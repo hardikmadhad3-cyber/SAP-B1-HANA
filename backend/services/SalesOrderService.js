@@ -191,6 +191,37 @@ const toRequiredString = (value, fallback = '') => {
   return normalized || fallback;
 };
 
+const COUNTRY_ORIGIN_ALIASES = new Map([
+  ['INDIA', 'IN'],
+  ['IND', 'IN'],
+  ['BHARAT', 'IN'],
+  ['CHINA', 'CN'],
+  ['JAPAN', 'JP'],
+  ['GERMANY', 'DE'],
+  ['UNITEDARABEMIRATES', 'AE'],
+  ['UAE', 'AE'],
+  ['UNITEDSTATES', 'US'],
+  ['UNITEDSTATESOFAMERICA', 'US'],
+  ['USA', 'US'],
+  ['US', 'US'],
+  ['UNITEDKINGDOM', 'UK'],
+  ['GREATBRITAIN', 'UK'],
+  ['BRITAIN', 'UK'],
+  ['UK', 'UK'],
+]);
+
+const normalizeCountryOrgValue = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const upper = raw.toUpperCase();
+  const compact = upper.replace(/[^A-Z0-9]/g, '');
+
+  if (COUNTRY_ORIGIN_ALIASES.has(compact)) return COUNTRY_ORIGIN_ALIASES.get(compact);
+  if (/^[A-Z0-9]{1,3}$/.test(compact)) return compact;
+  return '';
+};
+
 const NUMBER_DATA_TYPES = new Set([
   'bigint',
   'decimal',
@@ -228,8 +259,8 @@ const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Seller_Quality', getValue: (line) => line.sellerQuality },
   { sapField: 'U_Buyer_Price', getValue: (line) => line.buyerPrice },
   { sapField: 'U_Seller_Price', getValue: (line) => line.sellerPrice },
-  { sapField: 'U_Buyer_SPINS', getValue: (line) => line.buyerSpecialInstruction },
-  { sapField: 'U_Seller_SPINS', getValue: (line) => line.sellerSpecialInstruction },
+  { sapField: 'U_Buyer_SPINS', getValue: (line) => line.qtySpecialInstruction ?? line.buyerSpecialInstruction },
+  { sapField: 'U_Seller_SPINS', getValue: (line) => line.deliverySpecialInstruction ?? line.sellerSpecialInstruction },
   { sapField: 'U_Sel_Brok_AP', getValue: (line) => line.sellerBrokerageAmtPer },
   { sapField: 'U_Seller_Brok_Per', getValue: (line) => line.sellerBrokeragePercent },
   { sapField: 'U_Buyer_Bill_Disc', getValue: (line) => line.buyerBillDiscount },
@@ -243,6 +274,36 @@ const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Fr_trans_name', getValue: (line) => line.freightProviderName },
   { sapField: 'U_BDNum', getValue: (line) => line.brokerageNumber },
 ];
+
+const normalizeSapUdfFieldName = (value) => String(value || '').trim().toUpperCase();
+const compactSapUdfFieldName = (value) => normalizeSapUdfFieldName(value).replace(/[^A-Z0-9]/g, '');
+
+const GENERIC_LINE_UDF_SKIP_KEYS = new Set([
+  ...SALES_ORDER_LINE_UDF_MAPPINGS.map((mapping) => normalizeSapUdfFieldName(mapping.sapField)),
+]);
+
+const GENERIC_LINE_UDF_SKIP_FRAGMENTS = [
+  'SAUDANODEREF',
+  'SAUDANODHREF',
+  'SAUDANODHNO',
+  'APINVDOCKEY',
+  'APINVDOCNUM',
+  'APINVLINENUM',
+  'ASSESSABLEVALUE',
+  'BEDRATE',
+  'BEDAMOUNT',
+  'RG23DNO',
+  'DOCUMENTCREATED',
+];
+
+const shouldSkipGenericLineUdf = (key) => {
+  const normalized = normalizeSapUdfFieldName(key);
+  const compact = compactSapUdfFieldName(key);
+  return (
+    GENERIC_LINE_UDF_SKIP_KEYS.has(normalized) ||
+    GENERIC_LINE_UDF_SKIP_FRAGMENTS.some((fragment) => compact.includes(fragment))
+  );
+};
 
 const setOptionalString = (target, field, value) => {
   if (hasValue(value)) {
@@ -320,7 +381,11 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
     documentLine.FreeText = String(line.freeText).trim();
   }
 
-  setValidatedRdr1Field(documentLine, fieldMetadata, 'CountryOrg', line.countryOfOrigin);
+  const countryOrg = normalizeCountryOrgValue(line.countryOfOrigin);
+  if (hasValue(line.countryOfOrigin) && !countryOrg) {
+    console.warn(`[Sales Order Service] Skipping CountryOrg value because it is not a valid SAP country code: ${line.countryOfOrigin}`);
+  }
+  setValidatedRdr1Field(documentLine, fieldMetadata, 'CountryOrg', countryOrg);
 
   const sacEntry = toOptionalNumber(line.sacCode);
   if (sacEntry !== undefined) {
@@ -330,6 +395,12 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
   for (const mapping of SALES_ORDER_LINE_UDF_MAPPINGS) {
     setValidatedRdr1Field(documentLine, fieldMetadata, mapping.sapField, mapping.getValue(line));
   }
+
+  Object.entries(line.udf || {}).forEach(([key, value]) => {
+    if (normalizeSapUdfFieldName(key).startsWith('U_') && !shouldSkipGenericLineUdf(key)) {
+      setValidatedRdr1Field(documentLine, fieldMetadata, key, value);
+    }
+  });
 
   if (hasValue(line.baseEntry) && hasValue(line.baseType) && line.baseLine !== undefined && line.baseLine !== null) {
     documentLine.BaseEntry = Number(line.baseEntry);
@@ -356,6 +427,154 @@ const buildDocumentLinesPayload = async (lines = [], includeLineNum = false) => 
 };
 
 // ───────── REFERENCE DATA (USING ODBC) ─────────
+
+const getUniqueTaxCodesForLog = (payload = {}, documentLines = [], documentAdditionalExpenses = []) => {
+  const codes = new Set();
+  const addCode = (value) => {
+    const normalized = String(value || '').trim();
+    if (normalized && normalized !== 'Select') {
+      codes.add(normalized);
+    }
+  };
+
+  (payload.lines || []).forEach((line) => {
+    addCode(line.taxCode);
+    addCode(line.stcode);
+  });
+
+  documentLines.forEach((line) => {
+    addCode(line.TaxCode);
+    addCode(line.U_SELLTCODE);
+  });
+
+  documentAdditionalExpenses.forEach((expense) => {
+    addCode(expense.TaxCode);
+  });
+
+  return [...codes];
+};
+
+const summarizeTaxCodeDiagnostics = (rows = []) => {
+  const byCode = new Map();
+
+  rows.forEach((row) => {
+    const code = String(row.Code || '').trim();
+    if (!code) return;
+
+    if (!byCode.has(code)) {
+      byCode.set(code, {
+        code,
+        name: row.Name || '',
+        locked: row.Lock || '',
+        components: [],
+        hasCGST: false,
+        hasSGST: false,
+        hasIGST: false,
+        warnings: [],
+      });
+    }
+
+    const entry = byCode.get(code);
+    const staCode = String(row.STACode || '').trim();
+    const upperStaCode = staCode.toUpperCase();
+
+    if (staCode) {
+      entry.components.push({
+        staCode,
+        staType: row.STAType,
+        effectiveRate: row.EfctivRate,
+        rate: row.Rate,
+      });
+    }
+
+    if (upperStaCode.includes('CGST')) entry.hasCGST = true;
+    if (upperStaCode.includes('SGST')) entry.hasSGST = true;
+    if (upperStaCode.includes('IGST')) entry.hasIGST = true;
+  });
+
+  return [...byCode.values()].map((entry) => {
+    if (entry.hasSGST && !entry.hasCGST) {
+      entry.warnings.push('SGST component exists without CGST component');
+    }
+    if (entry.hasCGST && !entry.hasSGST) {
+      entry.warnings.push('CGST component exists without SGST component');
+    }
+    if (!entry.components.length) {
+      entry.warnings.push('No STC1 components found for tax code');
+    }
+    return entry;
+  });
+};
+
+const logSalesOrderSaveTaxDiagnostics = async ({
+  mode,
+  docEntry,
+  payload = {},
+  documentLines = [],
+  documentAdditionalExpenses = [],
+}) => {
+  try {
+    const header = payload.header || {};
+    const lines = payload.lines || [];
+    const taxCodes = getUniqueTaxCodesForLog(payload, documentLines, documentAdditionalExpenses);
+
+    console.log('[SalesOrderTaxSave] Save tax context:', JSON.stringify({
+      mode,
+      docEntry: docEntry || null,
+      customer: header.vendor || header.customerCode || '',
+      customerName: header.name || header.customerName || '',
+      placeOfSupply: header.placeOfSupply || '',
+      branch: header.branch || '',
+      postingDate: header.postingDate || '',
+      documentDate: header.documentDate || '',
+      taxCodes,
+      lines: lines.map((line, index) => ({
+        line: index + 1,
+        itemNo: line.itemNo || '',
+        quantity: line.quantity || '',
+        whse: line.whse || '',
+        frontendTaxCode: line.taxCode || '',
+        frontendStcode: line.stcode || '',
+        sentTaxCode: documentLines[index]?.TaxCode || '',
+        sentSellerTaxUdf: documentLines[index]?.U_SELLTCODE || '',
+        taxAmount: line.taxAmount || '',
+        total: line.total || '',
+      })),
+      freightCharges: documentAdditionalExpenses.map((expense, index) => ({
+        line: index + 1,
+        expenseCode: expense.ExpenseCode,
+        taxCode: expense.TaxCode || '',
+        lineTotal: expense.LineTotal,
+      })),
+    }, null, 2));
+
+    if (!taxCodes.length) {
+      console.warn('[SalesOrderTaxSave] No tax codes found in sales order save payload.');
+      return;
+    }
+
+    const rows = await salesOrderDb.getTaxCodeDiagnostics(taxCodes);
+    const summary = summarizeTaxCodeDiagnostics(rows);
+    const foundCodes = new Set(summary.map((entry) => entry.code));
+    const missingCodes = taxCodes.filter((code) => !foundCodes.has(code));
+
+    console.log('[SalesOrderTaxSave] SAP tax code components:', JSON.stringify({
+      summary,
+      missingCodes,
+    }, null, 2));
+
+    const warnings = [
+      ...summary.flatMap((entry) => entry.warnings.map((warning) => `${entry.code}: ${warning}`)),
+      ...missingCodes.map((code) => `${code}: tax code not found in OSTC/STC1 diagnostics`),
+    ];
+
+    if (warnings.length) {
+      console.warn('[SalesOrderTaxSave] Tax diagnostics warnings:', warnings);
+    }
+  } catch (error) {
+    console.warn('[SalesOrderTaxSave] Failed to write tax diagnostics:', error.message);
+  }
+};
 
 const getReferenceData = async (companyId) => {
   try {
@@ -422,6 +641,8 @@ const getSalesOrderList = async ({
   docNum = '',
   customerCode = '',
   customerName = '',
+  sellerCode = '',
+  sellerName = '',
   status = '',
   postingDateFrom = '',
   postingDateTo = '',
@@ -436,6 +657,8 @@ const getSalesOrderList = async ({
       docNum,
       customerCode,
       customerName,
+      sellerCode,
+      sellerName,
       status,
       postingDateFrom,
       postingDateTo,
@@ -496,6 +719,8 @@ const getSalesOrderFilterOptions = async ({
   docNum = '',
   customerCode = '',
   customerName = '',
+  sellerCode = '',
+  sellerName = '',
   status = '',
   postingDateFrom = '',
   postingDateTo = '',
@@ -509,6 +734,8 @@ const getSalesOrderFilterOptions = async ({
       docNum,
       customerCode,
       customerName,
+      sellerCode,
+      sellerName,
       status,
       postingDateFrom,
       postingDateTo,
@@ -590,6 +817,12 @@ const submitSalesOrder = async (payload) => {
     const Freight = payload.header.freight ? Number(payload.header.freight) : 0;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const documentLines = await buildDocumentLinesPayload(payload.lines);
+    await logSalesOrderSaveTaxDiagnostics({
+      mode: 'create',
+      payload,
+      documentLines,
+      documentAdditionalExpenses,
+    });
 
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 FINAL CONVERTED VALUES:");
@@ -753,6 +986,13 @@ const updateSalesOrder = async (docEntry, payload) => {
     const Freight = Number(payload.header.freight) || 0;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const documentLines = await buildDocumentLinesPayload(payload.lines, true);
+    await logSalesOrderSaveTaxDiagnostics({
+      mode: 'update',
+      docEntry,
+      payload,
+      documentLines,
+      documentAdditionalExpenses,
+    });
 
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 FINAL CONVERTED VALUES:");
@@ -867,9 +1107,9 @@ const getStateFromAddress = async (cardCode, addressCode) => {
   }
 };
 
-const getItemsForModal = async () => {
+const getItemsForModal = async (whsCode = '') => {
   try {
-    const items = await salesOrderDb.getItemsForModal();
+    const items = await salesOrderDb.getItemsForModal(whsCode);
     return { items };
   } catch (error) {
     console.error('[Sales Order Service] Failed to get items for modal:', error);
@@ -932,8 +1172,8 @@ module.exports = {
   getFreightCharges,
   getSalesOrderPrintLayouts,
   createLookupValue,
-  getOpenSalesOrders:          async () => { try { return { documents: await salesOrderDb.getOpenSalesOrders() }; } catch(e) { return { documents: [] }; } },
+  getOpenSalesOrders:          async (customerCode = '') => { try { return { documents: await salesOrderDb.getOpenSalesOrders(customerCode) }; } catch(e) { return { documents: [] }; } },
   getSalesOrderForCopy:        async (d) => salesOrderDb.getSalesOrderForCopy(d),
-  getOpenSalesQuotations:      async () => { try { const sq = require('./salesQuotationDbService'); return { documents: await sq.getOpenSalesQuotations() }; } catch(e) { return { documents: [] }; } },
+  getOpenSalesQuotations:      async (customerCode = '') => { try { const sq = require('./salesQuotationDbService'); return { documents: await sq.getOpenSalesQuotations(customerCode) }; } catch(e) { return { documents: [] }; } },
   getSalesQuotationForCopy:    async (d) => { const sq = require('./salesQuotationDbService'); return sq.getSalesQuotationForCopy(d); },
 };

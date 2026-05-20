@@ -65,6 +65,8 @@ const getSalesOrderList = async (req, res) => {
       docNum: req.query.docNum,
       customerCode: req.query.customerCode,
       customerName: req.query.customerName,
+      sellerCode: req.query.sellerCode,
+      sellerName: req.query.sellerName,
       status: req.query.status,
       postingDateFrom: req.query.postingDateFrom,
       postingDateTo: req.query.postingDateTo,
@@ -90,6 +92,8 @@ const getSalesOrderFilterOptions = async (req, res) => {
       docNum: req.query.docNum,
       customerCode: req.query.customerCode,
       customerName: req.query.customerName,
+      sellerCode: req.query.sellerCode,
+      sellerName: req.query.sellerName,
       status: req.query.status,
       postingDateFrom: req.query.postingDateFrom,
       postingDateTo: req.query.postingDateTo,
@@ -158,7 +162,7 @@ const getStateFromAddress = async (req, res) => {
 
 const getItemsForModal = async (req, res) => {
   try {
-    const data = await salesOrderService.getItemsForModal();
+    const data = await salesOrderService.getItemsForModal(req.query.whsCode);
     res.json(data);
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load items.'));
@@ -209,9 +213,9 @@ module.exports = {
   getFreightCharges,
   getSalesOrderPrintLayouts,
   createLookupValue,
-  getOpenSalesOrders:          async (req, res) => { try { res.json(await salesOrderService.getOpenSalesOrders()); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
+  getOpenSalesOrders:          async (req, res) => { try { res.json(await salesOrderService.getOpenSalesOrders(req.query.customerCode)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
   getSalesOrderForCopy:        async (req, res) => { try { res.json(await salesOrderService.getSalesOrderForCopy(req.params.docEntry)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
-  getOpenSalesQuotations:      async (req, res) => { try { res.json(await salesOrderService.getOpenSalesQuotations()); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
+  getOpenSalesQuotations:      async (req, res) => { try { res.json(await salesOrderService.getOpenSalesQuotations(req.query.customerCode)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
   getSalesQuotationForCopy:    async (req, res) => { try { res.json(await salesOrderService.getSalesQuotationForCopy(req.params.docEntry)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
   getOpenBlanketAgreements:    async (req, res) => { try { res.json({ documents: [] }); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
   getBlanketAgreementForCopy:  async (req, res) => { res.status(404).json({ detail: 'Blanket agreements not yet implemented.' }); },

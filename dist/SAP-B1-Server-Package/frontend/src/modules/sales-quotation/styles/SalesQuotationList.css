@@ -1,0 +1,81 @@
+.sales-quotation-list-container {
+  padding: 20px;
+  background-color: #f5f5f5;
+  min-height: 100vh;
+}
+
+.sales-quotation-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: white;
+  padding: 16px 20px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.sales-quotation-list-header h1 {
+  margin: 0;
+  font-size: 20px;
+  color: #333;
+}
+
+.btn-primary {
+  background-color: #1a73e8;
+  color: white;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.btn-primary:hover { background-color: #1558b0; }
+
+.sales-quotation-list-content {
+  background-color: white;
+  padding: 20px;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.sq-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.sq-list-table th {
+  background-color: #f8f9fa;
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #555;
+  border-bottom: 2px solid #dee2e6;
+}
+
+.sq-list-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  color: #333;
+}
+
+.sq-list-row {
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.sq-list-row:hover { background-color: #f0f7ff; }
+
+.sq-status {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sq-status--open { background-color: #e6f4ea; color: #1e7e34; }
+.sq-status--closed { background-color: #fce8e6; color: #c5221f; }
+.sq-status--unknown { background-color: #f1f3f4; color: #666; }

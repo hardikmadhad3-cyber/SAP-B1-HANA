@@ -7,6 +7,8 @@ export default function BusinessPartnerModal({
   onSelect,
   onCreateNew,
   businessPartners = [],
+  title = 'List of Business Partners',
+  variant = 'default',
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRow, setSelectedRow] = useState(null);
@@ -69,6 +71,16 @@ export default function BusinessPartnerModal({
     bp?.balance ??
     0;
 
+  const getBillToStreet = (bp) =>
+    bp?.BillToStreet ??
+    bp?.BillToBuildingFloorRoom ??
+    bp?.BillToBlock ??
+    bp?.Address ??
+    bp?.Street ??
+    '';
+
+  const isSellerVariant = variant === 'seller';
+
   if (!isOpen) return null;
 
   const modal = (
@@ -88,10 +100,10 @@ export default function BusinessPartnerModal({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="List of Business Partners"
+        aria-label={title}
         onClick={(event) => event.stopPropagation()}
         style={{
-          width: 'min(1420px, calc(100vw - 48px))',
+          width: isSellerVariant ? 'min(620px, calc(100vw - 48px))' : 'min(1420px, calc(100vw - 48px))',
           maxHeight: 'calc(100vh - 48px)',
           display: 'flex',
           flexDirection: 'column',
@@ -113,7 +125,7 @@ export default function BusinessPartnerModal({
           }}
         >
           <h6 className="modal-title mb-0" style={{ fontSize: 12, fontWeight: 600 }}>
-            List of Business Partners
+            {title}
           </h6>
           <div className="d-flex gap-1">
             <button
@@ -169,7 +181,7 @@ export default function BusinessPartnerModal({
               style={{ fontSize: 11, background: '#ffffcc' }}
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Search by code, name, or type..."
+              placeholder={isSellerVariant ? '' : 'Search by code, name, or type...'}
               autoFocus
             />
           </div>
@@ -178,22 +190,32 @@ export default function BusinessPartnerModal({
             <table className="table table-sm table-hover mb-0" style={{ fontSize: 11 }}>
               <thead style={{ position: 'sticky', top: 0, backgroundColor: '#e8edf2', zIndex: 1 }}>
                 <tr>
-                  <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '40px', padding: '4px 8px' }}>#</th>
-                  <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '200px', padding: '4px 8px' }}>
-                    BP name
-                    <span style={{ marginLeft: 4 }}>^</span>
-                  </th>
-                  <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '120px', padding: '4px 8px' }}>BP Code</th>
-                  <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '120px', padding: '4px 8px', textAlign: 'right' }}>
-                    Account Balance
-                  </th>
-                  <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '100px', padding: '4px 8px' }}>BP Type</th>
+                  {isSellerVariant ? (
+                    <>
+                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '130px', padding: '4px 8px' }}>BP Code</th>
+                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '240px', padding: '4px 8px' }}>BP Name</th>
+                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '220px', padding: '4px 8px' }}>Bill-to Street</th>
+                    </>
+                  ) : (
+                    <>
+                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '40px', padding: '4px 8px' }}>#</th>
+                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '200px', padding: '4px 8px' }}>
+                        BP name
+                        <span style={{ marginLeft: 4 }}>^</span>
+                      </th>
+                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '120px', padding: '4px 8px' }}>BP Code</th>
+                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '120px', padding: '4px 8px', textAlign: 'right' }}>
+                        Account Balance
+                      </th>
+                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '100px', padding: '4px 8px' }}>BP Type</th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {filteredPartners.length === 0 ? (
                   <tr>
-                    <td colSpan="5" className="text-center" style={{ padding: '20px', color: '#888' }}>
+                    <td colSpan={isSellerVariant ? 3 : 5} className="text-center" style={{ padding: '20px', color: '#888' }}>
                       No business partners found
                     </td>
                   </tr>
@@ -208,23 +230,35 @@ export default function BusinessPartnerModal({
                         backgroundColor: selectedRow === index ? '#ffffcc' : index % 2 === 0 ? '#fff' : '#fafbfc',
                       }}
                     >
-                      <td style={{ padding: '3px 8px' }}>{index + 1}</td>
-                      <td style={{ padding: '3px 8px', fontWeight: selectedRow === index ? 600 : 400 }}>
-                        {bp.CardName || ''}
-                      </td>
-                      <td style={{ padding: '3px 8px' }}>{bp.CardCode || ''}</td>
-                      <td style={{ padding: '3px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                        {formatCurrency(getBalanceValue(bp))}
-                      </td>
-                      <td style={{ padding: '3px 8px' }}>
-                        {bp.CardType === 'C'
-                          ? 'Customer'
-                          : bp.CardType === 'S'
-                            ? 'Supplier'
-                            : bp.CardType === 'L'
-                              ? 'Lead'
-                              : bp.CardType || 'Customer'}
-                      </td>
+                      {isSellerVariant ? (
+                        <>
+                          <td style={{ padding: '3px 8px' }}>{bp.CardCode || ''}</td>
+                          <td style={{ padding: '3px 8px', fontWeight: selectedRow === index ? 600 : 400 }}>
+                            {bp.CardName || ''}
+                          </td>
+                          <td style={{ padding: '3px 8px' }}>{getBillToStreet(bp)}</td>
+                        </>
+                      ) : (
+                        <>
+                          <td style={{ padding: '3px 8px' }}>{index + 1}</td>
+                          <td style={{ padding: '3px 8px', fontWeight: selectedRow === index ? 600 : 400 }}>
+                            {bp.CardName || ''}
+                          </td>
+                          <td style={{ padding: '3px 8px' }}>{bp.CardCode || ''}</td>
+                          <td style={{ padding: '3px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {formatCurrency(getBalanceValue(bp))}
+                          </td>
+                          <td style={{ padding: '3px 8px' }}>
+                            {bp.CardType === 'C'
+                              ? 'Customer'
+                              : bp.CardType === 'S'
+                                ? 'Supplier'
+                                : bp.CardType === 'L'
+                                  ? 'Lead'
+                                  : bp.CardType || 'Customer'}
+                          </td>
+                        </>
+                      )}
                     </tr>
                   ))
                 )}

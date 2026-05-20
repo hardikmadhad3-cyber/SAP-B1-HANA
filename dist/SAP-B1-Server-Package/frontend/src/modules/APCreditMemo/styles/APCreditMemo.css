@@ -1,0 +1,4 @@
+@import '../../purchase-order/styles/purchaseOrder.css';
+
+/* A/P Credit Memo uses the shared purchase-side document shell. Page-specific overrides should live here only when the credit memo workflow truly differs. */
+

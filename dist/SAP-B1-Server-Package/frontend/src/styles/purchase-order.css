@@ -1,0 +1,440 @@
+/* ═══════════════════════════════════════════════════════════════
+   Purchase Order / Sales Order — SAP B1 Style
+   Overrides Bootstrap to match Item Master look & feel
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Base ─────────────────────────────────────────────────────── */
+.po-page,
+.po-form {
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 13px;
+  color: #1a1a1a;
+  background: #f0f2f5;
+  min-height: 100%;
+  padding-bottom: 24px;
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────── */
+.po-page .d-flex.align-items-center.mb-3,
+.po-page .d-flex.justify-content-between.align-items-center.mb-3 {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #e8edf2;
+  border-bottom: 1px solid #c8d0da;
+  margin-bottom: 0 !important;
+}
+
+.po-page h2.mb-0 {
+  font-size: 14px;
+  font-weight: 700;
+  color: #003366;
+  margin: 0;
+  flex: 1;
+}
+
+/* ── Alerts ───────────────────────────────────────────────────── */
+.po-page .alert {
+  margin: 8px 12px 0;
+  padding: 7px 12px;
+  border-radius: 3px;
+  font-size: 12px;
+  border: 1px solid;
+}
+.po-page .alert-danger  { background: #fde8e8; color: #c00;    border-color: #f5a0a0; }
+.po-page .alert-success { background: #e6f4ea; color: #1a7a30; border-color: #8bc49a; }
+.po-page .alert-warning { background: #fff8e1; color: #856404; border-color: #ffc107; }
+.po-page .alert-info    { background: #e8f0fe; color: #1a56db; border-color: #93b4f5; }
+
+/* ── Container ────────────────────────────────────────────────── */
+.po-page .container-fluid {
+  padding: 10px 12px 0;
+}
+
+/* ── Cards (header, tab panels) ───────────────────────────────── */
+.po-page .card {
+  background: #fff;
+  border: 1px solid #c8d0da !important;
+  border-radius: 3px !important;
+  box-shadow: none !important;
+  margin-bottom: 0 !important;
+}
+
+.po-page .card.p-3 {
+  padding: 10px 14px !important;
+}
+
+/* ── Form labels ──────────────────────────────────────────────── */
+.po-page .form-label,
+.po-page label.form-label {
+  font-size: 12px;
+  font-weight: 400;
+  color: #444;
+  margin-bottom: 2px;
+  display: block;
+}
+
+/* ── Inputs, selects, textareas ───────────────────────────────── */
+.po-page .form-control,
+.po-page .form-control-sm,
+.po-page .form-select,
+.po-page select,
+.po-page input[type="text"],
+.po-page input[type="date"],
+.po-page input[type="number"],
+.po-page input[type="email"],
+.po-page textarea {
+  height: 22px !important;
+  min-height: 22px !important;
+  padding: 0 5px !important;
+  font-size: 12px !important;
+  font-family: "Segoe UI", Arial, sans-serif !important;
+  border: 1px solid #a0aab4 !important;
+  border-radius: 2px !important;
+  background: #fff !important;
+  color: #1a1a1a !important;
+  box-shadow: none !important;
+  line-height: 20px !important;
+}
+
+.po-page textarea,
+.po-page textarea.form-control,
+.po-page textarea.form-control-sm {
+  height: auto !important;
+  min-height: 52px !important;
+  padding: 4px 5px !important;
+  line-height: 1.4 !important;
+  resize: vertical;
+}
+
+.po-page .form-control:focus,
+.po-page .form-select:focus,
+.po-page select:focus,
+.po-page input:focus,
+.po-page textarea:focus {
+  outline: none !important;
+  border-color: #0070c0 !important;
+  box-shadow: 0 0 0 2px rgba(0,112,192,0.15) !important;
+}
+
+.po-page .form-control:disabled,
+.po-page select:disabled,
+.po-page input:disabled {
+  background: #f0f2f5 !important;
+  color: #888 !important;
+  cursor: not-allowed;
+}
+
+.po-page .form-control.is-invalid,
+.po-page select.is-invalid,
+.po-page input.is-invalid {
+  border-color: #c00 !important;
+}
+
+.po-page .invalid-feedback {
+  font-size: 11px;
+  color: #c00;
+  margin-top: 2px;
+}
+
+/* ── Checkboxes ───────────────────────────────────────────────── */
+.po-page .form-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  min-height: unset;
+}
+.po-page .form-check-input {
+  height: 13px !important;
+  width: 13px !important;
+  min-height: unset !important;
+  margin: 0 !important;
+  border-radius: 2px !important;
+  border: 1px solid #a0aab4 !important;
+  cursor: pointer;
+}
+.po-page .form-check-label {
+  font-size: 12px;
+  color: #1a1a1a;
+  cursor: pointer;
+  margin: 0;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────── */
+.po-page .btn,
+.po-page button.btn {
+  padding: 3px 12px !important;
+  font-size: 12px !important;
+  border-radius: 3px !important;
+  border: 1px solid #a0aab4 !important;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%) !important;
+  color: #1a1a1a !important;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 18px !important;
+  height: 24px !important;
+}
+.po-page .btn:hover {
+  background: linear-gradient(180deg, #f0f4f8 0%, #dde3ea 100%) !important;
+}
+
+.po-page .btn-primary,
+.po-page .btn-outline-primary.active,
+.po-page button.btn-primary {
+  background: linear-gradient(180deg, #0070c0 0%, #005a9e 100%) !important;
+  color: #fff !important;
+  border-color: #004a80 !important;
+}
+.po-page .btn-primary:hover {
+  background: linear-gradient(180deg, #0080d0 0%, #0060aa 100%) !important;
+}
+
+.po-page .btn-success {
+  background: linear-gradient(180deg, #2e8b2e 0%, #1e6b1e 100%) !important;
+  color: #fff !important;
+  border-color: #1a5c1a !important;
+}
+
+.po-page .btn-danger,
+.po-page .btn-outline-danger {
+  color: #c00 !important;
+  border-color: #f5a0a0 !important;
+  background: linear-gradient(180deg, #fff 0%, #fde8e8 100%) !important;
+}
+.po-page .btn-danger:hover,
+.po-page .btn-outline-danger:hover {
+  background: #fde8e8 !important;
+}
+
+.po-page .btn-outline-primary {
+  color: #0070c0 !important;
+  border-color: #0070c0 !important;
+  background: linear-gradient(180deg, #fff 0%, #e8f4fc 100%) !important;
+}
+.po-page .btn-outline-secondary {
+  color: #555 !important;
+  border-color: #a0aab4 !important;
+}
+
+.po-page .btn-sm {
+  padding: 2px 10px !important;
+  font-size: 11px !important;
+  height: 22px !important;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────── */
+.po-page .nav-tabs {
+  border-bottom: 2px solid #0070c0 !important;
+  display: flex;
+  gap: 2px;
+  margin: 10px 0 0 !important;
+  padding: 0;
+  list-style: none;
+  flex-wrap: wrap;
+}
+
+.po-page .nav-item {
+  margin: 0;
+}
+
+.po-page .nav-link {
+  display: inline-block;
+  padding: 5px 14px !important;
+  font-size: 12px !important;
+  border: 1px solid #c8d0da !important;
+  border-bottom: none !important;
+  border-radius: 3px 3px 0 0 !important;
+  background: #e8edf2 !important;
+  color: #444 !important;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 18px !important;
+  height: auto !important;
+  text-decoration: none;
+}
+.po-page .nav-link:hover {
+  background: #d8e2ec !important;
+  color: #003366 !important;
+}
+.po-page .nav-link.active {
+  background: #fff !important;
+  color: #003366 !important;
+  font-weight: 700 !important;
+  border-color: #0070c0 !important;
+  border-bottom: 2px solid #fff !important;
+  margin-bottom: -2px;
+}
+
+/* ── Tab panel card ───────────────────────────────────────────── */
+.po-page .card.p-3.mb-3 {
+  border-top: none !important;
+  border-radius: 0 0 3px 3px !important;
+  margin-top: 0 !important;
+}
+
+/* ── Grid layout (row/col) ────────────────────────────────────── */
+.po-page .row {
+  margin: 0 !important;
+}
+.po-page .row.g-2,
+.po-page .row.g-3 {
+  gap: 0 !important;
+}
+.po-page [class*="col-md-"] {
+  padding: 0 8px 0 0 !important;
+}
+.po-page [class*="col-md-"]:last-child {
+  padding-right: 0 !important;
+}
+
+/* ── mb-2 spacing ─────────────────────────────────────────────── */
+.po-page .mb-2 {
+  margin-bottom: 5px !important;
+}
+.po-page .mb-3 {
+  margin-bottom: 8px !important;
+}
+.po-page .mt-3 {
+  margin-top: 8px !important;
+}
+
+/* ── Item Matrix table ────────────────────────────────────────── */
+.po-page .table-responsive {
+  overflow-x: auto;
+  border: 1px solid #c8d0da;
+  border-radius: 2px;
+}
+
+.po-page .table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 0 !important;
+}
+
+.po-page .table thead th,
+.po-page .table-light th {
+  background: #e8edf2 !important;
+  border: 1px solid #c8d0da !important;
+  padding: 4px 6px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: #003366 !important;
+  white-space: nowrap;
+  vertical-align: middle !important;
+}
+
+.po-page .table tbody td {
+  border: 1px solid #e0e6ed !important;
+  padding: 1px 2px !important;
+  vertical-align: middle !important;
+}
+
+.po-page .table tbody tr:hover td {
+  background: #f5f8fc !important;
+}
+
+.po-page .table tbody tr:nth-child(even) td {
+  background: #fafbfc;
+}
+.po-page .table tbody tr:nth-child(even):hover td {
+  background: #f0f4f8 !important;
+}
+
+/* Inputs inside table cells */
+.po-page .table .form-control,
+.po-page .table .form-control-sm,
+.po-page .table select,
+.po-page .table input {
+  height: 20px !important;
+  min-height: 20px !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 0 3px !important;
+  font-size: 11px !important;
+  width: 100%;
+}
+.po-page .table .form-control:focus,
+.po-page .table select:focus,
+.po-page .table input:focus {
+  border: 1px solid #0070c0 !important;
+  background: #fff !important;
+  box-shadow: none !important;
+  border-radius: 2px !important;
+}
+
+/* ── Input group (Tax, eDoc) ──────────────────────────────────── */
+.po-page .input-group {
+  display: flex;
+  gap: 2px;
+}
+.po-page .input-group .form-control {
+  flex: 1;
+}
+.po-page .input-group .btn {
+  flex: 0 0 auto;
+  padding: 0 8px !important;
+}
+
+/* ── Section headings inside cards ───────────────────────────── */
+.po-page h6 {
+  font-size: 12px;
+  font-weight: 700;
+  color: #003366;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e0e6ed;
+}
+
+.po-page .border-bottom {
+  border-bottom: 1px solid #e0e6ed !important;
+}
+.po-page .border-top {
+  border-top: 1px solid #e0e6ed !important;
+}
+
+/* ── Totals footer ────────────────────────────────────────────── */
+.po-page .text-end input,
+.po-page input.text-end {
+  text-align: right !important;
+}
+
+/* ── UDF Sidebar ──────────────────────────────────────────────── */
+.po-page .po-udf-sidebar-card,
+.po-page [class*="col-md-3"] .card {
+  position: sticky;
+  top: 10px;
+}
+
+/* ── Small helper text ────────────────────────────────────────── */
+.po-page .text-muted {
+  font-size: 11px !important;
+  color: #888 !important;
+}
+.po-page .small {
+  font-size: 11px !important;
+}
+
+/* ── Loading spinner area ─────────────────────────────────────── */
+.po-page .d-flex.justify-content-center {
+  padding: 20px;
+  color: #555;
+  font-size: 12px;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────── */
+.po-page ::-webkit-scrollbar { width: 6px; height: 6px; }
+.po-page ::-webkit-scrollbar-track { background: #f0f2f5; }
+.po-page ::-webkit-scrollbar-thumb { background: #b0bac4; border-radius: 3px; }
+.po-page ::-webkit-scrollbar-thumb:hover { background: #8090a0; }
+
+/* ── Legacy class compatibility ───────────────────────────────── */
+.po-page .po-toolbar { margin-bottom: 0; }
+.po-page .po-status  { margin: 8px 12px 0; padding: 7px 12px; border-radius: 3px; font-size: 12px; border: 1px solid; }
+.po-page .po-status-error   { background: #fde8e8; color: #c00;    border-color: #f5a0a0; }
+.po-page .po-status-success { background: #e6f4ea; color: #1a7a30; border-color: #8bc49a; }
+.po-page .po-status-warn    { background: #fff8e1; color: #856404; border-color: #ffc107; }
+.po-page .po-status-info    { background: #e8f0fe; color: #1a56db; border-color: #93b4f5; }

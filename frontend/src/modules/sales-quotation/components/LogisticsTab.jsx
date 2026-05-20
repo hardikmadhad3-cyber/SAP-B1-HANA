@@ -62,7 +62,7 @@ export default function LogisticsTab({
             <div className="im-lookup-wrap">
               <select
                 className="im-field__select"
-                name="payToCode"
+                name="billToCode"
                 value={header.billToCode}
                 onChange={onHeaderChange}
                 style={{ flex: 1 }}

@@ -5,6 +5,42 @@ const SapWindowTaskbarContext = createContext(null);
 const TASKBAR_STORAGE_KEY = "sap-window-taskbar/tasks";
 const WINDOW_STATE_STORAGE_PREFIX = "sap-window-state:";
 
+const normalizeTaskPath = (path = "") =>
+  `/${String(path || "").replace(/^\/+/, "")}`.replace(/\/+$/g, "") || "/";
+
+const prettifyTaskTitle = (pathname = "") => {
+  const cleaned = normalizeTaskPath(pathname)
+    .replace(/^\/+|\/+$/g, "")
+    .split("/")
+    .filter(Boolean)
+    .filter((segment) => !/^\d+$/.test(segment));
+
+  if (!cleaned.length) return "Window";
+
+  return cleaned
+    .map((segment) =>
+      segment
+        .replace(/[-_]+/g, " ")
+        .replace(/\b\w/g, (character) => character.toUpperCase()),
+    )
+    .join(" / ");
+};
+
+const getCurrentRouteState = () => {
+  if (typeof window === "undefined") return null;
+
+  const historyState = window.history?.state;
+  if (historyState?.usr && typeof historyState.usr === "object") {
+    return historyState.usr;
+  }
+
+  if (historyState?.state && typeof historyState.state === "object") {
+    return historyState.state;
+  }
+
+  return null;
+};
+
 const readStoredTasks = () => {
   if (typeof window === "undefined") return [];
 
@@ -30,23 +66,32 @@ export function SapWindowTaskbarProvider({ children }) {
         id: task.id,
         title: task.title || "Window",
         path: task.path || window.location.pathname,
+        state: Object.prototype.hasOwnProperty.call(task, "state") ? task.state : undefined,
       };
       const existingIndex = current.findIndex((entry) => entry.id === normalizedTask.id);
 
       if (existingIndex === -1) {
-        return [...current, normalizedTask];
+        return [...current, { ...normalizedTask, state: normalizedTask.state ?? null }];
       }
 
       const next = [...current];
       const existingTask = next[existingIndex];
+      const mergedTask = {
+        ...existingTask,
+        id: normalizedTask.id,
+        title: normalizedTask.title,
+        path: normalizedTask.path,
+        state: normalizedTask.state === undefined ? existingTask.state : normalizedTask.state,
+      };
       if (
-        existingTask.title === normalizedTask.title
-        && existingTask.path === normalizedTask.path
+        existingTask.title === mergedTask.title
+        && existingTask.path === mergedTask.path
+        && JSON.stringify(existingTask.state || null) === JSON.stringify(mergedTask.state || null)
       ) {
         return current;
       }
 
-      next[existingIndex] = { ...next[existingIndex], ...normalizedTask };
+      next[existingIndex] = mergedTask;
       return next;
     });
   }, []);
@@ -87,9 +132,35 @@ export function useSapWindowTaskbarActions() {
   const taskbar = useSapWindowTaskbar();
   const navigate = useNavigate();
 
+  const minimizeCurrentRouteTask = useCallback((excludeId = null) => {
+    if (typeof window === "undefined") return;
+
+    const currentPath = normalizeTaskPath(window.location.pathname);
+    const currentRouteState = getCurrentRouteState();
+    const currentWindow = currentRouteState?.sapWindow || null;
+    const currentTaskId = currentWindow?.id || `page-window:${currentPath}`;
+
+    if (!currentTaskId || currentTaskId === excludeId) {
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      `${WINDOW_STATE_STORAGE_PREFIX}${currentTaskId}`,
+      JSON.stringify({ isMaximized: false, isMinimized: true })
+    );
+
+    taskbar?.upsertTask?.({
+      id: currentTaskId,
+      path: currentWindow?.path || currentPath,
+      title: currentWindow?.title || prettifyTaskTitle(currentPath),
+      state: currentRouteState || undefined,
+    });
+  }, [taskbar]);
+
   const restoreTask = useCallback((task, { minimizeActive = true } = {}) => {
     if (!task) return false;
     if (minimizeActive) {
+      minimizeCurrentRouteTask(task.id);
       window.dispatchEvent(new CustomEvent("sap-window-minimize-active", { detail: { excludeId: task.id } }));
     }
     if (typeof window !== "undefined") {
@@ -104,10 +175,10 @@ export function useSapWindowTaskbarActions() {
     window.dispatchEvent(new CustomEvent("sap-window-restore", { detail: { id: task.id } }));
 
     if (task.path && task.path !== window.location.pathname) {
-      navigate(task.path);
+      navigate(task.path, task.state ? { state: task.state } : undefined);
     }
     return true;
-  }, [navigate, taskbar]);
+  }, [minimizeCurrentRouteTask, navigate, taskbar]);
 
   const closeActiveAndRestorePrevious = useCallback(() => {
     const previousTask = taskbar?.tasks?.[taskbar.tasks.length - 1];

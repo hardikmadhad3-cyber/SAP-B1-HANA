@@ -20,6 +20,7 @@ import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../..
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   fetchPurchaseRequestByDocEntry,
   fetchPurchaseRequestReferenceData,
@@ -230,6 +231,7 @@ function PurchaseRequest() {
     lines: {},
     form: '',
   });
+  useValidationHighlights(valErrors);
   const [addressModal, setAddressModal] = useState(null);
   const [taxInfoModal, setTaxInfoModal] = useState(false);
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
@@ -1260,23 +1262,20 @@ function PurchaseRequest() {
       {/* toolbar */}
       <div className="po-toolbar sap-document-toolbar">
         <span className="po-toolbar__title">Purchase Request{currentDocEntry ? ` — #${header.docNo || currentDocEntry}` : ''}</span>
-        <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting}>
+        <button type="submit" className="po-btn po-btn--primary sap-document-toolbar__primary" disabled={pageState.posting}>
           {pageState.posting ? 'Saving…' : currentDocEntry ? 'Update' : 'Add'}
         </button>
-        <button type="button" className="po-btn" disabled={pageState.posting}>
-          Add Draft & New
-        </button>
-        <button type="button" className="po-btn" onClick={resetForm}>
+        <button type="button" className="po-btn sap-document-toolbar__cancel" onClick={resetForm}>
           Cancel
         </button>
-        <button type="button" className="po-btn" onClick={toggleHeaderUdfs}>
+        <button type="button" className="po-btn sap-document-toolbar__udf" onClick={toggleHeaderUdfs}>
           {sidebarOpen ? 'Hide UDFs' : 'Show UDFs'}
         </button>
-        <button type="button" className="po-btn" onClick={toggleFormSettings}>
+        <button type="button" className="po-btn sap-document-toolbar__settings" onClick={toggleFormSettings}>
           Form Settings
         </button>
-        <button type="button" className="po-btn" onClick={() => navigate('/purchase-request/find')}>Find</button>
-        <button type="button" className="po-btn" onClick={resetForm}>New</button>
+        <button type="button" className="po-btn sap-document-toolbar__find" onClick={() => navigate('/purchase-request/find')}>Find</button>
+        <button type="button" className="po-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
       </div>
 
       {/* alerts */}
@@ -1675,9 +1674,6 @@ function PurchaseRequest() {
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting}>
                   {pageState.posting ? 'Saving…' : currentDocEntry ? 'Update' : 'Add & New'}
-                </button>
-                <button type="button" className="po-btn" disabled={pageState.posting}>
-                  Add Draft & New
                 </button>
                 <button type="button" className="po-btn" onClick={resetForm}>
                   Cancel

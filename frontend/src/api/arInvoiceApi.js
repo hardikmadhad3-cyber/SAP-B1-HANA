@@ -81,8 +81,10 @@ export const fetchOpenDeliveriesForARInvoice = (customerCode = null) =>
 export const fetchDeliveryForARInvoiceCopy = (docEntry) =>
   client.get(`${API_BASE}/delivery/${encodeURIComponent(docEntry)}/copy`);
 
-export const fetchOpenSalesQuotationsForARInvoice = () =>
-   client.get('/sales-quotation/open');
+export const fetchOpenSalesQuotationsForARInvoice = (customerCode = null) =>
+   client.get('/sales-quotation/open', {
+    params: customerCode ? { customerCode } : {},
+  });
 
 export const fetchSalesQuotationForARInvoiceCopy = (docEntry) =>
   client.get(`/sales-quotation/${encodeURIComponent(docEntry)}/copy`);

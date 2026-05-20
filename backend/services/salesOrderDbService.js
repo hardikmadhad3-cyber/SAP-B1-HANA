@@ -3,6 +3,8 @@
  * Column names verified against NCPL_110126 schema.
  */
 const db = require('./dbService');
+const masterDataDbService = require('./masterDataDbService');
+const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 
 const safe = async (promise) => {
   try {
@@ -23,6 +25,12 @@ const normalizeTopLimit = (value) => {
   return Math.floor(parsed);
 };
 
+const formatSapDate = (value) => {
+  if (!value) return '';
+  if (value instanceof Date) return value.toISOString().split('T')[0];
+  return String(value).split('T')[0];
+};
+
 const normalizeSalesOrderStatusCode = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return '';
@@ -31,12 +39,35 @@ const normalizeSalesOrderStatusCode = (value) => {
   return '';
 };
 
+const salesOrderSellerCodeExpression = `
+  COALESCE(
+    NULLIF(LTRIM(RTRIM(CAST(T0.U_Seller_Code AS NVARCHAR(254)))), ''),
+    CASE
+      WHEN T0.SlpCode IS NOT NULL AND T0.SlpCode <> -1 THEN CAST(T0.SlpCode AS NVARCHAR(50))
+      ELSE ''
+    END
+  )
+`;
+
+const salesOrderSellerNameExpression = `
+  COALESCE(
+    NULLIF(LTRIM(RTRIM(CAST(T0.U_Seller_Name AS NVARCHAR(254)))), ''),
+    CASE
+      WHEN T0.SlpCode IS NOT NULL AND T0.SlpCode <> -1 THEN NULLIF(LTRIM(RTRIM(SLP.SlpName)), '')
+      ELSE ''
+    END,
+    ''
+  )
+`;
+
 const buildSalesOrderListFilterQuery = ({
   query = '',
   openOnly = true,
   docNum = '',
   customerCode = '',
   customerName = '',
+  sellerCode = '',
+  sellerName = '',
   status = '',
   postingDateFrom = '',
   postingDateTo = '',
@@ -45,6 +76,8 @@ const buildSalesOrderListFilterQuery = ({
   const normalizedDocNum = String(docNum || '').trim();
   const normalizedCustomerCode = String(customerCode || '').trim();
   const normalizedCustomerName = String(customerName || '').trim();
+  const normalizedSellerCode = String(sellerCode || '').trim();
+  const normalizedSellerName = String(sellerName || '').trim();
   const normalizedDateFrom = String(postingDateFrom || '').trim();
   const normalizedDateTo = String(postingDateTo || '').trim();
   const normalizedStatus = normalizeSalesOrderStatusCode(status);
@@ -65,6 +98,8 @@ const buildSalesOrderListFilterQuery = ({
       CAST(T0.DocNum AS NVARCHAR(50)) LIKE @query
       OR T0.CardCode LIKE @query
       OR T0.CardName LIKE @query
+      OR ${salesOrderSellerCodeExpression} LIKE @query
+      OR ${salesOrderSellerNameExpression} LIKE @query
     )`);
     params.query = `%${escapeLike(normalizedQuery)}%`;
   }
@@ -82,6 +117,16 @@ const buildSalesOrderListFilterQuery = ({
   if (normalizedCustomerName && excludeField !== 'customerName') {
     whereClauses.push('T0.CardName LIKE @customerName');
     params.customerName = `%${escapeLike(normalizedCustomerName)}%`;
+  }
+
+  if (normalizedSellerCode && excludeField !== 'sellerCode') {
+    whereClauses.push(`${salesOrderSellerCodeExpression} LIKE @sellerCode`);
+    params.sellerCode = `%${escapeLike(normalizedSellerCode)}%`;
+  }
+
+  if (normalizedSellerName && excludeField !== 'sellerName') {
+    whereClauses.push(`${salesOrderSellerNameExpression} LIKE @sellerName`);
+    params.sellerName = `%${escapeLike(normalizedSellerName)}%`;
   }
 
   if (normalizedDateFrom && excludeField !== 'postingDateFrom') {
@@ -154,16 +199,20 @@ const getItems = () => safe(db.query(`
 `));
 
 // Enhanced item list for modal with all details
-const getItemsForModal = () => safe(db.query(`
+const getItemsForModal = (whsCode = '') => {
+  const hasWarehouse = String(whsCode || '').trim();
+
+  return safe(db.query(`
   SELECT 
     T0.ItemCode,
     T0.ItemName,
     T0.FrgnName AS ForeignName,
     T0.ItmsGrpCod AS ItemGroupCode,
     T1.ItmsGrpNam AS ItemGroup, 
-    CAST(T0.OnHand AS DECIMAL(19,2)) AS InStock,
-    T0.IsCommited AS Committed,
-    T0.OnOrder AS Ordered,
+    CAST(${hasWarehouse ? 'ISNULL(W.OnHand, 0)' : 'T0.OnHand'} AS DECIMAL(19,2)) AS InStock,
+    ${hasWarehouse ? 'ISNULL(W.IsCommited, 0)' : 'T0.IsCommited'} AS Committed,
+    ${hasWarehouse ? 'ISNULL(W.OnOrder, 0)' : 'T0.OnOrder'} AS Ordered,
+    CAST(${hasWarehouse ? 'ISNULL(W.OnHand, 0) - ISNULL(W.IsCommited, 0)' : 'T0.OnHand - T0.IsCommited'} AS DECIMAL(19,2)) AS Available,
     T0.SalUnitMsr AS SalesUnit,
     T0.InvntryUom AS InventoryUOM,
     T0.SUoMEntry AS UoMGroupEntry,
@@ -185,13 +234,15 @@ const getItemsForModal = () => safe(db.query(`
   FROM OITM T0
  LEFT JOIN OITB T1 ON T0.ItmsGrpCod = T1.ItmsGrpCod 
    LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID
+   ${hasWarehouse ? 'LEFT JOIN OITW W ON W.ItemCode = T0.ItemCode AND W.WhsCode = @WhsCode' : ''}
 
  WHERE T0.SellItem = 'Y'
     AND T0.validFor <> 'N'
   ORDER BY T0.ItemCode
 
  
-`));
+`, hasWarehouse ? { WhsCode: hasWarehouse } : {}));
+};
 
 // Get freight charges for modal
 const getFreightCharges = (docEntry) => {
@@ -309,57 +360,44 @@ const getDistributionRules = () => safe(db.query(`
   WHERE  Active <> 'N'
   ORDER  BY OcrCode
 `));
-const getTaxCodes = () => safe(db.query(`
-  SELECT 
-    T0.Code,
-    T0.Name,
-    SUM(T1.EfctivRate) AS Rate,
-    CASE 
-        WHEN 
-            MAX(CASE WHEN T1.STACode LIKE '%IGST%' THEN 1 ELSE 0 END) = 1 
-            THEN 'INTERSTATE'
-        WHEN 
-            COUNT(DISTINCT CASE 
-                WHEN T1.STACode LIKE '%CGST%' THEN 'CGST'
-                WHEN T1.STACode LIKE '%SGST%' THEN 'SGST'
-            END) = 2 
-            THEN 'INTRASTATE'
-        ELSE 'OTHER'
-    END AS GSTType
-FROM OSTC T0
-INNER JOIN STC1 T1 ON T0.Code = T1.STCCode  and T1.[STAType] In ('-100','-110','-120')
-WHERE 
-    T0.Lock = 'N'
-GROUP BY 
-    T0.Code, T0.Name
-ORDER BY 
-    T0.Code;
-`));
+const getTaxCodes = () => masterDataDbService.searchDocumentTaxCodes('', 'sales', 500, 0);
 
-// const getTaxCodes = () => safe(db.query(`
-//   SELECT 
-//     T0.Code,
-//     T0.Name,
-//     SUM(T1.Rate) AS Rate,
-//     CASE 
-//         WHEN EXISTS (
-//             SELECT 1 FROM VTG1 T2 
-//             WHERE T2.Code = T0.Code AND T2.TaxType = 'C'
-//         ) AND EXISTS (
-//             SELECT 1 FROM VTG1 T3 
-//             WHERE T3.Code = T0.Code AND T3.TaxType = 'S'
-//         ) THEN 'INTRASTATE'
-//         WHEN EXISTS (
-//             SELECT 1 FROM VTG1 T4 
-//             WHERE T4.Code = T0.Code AND T4.TaxType = 'I'
-//         ) THEN 'INTERSTATE'
-//         ELSE 'OTHER'
-//     END AS GSTType
-// FROM OVTG T0
-// INNER JOIN VTG1 T1 ON T0.Code = T1.Code
-// GROUP BY T0.Code, T0.Name
-// ORDER BY T0.Code
-// `));
+const getTaxCodeDiagnostics = async (taxCodes = []) => {
+  const normalizedCodes = [...new Set(
+    (taxCodes || [])
+      .map((code) => String(code || '').trim())
+      .filter(Boolean)
+  )];
+
+  if (!normalizedCodes.length) {
+    return [];
+  }
+
+  const params = {};
+  const placeholders = normalizedCodes.map((code, index) => {
+    const key = `taxCode${index}`;
+    params[key] = code;
+    return `@${key}`;
+  });
+
+  return safe(db.query(`
+    SELECT
+      T0.Code,
+      T0.Name,
+      T0.Lock,
+      T1.STACode,
+      T1.STAType,
+      T1.EfctivRate,
+      T1.Rate
+    FROM OSTC T0
+    LEFT JOIN STC1 T1
+      ON T0.Code = T1.STCCode
+    WHERE T0.Code IN (${placeholders.join(', ')})
+    ORDER BY T0.Code, T1.STACode
+  `, params));
+};
+
+// const getTaxCodes = () => masterDataDbService.searchDocumentTaxCodes('', 'sales', 500, 0);
 
 const getUomGroups = () => safe(db.query(`
   SELECT g.UgpEntry AS AbsEntry,
@@ -373,21 +411,73 @@ const getUomGroups = () => safe(db.query(`
 `));
 
 let rdr1FieldMetadataPromise = null;
+const tableFieldMetadataPromises = new Map();
 const itemUomContextCache = new Map();
 
-const getSalesOrderLineFieldMetadata = async () => {
-  if (!rdr1FieldMetadataPromise) {
-    rdr1FieldMetadataPromise = safe(db.query(`
+const getTableFieldMetadata = async (tableName) => {
+  const normalizedTableName = String(tableName || '').trim();
+  if (!normalizedTableName) return {};
+
+  if (!tableFieldMetadataPromises.has(normalizedTableName)) {
+    tableFieldMetadataPromises.set(normalizedTableName, safe(db.query(`
       SELECT COLUMN_NAME, DATA_TYPE
       FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_NAME = 'RDR1'
+      WHERE TABLE_NAME = @tableName
       ORDER BY ORDINAL_POSITION
-    `)).then((rows) => rows.reduce((acc, row) => {
+    `, { tableName: normalizedTableName })).then((rows) => rows.reduce((acc, row) => {
       const columnName = String(row.COLUMN_NAME || '').trim();
       if (!columnName) return acc;
       acc[columnName] = String(row.DATA_TYPE || '').trim().toLowerCase();
       return acc;
-    }, {}));
+    }, {})));
+  }
+
+  return tableFieldMetadataPromises.get(normalizedTableName);
+};
+
+const toSqlIdentifier = (identifier) => `[${String(identifier || '').replace(/]/g, ']]')}]`;
+
+const normalizeDbScalar = (value) => {
+  if (value instanceof Date) return value.toISOString().split('T')[0];
+  return value == null ? '' : String(value);
+};
+
+const getPhysicalUdfValues = async ({ tableName, keyColumn = 'DocEntry', keyValue, includeLineNum = false }) => {
+  const fieldMetadata = await getTableFieldMetadata(tableName);
+  const udfColumns = Object.keys(fieldMetadata).filter((columnName) => columnName.startsWith('U_'));
+  if (!udfColumns.length) return includeLineNum ? {} : {};
+
+  const selectColumns = [
+    ...(includeLineNum ? ['LineNum'] : []),
+    ...udfColumns,
+  ].map(toSqlIdentifier).join(', ');
+
+  const rows = await safe(db.query(`
+    SELECT ${selectColumns}
+    FROM ${toSqlIdentifier(tableName)}
+    WHERE ${toSqlIdentifier(keyColumn)} = @keyValue
+  `, { keyValue }));
+
+  if (includeLineNum) {
+    return rows.reduce((acc, row) => {
+      acc[row.LineNum] = udfColumns.reduce((values, columnName) => {
+        values[columnName] = normalizeDbScalar(row[columnName]);
+        return values;
+      }, {});
+      return acc;
+    }, {});
+  }
+
+  const row = rows[0] || {};
+  return udfColumns.reduce((values, columnName) => {
+    values[columnName] = normalizeDbScalar(row[columnName]);
+    return values;
+  }, {});
+};
+
+const getSalesOrderLineFieldMetadata = async () => {
+  if (!rdr1FieldMetadataPromise) {
+    rdr1FieldMetadataPromise = getTableFieldMetadata('RDR1');
   }
 
   return rdr1FieldMetadataPromise;
@@ -793,7 +883,7 @@ const getReferenceData = async () => {
   const [
     customers, items, warehouses, paymentTerms,
     shippingTypes, branches, states, countries, distributionRules, taxCodes, uomRaw, salesEmployees, owners,
-    buyerQualityOptions, sellerQualityOptions, buyerPriceOptions, sellerPriceOptions,
+    buyerQualityOptions, sellerQualityOptions, buyerPriceOptions, sellerPriceOptions, udfMetadata,
   ] = await Promise.all([
     getCustomers(), getItems(), getWarehouses(), getPaymentTerms(),
     getShippingTypes(), getBranches(), getStates(), getCountries(), getDistributionRules(), getTaxCodes(), getUomGroups(), getSalesEmployees(), getOwners(),
@@ -801,6 +891,7 @@ const getReferenceData = async () => {
     getLookupValues('U_Seller_Quality'),
     getLookupValues('U_Buyer_Price'),
     getLookupValues('U_Seller_Price'),
+    getMarketingDocumentUdfs({ headerTable: 'ORDR', lineTable: 'RDR1' }),
   ]);
 
   // Group UoM rows: UgpEntry -> { AbsEntry, Name, uomCodes[] }
@@ -877,6 +968,7 @@ const getReferenceData = async () => {
     pay_to_addresses:   [],
     company_address:    {},
     decimal_settings:   { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 },
+    udf_metadata:       udfMetadata,
     warnings:           [],
   };
 };
@@ -951,6 +1043,8 @@ const getSalesOrderList = async ({
   docNum = '',
   customerCode = '',
   customerName = '',
+  sellerCode = '',
+  sellerName = '',
   status = '',
   postingDateFrom = '',
   postingDateTo = '',
@@ -966,6 +1060,8 @@ const getSalesOrderList = async ({
     docNum,
     customerCode,
     customerName,
+    sellerCode,
+    sellerName,
     status,
     postingDateFrom,
     postingDateTo,
@@ -974,6 +1070,7 @@ const getSalesOrderList = async ({
   const countResult = await safe(db.query(`
     SELECT COUNT(*) AS total_count
     FROM   ORDR T0
+    LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     WHERE  ${whereClauses.join('\n      AND ')}
   `, params));
 
@@ -985,6 +1082,8 @@ const getSalesOrderList = async ({
            T0.DocNum,
            T0.CardCode,
            T0.CardName,
+           ${salesOrderSellerCodeExpression} AS SellerCode,
+           ${salesOrderSellerNameExpression} AS SellerName,
            T0.DocDate,
            T0.DocDueDate,
            T0.DocStatus,
@@ -996,6 +1095,7 @@ const getSalesOrderList = async ({
              WHERE  T1.DocEntry = T0.DocEntry
            ) AS line_count
     FROM   ORDR T0
+    LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     WHERE  ${whereClauses.join('\n      AND ')}
     ORDER  BY T0.DocEntry DESC
     OFFSET @skip ROWS FETCH NEXT @top ROWS ONLY
@@ -1007,6 +1107,8 @@ const getSalesOrderList = async ({
       doc_num: o.DocNum,
       customer_code: o.CardCode,
       customer_name: o.CardName,
+      seller_code: o.SellerCode || '',
+      seller_name: o.SellerName || '',
       posting_date: o.DocDate ? o.DocDate.toISOString().split('T')[0] : '',
       delivery_date: o.DocDueDate ? o.DocDueDate.toISOString().split('T')[0] : '',
       status: o.DocStatus === 'O' ? 'Open' : o.DocStatus === 'C' ? 'Closed' : 'Unknown',
@@ -1030,6 +1132,8 @@ const getSalesOrderFilterOptions = async ({
   docNum = '',
   customerCode = '',
   customerName = '',
+  sellerCode = '',
+  sellerName = '',
   status = '',
   postingDateFrom = '',
   postingDateTo = '',
@@ -1116,6 +1220,24 @@ const getSalesOrderFilterOptions = async ({
       queryClause: '(T0.CardName LIKE @lookupQuery OR T0.CardCode LIKE @lookupQuery)',
       orderBy: 'code',
     },
+    sellerCode: {
+      select: `
+        DISTINCT TOP (@top)
+        ${salesOrderSellerCodeExpression} AS code,
+        ${salesOrderSellerNameExpression} AS name
+      `,
+      queryClause: `(${salesOrderSellerCodeExpression} LIKE @lookupQuery OR ${salesOrderSellerNameExpression} LIKE @lookupQuery)`,
+      orderBy: 'code',
+    },
+    sellerName: {
+      select: `
+        DISTINCT TOP (@top)
+        ${salesOrderSellerNameExpression} AS code,
+        ${salesOrderSellerCodeExpression} AS name
+      `,
+      queryClause: `(${salesOrderSellerNameExpression} LIKE @lookupQuery OR ${salesOrderSellerCodeExpression} LIKE @lookupQuery)`,
+      orderBy: 'code',
+    },
   };
 
   const config = fieldConfig[normalizedField];
@@ -1127,6 +1249,8 @@ const getSalesOrderFilterOptions = async ({
     docNum,
     customerCode,
     customerName,
+    sellerCode,
+    sellerName,
     status,
     postingDateFrom,
     postingDateTo,
@@ -1140,7 +1264,9 @@ const getSalesOrderFilterOptions = async ({
   const rows = await safe(db.query(`
     SELECT ${config.select}
     FROM ORDR T0
+    LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     WHERE ${whereClauses.join('\n      AND ')}
+      AND NULLIF(LTRIM(RTRIM(${normalizedField === 'sellerName' ? salesOrderSellerNameExpression : normalizedField === 'sellerCode' ? salesOrderSellerCodeExpression : 'CAST(1 AS NVARCHAR(1))'})), '') IS NOT NULL
     ORDER BY ${config.orderBy}
   `, { ...params, top: normalizedTop }));
 
@@ -1193,6 +1319,7 @@ const getSalesOrder = async (docEntry) => {
     T0.CardCode,
     T0.CardName,
     T0.DocDate,
+    T0.CreateDate AS DocumentCreated,
     T0.DocDueDate,
     T0.TaxDate,
     T0.DocStatus,
@@ -1242,6 +1369,7 @@ const getSalesOrder = async (docEntry) => {
     T1.TaxCode AS TaxCode,
     T1.WhsCode,
     T1.unitMsr AS UomCode,
+    T1.unitMsr AS UomName,
     T1.OcrCode AS DistributionRule,
     T1.FreeTxt AS [FreeText],
     T1.CountryOrg AS CountryOfOrigin,
@@ -1265,6 +1393,8 @@ const getSalesOrder = async (docEntry) => {
     T1.U_Seller_Price AS SellerPrice,
     T1.U_Buyer_SPINS AS BuyerSpecialInstruction,
     T1.U_Seller_SPINS AS SellerSpecialInstruction,
+    T1.U_Buyer_SPINS AS QtySpecialInstruction,
+    T1.U_Seller_SPINS AS DeliverySpecialInstruction,
     T1.U_Sel_Brok_AP AS SellerBrokerageAmtPer,
     T1.U_Seller_Brok_Per AS SellerBrokeragePercent,
     T1.U_Buyer_Bill_Disc AS BuyerBillDiscount,
@@ -1322,9 +1452,13 @@ ORDER BY T1.LineNum
 
   const header = rows[0];  // Header data is same in all rows
   const placeOfSupply = header.PlaceOfSupply || '';
+  const [dynamicHeaderUdfs, dynamicLineUdfs] = await Promise.all([
+    getHeaderUdfValues({ tableId: 'ORDR', keyValue: resolvedDocEntry }),
+    getLineUdfValues({ tableId: 'RDR1', keyValue: resolvedDocEntry }),
+  ]);
 
   // ✅ Try to get header UDFs if they exist
-  let headerUdfs = {};
+  let headerUdfs = dynamicHeaderUdfs;
   try {
     const udfRows = await db.query(`
       SELECT
@@ -1376,6 +1510,7 @@ ORDER BY T1.LineNum
     if (udfRows.recordset && udfRows.recordset.length > 0) {
       const udf = udfRows.recordset[0];
       headerUdfs = {
+        ...dynamicHeaderUdfs,
         U_SCharge: udf.U_SCharge || '',
         U_TRNS: udf.U_TRNS || '',
         U_LRNO: udf.U_LRNO || '',
@@ -1428,7 +1563,7 @@ ORDER BY T1.LineNum
   const lineRows = rows;
 
   // ✅ Try to get line UDFs if they exist
-  let lineUdfs = {};
+  let lineUdfs = dynamicLineUdfs;
   try {
     const udfLineRows = await db.query(`
       SELECT
@@ -1470,7 +1605,8 @@ ORDER BY T1.LineNum
     `, { DocEntry: resolvedDocEntry });
     if (udfLineRows.recordset) {
       udfLineRows.recordset.forEach(row => {
-        lineUdfs[row.LineNum] = {
+          lineUdfs[row.LineNum] = {
+            ...(dynamicLineUdfs[row.LineNum] || {}),
           U_Brand: row.U_Brand || '',
           U_Origin: row.U_Origin || '',
           U_PackSize: row.U_PackSize || '',
@@ -1544,6 +1680,7 @@ ORDER BY T1.LineNum
         series: String(header.Series || ''),
         placeOfSupply: placeOfSupply,
         postingDate: header.DocDate ? header.DocDate.toISOString().split('T')[0] : '',
+        documentCreated: formatSapDate(header.DocumentCreated),
         deliveryDate: header.DocDueDate ? header.DocDueDate.toISOString().split('T')[0] : '',
         documentDate: header.TaxDate ? header.TaxDate.toISOString().split('T')[0] : '',
         customerRefNo: header.NumAtCard || '',
@@ -1569,7 +1706,10 @@ ORDER BY T1.LineNum
       },
       header_udfs: headerUdfs,
       lines: lineRows.map(line => {
-        const lineUdf = lineUdfs[line.LineNum] || {};
+        const lineUdf = {
+          ...(dynamicLineUdfs[line.LineNum] || {}),
+          ...(lineUdfs[line.LineNum] || {}),
+        };
         // Get HSN Code from the joined query
         const hsnCode = line.HSNCode || '';
         
@@ -1599,6 +1739,8 @@ ORDER BY T1.LineNum
           sellerBrokeragePerQty: lineUdf.U_S_BrokPerQty != null ? String(lineUdf.U_S_BrokPerQty) : (line.SellerBrokeragePerQty != null ? String(line.SellerBrokeragePerQty) : ''),
           buyerPaymentTerms: lineUdf.U_Buyer_Payment_Terms || line.BuyerPaymentTerms || '',
           sellerPaymentTerms: lineUdf.U_Seller_Payment_Terms || line.SellerPaymentTerms || '',
+          qtySpecialInstruction: lineUdf.U_Buyer_SPINS || line.QtySpecialInstruction || line.BuyerSpecialInstruction || '',
+          deliverySpecialInstruction: lineUdf.U_Seller_SPINS || line.DeliverySpecialInstruction || line.SellerSpecialInstruction || '',
           buyerSpecialInstruction: lineUdf.U_Buyer_SPINS || line.BuyerSpecialInstruction || '',
           sellerSpecialInstruction: lineUdf.U_Seller_SPINS || line.SellerSpecialInstruction || '',
           buyerBillDiscount: lineUdf.U_Buyer_Bill_Disc != null ? String(lineUdf.U_Buyer_Bill_Disc) : (line.BuyerBillDiscount != null ? String(line.BuyerBillDiscount) : ''),
@@ -1611,6 +1753,7 @@ ORDER BY T1.LineNum
           freightProviderName: lineUdf.U_Fr_trans_name || line.FreightProviderName || '',
           brokerageNumber: lineUdf.U_BDNum || line.BrokerageNumber || '',
           uomCode: line.UomCode || '',
+          uomName: line.UomName || line.UomCode || '',
           stdDiscount: String(line.LineDiscPrcnt || ''),
           taxCode: line.TaxCode || '',
           total: String(line.LineTotal || 0),
@@ -1621,6 +1764,7 @@ ORDER BY T1.LineNum
           countryOfOrigin: line.CountryOfOrigin || '',
           openQty: line.OpenQuantity != null ? String(line.OpenQuantity) : '',
           deliveredQty: line.DeliveredQuantity != null ? String(line.DeliveredQuantity) : '',
+          documentCreated: formatSapDate(line.DocumentCreated),
           batches: batchesByLine[line.LineNum] || [],
           udf: {
             U_Brand: lineUdf.U_Brand || '',
@@ -1674,7 +1818,15 @@ ORDER BY T1.LineNum
 
 // ── OPEN SALES ORDERS (FOR COPY FROM) ────────────────────────────────────────
 
-const getOpenSalesOrders = () => safe(db.query(`
+const getOpenSalesOrders = (customerCode = '') => {
+  const normalizedCustomerCode = String(customerCode || '').trim();
+  const params = {};
+  const customerFilter = normalizedCustomerCode ? 'AND T0.CardCode = @customerCode' : '';
+  if (normalizedCustomerCode) {
+    params.customerCode = normalizedCustomerCode;
+  }
+
+  return safe(db.query(`
   SELECT TOP 200
     T0.DocEntry,
     T0.DocNum,
@@ -1687,18 +1839,37 @@ const getOpenSalesOrders = () => safe(db.query(`
   FROM ORDR T0
   WHERE T0.DocStatus = 'O'
     AND T0.CANCELED <> 'Y'
+    ${customerFilter}
   ORDER BY T0.DocDate DESC, T0.DocNum DESC
-`));
+`, params));
+};
 
 const getSalesOrderForCopy = async (docEntry) => {
+  const headerFieldMetadata = await getTableFieldMetadata('ORDR');
+  const lineFieldMetadata = await getSalesOrderLineFieldMetadata();
+  const sqlAlias = (alias) => `[${String(alias || '').replace(/]/g, ']]')}]`;
+  const headerBranchField = headerFieldMetadata?.BPL_IDAssignedToInvoice
+    ? 'T0.BPL_IDAssignedToInvoice'
+    : headerFieldMetadata?.BPLId
+      ? 'T0.BPLId'
+      : 'NULL';
+  const lineField = (columnName, alias, fallback = "''") => (
+    lineFieldMetadata?.[columnName]
+      ? `T0.${columnName} AS ${sqlAlias(alias)}`
+      : `${fallback} AS ${sqlAlias(alias)}`
+  );
+
   const headerResult = await db.query(`
     SELECT
-      T0.DocEntry, T0.DocNum, T0.DocDate, T0.DocDueDate, T0.TaxDate,
+      T0.DocEntry, T0.DocNum, T0.DocDate, T0.CreateDate AS DocumentCreated, T0.DocDueDate, T0.TaxDate,
       T0.CardCode, T0.CardName, T0.CntctCode,
       T0.NumAtCard, T0.Comments,
-      T0.BPLId, T0.BPL_IDAssignedToInvoice,
+      T0.Address, T0.Address2, T0.ShipToCode, T0.PayToCode,
+      T0.BPLId,
+      ${headerBranchField} AS BPL_IDAssignedToInvoice,
       T0.GroupNum, T0.SlpCode,
-      T0.DiscPrcnt, T0.TotalExpns AS Freight
+      T0.DiscPrcnt, T0.TotalExpns AS Freight,
+      T0.VatSum AS TaxAmount, T0.DocCur, T0.DocTotal
     FROM ORDR T0
     WHERE T0.DocEntry = @DocEntry
   `, { DocEntry: docEntry });
@@ -1708,47 +1879,56 @@ const getSalesOrderForCopy = async (docEntry) => {
       T0.LineNum, T0.ItemCode,
       T0.Dscription AS ItemDescription,
       T0.OpenQty AS Quantity,
-      T0.Price AS UnitPrice,
+      COALESCE(T0.PriceBefDi, T0.Price) AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.WhsCode AS WarehouseCode,
-      T0.TaxCode, T0.unitMsr AS UomCode,
+      T0.TaxCode, T0.unitMsr AS UomCode, T0.unitMsr AS UomName,
       T0.OcrCode AS DistributionRule,
-      T0.FreeTxt AS FreeText,
-      T0.CountryOrg AS CountryOfOrigin,
+      ${lineField('FreeTxt', 'FreeText')},
+      ${lineField('CountryOrg', 'CountryOfOrigin')},
       T0.OpenQty AS OpenQty,
       CAST((ISNULL(T0.Quantity, 0) - ISNULL(T0.OpenQty, 0)) AS DECIMAL(19, 6)) AS DeliveredQty,
-      ISNULL(T0.VatSum, 0) AS TaxAmount,
+      CASE
+        WHEN ISNULL(T0.Quantity, 0) = 0 THEN ISNULL(T0.LineTotal, 0)
+        ELSE ISNULL(T0.LineTotal, 0) * ISNULL(T0.OpenQty, 0) / NULLIF(T0.Quantity, 0)
+      END AS LineTotal,
+      CASE
+        WHEN ISNULL(T0.Quantity, 0) = 0 THEN ISNULL(T0.VatSum, 0)
+        ELSE ISNULL(T0.VatSum, 0) * ISNULL(T0.OpenQty, 0) / NULLIF(T0.Quantity, 0)
+      END AS TaxAmount,
       CHP.ChapterID AS HSNCode,
       T0.DocEntry AS BaseEntry,
       T0.LineNum AS BaseLine,
       17 AS BaseType,
-      T0.U_SPLRBT AS SpecialRebate,
-      T0.U_COMPRC AS Commission,
-      T0.U_S_BrokPerQty AS SellerBrokeragePerQty,
-      T0.U_Unit_Price AS UnitPriceUdf,
-      T0.U_Brok_Seller AS SellerBrokerage,
-      T0.U_Brok_Buyer AS BuyerBrokerage,
-      T0.U_Buyer_Delivery AS BuyerDelivery,
-      T0.U_Seller_Delivery AS SellerDelivery,
-      T0.U_Buyer_Payment_Terms AS BuyerPaymentTerms,
-      T0.U_Buyer_Quality AS BuyerQuality,
-      T0.U_Seller_Quality AS SellerQuality,
-      T0.U_Buyer_Price AS BuyerPrice,
-      T0.U_Seller_Price AS SellerPrice,
-      T0.U_Buyer_SPINS AS BuyerSpecialInstruction,
-      T0.U_Seller_SPINS AS SellerSpecialInstruction,
-      T0.U_Sel_Brok_AP AS SellerBrokerageAmtPer,
-      T0.U_Seller_Brok_Per AS SellerBrokeragePercent,
-      T0.U_Buyer_Bill_Disc AS BuyerBillDiscount,
-      T0.U_Seller_Bill_Disc AS SellerBillDiscount,
-      T0.U_SELLTCODE AS STCODE,
-      T0.U_S_Item AS SellerItem,
-      T0.U_S_Qty AS SellerQty,
-      T0.U_Freight_pur AS FreightPurchase,
-      T0.U_Freight_sales AS FreightSales,
-      T0.U_Fr_trans AS FreightProvider,
-      T0.U_Fr_trans_name AS FreightProviderName,
-      T0.U_BDNum AS BrokerageNumber
+      ${lineField('U_SPLRBT', 'SpecialRebate')},
+      ${lineField('U_COMPRC', 'Commission')},
+      ${lineField('U_S_BrokPerQty', 'SellerBrokeragePerQty')},
+      ${lineField('U_Unit_Price', 'UnitPriceUdf', 'COALESCE(T0.PriceBefDi, T0.Price)')},
+      ${lineField('U_Brok_Seller', 'SellerBrokerage')},
+      ${lineField('U_Brok_Buyer', 'BuyerBrokerage')},
+      ${lineField('U_Buyer_Delivery', 'BuyerDelivery')},
+      ${lineField('U_Seller_Delivery', 'SellerDelivery')},
+      ${lineField('U_Buyer_Payment_Terms', 'BuyerPaymentTerms')},
+      ${lineField('U_Buyer_Quality', 'BuyerQuality')},
+      ${lineField('U_Seller_Quality', 'SellerQuality')},
+      ${lineField('U_Buyer_Price', 'BuyerPrice')},
+      ${lineField('U_Seller_Price', 'SellerPrice')},
+      ${lineField('U_Buyer_SPINS', 'BuyerSpecialInstruction')},
+      ${lineField('U_Seller_SPINS', 'SellerSpecialInstruction')},
+      ${lineField('U_Buyer_SPINS', 'QtySpecialInstruction')},
+      ${lineField('U_Seller_SPINS', 'DeliverySpecialInstruction')},
+      ${lineField('U_Sel_Brok_AP', 'SellerBrokerageAmtPer')},
+      ${lineField('U_Seller_Brok_Per', 'SellerBrokeragePercent')},
+      ${lineField('U_Buyer_Bill_Disc', 'BuyerBillDiscount')},
+      ${lineField('U_Seller_Bill_Disc', 'SellerBillDiscount')},
+      ${lineField('U_SELLTCODE', 'STCODE', 'T0.TaxCode')},
+      ${lineField('U_S_Item', 'SellerItem')},
+      ${lineField('U_S_Qty', 'SellerQty')},
+      ${lineField('U_Freight_pur', 'FreightPurchase')},
+      ${lineField('U_Freight_sales', 'FreightSales')},
+      ${lineField('U_Fr_trans', 'FreightProvider')},
+      ${lineField('U_Fr_trans_name', 'FreightProviderName')},
+      ${lineField('U_BDNum', 'BrokerageNumber')}
     FROM RDR1 T0
     LEFT JOIN OITM ITM ON T0.ItemCode = ITM.ItemCode
     LEFT JOIN OCHP CHP ON ITM.ChapterID = CHP.AbsEntry
@@ -1759,7 +1939,49 @@ const getSalesOrderForCopy = async (docEntry) => {
   `, { DocEntry: docEntry });
 
   const header = headerResult.recordset?.[0] || {};
-  return { ...header, DocumentLines: linesResult.recordset || [] };
+  const resolvedDocEntry = header.DocEntry || docEntry;
+  const [metadataHeaderUdfs, metadataLineUdfsByLineNum, physicalHeaderUdfs, physicalLineUdfsByLineNum] = await Promise.all([
+    getHeaderUdfValues({ tableId: 'ORDR', keyValue: resolvedDocEntry }),
+    getLineUdfValues({ tableId: 'RDR1', keyValue: resolvedDocEntry }),
+    getPhysicalUdfValues({ tableName: 'ORDR', keyValue: resolvedDocEntry }),
+    getPhysicalUdfValues({ tableName: 'RDR1', keyValue: resolvedDocEntry, includeLineNum: true }),
+  ]);
+  const headerUdfs = {
+    ...metadataHeaderUdfs,
+    ...physicalHeaderUdfs,
+  };
+  const batchRows = await safe(db.query(`
+    SELECT BaseLineNum, BatchNum, Quantity
+    FROM   IBT1
+    WHERE  BaseEntry = @DocEntry
+      AND  BaseType = 17
+    ORDER  BY BaseLineNum, BatchNum
+  `, { DocEntry: resolvedDocEntry }));
+  const batchesByLine = {};
+  batchRows.forEach((batch) => {
+    if (!batchesByLine[batch.BaseLineNum]) {
+      batchesByLine[batch.BaseLineNum] = [];
+    }
+    batchesByLine[batch.BaseLineNum].push({
+      batchNumber: batch.BatchNum || '',
+      quantity: String(batch.Quantity || 0),
+    });
+  });
+  const documentLines = (linesResult.recordset || []).map((line) => ({
+    ...line,
+    batches: batchesByLine[line.LineNum] || [],
+    udf: {
+      ...(metadataLineUdfsByLineNum[line.LineNum] || {}),
+      ...(physicalLineUdfsByLineNum[line.LineNum] || {}),
+    },
+  }));
+
+  return {
+    ...header,
+    header_udfs: headerUdfs,
+    headerUdfs,
+    DocumentLines: documentLines,
+  };
 };
 
 module.exports = {
@@ -1769,6 +1991,7 @@ module.exports = {
   getItemDetails,
   getSalesOrderLineFieldMetadata,
   resolveSalesOrderLineUomEntry,
+  getTaxCodeDiagnostics,
   getLookupValues,
   createLookupValue,
   getSalesOrderList,

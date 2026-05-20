@@ -2,6 +2,7 @@ const sapService = require('./sapService');
 const deliveryDb = require('./deliveryDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { getUdfDefinitions } = require('./udfMetadataService');
 
 // ───────── HELPERS ─────────
 
@@ -11,6 +12,21 @@ const formatDateForSAP = (value) => {
 };
 
 const hasValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
+
+const normalizeBranchValue = (value) => {
+  const normalized = String(value ?? '').trim();
+  const lowered = normalized.toLowerCase();
+  if (!normalized || lowered === '0' || lowered === 'no branch' || lowered === 'select branch') {
+    return '';
+  }
+
+  return normalized;
+};
+
+const normalizeHeaderBranch = (header = {}) => ({
+  ...(header || {}),
+  branch: normalizeBranchValue(header?.branch),
+});
 
 const toOptionalNumber = (value) => {
   if (value === undefined || value === null || String(value).trim() === '') {
@@ -34,6 +50,31 @@ const toRequiredString = (value, fallback = '') => {
 const toBoolean = (value) => {
   if (typeof value === 'boolean') return value;
   return ['true', '1', 'yes', 'y'].includes(String(value || '').trim().toLowerCase());
+};
+
+const isUdfValuePresent = (value) => {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  return true;
+};
+
+const applyUdfs = (target, udfValues = {}, allowedKeys = null, fieldMetadata = null) => {
+  Object.entries(udfValues || {}).forEach(([key, value]) => {
+    if (!String(key || '').startsWith('U_') || !isUdfValuePresent(value)) return;
+    if (allowedKeys && !allowedKeys.has(key)) return;
+
+    if (fieldMetadata) {
+      setValidatedDeliveryField(target, fieldMetadata, key, value);
+      return;
+    }
+
+    target[key] = value;
+  });
+};
+
+const getAllowedUdfKeys = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Set(definitions.map((field) => field.key));
 };
 
 const resolveSalesEmployeeCode = (input, salesEmployees = []) => {
@@ -100,6 +141,37 @@ const DATE_DATA_TYPES = new Set([
   'time',
 ]);
 
+const COUNTRY_ORIGIN_ALIASES = new Map([
+  ['INDIA', 'IN'],
+  ['IND', 'IN'],
+  ['BHARAT', 'IN'],
+  ['CHINA', 'CN'],
+  ['JAPAN', 'JP'],
+  ['GERMANY', 'DE'],
+  ['UNITEDARABEMIRATES', 'AE'],
+  ['UAE', 'AE'],
+  ['UNITEDSTATES', 'US'],
+  ['UNITEDSTATESOFAMERICA', 'US'],
+  ['USA', 'US'],
+  ['US', 'US'],
+  ['UNITEDKINGDOM', 'UK'],
+  ['GREATBRITAIN', 'UK'],
+  ['BRITAIN', 'UK'],
+  ['UK', 'UK'],
+]);
+
+const normalizeCountryOrgValue = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const upper = raw.toUpperCase();
+  const compact = upper.replace(/[^A-Z0-9]/g, '');
+
+  if (COUNTRY_ORIGIN_ALIASES.has(compact)) return COUNTRY_ORIGIN_ALIASES.get(compact);
+  if (/^[A-Z0-9]{1,3}$/.test(compact)) return compact;
+  return '';
+};
+
 const DELIVERY_LINE_UDF_MAPPINGS = [
   { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
   { sapField: 'U_COMPRC', getValue: (line) => line.commission },
@@ -110,6 +182,7 @@ const DELIVERY_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
   { sapField: 'U_Seller_Delivery', getValue: (line) => line.sellerDelivery },
   { sapField: 'U_Buyer_Payment_Terms', getValue: (line) => line.buyerPaymentTerms },
+  { sapField: 'U_Seller_Payment_Terms', getValue: (line) => line.sellerPaymentTerms },
   { sapField: 'U_Buyer_Quality', getValue: (line) => line.buyerQuality },
   { sapField: 'U_Seller_Quality', getValue: (line) => line.sellerQuality },
   { sapField: 'U_Buyer_Price', getValue: (line) => line.buyerPrice },
@@ -129,6 +202,13 @@ const DELIVERY_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Fr_trans_name', getValue: (line) => line.freightProviderName },
   { sapField: 'U_BDNum', getValue: (line) => line.brokerageNumber },
 ];
+
+const DELIVERY_LOOKUP_UDF_FIELDS = new Set([
+  'U_Buyer_Quality',
+  'U_Seller_Quality',
+  'U_Buyer_Price',
+  'U_Seller_Price',
+]);
 
 const coerceValueForSqlType = (value, sqlDataType) => {
   if (!hasValue(value)) return undefined;
@@ -156,7 +236,61 @@ const setValidatedDeliveryField = (target, fieldMetadata, fieldName, value) => {
   }
 };
 
-const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLineNum = false) => {
+const normalizeLookupToken = (value) => String(value || '').trim().toLowerCase();
+
+const buildDeliveryLookupResolvers = async () => {
+  const entries = await Promise.all(
+    [...DELIVERY_LOOKUP_UDF_FIELDS].map(async (fieldName) => [
+      fieldName,
+      await deliveryDb.getLookupValues(fieldName).catch(() => []),
+    ])
+  );
+
+  return entries.reduce((acc, [fieldName, options]) => {
+    const tokens = new Map();
+
+    for (const option of options || []) {
+      const value = String(option?.value || '').trim();
+      const description = String(option?.description || '').trim();
+      const label = String(option?.label || '').trim();
+      if (!value) continue;
+
+      [value, description, label].forEach((token) => {
+        const normalizedToken = normalizeLookupToken(token);
+        if (normalizedToken) {
+          tokens.set(normalizedToken, value);
+        }
+      });
+    }
+
+    acc[fieldName] = {
+      hasFixedValues: tokens.size > 0,
+      tokens,
+    };
+    return acc;
+  }, {});
+};
+
+const resolveDeliveryLookupValue = (fieldName, value, lookupResolvers = {}) => {
+  if (!DELIVERY_LOOKUP_UDF_FIELDS.has(fieldName) || !hasValue(value)) {
+    return value;
+  }
+
+  const resolver = lookupResolvers[fieldName];
+  if (!resolver?.hasFixedValues) {
+    return value;
+  }
+
+  const resolvedValue = resolver.tokens.get(normalizeLookupToken(value));
+  if (resolvedValue) {
+    return resolvedValue;
+  }
+
+  console.warn(`[Delivery] Ignoring invalid ${fieldName} lookup value "${value}" because it is not configured for Delivery.`);
+  return undefined;
+};
+
+const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLineNum = false, lookupResolvers = {}, allowedLineUdfs = null) => {
   const documentLine = {
     Quantity: toRequiredNumber(line.quantity, 0),
     WarehouseCode: toRequiredString(line.whse, ''),
@@ -203,11 +337,26 @@ const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLi
     documentLine.SACEntry = sacEntry;
   }
 
-  setValidatedDeliveryField(documentLine, fieldMetadata, 'CountryOrg', line.countryOfOrigin);
+  const countryOrg = normalizeCountryOrgValue(line.countryOfOrigin);
+  if (hasValue(line.countryOfOrigin) && !countryOrg) {
+    console.warn(`[Delivery Service] Skipping CountryOrg value because it is not a valid SAP country code: ${line.countryOfOrigin}`);
+  }
+  setValidatedDeliveryField(documentLine, fieldMetadata, 'CountryOrg', countryOrg);
 
   for (const mapping of DELIVERY_LINE_UDF_MAPPINGS) {
-    setValidatedDeliveryField(documentLine, fieldMetadata, mapping.sapField, mapping.getValue(line));
+    const value = resolveDeliveryLookupValue(
+      mapping.sapField,
+      mapping.getValue(line),
+      lookupResolvers,
+    );
+    setValidatedDeliveryField(documentLine, fieldMetadata, mapping.sapField, value);
   }
+
+  const normalizedLineUdfs = Object.entries(line.udf || {}).reduce((acc, [key, value]) => {
+    acc[key] = resolveDeliveryLookupValue(key, value, lookupResolvers);
+    return acc;
+  }, {});
+  applyUdfs(documentLine, normalizedLineUdfs, allowedLineUdfs, fieldMetadata);
 
   if (line.batches && line.batches.length > 0) {
     documentLine.BatchNumbers = line.batches.map((batch) => ({
@@ -220,11 +369,15 @@ const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLi
 };
 
 const buildDocumentLinesPayload = async (lines = [], includeLineNum = false) => {
-  const dln1FieldMetadata = await deliveryDb.getDeliveryLineFieldMetadata();
+  const [dln1FieldMetadata, lookupResolvers, allowedLineUdfs] = await Promise.all([
+    deliveryDb.getDeliveryLineFieldMetadata(),
+    buildDeliveryLookupResolvers(),
+    getAllowedUdfKeys('DLN1'),
+  ]);
 
   const sourceLines = (lines || []).filter((line) => hasValue(line.itemNo));
   return Promise.all(
-    sourceLines.map((line) => buildDocumentLinePayload(line, dln1FieldMetadata, includeLineNum))
+    sourceLines.map((line) => buildDocumentLinePayload(line, dln1FieldMetadata, includeLineNum, lookupResolvers, allowedLineUdfs))
   );
 };
 
@@ -403,6 +556,8 @@ const getDeliveryList = async ({
   docNum = '',
   customerCode = '',
   customerName = '',
+  sellerCode = '',
+  sellerName = '',
   status = '',
   postingDateFrom = '',
   postingDateTo = '',
@@ -416,6 +571,8 @@ const getDeliveryList = async ({
       docNum,
       customerCode,
       customerName,
+      sellerCode,
+      sellerName,
       status,
       postingDateFrom,
       postingDateTo,
@@ -524,7 +681,8 @@ const getBatchesByItem = async (itemCode, whsCode) => {
 
 const submitDelivery = async (payload) => {
   try {
-    const { company_id, header, lines, header_udfs } = payload;
+    const { company_id, lines, header_udfs } = payload;
+    const header = normalizeHeaderBranch(payload.header);
     const customerCode =
       String(
         header.customerCode ||
@@ -534,7 +692,10 @@ const submitDelivery = async (payload) => {
       ).trim();
 console.log("Payload:", payload );
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const documentLines = await buildDocumentLinesPayload(lines);
+    const [documentLines, allowedHeaderUdfs] = await Promise.all([
+      buildDocumentLinesPayload(lines),
+      getAllowedUdfKeys('ODLN'),
+    ]);
     const salesEmployees = await deliveryDb.getSalesEmployees();
     const salesPersonCode = resolveSalesEmployeeCode(
       header.salesEmployee ?? header.purchaser,
@@ -564,14 +725,7 @@ console.log("SAP Payload:", sapPayload);
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
     if (salesPersonCode !== undefined) sapPayload.SalesPersonCode = salesPersonCode;
 
-    // Add header UDFs if any
-    if (header_udfs && Object.keys(header_udfs).length > 0) {
-      Object.keys(header_udfs).forEach(key => {
-        if (header_udfs[key]) {
-          sapPayload[key] = header_udfs[key];
-        }
-      });
-    }
+    applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs);
 
     console.log('[Delivery] Submit payload:', JSON.stringify(sapPayload, null, 2));
 
@@ -647,9 +801,13 @@ console.log("SAP Payload:", sapPayload);
 
 const updateDelivery = async (docEntry, payload) => {
   try {
-    const { header, lines, header_udfs } = payload;
+    const { lines, header_udfs } = payload;
+    const header = normalizeHeaderBranch(payload.header);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const documentLines = await buildDocumentLinesPayload(lines, true);
+    const [documentLines, allowedHeaderUdfs] = await Promise.all([
+      buildDocumentLinesPayload(lines, true),
+      getAllowedUdfKeys('ODLN'),
+    ]);
     const salesEmployees = await deliveryDb.getSalesEmployees();
     const salesPersonCode = resolveSalesEmployeeCode(
       header.salesEmployee ?? header.purchaser,
@@ -668,14 +826,7 @@ const updateDelivery = async (docEntry, payload) => {
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
     if (salesPersonCode !== undefined) sapPayload.SalesPersonCode = salesPersonCode;
 
-    // Add header UDFs if any
-    if (header_udfs && Object.keys(header_udfs).length > 0) {
-      Object.keys(header_udfs).forEach(key => {
-        if (header_udfs[key]) {
-          sapPayload[key] = header_udfs[key];
-        }
-      });
-    }
+    applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs);
 
     await sapService.request({
       method: 'PATCH',
@@ -770,7 +921,8 @@ const getUomConversionFactor = async (itemCode, uomCode) => {
 // ─── Validation Service Functions ───────────────────────────────────────────────
 
 const validateDeliveryDocument = async (payload) => {
-  const { header, lines } = payload;
+  const header = normalizeHeaderBranch(payload.header);
+  const { lines } = payload;
   const errors = [];
   
   // 1. Mandatory fields validation

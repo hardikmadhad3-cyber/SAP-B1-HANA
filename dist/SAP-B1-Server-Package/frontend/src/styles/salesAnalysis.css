@@ -1,0 +1,406 @@
+.sar-page {
+  min-height: 100%;
+  padding: 8px 12px 12px;
+}
+
+.sar-window {
+  max-width: 920px;
+  width: 920px;
+}
+
+.sar-window__titlebar {
+  padding: 7px 12px;
+}
+
+.sar-window__body {
+  padding: 10px 12px;
+}
+
+.sar-window__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 8px 12px 10px;
+  border-top: 1px solid #d7dde5;
+}
+
+.sar-window__footer--split {
+  justify-content: space-between;
+}
+
+.sar-window__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sar-criteria-grid {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.sar-criteria-grid--compact {
+  grid-template-columns: 460px minmax(0, 1fr);
+}
+
+.sar-criteria-left,
+.sar-criteria-right {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sar-criteria-grid--compact .sar-criteria-left {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+
+.sar-section-box,
+.sar-selection-panel {
+  padding: 8px 10px 10px;
+}
+
+.sar-selection-panel--nested {
+  margin-top: 8px;
+}
+
+.sar-section-caption {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #003366;
+}
+
+.sar-radio-stack {
+  display: grid;
+  gap: 5px;
+}
+
+.sar-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(300px, 1fr));
+  gap: 4px 14px;
+}
+
+.sar-lookup-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.sar-cfl-btn {
+  width: 23px;
+  height: 20px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.sar-date-row {
+  display: grid;
+  grid-template-columns: 170px 1fr auto 1fr;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.sar-date-row__toggle {
+  justify-content: flex-start;
+}
+
+.sar-date-separator {
+  font-size: 12px;
+  color: #444;
+}
+
+.sar-secondary-toggle,
+.sar-footer-options {
+  margin-top: 8px;
+}
+
+.sar-grid-wrap {
+  overflow: auto;
+}
+
+.sar-grid {
+  width: 100%;
+  font-size: 12px;
+  min-width: 1040px;
+}
+
+.sar-grid th {
+  padding: 5px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.sar-grid td {
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+.sar-grid tfoot td {
+  font-weight: 700;
+  border-top: 2px solid #a0aab4;
+}
+
+.sar-grid__cell--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sar-grid__row-link {
+  color: #005a9e;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.sar-row-arrow {
+  color: #0066cc;
+  margin-right: 6px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.sar-row-arrow-btn {
+  padding: 2px 6px;
+  margin: 0 6px 0 0;
+  border: 1px solid #0066cc;
+  background: #f0f8ff;
+  cursor: pointer;
+  line-height: 1;
+  border-radius: 3px;
+  transition: all 0.2s ease;
+  font-size: 12px;
+}
+
+.sar-row-arrow-btn:hover {
+  background-color: #0066cc;
+  color: white;
+  transform: translateX(2px);
+}
+
+.sar-row-arrow-btn:hover .sar-row-arrow {
+  color: white;
+}
+
+.sar-row-arrow-btn:active {
+  transform: translateX(1px);
+}
+
+.sar-row-arrow-btn .sar-row-arrow {
+  margin-right: 0;
+}
+
+.sar-result-hint {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #555;
+}
+
+.sar-chart-btn {
+  width: 28px;
+  height: 24px;
+  border: 1px solid #a0aab4;
+  background: linear-gradient(180deg, #fff9d6 0%, #f1d35d 100%);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.sar-chart-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sar-charts-panel {
+  margin-top: 14px;
+  border-top: 1px solid #dde4ec;
+  padding-top: 12px;
+}
+
+.sar-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.sar-chart-card {
+  border: 1px solid #c8d0da;
+  background: linear-gradient(180deg, #eef6ff 0%, #f7fbff 100%);
+  padding: 10px 12px 12px;
+}
+
+.sar-chart-card__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #28445f;
+  margin-bottom: 6px;
+}
+
+.sar-chart-svg {
+  width: 100%;
+  height: 210px;
+  display: block;
+}
+
+.sar-chart-axis {
+  stroke: #8da0b3;
+  stroke-width: 1;
+}
+
+.sar-chart-tick,
+.sar-chart-label {
+  font-size: 11px;
+  fill: #45586b;
+}
+
+.sar-chart-bar {
+  stroke: #b78d12;
+  stroke-width: 1;
+}
+
+.sar-chart-bar--primary {
+  fill: #f4d35d;
+}
+
+.sar-chart-bar--secondary {
+  fill: #c5da68;
+}
+
+.sar-chart-line {
+  fill: none;
+  stroke-width: 3;
+}
+
+.sar-chart-line--primary {
+  stroke: #d8a500;
+}
+
+.sar-chart-line--secondary {
+  stroke: #9fbe30;
+}
+
+.sar-chart-point {
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+
+.sar-chart-point--primary {
+  fill: #d8a500;
+}
+
+.sar-chart-point--secondary {
+  fill: #9fbe30;
+}
+
+.sar-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #36485a;
+}
+
+.sar-chart-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sar-chart-legend__swatch {
+  width: 12px;
+  height: 12px;
+  border: 1px solid #9aa8b7;
+}
+
+.sar-chart-legend__swatch--primary {
+  background: #f4d35d;
+}
+
+.sar-chart-legend__swatch--secondary {
+  background: #c5da68;
+}
+
+.sar-charts-panel__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.sar-charts-panel__note {
+  font-size: 12px;
+  color: #56697a;
+}
+
+.sar-charts-panel__controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sar-chart-style-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #36485a;
+}
+
+.sar-chart-style-field .im-field__input {
+  min-width: 140px;
+  height: 28px;
+}
+
+.sar-properties-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+  margin-top: 12px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+@media (max-width: 1366px) {
+  .sar-criteria-grid {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+
+  .sar-criteria-grid--compact {
+    grid-template-columns: 440px minmax(0, 1fr);
+  }
+
+  .sar-criteria-grid--compact .sar-criteria-left {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sar-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1180px) {
+  .sar-criteria-grid,
+  .sar-criteria-grid--compact {
+    grid-template-columns: 1fr;
+  }
+
+  .sar-criteria-grid--compact .sar-criteria-left {
+    grid-template-columns: 1fr;
+  }
+
+  .sar-charts-grid {
+    grid-template-columns: 1fr;
+  }
+}

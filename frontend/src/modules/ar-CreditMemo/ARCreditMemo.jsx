@@ -16,14 +16,21 @@ import StateSelectionModal from '../sales-order/components/StateSelectionModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
 import CopyToModal from './components/CopyToModal';
+import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
+import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
+import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../utils/copyToState';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import {
   fetchARCreditMemoReferenceData,
@@ -45,7 +52,7 @@ import {
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { fetchDeliveryForCopyToCreditMemo } from '../../api/deliveryApi';
 import { AR_INVOICE_COMPANY_ID } from '../../config/appConfig';
-import { normaliseDocumentHeader, normaliseDocumentLine, BASE_TYPE } from '../../api/copyFromApi';
+import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
   FORM_SETTINGS_STORAGE_KEY,
   HEADER_UDF_DEFINITIONS,
@@ -149,28 +156,11 @@ const FALLBACK_SHIPPING = [
   { value: '3', label: 'Road' },
   { value: '4', label: 'Courier' },
 ];
-const FALLBACK_TAX = [
-  { Code: 'GST5', Name: 'GST 5%', Rate: 5 },
-  { Code: 'GST12', Name: 'GST 12%', Rate: 12 },
-  { Code: 'GST18', Name: 'GST 18%', Rate: 18 },
-  { Code: 'GST28', Name: 'GST 28%', Rate: 28 },
-  { Code: 'IGST5', Name: 'IGST 5%', Rate: 5 },
-  { Code: 'IGST12', Name: 'IGST 12%', Rate: 12 },
-  { Code: 'IGST18', Name: 'IGST 18%', Rate: 18 },
-  { Code: 'IGST28', Name: 'IGST 28%', Rate: 28 },
-  { Code: 'EXEMPT', Name: 'Exempt', Rate: 0 },
-];
-const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
-const FALLBACK_WAREHOUSES = [
-  { WhsCode: 'WH01', WhsName: 'Main Warehouse' },
-  { WhsCode: 'WH02', WhsName: 'Secondary Warehouse' },
-];
-
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 
-const createLine = () => ({
+const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
   uomCode: '', stdDiscount: '', taxCode: '', total: '', whse: '',
   loc: '', branch: '',
@@ -179,7 +169,7 @@ const createLine = () => ({
   batches: [],
   inventoryUOM: '',
   uomFactor: 1,
-  udf: createUdfState(ROW_UDF_DEFINITIONS),
+  udf: createUdfState(rowUdfDefinitions),
 });
 
 const INIT_HEADER = {
@@ -203,11 +193,14 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 function ARCreditMemo() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const requestedEditDocEntry = location.state?.arCreditMemoDocEntry;
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
-  const [lines, setLines] = useState([createLine()]);
+  const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
+  const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
@@ -222,6 +215,7 @@ function ARCreditMemo() {
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
+  useValidationHighlights(valErrors);
   const [loadedSnapshot, setLoadedSnapshot] = useState('');
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -343,6 +337,28 @@ function ARCreditMemo() {
         
         if (!ignore) {
           const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
+          const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
+          const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs);
+          setHeaderUdfDefinitions(nextHeaderUdfs);
+          setRowUdfDefinitions(nextRowUdfs);
+          setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
+          setLines((prev) => prev.map((line) => ({
+            ...line,
+            udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
+          })));
+          setFormSettings((prev) => ({
+            ...nextDefaults,
+            ...prev,
+            headerUdfs: {
+              ...nextDefaults.headerUdfs,
+              ...(prev.headerUdfs || {}),
+            },
+            rowUdfs: {
+              ...nextDefaults.rowUdfs,
+              ...(prev.rowUdfs || {}),
+            },
+          }));
           setRefData(prev => ({
             ...prev,
             company: refDataRes.data.company || '',
@@ -361,6 +377,7 @@ function ARCreditMemo() {
             states: refDataRes.data.states || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
+            udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             warnings: refDataRes.data.warnings || [],
             series: Array.isArray(prev.series) ? prev.series : [],
           }));
@@ -475,10 +492,10 @@ function ARCreditMemo() {
         
         setLines(
           Array.isArray(so.lines) && so.lines.length
-            ? so.lines.map(l => ({ ...createLine(), ...l, udf: { ...createUdfState(ROW_UDF_DEFINITIONS), ...(l.udf || {}) } }))
-            : [createLine()]
+            ? so.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, udf: normalizeUdfState(rowUdfDefinitions, l.udf || {}) }))
+            : [createLine(rowUdfDefinitions)]
         );
-        setHeaderUdfs(normalizeUdfState(HEADER_UDF_DEFINITIONS, so.header_udfs || {}));
+        setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
         setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
@@ -570,14 +587,14 @@ function ARCreditMemo() {
         setLines(
           Array.isArray(deliveryData.lines) && deliveryData.lines.length
             ? deliveryData.lines.map(l => ({
-                ...createLine(),
+                ...createLine(rowUdfDefinitions),
                 ...l,
                 baseEntry: l.baseEntry, // Delivery DocEntry
                 baseType: 15, // Delivery
                 baseLine: l.baseLine,
-                udf: { ...createUdfState(ROW_UDF_DEFINITIONS), ...(l.udf || {}) }
+                udf: normalizeUdfState(rowUdfDefinitions, l.udf || {})
               }))
-            : [createLine()]
+            : [createLine(rowUdfDefinitions)]
         );
         
         // Load customer details
@@ -608,7 +625,9 @@ function ARCreditMemo() {
 
   // ── Copy To: populate form from Sales Order / Delivery ────────────────────
   useEffect(() => {
-    const copyFrom = location.state?.copyFrom;
+    const routedCopyFrom = location.state?.copyFrom;
+    const persistedCopyState = routedCopyFrom ? null : consumeCopyToState(location.pathname, ['/ar-credit-memo']);
+    const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
     if (!copyFrom) return;
 
     const {
@@ -644,11 +663,11 @@ function ARCreditMemo() {
       currency:         srcHeader.currency         || prev.currency,
     }));
 
-    setHeaderUdfs(normalizeUdfState(HEADER_UDF_DEFINITIONS, srcHeaderUdfs));
+    setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, srcHeaderUdfs));
 
     if (Array.isArray(srcLines) && srcLines.length > 0) {
       setLines(srcLines.map((l, idx) => ({
-        ...createLine(),
+        ...createLine(rowUdfDefinitions),
         itemNo:          l.itemNo             || l.ItemCode        || '',
         itemDescription: l.itemDescription    || l.ItemDescription || l.Dscription || '',
         quantity:        String(l.quantity    || l.Quantity || l.OpenQty || 0),
@@ -665,7 +684,7 @@ function ARCreditMemo() {
         baseLine:        l.lineNum         ?? l.LineNum         ?? idx,
         branch:          l.branch          || srcHeader.branch  || '',
         udf: {
-          ...createUdfState(ROW_UDF_DEFINITIONS),
+          ...createUdfState(rowUdfDefinitions),
           ...(l.udf || {}),
         },
       })));
@@ -698,7 +717,7 @@ function ARCreditMemo() {
   const defaultShipTo = fmtAddr(refData.company_address);
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
 
-  const effectiveTaxCodes = refData.tax_codes.length ? refData.tax_codes : FALLBACK_TAX;
+  const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES;
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
@@ -1347,7 +1366,7 @@ function ARCreditMemo() {
     setPageState(p => ({ ...p, error: '' }));
     markDirty();
     setLines(p => [...p, { 
-      ...createLine(), 
+      ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
       whse: header.warehouse || ''
@@ -1368,7 +1387,13 @@ function ARCreditMemo() {
     markDirty();
     setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
   };
-  const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...p[g], [k]: { ...p[g][k], [prop]: val } } }));
+  const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({
+    ...p,
+    [g]: {
+      ...(p[g] || {}),
+      [k]: { ...((p[g] || {})[k] || {}), [prop]: val },
+    },
+  }));
   const toggleHeaderUdfs = () => {
     setFormSettingsOpen(false);
     setSidebarOpen(p => !p);
@@ -1574,29 +1599,30 @@ function ARCreditMemo() {
     if (itemModal.lineIndex < 0) return;
     
     const lineIndex = itemModal.lineIndex;
+    const mergedItem = mergeItemMaster(item, refData.items);
     const currentLine = lines[lineIndex];
     
     try {
-      const hsnRes = await fetchHSNCodeFromItem(item.ItemCode);
+      const hsnRes = await fetchHSNCodeFromItem(mergedItem.ItemCode);
       const hsnData = hsnRes.data;
       
       // Check if item is batch-managed
-      const itemIsBatchManaged = isBatchManaged(item);
+      const itemIsBatchManaged = isBatchManaged(mergedItem);
       
       // Get UoM - use SalesUnit or InventoryUOM
-      const selectedUoM = item.SalesUnit || item.InventoryUOM || '';
+      const selectedUoM = mergedItem.SalesUnit || mergedItem.InventoryUOM || '';
       
       // Fetch UoM conversion factor if UoM is set
       let uomFactor = 1;
-      let inventoryUOM = item.InventoryUOM || '';
+      let inventoryUOM = mergedItem.InventoryUOM || '';
       
-      if (selectedUoM && item.ItemCode) {
+      if (selectedUoM && mergedItem.ItemCode) {
         try {
-          const uomRes = await fetchUomConversionFactor(item.ItemCode, selectedUoM);
+          const uomRes = await fetchUomConversionFactor(mergedItem.ItemCode, selectedUoM);
           uomFactor = uomRes.data.factor || 1;
-          inventoryUOM = uomRes.data.inventoryUOM || item.InventoryUOM || '';
+          inventoryUOM = uomRes.data.inventoryUOM || mergedItem.InventoryUOM || '';
           console.log('📦 [AR Credit Memo - handleItemSelect] UoM conversion:', { 
-            itemCode: item.ItemCode, 
+            itemCode: mergedItem.ItemCode, 
             uomCode: selectedUoM, 
             factor: uomFactor,
             inventoryUOM 
@@ -1610,7 +1636,7 @@ function ARCreditMemo() {
       let hasBatchesAvailable = false;
       if (itemIsBatchManaged && currentLine.whse) {
         try {
-          hasBatchesAvailable = await checkBatchAvailability(item.ItemCode, currentLine.whse);
+          hasBatchesAvailable = await checkBatchAvailability(mergedItem.ItemCode, currentLine.whse);
         } catch (batchError) {
           console.error('❌ [AR Credit Memo - handleItemSelect] Error checking batch availability:', batchError);
         }
@@ -1619,10 +1645,13 @@ function ARCreditMemo() {
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
           const updatedLine = {
-            ...line,
-            itemNo: item.ItemCode || '',
-            itemDescription: item.ItemName || '',
-            hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
+            ...hydrateDocumentLineFromItem(line, mergedItem, {
+              side: 'sales',
+              hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
+              fallbackWarehouse: header.warehouse,
+              calcLineTotal,
+              formatTotal: (value) => fmtDec(value, numDec.total),
+            }),
             uomCode: selectedUoM,
             batchManaged: itemIsBatchManaged,
             hasBatchesAvailable: hasBatchesAvailable,
@@ -1649,11 +1678,12 @@ function ARCreditMemo() {
       console.error('Error selecting item:', error);
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
-          return {
-            ...line,
-            itemNo: item.ItemCode || '',
-            itemDescription: item.ItemName || '',
-          };
+          return hydrateDocumentLineFromItem(line, mergedItem, {
+            side: 'sales',
+            fallbackWarehouse: header.warehouse,
+            calcLineTotal,
+            formatTotal: (value) => fmtDec(value, numDec.total),
+          });
         }
         return line;
       }));
@@ -1866,17 +1896,8 @@ function ARCreditMemo() {
       const taxCodesUsed = new Set(pop.map(l => l.taxCode).filter(Boolean));
       console.log('🔍 Tax codes used:', Array.from(taxCodesUsed));
       
-      const sgstCodes = Array.from(taxCodesUsed).filter(code => {
-        const codeStr = String(code || '');
-        console.log(`🔍 Checking if '${codeStr}' contains SGST`);
-        return codeStr.toUpperCase().includes('SGST');
-      });
-      
-      const cgstCodes = Array.from(taxCodesUsed).filter(code => {
-        const codeStr = String(code || '');
-        console.log(`🔍 Checking if '${codeStr}' contains CGST`);
-        return codeStr.toUpperCase().includes('CGST');
-      });
+      const sgstCodes = getTaxComponentCodes(taxCodesUsed, effectiveTaxCodes, 'SGST');
+      const cgstCodes = getTaxComponentCodes(taxCodesUsed, effectiveTaxCodes, 'CGST');
 
       console.log('🔍 SGST codes:', sgstCodes);
       console.log('🔍 CGST codes:', cgstCodes);
@@ -1894,11 +1915,11 @@ function ARCreditMemo() {
       if (sgstCodes.length > 0 && cgstCodes.length > 0) {
         console.log('🔍 Validating SGST and CGST rates match...');
         const sgstRates = sgstCodes.map(code => {
-          const tax = effectiveTaxCodes.find(t => t.Code === code);
+          const tax = findTaxCode(effectiveTaxCodes, code);
           return tax ? parseNum(tax.Rate) : 0;
         });
         const cgstRates = cgstCodes.map(code => {
-          const tax = effectiveTaxCodes.find(t => t.Code === code);
+          const tax = findTaxCode(effectiveTaxCodes, code);
           return tax ? parseNum(tax.Rate) : 0;
         });
         console.log('🔍 SGST rates:', sgstRates);
@@ -1985,16 +2006,17 @@ function ARCreditMemo() {
   const handleCopyFrom = (data, sourceType) => {
     console.log('📥 Copy From:', sourceType, data);
     
+    const copySource = unwrapCopyFromDocument(data);
     const baseType = BASE_TYPE[sourceType] || 13;
-    const normHeader = normaliseDocumentHeader(data);
+    const normHeader = normaliseDocumentHeader(copySource.header);
 
     setHeader(prev => ({ ...prev, ...normHeader }));
 
-    const rawLines = data.DocumentLines || data.lines || [];
+    const rawLines = copySource.lines;
     const newLines = rawLines.map((line, idx) =>
-      ({ ...createLine(), ...normaliseDocumentLine(line, idx, data.DocEntry || data.docEntry, baseType, normHeader.branch) })
+      ({ ...createLine(rowUdfDefinitions), ...normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch) })
     );
-    setLines(newLines.length > 0 ? newLines : [createLine()]);
+    setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
 
     const cardCode = normHeader.vendor;
     if (cardCode && cardCode !== header.vendor) loadVendorDetails(cardCode);
@@ -2006,37 +2028,48 @@ function ARCreditMemo() {
   // ── Copy To handler ───────────────────────────────────────────────────────
   const handleCopyTo = (targetType) => {
     console.log('📤 Copy To:', targetType);
-    
-    if (!currentDocEntry) {
-      setPageState(p => ({ ...p, error: 'Please save the AR Credit Memo first before copying to another document' }));
-      return;
-    }
+    const targetConfig = {
+      arInvoice: { docType: 'arInvoice', label: 'A/R Invoice', path: '/ar-invoice' },
+      return: { docType: 'return', label: 'Return', path: '/return/new' },
+    }[targetType];
 
-    if (targetType === 'arInvoice') {
-      // Navigate to A/R Invoice page with credit memo data
-      navigate('/ar-invoice/new', {
-        state: {
-          copyFromDelivery: currentDocEntry,
-          deliveryData: {
-            header,
-            lines,
-            headerUdfs,
+    const copyState = buildCopyToState({
+      sourceDocType: 'arCreditMemo',
+      sourceLabel: 'A/R Credit Memo',
+      sourceDocEntry: currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      baseType: 14,
+      extraState: targetType === 'return'
+        ? {
+            copyFromDelivery: currentDocEntry,
+            deliveryData: {
+              header,
+              lines,
+              headerUdfs,
+            },
           }
-        }
-      });
-    } else if (targetType === 'return') {
-      // Navigate to Return page with delivery data
-      navigate('/return/new', {
-        state: {
-          copyFromDelivery: currentDocEntry,
-          deliveryData: {
-            header,
-            lines,
-            headerUdfs,
-          }
-        }
-      });
-    }
+        : {},
+    });
+
+    openCopyToDocument({
+      sourceDocType: 'arCreditMemo',
+      sourceLabel: 'A/R Credit Memo',
+      sourceDocEntry: currentDocEntry,
+      sourceDocNo: header.docNo,
+      sourcePath: location.pathname,
+      targetDocType: targetConfig?.docType,
+      targetLabel: targetConfig?.label,
+      targetPath: targetConfig?.path,
+      copyState,
+      restoreState: { arCreditMemoDocEntry: currentDocEntry },
+      navigate,
+      upsertTask,
+      removeTask,
+      setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
+      errorMessage: 'Please save the AR Credit Memo first before copying to another document',
+    });
   };
 
   // ── submit ────────────────────────────────────────────────────────────────
@@ -2077,18 +2110,18 @@ function ARCreditMemo() {
         header: prep,
         lines: lines.map((line) => ({
           ...line,
-          udf: normalizeUdfState(ROW_UDF_DEFINITIONS, line.udf || {}),
+          udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
         })),
         freightCharges: freightModal.freightCharges,
-        header_udfs: normalizeUdfState(HEADER_UDF_DEFINITIONS, headerUdfs),
+        header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
       };
       const r = currentDocEntry ? await updateARCreditMemo(currentDocEntry, payload) : await submitARCreditMemo(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
-      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-      setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+      setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setValErrors({ header: {}, lines: {}, form: '' });
       
@@ -2109,13 +2142,14 @@ function ARCreditMemo() {
     setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
-    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-    setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
   };
 
-  const visHdrUdfs = HEADER_UDF_DEFINITIONS.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
 
   // Continue in next part with render...
@@ -2127,26 +2161,33 @@ function ARCreditMemo() {
       {/* toolbar */}
       <div className="del-toolbar sap-document-toolbar">
         <span className="del-toolbar__title">A/R Credit Memo{currentDocEntry ? ` — #${header.docNo || currentDocEntry}` : ''}</span>
-        <button type="submit" className="del-btn del-btn--primary" disabled={pageState.posting}>
+        <button type="submit" className="del-btn del-btn--primary sap-document-toolbar__primary" disabled={pageState.posting}>
           {primaryActionLabel}
         </button>
-        <button type="button" className="del-btn" disabled={pageState.posting}>
-          Add Draft & New
-        </button>
-        <button type="button" className="del-btn" onClick={resetForm}>
+        <button type="button" className="del-btn sap-document-toolbar__cancel" onClick={resetForm}>
           Cancel
         </button>
       
         <button
           type="button"
-          className="del-btn"
+          className="del-btn sap-document-toolbar__udf"
           onClick={toggleHeaderUdfs}
         >
           {sidebarOpen ? 'Hide UDFs' : 'Show UDFs'}
         </button>
-        <button type="button" className="del-btn" onClick={toggleFormSettings}>
+        <button type="button" className="del-btn sap-document-toolbar__settings" onClick={toggleFormSettings}>
           Form Settings
         </button>
+        <PrintLayoutToolbar
+          documentType="arCreditMemo"
+          documentLabel="A/R Credit Memo"
+          docEntry={currentDocEntry}
+          docNumber={header.docNo}
+          disabled={pageState.posting}
+          classPrefix="del"
+          onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
+          onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
+        />
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
           <button
             type="button"
@@ -2176,17 +2217,16 @@ function ARCreditMemo() {
             </button>
           </div>
         </div>
-        <button 
-          type="button" 
-          className="del-btn"
-          onClick={() => setCopyToModal(true)}
-          disabled={!currentDocEntry}
-          title={!currentDocEntry ? 'Save the AR Credit Memo first' : 'Copy to another document'}
+        <button
+          type="button"
+          className="del-btn sap-document-toolbar__copy"
+          disabled
+          title="No SAP Copy To target is configured for A/R Credit Memo."
         >
           Copy To
         </button>
-        <button type="button" className="del-btn" onClick={() => navigate('/ar-credit-memo/find')}>Find</button>
-        <button type="button" className="del-btn" onClick={resetForm}>New</button>
+        <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/ar-credit-memo/find')}>Find</button>
+        <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
       </div>
 
       {/* alerts */}
@@ -2445,6 +2485,8 @@ function ARCreditMemo() {
                 fmtTaxLabel={fmtTaxLabel}
                 getBranchName={getBranchName}
                 valErrors={valErrors}
+                rowUdfFields={visibleRowUdfs}
+                onRowUdfChange={handleRowUdfChange}
               />
             )}
 
@@ -2589,9 +2631,6 @@ function ARCreditMemo() {
                 <button type="submit" className="del-btn del-btn--primary" disabled={pageState.posting}>
                   {secondaryActionLabel}
                 </button>
-                <button type="button" className="del-btn" disabled={pageState.posting}>
-                  Add Draft & New
-                </button>
                 <button type="button" className="del-btn" onClick={resetForm}>
                   Cancel
                 </button>
@@ -2632,12 +2671,11 @@ function ARCreditMemo() {
                     ))}
                   </div>
                 </div>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="del-btn"
-                  onClick={() => setCopyToModal(true)}
-                  disabled={!currentDocEntry}
-                  title={!currentDocEntry ? 'Save the AR Credit Memo first' : 'Copy to another document'}
+                  disabled
+                  title="No SAP Copy To target is configured for A/R Credit Memo."
                 >
                   Copy To
                 </button>
@@ -2663,8 +2701,8 @@ function ARCreditMemo() {
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={[]}
-            headerUdfFields={HEADER_UDF_DEFINITIONS}
-            rowUdfFields={ROW_UDF_DEFINITIONS}
+            headerUdfFields={headerUdfDefinitions}
+            rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}
             onSettingChange={updateFormSetting}
           />

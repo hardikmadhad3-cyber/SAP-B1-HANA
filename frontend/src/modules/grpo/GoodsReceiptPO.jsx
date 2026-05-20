@@ -18,7 +18,10 @@ import HSNCodeModal from './components/HSNCodeModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import StateSelectionModal from './components/StateSelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { copyToDocument } from '../../services/documentCopyService';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
@@ -53,8 +56,9 @@ import {
   createUdfState,
   readSavedFormSettings,
 } from '../../config/grpoForm';
-import { FALLBACK_TAX_CODES } from '../../utils/fallbackTaxCodes';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
+import { consumeCopyToState } from '../../utils/copyToState';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
@@ -118,7 +122,7 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 
-const createLine = () => ({
+const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
   itemDescription: '',
   hsnCode: '',
@@ -138,7 +142,7 @@ const createLine = () => ({
   baseType: 22,
   baseLine: null,
   taxCodeManuallyOverridden: false,
-  udf: createUdfState(ROW_UDF_DEFINITIONS),
+  udf: createUdfState(rowUdfDefinitions),
 });
 
 const INIT_HEADER = {
@@ -236,10 +240,13 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 function GoodsReceiptPO() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { removeTask, upsertTask } = useSapWindowTaskbarActions();
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
-  const [lines, setLines] = useState([createLine()]);
+  const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
+  const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => createUdfState(HEADER_UDF_DEFINITIONS));
@@ -267,6 +274,7 @@ function GoodsReceiptPO() {
     warnings: [],
     series: [],
     states: [],
+    udf_metadata: { header: [], rows: [] },
   });
   const [pageState, setPageState] = useState({
     loading: false,
@@ -281,6 +289,7 @@ function GoodsReceiptPO() {
     lines: {},
     form: '',
   });
+  useValidationHighlights(valErrors);
   const [loadedSnapshot, setLoadedSnapshot] = useState('');
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -381,7 +390,8 @@ function GoodsReceiptPO() {
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
-  const markDirty = useCallback(() => {
+  const markDirty = useCallback((event) => {
+    if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
     if (currentDocEntry) setIsDirty(true);
   }, [currentDocEntry]);
 
@@ -397,6 +407,29 @@ function GoodsReceiptPO() {
         ]);
 
         if (!ignore) {
+          const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
+          const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          setHeaderUdfDefinitions(nextHeaderUdfs);
+          setRowUdfDefinitions(nextRowUdfs);
+          setHeaderUdfs((prev) => createUdfState(nextHeaderUdfs, prev));
+          setLines((prev) => prev.map((line) => ({
+            ...line,
+            udf: createUdfState(nextRowUdfs, line.udf || {}),
+          })));
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs);
+          setFormSettings((prev) => ({
+            ...nextDefaults,
+            ...prev,
+            headerUdfs: {
+              ...nextDefaults.headerUdfs,
+              ...(prev.headerUdfs || {}),
+            },
+            rowUdfs: {
+              ...nextDefaults.rowUdfs,
+              ...(prev.rowUdfs || {}),
+            },
+          }));
+
           setRefData({
             company: refDataRes.data.company || '',
             company_state: refDataRes.data.company_state || '',
@@ -417,6 +450,7 @@ function GoodsReceiptPO() {
             states: refDataRes.data.states || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
+            udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             warnings: refDataRes.data.warnings || [],
             series: seriesRes.data.series || [],
           });
@@ -459,10 +493,10 @@ function GoodsReceiptPO() {
 
         setLines(
           Array.isArray(grpo.lines) && grpo.lines.length
-            ? grpo.lines.map(l => ({ ...createLine(), ...l, taxCodeManuallyOverridden: true, udf: { ...createUdfState(ROW_UDF_DEFINITIONS), ...(l.udf || {}) } }))
-            : [createLine()]
+            ? grpo.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, taxCodeManuallyOverridden: true, udf: { ...createUdfState(rowUdfDefinitions), ...(l.udf || {}) } }))
+            : [createLine(rowUdfDefinitions)]
         );
-        setHeaderUdfs({ ...createUdfState(HEADER_UDF_DEFINITIONS), ...(grpo.header_udfs || {}) });
+        setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(grpo.header_udfs || {}) });
         setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
@@ -481,10 +515,12 @@ function GoodsReceiptPO() {
     };
     load();
     return () => { ignore = true; };
-  }, [location.pathname, location.state, navigate]);
+  }, [location.pathname, location.state, navigate, headerUdfDefinitions, rowUdfDefinitions]);
 
   useEffect(() => {
-    const copyFrom = location.state?.copyFrom;
+    const routedCopyFrom = location.state?.copyFrom;
+    const persistedCopyState = routedCopyFrom ? null : consumeCopyToState(location.pathname, ['/grpo']);
+    const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
     if (!copyFrom) return;
 
     const { header: sourceHeader = {}, lines: sourceLines = [], baseDocument } = copyFrom;
@@ -502,7 +538,7 @@ function GoodsReceiptPO() {
 
     if (Array.isArray(sourceLines) && sourceLines.length > 0) {
       setLines(sourceLines.map((line, index) => ({
-        ...createLine(),
+        ...createLine(rowUdfDefinitions),
         itemNo: line.itemNo || line.ItemCode || '',
         itemDescription: line.itemDescription || line.ItemDescription || line.Dscription || '',
         quantity: String(line.quantity || line.Quantity || line.OpenQty || 0),
@@ -608,7 +644,7 @@ function GoodsReceiptPO() {
     acc[i] = getUomOptions(line);
     return acc;
   }, {});
-  const effectiveTaxCodes = refData.tax_codes.length ? refData.tax_codes : FALLBACK_TAX_CODES;
+  const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : [];
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
@@ -1017,7 +1053,7 @@ function GoodsReceiptPO() {
   const addLine = () => {
     markDirty();
     setValErrors(p => ({ ...p, form: '' }));
-    setLines(p => [...p, { ...createLine(), whse: header.warehouse || '', branch: header.branch || '', loc: header.branch || '' }]);
+    setLines(p => [...p, { ...createLine(rowUdfDefinitions), whse: header.warehouse || '', branch: header.branch || '', loc: header.branch || '' }]);
   };
 
   const removeLine = (i) => {
@@ -1255,7 +1291,7 @@ function GoodsReceiptPO() {
       setPageState(p => ({ ...p, loading: true }));
       const res = await fetchPurchaseOrderForCopy(poDocEntry);
       setHeader(prev => ({ ...prev, ...res.data.header }));
-      setLines(res.data.lines.map(l => ({ ...createLine(), ...l, udf: { ...createUdfState(ROW_UDF_DEFINITIONS), ...(l.udf || {}) } })));
+      setLines(res.data.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, udf: { ...createUdfState(rowUdfDefinitions), ...(l.udf || {}) } })));
       setCopyFromModal(false);
       if (res.data.header.vendor) {
         loadVendorDetails(res.data.header.vendor);
@@ -1278,30 +1314,21 @@ function GoodsReceiptPO() {
     setCopyFromModal(true);
   };
 
-  const handleCopyTo = (targetType) => {
-    if (!currentDocEntry) return;
-
-    const copyState = {
-      copyFrom: {
-        type: 'grpo',
-        docEntry: currentDocEntry,
-        header: { ...header },
-        lines: lines.map(({ baseEntry, baseType, baseLine, ...line }, index) => ({ ...line, lineNum: index })),
-        baseDocument: {
-          baseType: 20,
-          baseEntry: currentDocEntry,
-        },
-      },
-    };
-
-    if (targetType === 'apInvoice') {
-      navigate('/ap-invoice', { state: copyState });
-      return;
-    }
-
-    if (targetType === 'apCreditMemo') {
-      navigate('/ap-credit-memo', { state: copyState });
-    }
+  const handleCopyTo = async (targetType) => {
+    await copyToDocument({
+      sourceDocType: 'grpo',
+      targetType,
+      sourceDocEntry: currentDocEntry,
+      sourceDocNo: header.docNo,
+      sourcePath: location.pathname,
+      sourceSnapshot: { header, lines },
+      restoreState: { grpoDocEntry: currentDocEntry },
+      navigate,
+      upsertTask,
+      removeTask,
+      setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
+      errorMessage: 'Please save the goods receipt PO first before copying to another document.',
+    });
   };
 
   // ── Browse Attachment handler ─────────────────────────────────────────────
@@ -1495,8 +1522,8 @@ function GoodsReceiptPO() {
       setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
-      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-      setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+      setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({
         ...p,
         contacts: [],
@@ -1522,39 +1549,38 @@ function GoodsReceiptPO() {
     setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
-    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-    setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
     setFreightModal({ open: false, freightCharges: [], loading: false });
   };
 
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
-  const visHdrUdfs = HEADER_UDF_DEFINITIONS.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
   const visibleColumns = BASE_MATRIX_COLUMNS.filter(c => formSettings.matrixColumns?.[c.key]?.visible !== false);
-  const visibleRowUdfs = ROW_UDF_DEFINITIONS.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
+  const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
 
   // Continue in next message with render...
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <form className={`po-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form className={`po-page sap-document-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
       {/* ── Toolbar ── */}
-      <div className="po-toolbar">
+      <div className="po-toolbar sap-document-toolbar">
         <span className="po-toolbar__title">Goods Receipt PO{currentDocEntry ? ` — #${header.docNo || currentDocEntry}` : ''}</span>
-        <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting}>
+        <button type="submit" className="po-btn po-btn--primary sap-document-toolbar__primary" disabled={pageState.posting}>
           {primaryActionLabel}
         </button>
-        <button type="button" className="po-btn" disabled={pageState.posting}>Add Draft & New</button>
-        <button type="button" className="po-btn po-btn--danger" onClick={resetForm}>Cancel</button>
-        <button type="button" className="po-btn" onClick={() => navigate('/grpo/find')}>Find</button>
-        <button type="button" className="po-btn" onClick={resetForm}>New</button>
-        <button type="button" className="po-btn" onClick={toggleHeaderUdfs}>
+        <button type="button" className="po-btn po-btn--danger sap-document-toolbar__cancel" onClick={resetForm}>Cancel</button>
+        <button type="button" className="po-btn sap-document-toolbar__find" onClick={() => navigate('/grpo/find')}>Find</button>
+        <button type="button" className="po-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
+        <button type="button" className="po-btn sap-document-toolbar__udf" onClick={toggleHeaderUdfs}>
           {sidebarOpen ? 'Hide UDFs' : 'Show UDFs'}
         </button>
-        <button type="button" className="po-btn" onClick={toggleFormSettings}>Form Settings</button>
+        <button type="button" className="po-btn sap-document-toolbar__settings" onClick={toggleFormSettings}>Form Settings</button>
         <div className="po-dropdown">
           <button
             type="button"
@@ -1613,19 +1639,16 @@ function GoodsReceiptPO() {
             >
               A/P Invoice
             </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                handleCopyTo('apCreditMemo');
-                document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
-              }}
-            >
-              A/P Credit Memo
-            </button>
           </div>
         </div>
+        <PurchasePrintLayoutActions
+          documentKey="goodsReceiptPo"
+          docEntry={currentDocEntry}
+          docNumber={header.docNo}
+          disabled={pageState.posting || pageState.loading}
+          onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
+          onError={(message) => setPageState(p => ({ ...p, error: message, success: '' }))}
+        />
         <span className={`po-mode-badge po-mode-badge--${currentDocEntry ? 'update' : 'add'}`}>
           {currentDocEntry ? 'Update' : 'Add'}
         </span>
@@ -1917,7 +1940,6 @@ function GoodsReceiptPO() {
                 <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting}>
                   {secondaryActionLabel}
                 </button>
-                <button type="button" className="po-btn" disabled={pageState.posting}>Add Draft & New</button>
                 <button type="button" className="po-btn po-btn--danger" onClick={resetForm}>Cancel</button>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
@@ -1979,17 +2001,6 @@ function GoodsReceiptPO() {
                     >
                       A/P Invoice
                     </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        handleCopyTo('apCreditMemo');
-                        document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
-                      }}
-                    >
-                      A/P Credit Memo
-                    </button>
                   </div>
                 </div>
               </div>
@@ -2014,8 +2025,8 @@ function GoodsReceiptPO() {
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={BASE_MATRIX_COLUMNS}
-            headerUdfFields={HEADER_UDF_DEFINITIONS}
-            rowUdfFields={ROW_UDF_DEFINITIONS}
+            headerUdfFields={headerUdfDefinitions}
+            rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}
             onSettingChange={updateFormSetting}
           />

@@ -167,6 +167,60 @@ const ROW_UDF_DEFINITIONS = [
   { key: 'U_QcStatus', label: 'QC Status', type: 'select', defaultValue: 'Pending', options: ['Pending', 'Approved', 'Rejected'] },
 ];
 
+const BASE_MATRIX_COLUMNS = [
+  { key: 'itemNo', label: 'Item No.', visible: true },
+  { key: 'quantity', label: 'Quantity', visible: true },
+  { key: 'unitPrice', label: 'Unit Price', visible: true },
+  { key: 'stdDiscount', label: 'Discount %', visible: true },
+  { key: 'taxCode', label: 'Tax Code', visible: true },
+  { key: 'totalLC', label: 'Total (LC)', visible: true },
+  { key: 'distRule', label: 'Distr. Rule', visible: true },
+  { key: 'uomCode', label: 'UoM Code', visible: true },
+  { key: 'cogsDistRule', label: 'COGS Distr. Rule', visible: true },
+  { key: 'countryOfOrigin', label: 'Country/Region of Origin', visible: true },
+  { key: 'loc', label: 'Loc.', visible: true },
+  { key: 'blanketAgreementNo', label: 'Blanket Agreement No.', visible: true },
+  { key: 'allowProcurementDoc', label: 'Allow Procmnt. Doc.', visible: true },
+  { key: 'saudaNodeRef', label: 'Sauda Node Ref', visible: true },
+  { key: 'apInvDocKey', label: 'AP Inv DocKey', visible: true },
+  { key: 'apInvDocNum', label: 'AP Inv DocNum', visible: true },
+  { key: 'apInvLineNum', label: 'AP Inv LineNum', visible: true },
+  { key: 'assessableValue', label: 'Assessable Value', visible: true },
+  { key: 'bedRate', label: 'BED Rate', visible: true },
+  { key: 'bedAmount', label: 'BED Amount', visible: true },
+  { key: 'rg23dNo', label: 'RG23DNo', visible: true },
+  { key: 'specialRebate', label: 'Special Rebate', visible: true },
+  { key: 'commission', label: 'Commision', visible: true },
+  { key: 'sellerItem', label: 'S_Item', visible: true },
+  { key: 'sellerQty', label: 'S_Qty', visible: true },
+  { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', visible: true },
+  { key: 'hsnCode', label: 'HSN', visible: true },
+  { key: 'sacCode', label: 'SAC', visible: true },
+  { key: 'sellerBrokerage', label: 'Seller Brokerage', visible: true },
+  { key: 'buyerBrokerage', label: 'Buyer Brokerage', visible: true },
+  { key: 'buyerDelivery', label: 'Buyer - Delivery', visible: true },
+  { key: 'sellerDelivery', label: 'Seller - Delivery', visible: true },
+  { key: 'buyerPaymentTerms', label: 'Buyer - Terms of payment', visible: true },
+  { key: 'sellerPaymentTerms', label: 'Seller - Terms of Payment', visible: true },
+  { key: 'buyerQuality', label: 'Buyer - Quality', visible: true },
+  { key: 'sellerQuality', label: 'Seller - Quality', visible: true },
+  { key: 'buyerPrice', label: 'Buyer - Price', visible: true },
+  { key: 'sellerPrice', label: 'Seller - Price', visible: true },
+  { key: 'buyerSpecialInstruction', label: 'Buyer - Special Instruction', visible: true },
+  { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', visible: true },
+  { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', visible: true },
+  { key: 'sellerBrokeragePercent', label: 'Seller Brokerage in Percentage', visible: true },
+  { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', visible: true },
+  { key: 'sellerBillDiscount', label: 'Seller Bill Discount', visible: true },
+  { key: 'stcode', label: 'STCODE', visible: true },
+  { key: 'freightPurchase', label: 'Freight Purchase', visible: true },
+  { key: 'freightSales', label: 'Freight Sales', visible: true },
+  { key: 'freightProvider', label: 'Freight Provider', visible: true },
+  { key: 'freightProviderName', label: 'Freight Provider Name', visible: true },
+  { key: 'documentCreated', label: 'Document Created', visible: true },
+  { key: 'brokerageNumber', label: 'Brokerage Number', visible: true },
+];
+
 const getOptionValue = (option) => (typeof option === 'string' ? option : option?.value ?? '');
 
 const getDefaultUdfValue = (field) => {
@@ -207,6 +261,7 @@ const buildVisibilitySettings = (definitions) =>
 
 const createDefaultFormSettings = () => ({
   headerUdfs: buildVisibilitySettings(HEADER_UDF_DEFINITIONS),
+  matrixColumns: buildVisibilitySettings(BASE_MATRIX_COLUMNS),
   rowUdfs: buildVisibilitySettings(ROW_UDF_DEFINITIONS),
 });
 
@@ -232,6 +287,7 @@ const readSavedFormSettings = () => {
 };
 
 export {
+  BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
   HEADER_UDF_DEFINITIONS,
   ROW_UDF_DEFINITIONS,

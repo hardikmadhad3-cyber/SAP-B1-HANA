@@ -2,6 +2,7 @@ const sapService = require('./sapService');
 const purchaseQuotationDb = require('./purchaseQuotationDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { getUdfDefinitions } = require('./udfMetadataService');
 
 // ───────── HELPERS ─────────
 
@@ -204,6 +205,96 @@ const toNumberOrUndefined = (value) => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+const hasValue = (value) => value !== '' && value !== null && value !== undefined;
+
+const PURCHASE_QUOTATION_LINE_UDF_MAPPINGS = [
+  { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
+  { sapField: 'U_COMPRC', getValue: (line) => line.commission },
+  { sapField: 'U_S_BrokPerQty', getValue: (line) => line.sellerBrokeragePerQty },
+  { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf ?? line.unitPrice },
+  { sapField: 'U_Brok_Seller', getValue: (line) => line.sellerBrokerage },
+  { sapField: 'U_Brok_Buyer', getValue: (line) => line.buyerBrokerage },
+  { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
+  { sapField: 'U_Seller_Delivery', getValue: (line) => line.sellerDelivery },
+  { sapField: 'U_Buyer_Payment_Terms', getValue: (line) => line.buyerPaymentTerms },
+  { sapField: 'U_Seller_Payment_Terms', getValue: (line) => line.sellerPaymentTerms },
+  { sapField: 'U_Buyer_Quality', getValue: (line) => line.buyerQuality },
+  { sapField: 'U_Seller_Quality', getValue: (line) => line.sellerQuality },
+  { sapField: 'U_Buyer_Price', getValue: (line) => line.buyerPrice },
+  { sapField: 'U_Seller_Price', getValue: (line) => line.sellerPrice },
+  { sapField: 'U_Buyer_SPINS', getValue: (line) => line.buyerSpecialInstruction },
+  { sapField: 'U_Seller_SPINS', getValue: (line) => line.sellerSpecialInstruction },
+  { sapField: 'U_Sel_Brok_AP', getValue: (line) => line.sellerBrokerageAmtPer },
+  { sapField: 'U_Seller_Brok_Per', getValue: (line) => line.sellerBrokeragePercent },
+  { sapField: 'U_Buyer_Bill_Disc', getValue: (line) => line.buyerBillDiscount },
+  { sapField: 'U_Seller_Bill_Disc', getValue: (line) => line.sellerBillDiscount },
+  { sapField: 'U_SELLTCODE', getValue: (line) => line.stcode },
+  { sapField: 'U_S_Item', getValue: (line) => line.sellerItem },
+  { sapField: 'U_S_Qty', getValue: (line) => line.sellerQty ?? line.quantity },
+  { sapField: 'U_Freight_pur', getValue: (line) => line.freightPurchase },
+  { sapField: 'U_Freight_sales', getValue: (line) => line.freightSales },
+  { sapField: 'U_Fr_trans', getValue: (line) => line.freightProvider },
+  { sapField: 'U_Fr_trans_name', getValue: (line) => line.freightProviderName },
+  { sapField: 'U_BDNum', getValue: (line) => line.brokerageNumber },
+];
+
+const PURCHASE_QUOTATION_LABEL_UDF_MAPPINGS = [
+  { labels: ['Sauda Node Ref', 'Sauda Nodh Ref', 'Sauda Nodh No'], getValue: (line) => line.saudaNodeRef },
+  { labels: ['AP Inv DocKey'], getValue: (line) => line.apInvDocKey },
+  { labels: ['AP Inv DocNum'], getValue: (line) => line.apInvDocNum },
+  { labels: ['AP Inv LineNum'], getValue: (line) => line.apInvLineNum },
+  { labels: ['Assessable Value'], getValue: (line) => line.assessableValue },
+  { labels: ['BED Rate', 'BEDRATE'], getValue: (line) => line.bedRate },
+  { labels: ['BED Amount', 'BEDAMOUNT'], getValue: (line) => line.bedAmount },
+  { labels: ['RG23DNo', 'RG23DNO'], getValue: (line) => line.rg23dNo },
+  { labels: ['HSN'], getValue: (line) => line.hsnCode },
+  { labels: ['SAC'], getValue: (line) => line.sacCode },
+];
+
+const compactLabel = (value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+const getPurchaseQuotationLineUdfMetadata = async () => {
+  const definitions = await getUdfDefinitions('PQT1');
+  return {
+    keys: new Set(definitions.map((field) => String(field.key || '').trim())),
+    labelToKey: definitions.reduce((acc, field) => {
+      const key = compactLabel(field.label || field.key);
+      if (key && field.key) acc[key] = field.key;
+      return acc;
+    }, {}),
+  };
+};
+
+const buildValidatedLineUdfs = (line, udfMetadata) => {
+  const availableUdfKeys = udfMetadata.keys || new Set();
+  const udfs = {};
+
+  Object.entries(line.udf || {}).forEach(([key, value]) => {
+    if (availableUdfKeys.has(key) && hasValue(value)) {
+      udfs[key] = value;
+    }
+  });
+
+  PURCHASE_QUOTATION_LINE_UDF_MAPPINGS.forEach(({ sapField, getValue }) => {
+    if (!availableUdfKeys.has(sapField)) return;
+    const value = getValue(line);
+    if (hasValue(value)) {
+      udfs[sapField] = value;
+    }
+  });
+
+  PURCHASE_QUOTATION_LABEL_UDF_MAPPINGS.forEach(({ labels, getValue }) => {
+    const sapField = labels.map((label) => udfMetadata.labelToKey?.[compactLabel(label)]).find(Boolean);
+    if (!sapField || !availableUdfKeys.has(sapField) || udfs[sapField] !== undefined) return;
+    const value = getValue(line);
+    if (hasValue(value)) {
+      udfs[sapField] = value;
+    }
+  });
+
+  return udfs;
+};
+
 const cleanObject = (value) => {
   if (Array.isArray(value)) {
     return value
@@ -237,8 +328,9 @@ const cleanObject = (value) => {
   return value;
 };
 
-const buildDocumentLines = (lines = []) =>
-  lines
+const buildDocumentLines = async (lines = []) => {
+  const udfMetadata = await getPurchaseQuotationLineUdfMetadata();
+  return lines
     .filter((line) => String(line.itemNo || '').trim())
     .map((line) =>
       cleanObject({
@@ -251,11 +343,20 @@ const buildDocumentLines = (lines = []) =>
         TaxCode: line.taxCode,
         WarehouseCode: line.whse,
         UoMCode: line.uomCode,
-        ...(line.udf || {}),
+        RequiredDate: line.requiredDate,
+        ShipDate: line.quotedDate,
+        CostingCode: line.distRule,
+        CountryOrg: line.countryOfOrigin,
+        AgreementNo: toNumberOrUndefined(line.blanketAgreementNo),
+        ...(line.baseType && line.baseEntry != null ? { BaseType: Number(line.baseType) } : {}),
+        ...(line.baseEntry != null ? { BaseEntry: Number(line.baseEntry) } : {}),
+        ...(line.baseLine != null ? { BaseLine: Number(line.baseLine) } : {}),
+        ...buildValidatedLineUdfs(line, udfMetadata),
       })
     );
+};
 
-const buildPurchaseQuotationPayload = ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) =>
+const buildPurchaseQuotationPayload = async ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) =>
   cleanObject({
     CardCode: header.vendor,
     NumAtCard: header.salesContractNo,
@@ -276,7 +377,7 @@ const buildPurchaseQuotationPayload = ({ header = {}, lines = [], header_udfs = 
     DiscountPercent: toNumberOrUndefined(header.discount),
     ...header_udfs,
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
-    DocumentLines: buildDocumentLines(lines),
+    DocumentLines: await buildDocumentLines(lines),
   });
 
 const validatePurchaseQuotationPayload = async ({ header = {}, lines = [] }) => {
@@ -300,7 +401,7 @@ const validatePurchaseQuotationPayload = async ({ header = {}, lines = [] }) => 
 
 const submitPurchaseQuotation = async (payload) => {
   await validatePurchaseQuotationPayload(payload);
-  const purchaseQuotationPayload = buildPurchaseQuotationPayload(payload);
+  const purchaseQuotationPayload = await buildPurchaseQuotationPayload(payload);
 
   const response = await sapService.request({
     method: 'post',
@@ -320,7 +421,7 @@ const submitPurchaseQuotation = async (payload) => {
 
 const updatePurchaseQuotation = async (docEntry, payload) => {
   await validatePurchaseQuotationPayload(payload);
-  const purchaseQuotationPayload = buildPurchaseQuotationPayload(payload);
+  const purchaseQuotationPayload = await buildPurchaseQuotationPayload(payload);
 
   const response = await sapService.request({
     method: 'patch',

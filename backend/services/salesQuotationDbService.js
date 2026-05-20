@@ -3,11 +3,16 @@
  * Mirrors salesOrderDbService.js but targets OQUT/QUT1 tables (ObjectCode = '23').
  */
 const db = require('./dbService');
+const masterDataDbService = require('./masterDataDbService');
+const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
+const { createMarketingDocumentLineLookupRepository } = require('./marketingDocumentLineLookupDbService');
 const {
   escapeLike,
   normalizeTopLimit,
   buildMarketingDocumentListFilterQuery,
 } = require('./documentListUtils');
+
+const salesQuotationLineLookups = createMarketingDocumentLineLookupRepository({ lineTable: 'QUT1' });
 
 const safe = async (promise) => {
   try {
@@ -16,6 +21,43 @@ const safe = async (promise) => {
   } catch (e) {
     return [];
   }
+};
+
+const tableFieldMetadataPromises = new Map();
+
+const getTableFieldMetadata = async (tableName) => {
+  const normalizedTableName = String(tableName || '').trim();
+  if (!normalizedTableName) return {};
+
+  if (!tableFieldMetadataPromises.has(normalizedTableName)) {
+    tableFieldMetadataPromises.set(normalizedTableName, safe(db.query(`
+      SELECT COLUMN_NAME, DATA_TYPE
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_NAME = @tableName
+      ORDER BY ORDINAL_POSITION
+    `, { tableName: normalizedTableName })).then((rows) => rows.reduce((acc, row) => {
+      const columnName = String(row.COLUMN_NAME || '').trim();
+      if (!columnName) return acc;
+      acc[columnName] = String(row.DATA_TYPE || '').trim().toLowerCase();
+      return acc;
+    }, {})));
+  }
+
+  return tableFieldMetadataPromises.get(normalizedTableName);
+};
+
+const hasTableField = (metadata, columnName) => {
+  const normalizedColumnName = String(columnName || '').trim().toLowerCase();
+  if (!metadata || !normalizedColumnName) return false;
+  return Object.keys(metadata).some((fieldName) => fieldName.toLowerCase() === normalizedColumnName);
+};
+
+const sqlAlias = (alias) => `[${String(alias || '').replace(/]/g, ']]')}]`;
+
+const formatSapDate = (value) => {
+  if (!value) return '';
+  if (value instanceof Date) return value.toISOString().split('T')[0];
+  return String(value).split('T')[0];
 };
 
 // ── queries ───────────────────────────────────────────────────────────────────
@@ -62,7 +104,12 @@ const getItems = () => safe(db.query(`
          SalUnitMsr  AS SalesUnit,
          InvntryUom  AS InventoryUOM,
          SUoMEntry   AS UoMGroupEntry,
-         SWW         AS HSNCode
+         SWW         AS HSNCode,
+         DfltWH      AS DefaultWarehouse,
+         CountryOrg  AS ItemCountryOrg,
+         SACEntry    AS SACEntry,
+         VatGourpSa  AS TaxCodeAR,
+         ''          AS DistributionRule
   FROM   OITM
   WHERE  SellItem = 'Y'
     AND  validFor  <> 'N'
@@ -90,7 +137,11 @@ const getItemsForModal = () => safe(db.query(`
     T0.InvntItem AS InventoryItem,
     T0.DfltWH AS DefaultWarehouse,
     T0.ManBtchNum AS BatchManaged,
-    T0.ManSerNum AS SerialManaged
+    T0.ManSerNum AS SerialManaged,
+    T0.CountryOrg AS ItemCountryOrg,
+    T0.SACEntry AS SACEntry,
+    T0.VatGourpSa AS TaxCodeAR,
+    '' AS DistributionRule
   FROM OITM T0
   LEFT JOIN OITB T1 ON T0.ItmsGrpCod = T1.ItmsGrpCod
   LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID
@@ -156,27 +207,20 @@ const getStates = () => safe(db.query(`
   ORDER  BY Name
 `));
 
-const getTaxCodes = () => safe(db.query(`
-  SELECT 
-    T0.Code,
-    T0.Name,
-    SUM(T1.EfctivRate) AS Rate,
-    CASE 
-      WHEN MAX(CASE WHEN T1.STACode LIKE '%IGST%' THEN 1 ELSE 0 END) = 1 
-        THEN 'INTERSTATE'
-      WHEN COUNT(DISTINCT CASE 
-        WHEN T1.STACode LIKE '%CGST%' THEN 'CGST'
-        WHEN T1.STACode LIKE '%SGST%' THEN 'SGST'
-      END) = 2 
-        THEN 'INTRASTATE'
-      ELSE 'OTHER'
-    END AS GSTType
-  FROM OSTC T0
-  INNER JOIN STC1 T1 ON T0.Code = T1.STCCode  and T1.[STAType] In ('-100','-110','-120')
-  WHERE T0.Lock = 'N'
-  GROUP BY T0.Code, T0.Name
-  ORDER BY T0.Code
+const getCountries = () => safe(db.query(`
+  SELECT Code, Name
+  FROM   OCRY
+  ORDER  BY Name
 `));
+
+const getDistributionRules = () => safe(db.query(`
+  SELECT TOP 200 OcrCode AS FactorCode, OcrName AS FactorDescription
+  FROM   OOCR
+  WHERE  Active <> 'N'
+  ORDER  BY OcrCode
+`));
+
+const getTaxCodes = () => masterDataDbService.searchDocumentTaxCodes('', 'sales', 500, 0);
 
 const getUomGroups = () => safe(db.query(`
   SELECT g.UgpEntry AS AbsEntry,
@@ -284,11 +328,17 @@ const getStateFromAddress = async (cardCode, addressCode) => {
 const getReferenceData = async () => {
   const [
     customers, items, warehouses, paymentTerms,
-    shippingTypes, branches, states, taxCodes, uomRaw, salesEmployees, owners,
+    shippingTypes, branches, states, countries, distributionRules, taxCodes, uomRaw, salesEmployees, owners,
+    buyerQualityOptions, sellerQualityOptions, buyerPriceOptions, sellerPriceOptions, udfMetadata,
   ] = await Promise.all([
     getCustomers(), getItems(), getWarehouses(), getPaymentTerms(),
-    getShippingTypes(), getBranches(), getStates(), getTaxCodes(), getUomGroups(),
+    getShippingTypes(), getBranches(), getStates(), getCountries(), getDistributionRules(), getTaxCodes(), getUomGroups(),
     getSalesEmployees(), getOwners(),
+    salesQuotationLineLookups.getLookupValues('U_Buyer_Quality'),
+    salesQuotationLineLookups.getLookupValues('U_Seller_Quality'),
+    salesQuotationLineLookups.getLookupValues('U_Buyer_Price'),
+    salesQuotationLineLookups.getLookupValues('U_Seller_Price'),
+    getMarketingDocumentUdfs({ headerTable: 'OQUT', lineTable: 'QUT1' }),
   ]);
 
   const uomMap = {};
@@ -326,6 +376,8 @@ const getReferenceData = async () => {
       ItemCode: i.ItemCode, ItemName: i.ItemName,
       SalesUnit: i.SalesUnit, InventoryUOM: i.InventoryUOM,
       UoMGroupEntry: i.UoMGroupEntry, SWW: i.HSNCode || '',
+      DistributionRule: i.DistributionRule || '',
+      DefaultWarehouse: i.DefaultWarehouse || '',
     })),
     warehouses: mappedWarehouses,
     warehouse_addresses: mappedWarehouses,
@@ -333,14 +385,28 @@ const getReferenceData = async () => {
     shipping_types: shippingTypes.map(s => ({ TrnspCode: s.TrnspCode, TrnspName: s.TrnspName })),
     branches: branches.map(b => ({ BPLId: b.BPLId, BPLName: b.BPLName })),
     states: states.map(st => ({ Code: st.Code, Name: st.Name })),
+    countries: countries.map(country => ({ Code: country.Code, Name: country.Name })),
+    distribution_rules: distributionRules.map(rule => ({
+      FactorCode: rule.FactorCode || '',
+      FactorDescription: rule.FactorDescription || '',
+    })),
     tax_codes: taxCodes.map(t => ({ Code: t.Code, Name: t.Name, Rate: t.Rate, GSTType: t.GSTType })),
     uom_groups,
     sales_employees: salesEmployees.map(e => ({ SlpCode: e.SlpCode, SlpName: e.SlpName })),
     owners: owners.map(o => ({ empID: o.empID, firstName: o.firstName, lastName: o.lastName, FullName: o.FullName })),
+    quality_options: {
+      buyer: buyerQualityOptions,
+      seller: sellerQualityOptions,
+    },
+    price_options: {
+      buyer: buyerPriceOptions,
+      seller: sellerPriceOptions,
+    },
     contacts: [],
     pay_to_addresses: [],
     company_address: {},
     decimal_settings: { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 },
+    udf_metadata: udfMetadata,
     warnings: [],
   };
 };
@@ -371,6 +437,8 @@ const getSalesQuotationList = async ({
   docNum = '',
   customerCode = '',
   customerName = '',
+  sellerCode = '',
+  sellerName = '',
   status = '',
   postingDateFrom = '',
   postingDateTo = '',
@@ -386,10 +454,12 @@ const getSalesQuotationList = async ({
     docNum,
     partnerCode: customerCode,
     partnerName: customerName,
+    sellerCode,
+    sellerName,
     status,
     postingDateFrom,
     postingDateTo,
-  });
+  }, { includeSellerFields: true });
 
   const countRows = await safe(db.query(`
     SELECT COUNT(*) AS total_count
@@ -405,6 +475,8 @@ const getSalesQuotationList = async ({
       T0.DocNum,
       T0.CardCode,
       T0.CardName,
+      T0.U_Seller_Code,
+      T0.U_Seller_Name,
       T0.DocDate,
       T0.DocDueDate,
       T0.DocStatus,
@@ -427,6 +499,8 @@ const getSalesQuotationList = async ({
       doc_num: o.DocNum,
       customer_code: o.CardCode,
       customer_name: o.CardName,
+      seller_code: o.U_Seller_Code || '',
+      seller_name: o.U_Seller_Name || '',
       posting_date: o.DocDate ? o.DocDate.toISOString().split('T')[0] : '',
       delivery_date: o.DocDueDate ? o.DocDueDate.toISOString().split('T')[0] : '',
       status: o.DocStatus === 'O' ? 'Open' : o.DocStatus === 'C' ? 'Closed' : 'Unknown',
@@ -469,6 +543,10 @@ const getSalesQuotation = async (docEntry) => {
       T1.DiscPrcnt AS LineDiscPrcnt,
       T1.VatGroup AS TaxCode,
       T1.WhsCode, T1.unitMsr AS UomCode, T1.LineTotal,
+      T1.OcrCode AS DistRule,
+      T1.CogsOcrCod AS CogsDistRule,
+      T1.CountryOrg AS CountryOfOrigin,
+      T1.AgrNo AS BlanketAgreementNo,
       CHP.ChapterID AS HSNCode
     FROM OQUT T0
     INNER JOIN QUT1 T1 ON T0.DocEntry = T1.DocEntry
@@ -492,6 +570,10 @@ const getSalesQuotation = async (docEntry) => {
   if (!rows.length) throw new Error(`Sales Quotation ${docEntry} not found`);
 
   const header = rows[0];
+  const [headerUdfs, lineUdfs] = await Promise.all([
+    getHeaderUdfValues({ tableId: 'OQUT', keyValue: docEntry }),
+    getLineUdfValues({ tableId: 'QUT1', keyValue: docEntry }),
+  ]);
 
   const batchRows = await safe(db.query(`
     SELECT BaseLineNum, BatchNum, Quantity
@@ -510,6 +592,15 @@ const getSalesQuotation = async (docEntry) => {
       expiryDate: '',
     });
   });
+
+  const firstUdfValue = (udfs, keys) => {
+    for (const key of keys) {
+      if (udfs[key] !== undefined && udfs[key] !== null && String(udfs[key]) !== '') {
+        return String(udfs[key]);
+      }
+    }
+    return '';
+  };
 
   return {
     sales_quotation: {
@@ -547,31 +638,77 @@ const getSalesQuotation = async (docEntry) => {
         discount: String(header.DiscPrcnt || ''),
         currency: header.DocCur || 'INR',
       },
-      lines: rows.map(line => ({
-        itemNo: line.ItemCode,
-        itemDescription: line.Dscription || '',
-        hsnCode: line.HSNCode || '',
-        quantity: String(line.Quantity || 0),
-        unitPrice: String(line.Price || 0),
-        uomCode: line.UomCode || '',
-        stdDiscount: String(line.LineDiscPrcnt || ''),
-        taxCode: line.TaxCode || '',
-        total: String(line.LineTotal || 0),
-        whse: line.WhsCode || '',
-        batches: batchesByLine[line.LineNum] || [],
-        udf: {},
-      })),
+      header_udfs: headerUdfs,
+      lines: rows.map(line => {
+        const lineUdf = lineUdfs[line.LineNum] || {};
+        return {
+          itemNo: line.ItemCode,
+          itemDescription: line.Dscription || '',
+          hsnCode: firstUdfValue(lineUdf, ['U_HSNCode', 'U_HSN']) || line.HSNCode || '',
+          sacCode: firstUdfValue(lineUdf, ['U_SACCode', 'U_SAC']),
+          quantity: String(line.Quantity || 0),
+          unitPrice: String(line.Price || 0),
+          uomCode: line.UomCode || '',
+          stdDiscount: String(line.LineDiscPrcnt || ''),
+          taxCode: line.TaxCode || '',
+          total: String(line.LineTotal || 0),
+          totalLC: String(line.LineTotal || 0),
+          whse: line.WhsCode || '',
+          distRule: line.DistRule || '',
+          cogsDistRule: line.CogsDistRule || '',
+          countryOfOrigin: line.CountryOfOrigin || '',
+          blanketAgreementNo: line.BlanketAgreementNo != null ? String(line.BlanketAgreementNo) : '',
+          specialRebate: firstUdfValue(lineUdf, ['U_SPLRBT']),
+          commission: firstUdfValue(lineUdf, ['U_COMPRC']),
+          sellerBrokeragePerQty: firstUdfValue(lineUdf, ['U_S_BrokPerQty']),
+          sellerBrokerage: firstUdfValue(lineUdf, ['U_Brok_Seller']),
+          buyerBrokerage: firstUdfValue(lineUdf, ['U_Brok_Buyer']),
+          buyerDelivery: firstUdfValue(lineUdf, ['U_Buyer_Delivery']),
+          sellerDelivery: firstUdfValue(lineUdf, ['U_Seller_Delivery']),
+          buyerPaymentTerms: firstUdfValue(lineUdf, ['U_Buyer_Payment_Terms']),
+          sellerPaymentTerms: firstUdfValue(lineUdf, ['U_Seller_Payment_Terms']),
+          buyerQuality: firstUdfValue(lineUdf, ['U_Buyer_Quality']),
+          sellerQuality: firstUdfValue(lineUdf, ['U_Seller_Quality']),
+          buyerPrice: firstUdfValue(lineUdf, ['U_Buyer_Price']),
+          sellerPrice: firstUdfValue(lineUdf, ['U_Seller_Price']),
+          buyerSpecialInstruction: firstUdfValue(lineUdf, ['U_Buyer_SPINS']),
+          sellerSpecialInstruction: firstUdfValue(lineUdf, ['U_Seller_SPINS']),
+          sellerBrokerageAmtPer: firstUdfValue(lineUdf, ['U_Sel_Brok_AP']),
+          sellerBrokeragePercent: firstUdfValue(lineUdf, ['U_Seller_Brok_Per']),
+          buyerBillDiscount: firstUdfValue(lineUdf, ['U_Buyer_Bill_Disc']),
+          sellerBillDiscount: firstUdfValue(lineUdf, ['U_Seller_Bill_Disc']),
+          stcode: firstUdfValue(lineUdf, ['U_SELLTCODE']),
+          sellerItem: firstUdfValue(lineUdf, ['U_S_Item']),
+          sellerQty: firstUdfValue(lineUdf, ['U_S_Qty']),
+          freightPurchase: firstUdfValue(lineUdf, ['U_Freight_pur']),
+          freightSales: firstUdfValue(lineUdf, ['U_Freight_sales']),
+          freightProvider: firstUdfValue(lineUdf, ['U_Fr_trans']),
+          freightProviderName: firstUdfValue(lineUdf, ['U_Fr_trans_name']),
+          brokerageNumber: firstUdfValue(lineUdf, ['U_BDNum']),
+          batches: batchesByLine[line.LineNum] || [],
+          udf: lineUdf,
+        };
+      }),
     },
   };
 };
 
 // ── Open Quotations for Copy ──────────────────────────────────────────────────
 
-const getOpenSalesQuotations = () => safe(db.query(`
+const getOpenSalesQuotations = (customerCode = '') => {
+  const normalizedCustomerCode = String(customerCode || '').trim();
+  const params = {};
+  const customerFilter = normalizedCustomerCode ? 'AND T0.CardCode = @customerCode' : '';
+  if (normalizedCustomerCode) {
+    params.customerCode = normalizedCustomerCode;
+  }
+
+  return safe(db.query(`
   SELECT DISTINCT
     T0.DocEntry,
     T0.DocNum,
     T0.DocDate,
+    T0.DocDueDate,
     T0.CardCode,
     T0.CardName,
     T0.Comments,
@@ -583,34 +720,96 @@ INNER JOIN QUT1 T1 ON T0.DocEntry = T1.DocEntry
 WHERE 
     T0.DocStatus = 'O'
     AND T0.CANCELED = 'N'
-    AND (T1.Quantity - T1.OpenQty) > 0  -- still open qty
+    AND T1.OpenQty > 0
+    ${customerFilter}
 ORDER BY 
     T0.DocDate DESC,
     T0.DocNum DESC;
-`));
+`, params));
+};
 
 const getSalesQuotationForCopy = async (docEntry) => {
+  const headerFieldMetadata = await getTableFieldMetadata('OQUT');
+  const lineFieldMetadata = await getTableFieldMetadata('QUT1');
+  const headerBranchField = hasTableField(headerFieldMetadata, 'BPL_IDAssignedToInvoice')
+    ? 'T0.BPL_IDAssignedToInvoice'
+    : hasTableField(headerFieldMetadata, 'BPLId')
+      ? 'T0.BPLId'
+      : 'NULL';
+  const placeOfSupplyExpression = hasTableField(headerFieldMetadata, 'U_PlaceOfSupply')
+    ? "COALESCE(NULLIF(LTRIM(RTRIM(CAST(T0.U_PlaceOfSupply AS NVARCHAR(254)))), ''), ST.Name, '')"
+    : "ISNULL(ST.Name, '')";
+  const lineField = (columnName, alias, fallback = "''") => (
+    hasTableField(lineFieldMetadata, columnName)
+      ? `T0.${columnName} AS ${sqlAlias(alias)}`
+      : `${fallback} AS ${sqlAlias(alias)}`
+  );
+  const lineTaxField = hasTableField(lineFieldMetadata, 'TaxCode')
+    ? `T0.TaxCode AS ${sqlAlias('TaxCode')}`
+    : hasTableField(lineFieldMetadata, 'VatGroup')
+      ? `T0.VatGroup AS ${sqlAlias('TaxCode')}`
+      : `'' AS ${sqlAlias('TaxCode')}`;
+  const lineUomCodeField = hasTableField(lineFieldMetadata, 'unitMsr')
+    ? `T0.unitMsr AS ${sqlAlias('UomCode')}`
+    : hasTableField(lineFieldMetadata, 'UomCode')
+      ? `T0.UomCode AS ${sqlAlias('UomCode')}`
+      : `'' AS ${sqlAlias('UomCode')}`;
+  const lineUomNameField = hasTableField(lineFieldMetadata, 'unitMsr')
+    ? `T0.unitMsr AS ${sqlAlias('UomName')}`
+    : hasTableField(lineFieldMetadata, 'UomCode')
+      ? `T0.UomCode AS ${sqlAlias('UomName')}`
+      : `'' AS ${sqlAlias('UomName')}`;
+
   // ================= HEADER =================
   const headerResult = await db.query(`
     SELECT 
       T0.DocEntry,
       T0.DocNum,
       T0.DocDate,
+      T0.CreateDate AS DocumentCreated,
       T0.DocDueDate,
       T0.TaxDate,
+      T0.DocStatus,
       T0.CardCode,
       T0.CardName,
       T0.CntctCode,
       T0.NumAtCard,
       T0.Comments,
       T0.BPLId,
-      T0.BPL_IDAssignedToInvoice,
+      ${headerBranchField} AS BPL_IDAssignedToInvoice,
       T0.GroupNum,
+      T0.ShipToCode,
+      T0.PayToCode,
+      T0.Address,
+      T0.Address2,
+      T0.TrnspCode,
+      T0.Confirmed,
+      T0.JrnlMemo,
+      T0.Series,
+      T0.DiscPrcnt,
       T0.SlpCode,
-      T0.U_PlaceOfSupply AS PlaceOfSupply,
+      SLP.SlpName AS SalesEmployeeName,
+      T0.OwnerCode,
+      CASE
+        WHEN EMP.empID IS NOT NULL THEN EMP.firstName + ' ' + ISNULL(EMP.lastName, '')
+        ELSE NULL
+      END AS OwnerName,
+      ${placeOfSupplyExpression} AS PlaceOfSupply,
+      T0.DocCur,
       T0.DocTotal,
-      T0.TotalExpenses AS Freight
+      T0.TotalExpns AS Freight,
+      T0.VatSum AS TaxAmount
     FROM OQUT T0
+    LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
+    LEFT JOIN OHEM EMP ON EMP.empID = T0.OwnerCode
+    OUTER APPLY (
+      SELECT TOP 1 C.State, C.Country
+      FROM CRD1 C
+      WHERE C.CardCode = T0.CardCode
+        AND C.Address = T0.ShipToCode
+        AND C.AdresType = 'S'
+    ) C
+    LEFT JOIN OCST ST ON ST.Code = C.State AND ST.Country = C.Country
     WHERE T0.DocEntry = @DocEntry
       AND T0.DocStatus = 'O'
       AND T0.CANCELED <> 'Y'
@@ -626,11 +825,25 @@ const getSalesQuotationForCopy = async (docEntry) => {
       -- 🔥 IMPORTANT: USE OPEN QTY
       T0.OpenQty AS Quantity,
 
-      T0.Price AS UnitPrice,
+      COALESCE(T0.PriceBefDi, T0.Price) AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.WhsCode AS WarehouseCode,
-      T0.TaxCode,
-      T0.UomCode,
+      ${lineTaxField},
+      ${lineUomCodeField},
+      ${lineUomNameField},
+      ${lineField('OcrCode', 'DistributionRule')},
+      ${lineField('FreeTxt', 'FreeText')},
+      ${lineField('CountryOrg', 'CountryOfOrigin')},
+      T0.OpenQty AS OpenQty,
+      CAST((ISNULL(T0.Quantity, 0) - ISNULL(T0.OpenQty, 0)) AS DECIMAL(19, 6)) AS DeliveredQty,
+      CASE
+        WHEN ISNULL(T0.Quantity, 0) = 0 THEN ISNULL(T0.LineTotal, 0)
+        ELSE ISNULL(T0.LineTotal, 0) * ISNULL(T0.OpenQty, 0) / NULLIF(T0.Quantity, 0)
+      END AS LineTotal,
+      CASE
+        WHEN ISNULL(T0.Quantity, 0) = 0 THEN ISNULL(T0.VatSum, 0)
+        ELSE ISNULL(T0.VatSum, 0) * ISNULL(T0.OpenQty, 0) / NULLIF(T0.Quantity, 0)
+      END AS TaxAmount,
 
       -- HSN
       CHP.ChapterID AS HSNCode,
@@ -638,7 +851,36 @@ const getSalesQuotationForCopy = async (docEntry) => {
       -- 🔥 BASE DOCUMENT LINK (VERY IMPORTANT)
       T0.DocEntry AS BaseEntry,
       T0.LineNum AS BaseLine,
-      23 AS BaseType   -- Sales Quotation
+      23 AS BaseType,
+      ${lineField('U_SPLRBT', 'SpecialRebate')},
+      ${lineField('U_COMPRC', 'Commission')},
+      ${lineField('U_S_BrokPerQty', 'SellerBrokeragePerQty')},
+      ${lineField('U_Unit_Price', 'UnitPriceUdf', 'COALESCE(T0.PriceBefDi, T0.Price)')},
+      ${lineField('U_Brok_Seller', 'SellerBrokerage')},
+      ${lineField('U_Brok_Buyer', 'BuyerBrokerage')},
+      ${lineField('U_Buyer_Delivery', 'BuyerDelivery')},
+      ${lineField('U_Seller_Delivery', 'SellerDelivery')},
+      ${lineField('U_Buyer_Payment_Terms', 'BuyerPaymentTerms')},
+      ${lineField('U_Buyer_Quality', 'BuyerQuality')},
+      ${lineField('U_Seller_Quality', 'SellerQuality')},
+      ${lineField('U_Buyer_Price', 'BuyerPrice')},
+      ${lineField('U_Seller_Price', 'SellerPrice')},
+      ${lineField('U_Buyer_SPINS', 'BuyerSpecialInstruction')},
+      ${lineField('U_Seller_SPINS', 'SellerSpecialInstruction')},
+      ${lineField('U_Buyer_SPINS', 'QtySpecialInstruction')},
+      ${lineField('U_Seller_SPINS', 'DeliverySpecialInstruction')},
+      ${lineField('U_Sel_Brok_AP', 'SellerBrokerageAmtPer')},
+      ${lineField('U_Seller_Brok_Per', 'SellerBrokeragePercent')},
+      ${lineField('U_Buyer_Bill_Disc', 'BuyerBillDiscount')},
+      ${lineField('U_Seller_Bill_Disc', 'SellerBillDiscount')},
+      ${lineField('U_SELLTCODE', 'STCODE', hasTableField(lineFieldMetadata, 'VatGroup') ? 'T0.VatGroup' : "''")},
+      ${lineField('U_S_Item', 'SellerItem')},
+      ${lineField('U_S_Qty', 'SellerQty')},
+      ${lineField('U_Freight_pur', 'FreightPurchase')},
+      ${lineField('U_Freight_sales', 'FreightSales')},
+      ${lineField('U_Fr_trans', 'FreightProvider')},
+      ${lineField('U_Fr_trans_name', 'FreightProviderName')},
+      ${lineField('U_BDNum', 'BrokerageNumber')}
 
     FROM QUT1 T0
     LEFT JOIN OITM ITM ON T0.ItemCode = ITM.ItemCode
@@ -651,11 +893,65 @@ const getSalesQuotationForCopy = async (docEntry) => {
   `, { DocEntry: docEntry });
 
   const header = headerResult.recordset?.[0] || {};
-  const lines = linesResult.recordset || [];
+  const resolvedDocEntry = header.DocEntry || docEntry;
+  const [headerUdfs, lineUdfs, freightCharges] = await Promise.all([
+    getHeaderUdfValues({ tableId: 'OQUT', keyValue: resolvedDocEntry }),
+    getLineUdfValues({ tableId: 'QUT1', keyValue: resolvedDocEntry }),
+    getFreightCharges(resolvedDocEntry),
+  ]);
+  const lines = (linesResult.recordset || []).map((line) => {
+    const udf = lineUdfs[line.LineNum] || {};
+    return {
+      ...line,
+      udf,
+    };
+  });
 
   return {
     ...header,
-    DocumentLines: lines
+    header_udfs: headerUdfs,
+    freightCharges,
+    DocumentLines: lines,
+    sales_quotation: {
+      doc_entry: header.DocEntry,
+      doc_num: header.DocNum,
+      header: {
+        customerCode: header.CardCode || '',
+        customerName: header.CardName || '',
+        contactPerson: header.CntctCode != null ? String(header.CntctCode) : '',
+        branch: header.BPL_IDAssignedToInvoice != null ? String(header.BPL_IDAssignedToInvoice) : (header.BPLId != null ? String(header.BPLId) : ''),
+        series: header.Series != null ? String(header.Series) : '',
+        placeOfSupply: header.PlaceOfSupply || '',
+        postingDate: formatSapDate(header.DocDate),
+        documentCreated: formatSapDate(header.DocumentCreated),
+        deliveryDate: formatSapDate(header.DocDueDate),
+        documentDate: formatSapDate(header.TaxDate),
+        customerRefNo: header.NumAtCard || '',
+        remarks: header.Comments || '',
+        otherInstruction: header.Comments || '',
+        docNum: header.DocNum,
+        status: header.DocStatus === 'O' ? 'Open' : header.DocStatus === 'C' ? 'Closed' : '',
+        paymentTerms: header.GroupNum != null ? String(header.GroupNum) : '',
+        salesEmployee: header.SlpCode != null ? String(header.SlpCode) : '',
+        purchaser: header.SalesEmployeeName || '',
+        owner: header.OwnerName || '',
+        freight: header.Freight != null ? String(header.Freight) : '',
+        tax: header.TaxAmount != null ? String(header.TaxAmount) : '',
+        totalPaymentDue: header.DocTotal != null ? String(header.DocTotal) : '',
+        shipToCode: header.ShipToCode || '',
+        payToCode: header.PayToCode || '',
+        shipTo: header.Address || '',
+        payTo: header.Address2 || '',
+        shippingType: header.TrnspCode != null ? String(header.TrnspCode) : '',
+        confirmed: header.Confirmed === 'Y',
+        journalRemark: header.JrnlMemo || '',
+        discount: header.DiscPrcnt != null ? String(header.DiscPrcnt) : '',
+        currency: header.DocCur || 'INR',
+      },
+      header_udfs: headerUdfs,
+      freightCharges,
+      lines,
+    },
   };
 };
 
@@ -663,6 +959,8 @@ module.exports = {
   getReferenceData,
   getCustomerDetails,
   searchCustomers,
+  getLookupValues: salesQuotationLineLookups.getLookupValues,
+  createLookupValue: salesQuotationLineLookups.createLookupValue,
   getSalesQuotationList,
   getSalesQuotation,
   getDocumentSeries,

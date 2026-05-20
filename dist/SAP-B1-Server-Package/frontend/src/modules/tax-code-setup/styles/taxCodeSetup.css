@@ -1,0 +1,460 @@
+/* ── Tax Codes Setup Page (SAP B1 Style) ── */
+.tc-page {
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 12px;
+  color: #1a1a1a;
+  background: #f0f2f5;
+  min-height: 100vh;
+}
+
+/* ── Toolbar ── */
+.tc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #e8edf2;
+  border-bottom: 1px solid #c8d0da;
+}
+
+.tc-toolbar__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #003366;
+  margin-right: auto;
+}
+
+/* ── Buttons ── */
+.tc-btn {
+  padding: 4px 14px;
+  font-size: 12px;
+  border: 1px solid #a0aab4;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
+  color: #1a1a1a;
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 70px;
+}
+
+.tc-btn:hover {
+  background: linear-gradient(180deg, #f0f4f8 0%, #dde3ea 100%);
+}
+
+.tc-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tc-btn--primary {
+  background: linear-gradient(180deg, #0070c0 0%, #005a9e 100%);
+  color: #fff;
+  border-color: #004a80;
+}
+
+.tc-btn--primary:hover {
+  background: linear-gradient(180deg, #0080d0 0%, #0060aa 100%);
+}
+
+.tc-btn--small {
+  padding: 3px 10px;
+  min-width: 60px;
+}
+
+/* ── Alert ── */
+.tc-alert {
+  margin: 8px 12px 0;
+  padding: 7px 12px;
+  border-radius: 3px;
+  font-size: 12px;
+  border: 1px solid;
+}
+
+.tc-alert--success {
+  background: #e6f4ea;
+  color: #1a7a30;
+  border-color: #8bc49a;
+}
+
+.tc-alert--error {
+  background: #fde8e8;
+  color: #c00;
+  border-color: #f5a0a0;
+}
+
+/* ── Header Section ── */
+.tc-header {
+  margin: 10px 12px;
+  background: #fff;
+  border: 1px solid #c8d0da;
+  border-radius: 3px;
+  padding: 12px 14px;
+}
+
+.tc-header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.tc-header-row:last-child {
+  margin-bottom: 0;
+}
+
+/* ── Field ── */
+.tc-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tc-field--wide {
+  flex: 1;
+}
+
+.tc-field--combination {
+  flex: 1;
+  max-width: 300px;
+}
+
+.tc-field--checkbox {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tc-field--checkbox input[type="checkbox"] {
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
+
+.tc-field--checkbox label {
+  cursor: pointer;
+  font-size: 12px;
+  color: #1a1a1a;
+}
+
+.tc-field__label {
+  font-size: 12px;
+  color: #444;
+  white-space: nowrap;
+  min-width: 80px;
+}
+
+.tc-field__input {
+  height: 22px;
+  padding: 0 5px;
+  font-size: 12px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #1a1a1a;
+  min-width: 100px;
+}
+
+.tc-field__input--code {
+  min-width: 120px;
+  max-width: 150px;
+}
+
+.tc-field__input--rate {
+  min-width: 80px;
+  max-width: 100px;
+  text-align: right;
+}
+
+.tc-field__input:focus {
+  outline: none;
+  border-color: #0070c0;
+  box-shadow: 0 0 0 2px rgba(0, 112, 192, 0.15);
+}
+
+.tc-field__input:read-only,
+.tc-field__input--readonly {
+  background: #e0e0e0;
+  color: #555;
+}
+
+.tc-field__select {
+  height: 22px;
+  padding: 0 4px;
+  font-size: 12px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #1a1a1a;
+  min-width: 180px;
+}
+
+.tc-field__select:focus {
+  outline: none;
+  border-color: #0070c0;
+}
+
+.tc-field__select:disabled {
+  background: #e0e0e0;
+  color: #555;
+  cursor: not-allowed;
+}
+
+/* ── Grid Section ── */
+.tc-grid-section {
+  margin: 0 12px 12px;
+  background: #fff;
+  border: 1px solid #c8d0da;
+  border-radius: 3px;
+  padding: 10px;
+}
+
+.tc-grid-wrap {
+  overflow-x: auto;
+  margin-bottom: 8px;
+}
+
+.tc-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 900px;
+}
+
+.tc-grid th {
+  background: #d0d0d0;
+  border: 1px solid #999;
+  padding: 4px 6px;
+  text-align: left;
+  font-weight: bold;
+  color: #1a1a1a;
+  white-space: nowrap;
+}
+
+.tc-grid td {
+  background: #ffffff;
+  border: 1px solid #ccc;
+  padding: 2px 4px;
+  height: 24px;
+  vertical-align: middle;
+}
+
+.tc-grid tbody tr:hover td {
+  background: #e8f0fe;
+}
+
+.tc-grid__cell--center {
+  text-align: center;
+}
+
+.tc-grid__input {
+  width: 100%;
+  height: 20px;
+  padding: 0 4px;
+  font-size: 12px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #1a1a1a;
+  box-sizing: border-box;
+}
+
+.tc-grid__input:focus {
+  outline: none;
+  border-color: #0070c0;
+  background: #fff;
+}
+
+.tc-grid__input--readonly {
+  background: #e0e0e0;
+  color: #555;
+}
+
+.tc-grid__input--number {
+  text-align: right;
+}
+
+.tc-grid__select {
+  width: 100%;
+  height: 20px;
+  padding: 0 2px;
+  font-size: 12px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #1a1a1a;
+  box-sizing: border-box;
+}
+
+.tc-grid__select:focus {
+  outline: none;
+  border-color: #0070c0;
+}
+
+.tc-grid__lookup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tc-grid__lookup .tc-grid__input {
+  flex: 1;
+  min-width: 0;
+}
+
+.tc-grid__lookup-btn {
+  flex: 0 0 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 11px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fff 0%, #e8ecf0 100%);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.tc-grid__lookup-btn:hover {
+  background: #d8e2ec;
+}
+
+.tc-grid__delete-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 12px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fff 0%, #e8ecf0 100%);
+  cursor: pointer;
+  color: #c00;
+  line-height: 1;
+}
+
+.tc-grid__delete-btn:hover {
+  background: #ffe0e0;
+}
+
+.tc-grid-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ── Modal ── */
+.tc-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tc-modal {
+  background: #fff;
+  border: 1px solid #a0aab4;
+  border-radius: 4px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+  width: 600px;
+  max-width: 95vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+}
+
+.tc-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #e8edf2;
+  border-bottom: 1px solid #c8d0da;
+  font-weight: 700;
+  color: #003366;
+}
+
+.tc-modal__close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: #666;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.tc-modal__close:hover {
+  color: #c00;
+}
+
+.tc-modal__search {
+  padding: 8px 12px;
+  border-bottom: 1px solid #e8ecf0;
+}
+
+.tc-modal__search form {
+  display: flex;
+  gap: 6px;
+}
+
+.tc-modal__search-input {
+  flex: 1;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: #fff;
+}
+
+.tc-modal__search-input:focus {
+  outline: none;
+  border-color: #0070c0;
+}
+
+.tc-modal__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.tc-modal__empty {
+  padding: 20px;
+  text-align: center;
+  color: #888;
+}
+
+/* ── Lookup Table ── */
+.tc-lookup-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.tc-lookup-table th {
+  background: #e8edf2;
+  border-bottom: 1px solid #c8d0da;
+  padding: 5px 10px;
+  text-align: left;
+  font-weight: 700;
+  color: #003366;
+  position: sticky;
+  top: 0;
+}
+
+.tc-lookup-table td {
+  padding: 4px 10px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.tc-lookup-table__row {
+  cursor: pointer;
+}
+
+.tc-lookup-table__row:hover {
+  background: #e8f0fe;
+}

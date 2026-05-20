@@ -50,8 +50,10 @@ const fetchNextNumber = (series) =>
 const fetchStateFromAddress = (cardCode, addressCode) =>
   apiClient.get(`/sales-order/state-from-address?cardCode=${encodeURIComponent(cardCode)}&addressCode=${encodeURIComponent(addressCode)}`);
 
-const fetchItemsForModal = () =>
-  apiClient.get('/sales-order/items-modal');
+const fetchItemsForModal = (whsCode = '') =>
+  apiClient.get('/sales-order/items-modal', {
+    params: whsCode ? { whsCode } : {},
+  });
 
 const fetchFreightCharges = (docEntry) =>
   apiClient.get('/sales-order/freight-charges', { params: { docEntry } });
@@ -63,8 +65,10 @@ const createSalesOrderLookupValue = (field, value, description = '') =>
   apiClient.post('/sales-order/lookup-values', { field, value, description });
 
 // ── Copy From: reuse existing sales-quotation and blanket-agreement endpoints ──
-const fetchOpenSalesQuotations = () =>
-  apiClient.get('/sales-quotation/open');
+const fetchOpenSalesQuotations = (customerCode = null) =>
+  apiClient.get('/sales-quotation/open', {
+    params: customerCode ? { customerCode } : {},
+  });
 
 const fetchOpenBlanketAgreements = () =>
   apiClient.get('/blanket-agreements/open');
@@ -76,8 +80,10 @@ const fetchBlanketAgreementForCopy = (docEntry) =>
   apiClient.get(`/blanket-agreements/${encodeURIComponent(docEntry)}/copy`);
 
 // ── Open Sales Orders (for Copy From in Sales Order page) ──
-const fetchOpenSalesOrdersForCopy = () =>
-  apiClient.get('/sales-order/open');
+const fetchOpenSalesOrdersForCopy = (customerCode = null) =>
+  apiClient.get('/sales-order/open', {
+    params: customerCode ? { customerCode } : {},
+  });
 
 const fetchSalesOrderForCopy = (docEntry) =>
   apiClient.get(`/sales-order/${encodeURIComponent(docEntry)}/copy`);

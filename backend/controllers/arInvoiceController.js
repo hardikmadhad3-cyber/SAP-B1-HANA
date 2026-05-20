@@ -68,6 +68,8 @@ const getARInvoiceList = async (req, res) => {
       docNum: req.query.docNum,
       customerCode: req.query.customerCode,
       customerName: req.query.customerName,
+      sellerCode: req.query.sellerCode,
+      sellerName: req.query.sellerName,
       status: req.query.status,
       postingDateFrom: req.query.postingDateFrom,
       postingDateTo: req.query.postingDateTo,
@@ -197,7 +199,7 @@ const getDeliveryForCopy = async (req, res) => {
 
 const getOpenSalesQuotations = async (req, res) => {
   try {
-    res.json(await arInvoiceService.getOpenSalesQuotations());
+    res.json(await arInvoiceService.getOpenSalesQuotations(req.query.customerCode));
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load open sales quotations.'));
   }

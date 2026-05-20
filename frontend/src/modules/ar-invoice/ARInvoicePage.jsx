@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import './styles/arInvoice.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
@@ -16,13 +16,21 @@ import StateSelectionModal from '../sales-order/components/StateSelectionModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
+import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { copyToDocument } from '../../services/documentCopyService';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
+import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
+import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import {
   fetchARInvoiceReferenceData,
@@ -47,7 +55,7 @@ import {
 } from '../../api/arInvoiceApi';
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { AR_INVOICE_COMPANY_ID } from '../../config/appConfig';
-import { arInvoiceCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, BASE_TYPE } from '../../api/copyFromApi';
+import { arInvoiceCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
   FORM_SETTINGS_STORAGE_KEY,
   HEADER_UDF_DEFINITIONS,
@@ -108,6 +116,10 @@ const normalizeAddressText = (value) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+const normalizeBaseLine = (line, fallbackIndex) =>
+  line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? fallbackIndex;
+const normalizeWarehouse = (line = {}, header = {}) =>
+  line.whse || line.WarehouseCode || line.WhsCode || line.warehouse || header.warehouse || header.WarehouseCode || '';
 
 // ─── static fallbacks ────────────────────────────────────────────────────────
 const FALLBACK_PAYMENT_TERMS = [
@@ -122,32 +134,15 @@ const FALLBACK_SHIPPING = [
   { value: '3', label: 'Road' },
   { value: '4', label: 'Courier' },
 ];
-const FALLBACK_TAX = [
-  { Code: 'GST5', Name: 'GST 5%', Rate: 5 },
-  { Code: 'GST12', Name: 'GST 12%', Rate: 12 },
-  { Code: 'GST18', Name: 'GST 18%', Rate: 18 },
-  { Code: 'GST28', Name: 'GST 28%', Rate: 28 },
-  { Code: 'IGST5', Name: 'IGST 5%', Rate: 5 },
-  { Code: 'IGST12', Name: 'IGST 12%', Rate: 12 },
-  { Code: 'IGST18', Name: 'IGST 18%', Rate: 18 },
-  { Code: 'IGST28', Name: 'IGST 28%', Rate: 28 },
-  { Code: 'EXEMPT', Name: 'Exempt', Rate: 0 },
-];
-const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
-const FALLBACK_WAREHOUSES = [
-  { WhsCode: 'WH01', WhsName: 'Main Warehouse' },
-  { WhsCode: 'WH02', WhsName: 'Secondary Warehouse' },
-];
-
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 
-const createLine = () => ({
+const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
   openQty: '', uomCode: '', stdDiscount: '', taxCode: '', total: '', whse: '',
   loc: '', branch: '',
-  udf: createUdfState(ROW_UDF_DEFINITIONS),
+  udf: createUdfState(rowUdfDefinitions),
 });
 
 const INIT_HEADER = {
@@ -171,11 +166,15 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 function ARInvoicePage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { removeTask, upsertTask } = useSapWindowTaskbarActions();
+  const handledCopyFromRef = useRef('');
   const requestedEditDocEntry = location.state?.arInvoiceDocEntry;
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
-  const [lines, setLines] = useState([createLine()]);
+  const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
+  const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
@@ -190,6 +189,7 @@ function ARInvoicePage() {
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
+  useValidationHighlights(valErrors);
   const [loadedSnapshot, setLoadedSnapshot] = useState('');
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -296,7 +296,8 @@ function ARInvoicePage() {
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
-  const markDirty = useCallback(() => {
+  const markDirty = useCallback((event) => {
+    if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
     if (currentDocEntry) setIsDirty(true);
   }, [currentDocEntry]);
 
@@ -312,6 +313,28 @@ function ARInvoicePage() {
         
         if (!ignore) {
           const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
+          const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
+          const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs);
+          setHeaderUdfDefinitions(nextHeaderUdfs);
+          setRowUdfDefinitions(nextRowUdfs);
+          setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
+          setLines((prev) => prev.map((line) => ({
+            ...line,
+            udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
+          })));
+          setFormSettings((prev) => ({
+            ...nextDefaults,
+            ...prev,
+            headerUdfs: {
+              ...nextDefaults.headerUdfs,
+              ...(prev.headerUdfs || {}),
+            },
+            rowUdfs: {
+              ...nextDefaults.rowUdfs,
+              ...(prev.rowUdfs || {}),
+            },
+          }));
           setRefData(prev => ({
             ...prev,
             company: refDataRes.data.company || '',
@@ -330,6 +353,7 @@ function ARInvoicePage() {
             states: refDataRes.data.states || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
+            udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             warnings: refDataRes.data.warnings || [],
             series: Array.isArray(prev.series) ? prev.series : [],
           }));
@@ -444,10 +468,10 @@ function ARInvoicePage() {
         
         setLines(
           Array.isArray(so.lines) && so.lines.length
-            ? so.lines.map(l => ({ ...createLine(), ...l, udf: { ...createUdfState(ROW_UDF_DEFINITIONS), ...(l.udf || {}) } }))
-            : [createLine()]
+            ? so.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, udf: normalizeUdfState(rowUdfDefinitions, l.udf || {}) }))
+            : [createLine(rowUdfDefinitions)]
         );
-        setHeaderUdfs(normalizeUdfState(HEADER_UDF_DEFINITIONS, so.header_udfs || {}));
+        setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
         setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
@@ -507,17 +531,38 @@ function ARInvoicePage() {
 
   // ── Copy To: populate form from Sales Order / Delivery ────────────────────
   useEffect(() => {
-    const copyFrom = location.state?.copyFrom;
+    const routedCopyFrom = location.state?.copyFrom;
+    const persistedCopyState = routedCopyFrom ? null : consumeCopyToState(location.pathname, ['/ar-invoice']);
+    const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
     if (!copyFrom) return;
 
-    const { header: srcHeader, lines: srcLines, baseDocument } = copyFrom;
+    const copyFromKey = JSON.stringify({
+      path: location.pathname,
+      type: copyFrom.type,
+      docEntry: copyFrom.docEntry,
+      lineCount: Array.isArray(copyFrom.lines) ? copyFrom.lines.length : 0,
+    });
+
+    if (handledCopyFromRef.current === copyFromKey) {
+      return;
+    }
+
+    handledCopyFromRef.current = copyFromKey;
+
+    const { header: srcHeader = {}, lines: srcLines = [], baseDocument } = copyFrom;
+    const firstSourceLine = Array.isArray(srcLines) && srcLines.length ? srcLines[0] : {};
+    const copiedWarehouse = normalizeWarehouse(firstSourceLine, srcHeader);
+    const copiedBranch = srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || srcHeader.BPLId || firstSourceLine.branch || '';
+    const copiedBaseType = baseDocument?.baseType || BASE_TYPE[copyFrom.type] || firstSourceLine.baseType || 15;
+    const copiedBaseEntry = baseDocument?.baseEntry || copyFrom.docEntry;
 
     setHeader(prev => ({
       ...prev,
       vendor:           srcHeader.vendor        || srcHeader.CardCode  || '',
       name:             srcHeader.name          || srcHeader.CardName  || '',
       contactPerson:    srcHeader.contactPerson || srcHeader.CntctCode || '',
-      branch:           srcHeader.branch        || srcHeader.BPL_IDAssignedToInvoice || '',
+      branch:           copiedBranch,
+      warehouse:        copiedWarehouse,
       paymentTerms:     srcHeader.paymentTerms  || srcHeader.GroupNum  || '',
       placeOfSupply:    srcHeader.placeOfSupply || '',
       otherInstruction: srcHeader.otherInstruction || srcHeader.Comments || '',
@@ -525,7 +570,7 @@ function ARInvoicePage() {
 
     if (Array.isArray(srcLines) && srcLines.length > 0) {
       setLines(srcLines.map((l, idx) => ({
-        ...createLine(),
+        ...createLine(rowUdfDefinitions),
         itemNo:          l.itemNo          || l.ItemCode        || '',
         itemDescription: l.itemDescription || l.ItemDescription || l.Dscription || '',
         quantity:        String(l.quantity || l.Quantity || l.OpenQty || 0),
@@ -533,21 +578,23 @@ function ARInvoicePage() {
         uomCode:         l.uomCode         || l.UomCode         || l.unitMsr || '',
         hsnCode:         l.hsnCode         || l.HSNCode         || '',
         taxCode:         l.taxCode         || l.TaxCode         || '',
-        whse:            l.whse            || l.WarehouseCode   || l.WhsCode || '',
+        whse:            normalizeWarehouse(l, srcHeader),
         discount:        String(l.discount || l.DiscountPercent || l.DiscPrcnt || 0),
-        baseEntry:       baseDocument?.baseEntry || copyFrom.docEntry,
-        baseType:        baseDocument?.baseType  || 17,
-        baseLine:        l.lineNum         ?? l.LineNum         ?? idx,
-        branch:          l.branch          || srcHeader.branch  || '',
+        stdDiscount:     String(l.stdDiscount || l.discount || l.DiscountPercent || l.DiscPrcnt || 0),
+        baseEntry:       l.baseEntry ?? l.BaseEntry ?? copiedBaseEntry,
+        baseType:        l.baseType ?? l.BaseType ?? copiedBaseType,
+        baseLine:        normalizeBaseLine(l, idx),
+        branch:          l.branch || copiedBranch,
       })));
     }
 
     const cardCode = srcHeader.vendor || srcHeader.CardCode;
     if (cardCode) loadVendorDetails(cardCode);
 
-    setPageState(p => ({ ...p, success: 'Copied from Sales Order. Please review and save.' }));
-    navigate(location.pathname, { replace: true, state: null });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    const sourceLabel = copyFrom.sourceLabel || copyFrom.type || 'source document';
+    setPageState(p => ({ ...p, success: `Copied from ${sourceLabel}. Please review and save.` }));
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state || persistedCopyState);
+  }, [location.pathname, location.state?.copyFrom, navigate, rowUdfDefinitions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
@@ -568,7 +615,7 @@ function ARInvoicePage() {
   const defaultShipTo = fmtAddr(refData.company_address);
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
 
-  const effectiveTaxCodes = refData.tax_codes.length ? refData.tax_codes : FALLBACK_TAX;
+  const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES;
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
@@ -1152,7 +1199,7 @@ function ARInvoicePage() {
     setPageState(p => ({ ...p, error: '' }));
     markDirty();
     setLines(p => [...p, { 
-      ...createLine(), 
+      ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
       whse: header.warehouse || ''
@@ -1176,7 +1223,13 @@ function ARInvoicePage() {
     markDirty();
     setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
   };
-  const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...p[g], [k]: { ...p[g][k], [prop]: val } } }));
+  const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({
+    ...p,
+    [g]: {
+      ...(p[g] || {}),
+      [k]: { ...((p[g] || {})[k] || {}), [prop]: val },
+    },
+  }));
   const toggleHeaderUdfs = () => {
     setFormSettingsOpen(false);
     setSidebarOpen(p => !p);
@@ -1394,19 +1447,21 @@ function ARInvoicePage() {
     if (itemModal.lineIndex < 0) return;
     
     const lineIndex = itemModal.lineIndex;
+    const mergedItem = mergeItemMaster(item, refData.items);
     
     try {
-      const hsnRes = await fetchHSNCodeFromItem(item.ItemCode);
+      const hsnRes = await fetchHSNCodeFromItem(mergedItem.ItemCode);
       const hsnData = hsnRes.data;
       
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
-          const updatedLine = {
-            ...line,
-            itemNo: item.ItemCode || '',
-            itemDescription: item.ItemName || '',
+          const updatedLine = hydrateDocumentLineFromItem(line, mergedItem, {
+            side: 'sales',
             hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
-          };
+            fallbackWarehouse: header.warehouse,
+            calcLineTotal,
+            formatTotal: (value) => fmtDec(value, numDec.total),
+          });
           
           // Auto-populate tax code based on HSN
           if (updatedLine.hsnCode) {
@@ -1426,11 +1481,12 @@ function ARInvoicePage() {
       console.error('Error selecting item:', error);
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
-          return {
-            ...line,
-            itemNo: item.ItemCode || '',
-            itemDescription: item.ItemName || '',
-          };
+          return hydrateDocumentLineFromItem(line, mergedItem, {
+            side: 'sales',
+            fallbackWarehouse: header.warehouse,
+            calcLineTotal,
+            formatTotal: (value) => fmtDec(value, numDec.total),
+          });
         }
         return line;
       }));
@@ -1643,17 +1699,8 @@ function ARInvoicePage() {
       const taxCodesUsed = new Set(pop.map(l => l.taxCode).filter(Boolean));
       console.log('🔍 Tax codes used:', Array.from(taxCodesUsed));
       
-      const sgstCodes = Array.from(taxCodesUsed).filter(code => {
-        const codeStr = String(code || '');
-        console.log(`🔍 Checking if '${codeStr}' contains SGST`);
-        return codeStr.toUpperCase().includes('SGST');
-      });
-      
-      const cgstCodes = Array.from(taxCodesUsed).filter(code => {
-        const codeStr = String(code || '');
-        console.log(`🔍 Checking if '${codeStr}' contains CGST`);
-        return codeStr.toUpperCase().includes('CGST');
-      });
+      const sgstCodes = getTaxComponentCodes(taxCodesUsed, effectiveTaxCodes, 'SGST');
+      const cgstCodes = getTaxComponentCodes(taxCodesUsed, effectiveTaxCodes, 'CGST');
 
       console.log('🔍 SGST codes:', sgstCodes);
       console.log('🔍 CGST codes:', cgstCodes);
@@ -1671,11 +1718,11 @@ function ARInvoicePage() {
       if (sgstCodes.length > 0 && cgstCodes.length > 0) {
         console.log('🔍 Validating SGST and CGST rates match...');
         const sgstRates = sgstCodes.map(code => {
-          const tax = effectiveTaxCodes.find(t => t.Code === code);
+          const tax = findTaxCode(effectiveTaxCodes, code);
           return tax ? parseNum(tax.Rate) : 0;
         });
         const cgstRates = cgstCodes.map(code => {
-          const tax = effectiveTaxCodes.find(t => t.Code === code);
+          const tax = findTaxCode(effectiveTaxCodes, code);
           return tax ? parseNum(tax.Rate) : 0;
         });
         console.log('🔍 SGST rates:', sgstRates);
@@ -1735,16 +1782,17 @@ function ARInvoicePage() {
 
   // ── Copy From handler ─────────────────────────────────────────────────────
   const handleCopyFrom = (data, sourceType) => {
+    const copySource = unwrapCopyFromDocument(data);
     const baseType = BASE_TYPE[sourceType] || 17;
-    const normHeader = normaliseDocumentHeader(data);
+    const normHeader = normaliseDocumentHeader(copySource.header);
 
     setHeader(prev => ({ ...prev, ...normHeader }));
 
-    const rawLines = data.DocumentLines || data.lines || [];
+    const rawLines = copySource.lines;
     const newLines = rawLines.map((line, idx) =>
-      ({ ...createLine(), ...normaliseDocumentLine(line, idx, data.DocEntry || data.docEntry, baseType, normHeader.branch) })
+      ({ ...createLine(rowUdfDefinitions), ...normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch) })
     );
-    setLines(newLines.length > 0 ? newLines : [createLine()]);
+    setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
 
     const cardCode = normHeader.vendor;
     if (cardCode && cardCode !== header.vendor) loadVendorDetails(cardCode);
@@ -1756,19 +1804,22 @@ function ARInvoicePage() {
   // ── Copy From fetch handlers ───────────────────────────────────────────────
   const fetchCopyFromDocuments = async (docType) => {
     try {
+      const bpCode = String(header.vendor || '').trim();
+      if (!bpCode) return [];
+
       // Sales Quotations: use dedicated API
       if (docType === 'salesQuotation') {
-        const res = await fetchOpenSalesQuotationsForARInvoice();
-        return res?.data?.quotations || [];
+        const res = await fetchOpenSalesQuotationsForARInvoice(bpCode);
+        return res?.data?.quotations || res?.data?.documents || [];
       }
       // Sales Orders: filter by current customer for relevance
       if (docType === 'salesOrder') {
-        const res = await fetchOpenSalesOrdersForARInvoice(header.vendor || null);
+        const res = await fetchOpenSalesOrdersForARInvoice(bpCode);
         return res?.data?.orders || res?.data?.documents || [];
       }
       // Deliveries: filter by current customer for relevance
       if (docType === 'delivery') {
-        const res = await fetchOpenDeliveriesForARInvoice(header.vendor || null);
+        const res = await fetchOpenDeliveriesForARInvoice(bpCode);
         return res?.data?.deliveries || res?.data?.documents || [];
       }
       // Blanket Agreements: use dedicated API
@@ -1776,7 +1827,7 @@ function ARInvoicePage() {
         const res = await fetchOpenBlanketAgreementsForARInvoice();
         return res?.data?.agreements || [];
       }
-      return await arInvoiceCopyFromApi.fetchOpenDocuments(docType);
+      return await arInvoiceCopyFromApi.fetchOpenDocuments(docType, bpCode);
     } catch (err) {
       console.error('Error fetching documents:', err);
       throw err;
@@ -1809,60 +1860,25 @@ function ARInvoicePage() {
   };
 
   // ── Copy To handler ───────────────────────────────────────────────────────
-  const handleCopyTo = (targetType = 'arCreditMemo') => {
-    if (!currentDocEntry) {
-      setPageState(p => ({ ...p, error: 'Please save the AR invoice first before copying to another document' }));
-      return;
-    }
-
-    const copyState = {
-      copyFrom: {
-        type: 'arInvoice',
-        sourceLabel: 'A/R Invoice',
-        docEntry: currentDocEntry,
-        header: {
-          vendor: header.vendor,
-          name: header.name,
-          contactPerson: header.contactPerson,
-          salesContractNo: header.salesContractNo,
-          branch: header.branch,
-          warehouse: header.warehouse,
-          paymentTerms: header.paymentTerms,
-          placeOfSupply: header.placeOfSupply,
-          otherInstruction: header.otherInstruction,
-          discount: header.discount,
-          freight: header.freight,
-          tax: header.tax,
-          totalPaymentDue: header.totalPaymentDue,
-          postingDate: header.postingDate,
-          deliveryDate: header.deliveryDate,
-          documentDate: header.documentDate,
-          billToAddress: header.billToAddress,
-          billToCode: header.billToCode,
-          shipToAddress: header.shipToAddress,
-          shipToCode: header.shipToCode,
-          payTo: header.payTo,
-          payToCode: header.payToCode,
-          owner: header.owner,
-          purchaser: header.purchaser,
-          currency: header.currency,
-        },
-        lines: lines.map((l, idx) => ({
-          ...l,
-          lineNum: l.lineNum ?? idx,
-          stdDiscount: l.stdDiscount ?? l.discount ?? '',
-        })),
-        headerUdfs: { ...headerUdfs },
-        baseDocument: {
-          baseType: 13,
-          baseEntry: currentDocEntry,
-        },
-      }
-    };
-
-    if (targetType === 'arCreditMemo') {
-      navigate('/ar-credit-memo', { state: copyState });
-    }
+  const handleCopyTo = async (targetType = 'ar-credit-memo') => {
+    await copyToDocument({
+      sourceDocType: 'arInvoice',
+      targetType,
+      sourceDocEntry: currentDocEntry,
+      sourceDocNo: header.docNo,
+      sourcePath: location.pathname,
+      sourceSnapshot: {
+        header,
+        lines: lines.map((line) => ({ ...line, stdDiscount: line.stdDiscount ?? line.discount ?? '' })),
+        headerUdfs,
+      },
+      restoreState: { arInvoiceDocEntry: currentDocEntry },
+      navigate,
+      upsertTask,
+      removeTask,
+      setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
+      errorMessage: 'Please save the AR invoice first before copying to another document',
+    });
   };
 
   // ── submit ────────────────────────────────────────────────────────────────
@@ -1903,18 +1919,18 @@ function ARInvoicePage() {
         header: prep,
         lines: lines.map((line) => ({
           ...line,
-          udf: normalizeUdfState(ROW_UDF_DEFINITIONS, line.udf || {}),
+          udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
         })),
         freightCharges: freightModal.freightCharges,
-        header_udfs: normalizeUdfState(HEADER_UDF_DEFINITIONS, headerUdfs),
+        header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
       };
       const r = currentDocEntry ? await updateARInvoice(currentDocEntry, payload) : await submitARInvoice(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
-      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-      setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+      setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setValErrors({ header: {}, lines: {}, form: '' });
       
@@ -1935,13 +1951,14 @@ function ARInvoicePage() {
     setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
-    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-    setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
   };
 
-  const visHdrUdfs = HEADER_UDF_DEFINITIONS.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
 
   // Continue in next part with render...
@@ -1953,26 +1970,33 @@ function ARInvoicePage() {
       {/* toolbar */}
       <div className="del-toolbar sap-document-toolbar">
         <span className="del-toolbar__title">A/R Invoice{currentDocEntry ? ` — #${header.docNo || currentDocEntry}` : ''}</span>
-        <button type="submit" className="del-btn del-btn--primary" disabled={pageState.posting || !isDocumentEditable}>
+        <button type="submit" className="del-btn del-btn--primary sap-document-toolbar__primary" disabled={pageState.posting || !isDocumentEditable}>
           {primaryActionLabel}
         </button>
-        <button type="button" className="del-btn" disabled={pageState.posting || !isDocumentEditable}>
-          Add Draft & New
-        </button>
-        <button type="button" className="del-btn" onClick={resetForm}>
+        <button type="button" className="del-btn sap-document-toolbar__cancel" onClick={resetForm}>
           Cancel
         </button>
       
         <button
           type="button"
-          className="del-btn"
+          className="del-btn sap-document-toolbar__udf"
           onClick={toggleHeaderUdfs}
         >
           {sidebarOpen ? 'Hide UDFs' : 'Show UDFs'}
         </button>
-        <button type="button" className="del-btn" onClick={toggleFormSettings}>
+        <button type="button" className="del-btn sap-document-toolbar__settings" onClick={toggleFormSettings}>
           Form Settings
         </button>
+        <PrintLayoutToolbar
+          documentType="arInvoice"
+          documentLabel="A/R Invoice"
+          docEntry={currentDocEntry}
+          docNumber={header.docNo}
+          disabled={pageState.posting}
+          classPrefix="del"
+          onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
+          onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
+        />
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
           <button
             type="button"
@@ -2006,15 +2030,15 @@ function ARInvoicePage() {
         </div>
         <button 
           type="button" 
-          className="del-btn"
+          className="del-btn sap-document-toolbar__copy"
           onClick={() => handleCopyTo('arCreditMemo')}
           disabled={!currentDocEntry}
           title={!currentDocEntry ? 'Save the AR invoice first' : 'Copy this invoice to A/R Credit Memo'}
         >
           Copy To
         </button>
-        <button type="button" className="del-btn" onClick={() => navigate('/ar-invoice/find')}>Find</button>
-        <button type="button" className="del-btn" onClick={resetForm}>New</button>
+        <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/ar-invoice/find')}>Find</button>
+        <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
       </div>
 
       {/* alerts */}
@@ -2277,6 +2301,8 @@ function ARInvoicePage() {
                 getBranchName={getBranchName}
                 valErrors={valErrors}
                 isEditable={isDocumentEditable}
+                rowUdfFields={visibleRowUdfs}
+                onRowUdfChange={handleRowUdfChange}
               />
             )}
 
@@ -2426,9 +2452,6 @@ function ARInvoicePage() {
                 <button type="submit" className="del-btn del-btn--primary" disabled={pageState.posting || !isDocumentEditable}>
                   {secondaryActionLabel}
                 </button>
-                <button type="button" className="del-btn" disabled={pageState.posting || !isDocumentEditable}>
-                  Add Draft & New
-                </button>
                 <button type="button" className="del-btn" onClick={resetForm}>
                   Cancel
                 </button>
@@ -2506,8 +2529,8 @@ function ARInvoicePage() {
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={[]}
-            headerUdfFields={HEADER_UDF_DEFINITIONS}
-            rowUdfFields={ROW_UDF_DEFINITIONS}
+            headerUdfFields={headerUdfDefinitions}
+            rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}
             onSettingChange={updateFormSetting}
           />

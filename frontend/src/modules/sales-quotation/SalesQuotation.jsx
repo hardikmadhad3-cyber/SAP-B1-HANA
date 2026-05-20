@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import './styles/SalesQuotation.css';
 import '../../modules/item-master/styles/itemMaster.css';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -17,16 +17,25 @@ import TaxInfoModal from './components/TaxInfoModal';
 import StateSelectionModal from './components/StateSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import CopyFromModal from './components/CopyFromModal';
-import CopyToModal from './components/CopyToModal';
+import CopyToDropdown from '../../components/document/CopyToDropdown';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
+import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
+import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
+import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
+import { copyToDocument } from '../../services/documentCopyService';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import {
   fetchSalesQuotationByDocEntry,
@@ -39,10 +48,15 @@ import {
   fetchStateFromAddress,
   fetchItemsForModal,
   fetchFreightCharges,
+  createSalesQuotationLookupValue,
+  fetchOpenSalesQuotations,
+  fetchSalesQuotationForCopy,
 } from '../../api/salesQuotationApi';
+import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { SALES_ORDER_COMPANY_ID } from '../../config/appConfig';
 import {
+  BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
   HEADER_UDF_DEFINITIONS,
   ROW_UDF_DEFINITIONS,
@@ -116,32 +130,43 @@ const FALLBACK_SHIPPING = [
   { value: '3', label: 'Road' },
   { value: '4', label: 'Courier' },
 ];
-const FALLBACK_TAX = [
-  { Code: 'GST5', Name: 'GST 5%', Rate: 5 },
-  { Code: 'GST12', Name: 'GST 12%', Rate: 12 },
-  { Code: 'GST18', Name: 'GST 18%', Rate: 18 },
-  { Code: 'GST28', Name: 'GST 28%', Rate: 28 },
-  { Code: 'IGST5', Name: 'IGST 5%', Rate: 5 },
-  { Code: 'IGST12', Name: 'IGST 12%', Rate: 12 },
-  { Code: 'IGST18', Name: 'IGST 18%', Rate: 18 },
-  { Code: 'IGST28', Name: 'IGST 28%', Rate: 28 },
-  { Code: 'EXEMPT', Name: 'Exempt', Rate: 0 },
-];
-const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
-const FALLBACK_WAREHOUSES = [
-  { WhsCode: 'WH01', WhsName: 'Main Warehouse' },
-  { WhsCode: 'WH02', WhsName: 'Secondary Warehouse' },
-];
-
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Transport', 'Electronic Documents', 'Attachments'];
+const HEADER_VALIDATION_TABS = {
+  shipToCode: 'Logistics',
+  billToCode: 'Logistics',
+};
 
-const createLine = () => ({
+const getValidationTab = (errors) => {
+  if (Object.values(errors.lines || {}).some(lineErrors => Object.values(lineErrors || {}).some(Boolean))) {
+    return 'Contents';
+  }
+
+  const headerField = Object.entries(errors.header || {}).find(([, message]) => Boolean(message))?.[0];
+  return HEADER_VALIDATION_TABS[headerField] || 'Contents';
+};
+
+const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
-  uomCode: '', stdDiscount: '', taxCode: '', total: '', whse: '',
-  loc: '', branch: '',
-  udf: createUdfState(ROW_UDF_DEFINITIONS),
+  sacCode: '', uomCode: '', stdDiscount: '', taxCode: '', total: '', totalLC: '', whse: '',
+  distRule: '', cogsDistRule: '', countryOfOrigin: '', loc: '', branch: '',
+  blanketAgreementNo: '', allowProcurementDoc: false,
+  saudaNodeRef: '', apInvDocKey: '', apInvDocNum: '', apInvLineNum: '',
+  assessableValue: '', bedRate: '', bedAmount: '', rg23dNo: '',
+  specialRebate: '', commission: '', sellerItem: '', sellerQty: '',
+  sellerBrokeragePerQty: '',
+  sellerBrokerage: '', buyerBrokerage: '',
+  buyerDelivery: '', sellerDelivery: '',
+  buyerPaymentTerms: '', sellerPaymentTerms: '',
+  buyerQuality: '', sellerQuality: '',
+  buyerPrice: '', sellerPrice: '',
+  buyerSpecialInstruction: '', sellerSpecialInstruction: '',
+  sellerBrokerageAmtPer: '', sellerBrokeragePercent: '',
+  buyerBillDiscount: '', sellerBillDiscount: '', stcode: '',
+  freightPurchase: '', freightSales: '', freightProvider: '', freightProviderName: '',
+  documentCreated: '', brokerageNumber: '',
+  udf: createUdfState(rowUdfDefinitions),
 });
 
 const INIT_HEADER = {
@@ -161,15 +186,24 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
   freeText: '', copyToTargetDocument: '', documentType: '', atchDocDate: '', alert: '',
 }));
 
+const closeDocumentDropdowns = () => {
+  if (typeof document === 'undefined') return;
+  document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
+};
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 function SalesQuotation() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const requestedEditDocEntry = location.state?.salesQuotationDocEntry || location.state?.salesOrderDocEntry;
+  const formRef = useRef(null);
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
-  const [lines, setLines] = useState([createLine()]);
+  const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
+  const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
@@ -180,10 +214,12 @@ function SalesQuotation() {
     company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
     warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
     payment_terms: [], shipping_types: [], branches: [], uom_groups: [], sales_employees: [], owners: [],
-    decimal_settings: DEC, warnings: [], series: [], states: [],
+    countries: [], distribution_rules: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
+    decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
+  useValidationHighlights(valErrors, { rootRef: formRef });
   const [loadedSnapshot, setLoadedSnapshot] = useState('');
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -197,7 +233,6 @@ function SalesQuotation() {
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
   const [copyFromModal, setCopyFromModal] = useState(false);
-  const [copyToModal, setCopyToModal] = useState(false);
   const [addressForm, setAddressForm] = useState({
     shipToCode: '', shipToAddress: '', billToCode: '', billToAddress: '',
     streetPoBox: '', streetNo: '', buildingFloorRoom: '', block: '', city: '', zipCode: '', county: '',
@@ -207,6 +242,19 @@ function SalesQuotation() {
     panNo: '', panCircleNo: '', panWardNo: '', panAssessingOfficer: '', deducteeRefNo: '',
     lstVatNo: '', cstNo: '', tanNo: '', serviceTaxNo: '', companyType: '', natureOfBusiness: '',
     assesseeType: '', tinNo: '', itrFiling: '', gstType: '', gstin: ''
+  });
+  const {
+    lineLookupModal,
+    openQualityModal,
+    openPaymentTermsModal,
+    closeLineLookupModal,
+    handleLineLookupSelect,
+    handleLineLookupCreate,
+  } = useSalesDocumentLineLookups({
+    refData,
+    setRefData,
+    setLines,
+    createLookupValue: createSalesQuotationLookupValue,
   });
 
   useEffect(() => {
@@ -223,10 +271,35 @@ function SalesQuotation() {
 
   useEffect(() => { localStorage.setItem(FORM_SETTINGS_STORAGE_KEY, JSON.stringify(formSettings)); }, [formSettings]);
 
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!event.target.closest('.so-dropdown')) {
+        closeDocumentDropdowns();
+      }
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
+
   // decimal config
   const dec = { ...DEC, ...(refData.decimal_settings || {}) };
   const numDec = {
     quantity: Number(dec.QtyDec), unitPrice: Number(dec.PriceDec),
+    sellerQty: Number(dec.QtyDec),
+    sellerBrokeragePerQty: Number(dec.PriceDec),
+    assessableValue: Number(dec.SumDec),
+    bedRate: Number(dec.PercentDec),
+    bedAmount: Number(dec.SumDec),
+    specialRebate: Number(dec.PercentDec),
+    commission: Number(dec.PercentDec),
+    sellerBrokerage: Number(dec.SumDec),
+    buyerBrokerage: Number(dec.SumDec),
+    sellerBrokeragePercent: Number(dec.PercentDec),
+    buyerBillDiscount: Number(dec.PercentDec),
+    sellerBillDiscount: Number(dec.PercentDec),
+    freightPurchase: Number(dec.SumDec),
+    freightSales: Number(dec.SumDec),
     stdDiscount: Number(dec.PercentDec), total: Number(dec.SumDec),
     discount: Number(dec.PercentDec), freight: Number(dec.SumDec),
     tax: Number(dec.SumDec), totalPaymentDue: Number(dec.SumDec),
@@ -249,6 +322,7 @@ function SalesQuotation() {
   });
   const isDocumentEditable = !currentDocEntry || String(header.status || '').toLowerCase() === 'open';
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
+  const isUpdateMode = Boolean(currentDocEntry);
   const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
   const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
   const resolvePreferredSeries = (seriesList, postingDateValue, selectedSeries = '') => {
@@ -279,9 +353,9 @@ function SalesQuotation() {
     return null;
   }, []);
   const primaryActionLabel = pageState.posting
-    ? 'Saving…'
-    : currentDocEntry
-      ? updateActionLabel
+    ? 'Saving...'
+    : isUpdateMode
+      ? (hasUnsavedChanges ? 'Update (Alt+U)' : 'OK')
       : 'Add';
   const secondaryActionLabel = pageState.posting
     ? 'Saving…'
@@ -351,6 +425,33 @@ function SalesQuotation() {
         console.log('═══════════════════════════════════════════════════');
         
         if (!ignore) {
+          const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
+          const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          setHeaderUdfDefinitions(nextHeaderUdfs);
+          setRowUdfDefinitions(nextRowUdfs);
+          setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
+          setLines((prev) => prev.map((line) => ({
+            ...line,
+            udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
+          })));
+          setFormSettings((prev) => ({
+            ...prev,
+            matrixColumns: {
+              ...BASE_MATRIX_COLUMNS.reduce((acc, field) => ({
+                ...acc,
+                [field.key]: { visible: field.visible !== undefined ? field.visible : true, active: true },
+              }), {}),
+              ...(prev.matrixColumns || {}),
+            },
+            headerUdfs: {
+              ...nextHeaderUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
+              ...(prev.headerUdfs || {}),
+            },
+            rowUdfs: {
+              ...nextRowUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
+              ...(prev.rowUdfs || {}),
+            },
+          }));
           setRefData(prev => ({
             ...prev,
             company: refDataRes.data.company || '',
@@ -372,8 +473,13 @@ function SalesQuotation() {
             uom_groups: refDataRes.data.uom_groups || [],
             sales_employees: refDataRes.data.sales_employees || [],
             owners: refDataRes.data.owners || [],
+            countries: refDataRes.data.countries || [],
+            distribution_rules: refDataRes.data.distribution_rules || [],
+            quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
+            price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             warnings: refDataRes.data.warnings || [],
+            udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             series: Array.isArray(prev.series) ? prev.series : [],
           }));
         }
@@ -532,15 +638,15 @@ function SalesQuotation() {
                 }
                 
                 return { 
-                  ...createLine(), 
+                  ...createLine(rowUdfDefinitions), 
                   ...l, 
                   hsnCode: hsnCode,
-                  udf: { ...createUdfState(ROW_UDF_DEFINITIONS), ...(l.udf || {}) } 
+                  udf: normalizeUdfState(rowUdfDefinitions, l.udf || {})
                 };
               })
-            : [createLine()]
+            : [createLine(rowUdfDefinitions)]
         );
-        setHeaderUdfs(normalizeUdfState(HEADER_UDF_DEFINITIONS, so.header_udfs || {}));
+        setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
         setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
@@ -615,7 +721,7 @@ function SalesQuotation() {
   const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
 
-  const effectiveTaxCodes = refData.tax_codes.length ? refData.tax_codes : FALLBACK_TAX;
+  const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES;
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
   
@@ -740,11 +846,13 @@ function SalesQuotation() {
 
   const getApplicableTaxCodes = (gstType) => {
     const taxCodes = effectiveTaxCodes.filter(code => {
-      const codeStr = String(code.Code || '').toUpperCase();
       if (gstType === 'CGST_SGST') {
-        return codeStr.includes('CGST') || codeStr.includes('SGST');
+        return String(code.GSTType || '').trim().toUpperCase() === 'INTRASTATE'
+          || taxCodeHasComponent(effectiveTaxCodes, code.Code, 'CGST')
+          || taxCodeHasComponent(effectiveTaxCodes, code.Code, 'SGST');
       } else if (gstType === 'IGST') {
-        return codeStr.includes('IGST');
+        return String(code.GSTType || '').trim().toUpperCase() === 'INTERSTATE'
+          || taxCodeHasComponent(effectiveTaxCodes, code.Code, 'IGST');
       }
       return false;
     });
@@ -777,16 +885,25 @@ function SalesQuotation() {
   const getApplicableTaxCode = (gstType, itemTaxRate = 18) => {
     // Find tax codes based on GST type
     const taxCodes = effectiveTaxCodes.filter(code => {
-      const codeStr = String(code.Code || '').toUpperCase();
       const rate = Number(code.Rate || 0);
+      const gstTypeValue = String(code.GSTType || '').trim().toUpperCase();
       
       if (gstType === 'CGST_SGST') {
+        if (gstTypeValue === 'INTRASTATE' && Math.abs(rate - itemTaxRate) < 0.01) {
+          return true;
+        }
         // For CGST+SGST, we need CGST or SGST with half the rate
         const halfRate = itemTaxRate / 2;
-        return (codeStr.includes('CGST') || codeStr.includes('SGST')) && Math.abs(rate - halfRate) < 0.01;
+        return (
+          taxCodeHasComponent(effectiveTaxCodes, code.Code, 'CGST')
+          || taxCodeHasComponent(effectiveTaxCodes, code.Code, 'SGST')
+        ) && Math.abs(rate - halfRate) < 0.01;
       } else if (gstType === 'IGST') {
+        if (gstTypeValue === 'INTERSTATE' && Math.abs(rate - itemTaxRate) < 0.01) {
+          return true;
+        }
         // For IGST, we need IGST with full rate
-        return codeStr.includes('IGST') && Math.abs(rate - itemTaxRate) < 0.01;
+        return taxCodeHasComponent(effectiveTaxCodes, code.Code, 'IGST') && Math.abs(rate - itemTaxRate) < 0.01;
       }
       return false;
     });
@@ -1303,7 +1420,7 @@ function SalesQuotation() {
     setPageState(p => ({ ...p, error: '' }));
     markDirty();
     setLines(p => [...p, { 
-      ...createLine(), 
+      ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
       whse: header.warehouse || ''
@@ -1330,7 +1447,7 @@ function SalesQuotation() {
     markDirty();
     setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
   };
-  const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...p[g], [k]: { ...p[g][k], [prop]: val } } }));
+  const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...(p[g] || {}), [k]: { ...((p[g] || {})[k] || {}), [prop]: val } } }));
   const toggleHeaderUdfs = () => {
     setFormSettingsOpen(false);
     setSidebarOpen(p => !p);
@@ -1539,20 +1656,23 @@ function SalesQuotation() {
     if (itemModal.lineIndex < 0) return;
     
     const lineIndex = itemModal.lineIndex;
+    const mergedItem = mergeItemMaster(item, refData.items);
     
     try {
       // Fetch HSN code from database
-      const hsnResponse = await fetchHSNCodeFromItem(item.ItemCode);
+      const hsnResponse = await fetchHSNCodeFromItem(mergedItem.ItemCode);
       const hsnData = hsnResponse.data;
       
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
         
-        const next = { ...line };
-        next.itemNo = item.ItemCode;
-        next.itemDescription = item.ItemName || '';
-        next.uomCode = item.SalesUnit || item.InventoryUOM || '';
-        next.hsnCode = hsnData.hsnCode || item.HSNCode || '';
+        const next = hydrateDocumentLineFromItem(line, mergedItem, {
+          side: 'sales',
+          hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
+          fallbackWarehouse: header.warehouse,
+          calcLineTotal,
+          formatTotal: (value) => fmtDec(value, numDec.total),
+        });
         
         // Auto-determine tax code
         const gstState = header.placeOfSupply;
@@ -1583,14 +1703,13 @@ function SalesQuotation() {
       // Still set basic item info even if HSN fetch fails
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        return {
-          ...line,
-          itemNo: item.ItemCode,
-          itemDescription: item.ItemName || '',
-          uomCode: item.SalesUnit || item.InventoryUOM || '',
-          hsnCode: item.HSNCode || '',
-          total: fmtDec(calcLineTotal(line), numDec.total)
-        };
+        return hydrateDocumentLineFromItem(line, mergedItem, {
+          side: 'sales',
+          hsnCode: mergedItem.HSNCode || '',
+          fallbackWarehouse: header.warehouse,
+          calcLineTotal,
+          formatTotal: (value) => fmtDec(value, numDec.total),
+        });
       }));
       closeItemModal();
     }
@@ -1646,7 +1765,114 @@ function SalesQuotation() {
   };
 
   // ── Copy From Handler ──────────────────────────────────────────────────────
-  const handleCopyFrom = (documentData, docType) => {
+  const openCopyFromModal = () => {
+    const bpCode = String(header.vendor || '').trim();
+    if (!bpCode) {
+      setValErrors({ header: { vendor: 'Select Customer first' }, lines: {}, form: '' });
+      setPageState(prev => ({ ...prev, error: '', success: '' }));
+      return;
+    }
+
+    setValErrors({ header: {}, lines: {}, form: '' });
+    setPageState(prev => ({ ...prev, error: '', success: '' }));
+    setCopyFromModal(true);
+  };
+
+  const fetchCopyFromDocuments = async () => {
+    const bpCode = String(header.vendor || '').trim();
+    if (!bpCode) return [];
+    const response = await fetchOpenSalesQuotations(bpCode);
+    return response.data?.documents || [];
+  };
+
+  const fetchCopyFromDocumentDetails = async (_docType, docEntry) => {
+    const response = await fetchSalesQuotationForCopy(docEntry);
+    return response.data;
+  };
+
+  const handleCopyFrom = (documentData, docType = 'salesQuotation') => {
+    console.log('Copying from:', docType, documentData);
+
+    const copySource = unwrapCopyFromDocument(documentData);
+    const normalizedHeader = normaliseDocumentHeader(copySource.header);
+    const rawLines = copySource.lines;
+    const baseEntry = copySource.docEntry || documentData?.baseDocument?.baseEntry || null;
+    const baseType = BASE_TYPE[docType] || BASE_TYPE.salesQuotation;
+    const firstLine = rawLines[0] || {};
+    const firstLineWarehouse = firstLine.WarehouseCode || firstLine.WhsCode || firstLine.whse || '';
+
+    setCurrentDocEntry(null);
+    setHeader(prev => ({
+      ...prev,
+      vendor: normalizedHeader.vendor,
+      name: normalizedHeader.name,
+      contactPerson: normalizedHeader.contactPerson,
+      placeOfSupply: normalizedHeader.placeOfSupply,
+      paymentTerms: normalizedHeader.paymentTerms,
+      branch: normalizedHeader.branch,
+      warehouse: firstLineWarehouse || prev.warehouse,
+      otherInstruction: normalizedHeader.otherInstruction || prev.otherInstruction,
+      docNo: '',
+      nextNumber: currentDocEntry ? '' : prev.nextNumber,
+      status: 'Open',
+    }));
+
+    const copiedLines = rawLines.map((line, idx) => {
+      const normalizedLine = normaliseDocumentLine(
+        line,
+        idx,
+        baseEntry,
+        baseType,
+        normalizedHeader.branch
+      );
+
+      const nextLine = {
+        ...createLine(rowUdfDefinitions),
+        ...normalizedLine,
+        baseType,
+        baseEntry,
+        baseLine: line.LineNum ?? line.lineNum ?? normalizedLine.baseLine ?? idx,
+        udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
+      };
+
+      return {
+        ...nextLine,
+        total: fmtDec(calcLineTotal(nextLine), numDec.total),
+      };
+    });
+
+    setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
+
+    if (normalizedHeader.vendor) {
+      loadVendorDetails(normalizedHeader.vendor);
+    }
+
+    setCopyFromModal(false);
+    setPageState(p => ({ ...p, error: '', success: 'Copied from Sales Quotation. Please review and save.' }));
+  };
+
+  const handleCopyTo = async (targetType) => {
+    await copyToDocument({
+      sourceDocType: 'salesQuotation',
+      targetType,
+      sourceDocEntry: currentDocEntry,
+      sourceDocNo: header.docNo,
+      sourcePath: location.pathname,
+      sourceSnapshot: { header, lines, headerUdfs },
+      restoreState: { salesQuotationDocEntry: currentDocEntry },
+      navigate,
+      upsertTask,
+      removeTask,
+      beforeNavigate: closeDocumentDropdowns,
+      setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
+      errorMessage: pageState.loading
+        ? 'Please wait until the sales quotation has finished loading before using Copy To.'
+        : 'Open a saved sales quotation before using Copy To.',
+    });
+  };
+
+  // eslint-disable-next-line no-unused-vars
+  const handleCopyFromLegacy = (documentData, docType) => {
     console.log('📋 Copying from:', docType, documentData);
     
     // Copy header
@@ -1662,7 +1888,7 @@ function SalesQuotation() {
 
     // Copy lines WITHOUT tax codes (will be recalculated)
     const copiedLines = documentData.lines.map(line => ({
-      ...createLine(),
+      ...createLine(rowUdfDefinitions),
       ...line,
       taxCode: '', // DO NOT copy tax code - will be auto-determined
       baseType: documentData.baseDocument.baseType,
@@ -1678,40 +1904,6 @@ function SalesQuotation() {
     }
     
     setCopyFromModal(false);
-  };
-
-  // ── Copy To Handler ────────────────────────────────────────────────────────
-  const handleCopyTo = (copyData) => {
-    console.log('📤 Copying to:', copyData.targetType);
-    
-    // Navigate to target document with data
-    if (copyData.targetType === 'delivery') {
-      navigate('/delivery/new', {
-        state: {
-          copyFrom: {
-            type: 'salesOrder',
-            docEntry: currentDocEntry,
-            header: copyData.header,
-            lines: copyData.lines,
-            baseDocument: copyData.baseDocument,
-          }
-        }
-      });
-    } else if (copyData.targetType === 'invoice') {
-      navigate('/ar-invoice/new', {
-        state: {
-          copyFrom: {
-            type: 'salesOrder',
-            docEntry: currentDocEntry,
-            header: copyData.header,
-            lines: copyData.lines,
-            baseDocument: copyData.baseDocument,
-          }
-        }
-      });
-    }
-    
-    setCopyToModal(false);
   };
 
   // ── Browse Attachment handler ─────────────────────────────────────────────
@@ -1828,8 +2020,8 @@ function SalesQuotation() {
       }
       
       const taxCodesUsed = new Set(pop.map(l => l.taxCode).filter(Boolean));
-      const sgstCodes = Array.from(taxCodesUsed).filter(code => code.toUpperCase().includes('SGST'));
-      const cgstCodes = Array.from(taxCodesUsed).filter(code => code.toUpperCase().includes('CGST'));
+      const sgstCodes = getTaxComponentCodes(taxCodesUsed, effectiveTaxCodes, 'SGST');
+      const cgstCodes = getTaxComponentCodes(taxCodesUsed, effectiveTaxCodes, 'CGST');
 
       if (sgstCodes.length > 0 && cgstCodes.length === 0) {
         e.form = 'SGST requires CGST to be applied as well';
@@ -1841,11 +2033,11 @@ function SalesQuotation() {
       }
       if (sgstCodes.length > 0 && cgstCodes.length > 0) {
         const sgstRates = sgstCodes.map(code => {
-          const tax = effectiveTaxCodes.find(t => t.Code === code);
+          const tax = findTaxCode(effectiveTaxCodes, code);
           return tax ? parseNum(tax.Rate) : 0;
         });
         const cgstRates = cgstCodes.map(code => {
-          const tax = effectiveTaxCodes.find(t => t.Code === code);
+          const tax = findTaxCode(effectiveTaxCodes, code);
           return tax ? parseNum(tax.Rate) : 0;
         });
         if (sgstRates[0] !== cgstRates[0]) {
@@ -1868,6 +2060,7 @@ function SalesQuotation() {
     if (currentDocEntry && !hasUnsavedChanges) return;
     const e = validate();
     if (e.form || Object.values(e.header).some(Boolean) || Object.values(e.lines).some(le => Object.values(le || {}).some(Boolean))) {
+      setActiveTab(getValidationTab(e));
       setValErrors(e);
       setPageState(p => ({ ...p, error: e.form || 'Please correct the highlighted fields.', success: '' }));
       return;
@@ -1898,7 +2091,7 @@ function SalesQuotation() {
         whse: line.whse,
         loc: line.loc,
         branch: line.branch,
-        udf: normalizeUdfState(ROW_UDF_DEFINITIONS, line.udf || {}),
+        udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
       }));
       
       const payload = {
@@ -1906,7 +2099,7 @@ function SalesQuotation() {
         header: prep,
         lines: cleanedLines,
         freightCharges: freightModal.freightCharges,
-        header_udfs: normalizeUdfState(HEADER_UDF_DEFINITIONS, headerUdfs),
+        header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
       };
       
       const r = currentDocEntry ? await updateSalesQuotation(currentDocEntry, payload) : await submitSalesQuotation(payload);
@@ -1914,8 +2107,8 @@ function SalesQuotation() {
       setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
-      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-      setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+      setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [] }));
       setValErrors({ header: {}, lines: {}, form: '' });
       
@@ -1937,52 +2130,74 @@ function SalesQuotation() {
     setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
-    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-    setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
   };
 
-  const visHdrUdfs = HEADER_UDF_DEFINITIONS.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
+
+  useEffect(() => {
+    const handleShortcut = (event) => {
+      if (!event.altKey || event.ctrlKey || event.shiftKey || event.metaKey) return;
+      if (pageState.posting || !isDocumentEditable) return;
+
+      const key = String(event.key || '').toLowerCase();
+      const shouldSubmit = (!isUpdateMode && key === 'a') || (isUpdateMode && key === 'u');
+      if (!shouldSubmit) return;
+
+      event.preventDefault();
+      formRef.current?.requestSubmit();
+    };
+
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [isDocumentEditable, isUpdateMode, pageState.posting]);
 
   // Continue in next part with render...
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <form className={`so-page sap-document-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form ref={formRef} className={`so-page sap-document-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
       {/* toolbar */}
       <div className="so-toolbar sap-document-toolbar">
         <span className="so-toolbar__title">Sales Quotation{currentDocEntry ? ` — #${header.docNo || currentDocEntry}` : ''}</span>
-        <button type="submit" className="so-btn so-btn--primary" disabled={pageState.posting}>
+        <button type="submit" className="so-btn so-btn--primary sap-document-toolbar__primary" disabled={pageState.posting || !isDocumentEditable} title={primaryActionLabel}>
           {primaryActionLabel}
         </button>
-        <button type="button" className="so-btn" disabled={pageState.posting}>
-          Add Draft & New
-        </button>
-        <button type="button" className="so-btn" onClick={resetForm}>
+        <button type="button" className="so-btn sap-document-toolbar__cancel" onClick={resetForm}>
           Cancel
         </button>
-        <button type="button" className="so-btn" onClick={toggleHeaderUdfs}>
+        <button type="button" className="so-btn sap-document-toolbar__udf" onClick={toggleHeaderUdfs}>
           {sidebarOpen ? 'Hide UDFs' : 'Show UDFs'}
         </button>
-        <button type="button" className="so-btn" onClick={toggleFormSettings}>
+        <button type="button" className="so-btn sap-document-toolbar__settings" onClick={toggleFormSettings}>
           Form Settings
         </button>
-        <button type="button" className="so-btn" onClick={() => setCopyFromModal(true)}>
+        <PrintLayoutToolbar
+          documentType="salesQuotation"
+          documentLabel="Sales Quotation"
+          docEntry={currentDocEntry}
+          docNumber={header.docNo}
+          disabled={pageState.posting}
+          classPrefix="so"
+          onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
+          onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
+        />
+        <button type="button" className="so-btn sap-document-toolbar__copy" onClick={() => openCopyFromModal()}>
           Copy From
         </button>
-        <button 
-          type="button" 
-          className="so-btn" 
-          onClick={() => setCopyToModal(true)}
+        <CopyToDropdown
+          sourceDocType="salesQuotation"
           disabled={!currentDocEntry}
-        >
-          Copy To
-        </button>
-        <button type="button" className="so-btn" onClick={() => navigate('/sales-order/find')}>Find</button>
-        <button type="button" className="so-btn" onClick={resetForm}>New</button>
+          onCopyTo={handleCopyTo}
+        />
+        <button type="button" className="so-btn sap-document-toolbar__find" onClick={() => navigate('/sales-quotation/find')}>Find</button>
+        <button type="button" className="so-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
       </div>
 
       {/* alerts */}
@@ -2262,9 +2477,16 @@ function SalesQuotation() {
                 fmtTaxLabel={fmtTaxLabel}
                 valErrors={valErrors}
                 branches={refData.branches}
+                distributionRules={refData.distribution_rules || []}
+                countries={refData.countries || []}
                 onOpenHSNModal={openHSNModal}
                 onOpenItemModal={openItemModal}
+                onOpenQualityModal={openQualityModal}
+                onOpenPaymentTermsModal={openPaymentTermsModal}
                 getBranchName={getBranchName}
+                formSettings={formSettings}
+                rowUdfFields={visibleRowUdfs}
+                onRowUdfChange={handleRowUdfChange}
               />
             )}
 
@@ -2445,24 +2667,13 @@ function SalesQuotation() {
                 <button type="submit" className="so-btn so-btn--primary" disabled={pageState.posting}>
                   {secondaryActionLabel}
                 </button>
-                <button type="button" className="so-btn" disabled={pageState.posting}>
-                  Add Draft & New
-                </button>
                 <button type="button" className="so-btn" onClick={resetForm}>
                   Cancel
                 </button>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="button" className="so-btn" onClick={() => setCopyFromModal(true)}>
+                <button type="button" className="so-btn" onClick={() => openCopyFromModal()}>
                   Copy From
-                </button>
-                <button 
-                  type="button" 
-                  className="so-btn" 
-                  onClick={() => setCopyToModal(true)}
-                  disabled={!currentDocEntry}
-                >
-                  Copy To
                 </button>
               </div>
             </div>
@@ -2485,9 +2696,9 @@ function SalesQuotation() {
             className="so-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
-            matrixFields={[]}
-            headerUdfFields={HEADER_UDF_DEFINITIONS}
-            rowUdfFields={ROW_UDF_DEFINITIONS}
+            matrixFields={BASE_MATRIX_COLUMNS}
+            headerUdfFields={headerUdfDefinitions}
+            rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}
             onSettingChange={updateFormSetting}
           />
@@ -2543,19 +2754,9 @@ function SalesQuotation() {
         isOpen={copyFromModal}
         onClose={() => setCopyFromModal(false)}
         onCopy={handleCopyFrom}
-        documentType="quotation"
-      />
-
-      {/* Copy To Modal */}
-      <CopyToModal
-        isOpen={copyToModal}
-        onClose={() => setCopyToModal(false)}
-        onCopyTo={handleCopyTo}
-        currentDocument={{
-          docEntry: currentDocEntry,
-          header: header,
-          lines: lines,
-        }}
+        documentType="salesQuotation"
+        onFetchDocuments={fetchCopyFromDocuments}
+        onFetchDocumentDetails={fetchCopyFromDocumentDetails}
       />
 
       {/* HSN Code Selection Modal */}
@@ -2572,6 +2773,18 @@ function SalesQuotation() {
         onSelect={handleItemSelect}
         items={itemModal.items}
         loading={itemModal.loading}
+      />
+
+      <LineValueLookupModal
+        isOpen={lineLookupModal.open}
+        onClose={closeLineLookupModal}
+        onSelect={handleLineLookupSelect}
+        onCreate={handleLineLookupCreate}
+        options={lineLookupModal.options}
+        title={lineLookupModal.title}
+        searchPlaceholder={lineLookupModal.searchPlaceholder}
+        emptyMessage={lineLookupModal.emptyMessage}
+        allowCreate={lineLookupModal.allowCreate}
       />
 
       <SalesEmployeeSetupModal

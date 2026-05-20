@@ -3,9 +3,11 @@
  * Column names verified against SAP B1 schema.
  */
 const db = require('./dbService');
+const masterDataDbService = require('./masterDataDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const salesQuotationDb = require('./salesQuotationDbService');
 const deliveryDb = require('./deliveryDbService');
+const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
 
 const safe = async (promise) => {
@@ -73,32 +75,7 @@ const getStates = () => safe(db.query(`
   ORDER  BY Name
 `));
 
-const getTaxCodes = () => safe(db.query(`
-  SELECT 
-    T0.Code,
-    T0.Name,
-    SUM(T1.EfctivRate) AS Rate,
-    CASE 
-        WHEN 
-            MAX(CASE WHEN T1.STACode LIKE '%IGST%' THEN 1 ELSE 0 END) = 1 
-            THEN 'INTERSTATE'
-        WHEN 
-            COUNT(DISTINCT CASE 
-                WHEN T1.STACode LIKE '%CGST%' THEN 'CGST'
-                WHEN T1.STACode LIKE '%SGST%' THEN 'SGST'
-            END) = 2 
-            THEN 'INTRASTATE'
-        ELSE 'OTHER'
-    END AS GSTType
-FROM OSTC T0
-INNER JOIN STC1 T1 ON T0.Code = T1.STCCode  and T1.[STAType] In ('-100','-110','-120')
-WHERE 
-    T0.Lock = 'N'
-GROUP BY 
-    T0.Code, T0.Name
-ORDER BY 
-    T0.Code;
-`));
+const getTaxCodes = () => masterDataDbService.searchDocumentTaxCodes('', 'sales', 500, 0);
 
 const getUomGroups = () => safe(db.query(`
   SELECT g.UgpEntry AS AbsEntry,
@@ -314,6 +291,7 @@ const getReferenceData = async () => {
     salesEmployees,
     openSalesOrders,
     openDeliveries,
+    udfMetadata,
   ] = await Promise.all([
     getCustomers(),
     getItems(),
@@ -327,6 +305,7 @@ const getReferenceData = async () => {
     getSalesEmployees(),
     getOpenSalesOrders(),
     getOpenDeliveries(),
+    getMarketingDocumentUdfs({ headerTable: 'OINV', lineTable: 'INV1' }),
   ]);
 
   // Process UOM groups
@@ -374,6 +353,7 @@ const getReferenceData = async () => {
       RateDec: 2,
       PercentDec: 2,
     },
+    udf_metadata: udfMetadata,
     warnings: [],
   };
 };
@@ -427,6 +407,8 @@ const getARInvoiceList = async ({
   docNum = '',
   customerCode = '',
   customerName = '',
+  sellerCode = '',
+  sellerName = '',
   status = '',
   postingDateFrom = '',
   postingDateTo = '',
@@ -442,10 +424,12 @@ const getARInvoiceList = async ({
     docNum,
     partnerCode: customerCode,
     partnerName: customerName,
+    sellerCode,
+    sellerName,
     status,
     postingDateFrom,
     postingDateTo,
-  });
+  }, { includeSellerFields: true });
 
   const countRows = await safe(db.query(`
     SELECT COUNT(*) AS total_count
@@ -461,6 +445,8 @@ const getARInvoiceList = async ({
       T0.DocNum AS doc_num,
       T0.CardCode AS customer_code,
       T0.CardName AS customer_name,
+      T0.U_Seller_Code AS seller_code,
+      T0.U_Seller_Name AS seller_name,
       T0.DocDate AS posting_date,
       T0.DocDueDate AS delivery_date,
       T0.DocTotal AS total_amount,
@@ -487,6 +473,8 @@ const getARInvoiceList = async ({
       doc_num: row.doc_num,
       customer_code: row.customer_code,
       customer_name: row.customer_name,
+      seller_code: row.seller_code || '',
+      seller_name: row.seller_name || '',
       posting_date: row.posting_date ? row.posting_date.toISOString().split('T')[0] : '',
       delivery_date: row.delivery_date ? row.delivery_date.toISOString().split('T')[0] : '',
       total_amount: Number(row.total_amount || 0),
@@ -569,6 +557,10 @@ const getARInvoice = async (docEntry) => {
     WHERE T0.DocEntry = @docEntry
     ORDER BY T0.LineNum
   `, { docEntry }));
+  const [headerUdfs, lineUdfsByLineNum] = await Promise.all([
+    getHeaderUdfValues({ tableId: 'OINV', keyValue: docEntry }),
+    getLineUdfValues({ tableId: 'INV1', keyValue: docEntry }),
+  ]);
 
   return {
     ar_invoice: {
@@ -617,9 +609,9 @@ const getARInvoice = async (docEntry) => {
         total: line.LineTotal != null ? String(line.LineTotal) : '',
         whse: line.Warehouse || '',
         uomCode: line.UoMCode || '',
-        udf: {},
+        udf: lineUdfsByLineNum[line.LineNum] || {},
       })),
-      header_udfs: {},
+      header_udfs: headerUdfs,
     },
   };
 };
@@ -740,14 +732,24 @@ const getSalesOrderForCopy = async (docEntry) => salesOrderDb.getSalesOrderForCo
 
 const getDeliveryForCopy = async (docEntry) => deliveryDb.getDeliveryForCopy(docEntry);
 
-const getOpenSalesQuotations = () => safe(db.query(`
+const getOpenSalesQuotations = (customerCode = null) => {
+  const normalizedCustomerCode = String(customerCode || '').trim();
+  const params = {};
+  const customerFilter = normalizedCustomerCode ? 'AND T0.CardCode = @customerCode' : '';
+  if (normalizedCustomerCode) {
+    params.customerCode = normalizedCustomerCode;
+  }
+
+  return safe(db.query(`
   SELECT TOP 200
     T0.DocEntry, T0.DocNum, T0.DocDate, T0.DocDueDate,
     T0.CardCode, T0.CardName, T0.Comments, T0.DocTotal
   FROM OQUT T0
   WHERE T0.DocStatus = 'O' AND T0.CANCELED <> 'Y'
+    ${customerFilter}
   ORDER BY T0.DocDate DESC, T0.DocNum DESC
-`));
+`, params));
+};
 
 const getSalesQuotationForCopy = async (docEntry) => salesQuotationDb.getSalesQuotationForCopy(docEntry);
 

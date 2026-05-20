@@ -17,12 +17,17 @@ import BusinessPartnerModal from './components/BusinessPartnerModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import CopyFromModal from './components/CopyFromModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { copyToDocument } from '../../services/documentCopyService';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   fetchPurchaseOrderByDocEntry,
   fetchPurchaseOrderReferenceData,
@@ -41,9 +46,9 @@ import {
 } from '../../api/purchaseOrderApi';
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { PURCHASE_ORDER_COMPANY_ID } from '../../config/appConfig';
-import { FALLBACK_TAX_CODES } from '../../utils/fallbackTaxCodes';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
-import { normaliseDocumentHeader, normaliseDocumentLine } from '../../api/copyFromApi';
+import { consumeCopyToState } from '../../utils/copyToState';
+import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument } from '../../api/copyFromApi';
 import {
   BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
@@ -114,7 +119,7 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 
-const createLine = () => ({
+const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
   itemDescription: '',
   hsnCode: '',
@@ -131,7 +136,7 @@ const createLine = () => ({
   baseType: null,
   baseLine: null,
   taxCodeManuallyOverridden: false,
-  udf: createUdfState(ROW_UDF_DEFINITIONS),
+  udf: createUdfState(rowUdfDefinitions),
 });
 
 const INIT_HEADER = {
@@ -238,10 +243,13 @@ const PURCHASE_COPY_BASE_TYPE = {
 function PurchaseOrder() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { removeTask, upsertTask } = useSapWindowTaskbarActions();
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
-  const [lines, setLines] = useState([createLine()]);
+  const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
+  const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => createUdfState(HEADER_UDF_DEFINITIONS));
@@ -269,6 +277,7 @@ function PurchaseOrder() {
     warnings: [],
     series: [],
     states: [],
+    udf_metadata: { header: [], rows: [] },
   });
   const [pageState, setPageState] = useState({
     loading: false,
@@ -283,6 +292,7 @@ function PurchaseOrder() {
     lines: {},
     form: '',
   });
+  useValidationHighlights(valErrors);
   const [loadedSnapshot, setLoadedSnapshot] = useState('');
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -383,7 +393,8 @@ function PurchaseOrder() {
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
-  const markDirty = useCallback(() => {
+  const markDirty = useCallback((event) => {
+    if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
     if (currentDocEntry) setIsDirty(true);
   }, [currentDocEntry]);
 
@@ -400,6 +411,29 @@ function PurchaseOrder() {
         ]);
 
         if (!ignore) {
+          const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
+          const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          setHeaderUdfDefinitions(nextHeaderUdfs);
+          setRowUdfDefinitions(nextRowUdfs);
+          setHeaderUdfs((prev) => createUdfState(nextHeaderUdfs, prev));
+          setLines((prev) => prev.map((line) => ({
+            ...line,
+            udf: createUdfState(nextRowUdfs, line.udf || {}),
+          })));
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs);
+          setFormSettings((prev) => ({
+            ...nextDefaults,
+            ...prev,
+            headerUdfs: {
+              ...nextDefaults.headerUdfs,
+              ...(prev.headerUdfs || {}),
+            },
+            rowUdfs: {
+              ...nextDefaults.rowUdfs,
+              ...(prev.rowUdfs || {}),
+            },
+          }));
+
           setRefData({
             company: refDataRes.data.company || '',
             company_state: refDataRes.data.company_state || '',
@@ -419,6 +453,7 @@ function PurchaseOrder() {
             states: refDataRes.data.states || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
+            udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             warnings: refDataRes.data.warnings || [],
             series: seriesRes.data.series || [],
           });
@@ -461,10 +496,10 @@ function PurchaseOrder() {
 
         setLines(
           Array.isArray(po.lines) && po.lines.length
-            ? po.lines.map(l => ({ ...createLine(), ...l, taxCodeManuallyOverridden: true, udf: { ...createUdfState(ROW_UDF_DEFINITIONS), ...(l.udf || {}) } }))
-            : [createLine()]
+            ? po.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, taxCodeManuallyOverridden: true, udf: { ...createUdfState(rowUdfDefinitions), ...(l.udf || {}) } }))
+            : [createLine(rowUdfDefinitions)]
         );
-        setHeaderUdfs({ ...createUdfState(HEADER_UDF_DEFINITIONS), ...(po.header_udfs || {}) });
+        setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(po.header_udfs || {}) });
         setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
@@ -483,10 +518,12 @@ function PurchaseOrder() {
     };
     load();
     return () => { ignore = true; };
-  }, [location.pathname, location.state, navigate]);
+  }, [location.pathname, location.state, navigate, headerUdfDefinitions, rowUdfDefinitions]);
 
   useEffect(() => {
-    const copyFrom = location.state?.copyFrom;
+    const routedCopyFrom = location.state?.copyFrom;
+    const persistedCopyState = routedCopyFrom ? null : consumeCopyToState(location.pathname, ['/purchase-order']);
+    const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
     if (!copyFrom) return;
 
     const sourceType = copyFrom.type || 'purchaseQuotation';
@@ -494,7 +531,7 @@ function PurchaseOrder() {
     const normalizedHeader = normaliseDocumentHeader(copyFrom.header || {});
     const sourceLines = Array.isArray(copyFrom.lines) ? copyFrom.lines : [];
     const copiedLines = sourceLines.map((line, index) => ({
-      ...createLine(),
+      ...createLine(rowUdfDefinitions),
       ...normaliseDocumentLine(
         line,
         index,
@@ -506,7 +543,7 @@ function PurchaseOrder() {
     }));
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
-    setLines(copiedLines.length ? copiedLines : [createLine()]);
+    setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
     setFreightModal({ open: false, freightCharges: [], loading: false });
     setValErrors({ header: {}, lines: {}, form: '' });
 
@@ -604,7 +641,7 @@ function PurchaseOrder() {
     acc[i] = getUomOptions(line);
     return acc;
   }, {});
-  const effectiveTaxCodes = refData.tax_codes.length ? refData.tax_codes : FALLBACK_TAX_CODES;
+  const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : [];
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
@@ -1087,7 +1124,7 @@ function PurchaseOrder() {
     setPageState(p => ({ ...p, error: '', success: '' }));
     markDirty();
     setLines(p => [...p, { 
-      ...createLine(), 
+      ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
       whse: header.warehouse || ''
@@ -1234,17 +1271,19 @@ function PurchaseOrder() {
   const handleItemSelect = async (item) => {
     const lineIndex = itemModal.lineIndex;
     if (lineIndex < 0) return;
+    const mergedItem = mergeItemMaster(item, refData.items);
     try {
-      const hsnResponse = await fetchHSNCodeFromItem(item.ItemCode);
-      const hsnCode = hsnResponse.data?.hsnCode || item.HSNCode || '';
+      const hsnResponse = await fetchHSNCodeFromItem(mergedItem.ItemCode);
+      const hsnCode = hsnResponse.data?.hsnCode || mergedItem.HSNCode || '';
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        const next = { ...line };
-        next.itemNo = item.ItemCode;
-        next.itemDescription = item.ItemName || '';
-        next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
-        next.hsnCode = hsnCode;
-        if (item.DefaultWarehouse) next.whse = item.DefaultWarehouse;
+        const next = hydrateDocumentLineFromItem(line, mergedItem, {
+          side: 'purchase',
+          hsnCode,
+          fallbackWarehouse: header.warehouse,
+          calcLineTotal,
+          formatTotal: (value) => fmtDec(value, numDec.total),
+        });
         if (!next.taxCodeManuallyOverridden) {
           const preferredTaxCode = getPreferredLineTaxCode(next.taxCode);
           if (preferredTaxCode) {
@@ -1257,14 +1296,16 @@ function PurchaseOrder() {
     } catch {
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        return {
-          ...line,
-          itemNo: item.ItemCode,
-          itemDescription: item.ItemName || '',
-          uomCode: String(item.PurchaseUnit || item.InventoryUOM || '').trim(),
-          hsnCode: item.HSNCode || '',
-          taxCode: !line.taxCodeManuallyOverridden ? (getPreferredLineTaxCode(line.taxCode) || line.taxCode) : line.taxCode,
-        };
+        const next = hydrateDocumentLineFromItem(line, mergedItem, {
+          side: 'purchase',
+          hsnCode: mergedItem.HSNCode || '',
+          fallbackWarehouse: header.warehouse,
+          calcLineTotal,
+          formatTotal: (value) => fmtDec(value, numDec.total),
+        });
+        next.taxCode = !line.taxCodeManuallyOverridden ? (getPreferredLineTaxCode(next.taxCode) || next.taxCode) : line.taxCode;
+        next.total = fmtDec(calcLineTotal(next), numDec.total);
+        return next;
       }));
     }
     closeItemModal();
@@ -1342,19 +1383,20 @@ function PurchaseOrder() {
   };
 
   const handleCopyFrom = (data, docType) => {
+    const copySource = unwrapCopyFromDocument(data);
     const baseType = PURCHASE_COPY_BASE_TYPE[docType] || 540000006;
-    const normalizedHeader = normaliseDocumentHeader(data);
+    const normalizedHeader = normaliseDocumentHeader(copySource.header);
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
 
-    const rawLines = data.DocumentLines || data.lines || [];
+    const rawLines = copySource.lines;
     const copiedLines = rawLines.map((line, index) => ({
-      ...createLine(),
-      ...normaliseDocumentLine(line, index, data.DocEntry || data.docEntry, baseType, normalizedHeader.branch),
+      ...createLine(rowUdfDefinitions),
+      ...normaliseDocumentLine(line, index, copySource.docEntry, baseType, normalizedHeader.branch),
       taxCodeManuallyOverridden: false,
     }));
 
-    setLines(copiedLines.length > 0 ? copiedLines : [createLine()]);
+    setLines(copiedLines.length > 0 ? copiedLines : [createLine(rowUdfDefinitions)]);
     setFreightModal({ open: false, freightCharges: [], loading: false });
 
     if (normalizedHeader.vendor) {
@@ -1405,25 +1447,21 @@ function PurchaseOrder() {
     throw new Error(`Unsupported copy from type: ${docType}`);
   };
 
-  const handleCopyTo = (targetType) => {
-    if (!currentDocEntry) return;
-
-    const copyState = {
-      copyFrom: {
-        type: 'purchaseOrder',
-        docEntry: currentDocEntry,
-        header: { ...header },
-        lines: lines.map((line, index) => ({ ...line, lineNum: index })),
-        baseDocument: {
-          baseType: 22,
-          baseEntry: currentDocEntry,
-        },
-      },
-    };
-
-    if (targetType === 'grpo') {
-      navigate('/grpo', { state: copyState });
-    }
+  const handleCopyTo = async (targetType) => {
+    await copyToDocument({
+      sourceDocType: 'purchaseOrder',
+      targetType,
+      sourceDocEntry: currentDocEntry,
+      sourceDocNo: header.docNo,
+      sourcePath: location.pathname,
+      sourceSnapshot: { header, lines },
+      restoreState: { purchaseOrderDocEntry: currentDocEntry },
+      navigate,
+      upsertTask,
+      removeTask,
+      setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
+      errorMessage: 'Please save the purchase order first before copying to another document.',
+    });
   };
 
   // ── validation ────────────────────────────────────────────────────────────
@@ -1530,8 +1568,8 @@ function PurchaseOrder() {
       setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
-      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-      setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+      setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [] }));
       setValErrors({ header: {}, lines: {}, form: '' });
 
@@ -1551,18 +1589,18 @@ function PurchaseOrder() {
     setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
-    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-    setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
     setFreightModal({ open: false, freightCharges: [], loading: false });
   };
 
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
-  const visHdrUdfs = HEADER_UDF_DEFINITIONS.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
   const visibleColumns = BASE_MATRIX_COLUMNS.filter(c => formSettings.matrixColumns?.[c.key]?.visible !== false);
-  const visibleRowUdfs = ROW_UDF_DEFINITIONS.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
+  const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
@@ -1571,19 +1609,16 @@ function PurchaseOrder() {
       {/* toolbar */}
       <div className="po-toolbar sap-document-toolbar">
         <span className="po-toolbar__title sap-document-toolbar__title">Purchase Order{currentDocEntry ? ` — #${header.docNo || currentDocEntry}` : ''}</span>
-        <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting}>
+        <button type="submit" className="po-btn po-btn--primary sap-document-toolbar__primary" disabled={pageState.posting}>
           {primaryActionLabel}
         </button>
-        <button type="button" className="po-btn" disabled={pageState.posting}>
-          Add Draft & New
-        </button>
-        <button type="button" className="po-btn" onClick={resetForm}>
+        <button type="button" className="po-btn sap-document-toolbar__cancel" onClick={resetForm}>
           Cancel
         </button>
-        <button type="button" className="po-btn" onClick={toggleHeaderUdfs}>
+        <button type="button" className="po-btn sap-document-toolbar__udf" onClick={toggleHeaderUdfs}>
           {sidebarOpen ? 'Hide UDFs' : 'Show UDFs'}
         </button>
-        <button type="button" className="po-btn" onClick={toggleFormSettings}>
+        <button type="button" className="po-btn sap-document-toolbar__settings" onClick={toggleFormSettings}>
           Form Settings
         </button>
         <div className="po-dropdown">
@@ -1627,6 +1662,14 @@ function PurchaseOrder() {
             </button>
           </div>
         </div>
+        <PurchasePrintLayoutActions
+          documentKey="purchaseOrder"
+          docEntry={currentDocEntry}
+          docNumber={header.docNo}
+          disabled={pageState.posting || pageState.loading}
+          onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
+          onError={(message) => setPageState(p => ({ ...p, error: message, success: '' }))}
+        />
         <div className="po-dropdown">
           <button
             type="button"
@@ -1657,8 +1700,8 @@ function PurchaseOrder() {
             </button>
           </div>
         </div>
-        <button type="button" className="po-btn" onClick={() => navigate('/purchase-order/find')}>Find</button>
-        <button type="button" className="po-btn" onClick={resetForm}>New</button>
+        <button type="button" className="po-btn sap-document-toolbar__find" onClick={() => navigate('/purchase-order/find')}>Find</button>
+        <button type="button" className="po-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
       </div>
 
       {/* alerts */}
@@ -1938,6 +1981,8 @@ function PurchaseOrder() {
                 effectiveWarehouses={branchFilteredWarehouses}
                 fmtTaxLabel={fmtTaxLabel}
                 getBranchName={getBranchName}
+                rowUdfFields={visibleRowUdfs}
+                onRowUdfChange={handleRowUdfChange}
                 valErrors={valErrors}
               />
             )}
@@ -2059,9 +2104,6 @@ function PurchaseOrder() {
                 <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting}>
                   {secondaryActionLabel}
                 </button>
-                <button type="button" className="po-btn" disabled={pageState.posting}>
-                  Add Draft & New
-                </button>
                 <button type="button" className="po-btn" onClick={resetForm}>
                   Cancel
                 </button>
@@ -2160,8 +2202,8 @@ function PurchaseOrder() {
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={BASE_MATRIX_COLUMNS}
-            headerUdfFields={HEADER_UDF_DEFINITIONS}
-            rowUdfFields={ROW_UDF_DEFINITIONS}
+            headerUdfFields={headerUdfDefinitions}
+            rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}
             onSettingChange={updateFormSetting}
           />

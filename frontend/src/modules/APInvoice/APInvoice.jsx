@@ -16,13 +16,19 @@ import BusinessPartnerModal from './components/BusinessPartnerModal';
 import StateSelectionModal from './components/StateSelectionModal';
 import CopyFromModal from '../purchase-order/components/CopyFromModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { copyToDocument } from '../../services/documentCopyService';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import { consumeCopyToState } from '../../utils/copyToState';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   fetchAPInvoiceReferenceData,
   fetchAPInvoiceVendorDetails,
@@ -38,7 +44,7 @@ import {
 } from '../../api/apInvoiceApi';
 import { PURCHASE_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
-import { normaliseDocumentHeader, normaliseDocumentLine } from '../../api/copyFromApi';
+import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument } from '../../api/copyFromApi';
 import {
   BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
@@ -128,7 +134,7 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 
-const createLine = () => ({
+const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
   itemDescription: '',
   hsnCode: '',
@@ -144,7 +150,7 @@ const createLine = () => ({
   baseType: null,
   baseLine: null,
   taxCodeManuallyOverridden: false,
-  udf: createUdfState(ROW_UDF_DEFINITIONS),
+  udf: createUdfState(rowUdfDefinitions),
 });
 
 const INIT_HEADER = {
@@ -247,10 +253,13 @@ const AP_INVOICE_COPY_BASE_TYPE = {
 function APInvoice() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { removeTask, upsertTask } = useSapWindowTaskbarActions();
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
-  const [lines, setLines] = useState([createLine()]);
+  const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
+  const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => createUdfState(HEADER_UDF_DEFINITIONS));
@@ -275,6 +284,7 @@ function APInvoice() {
     branches: [],
     uom_groups: [],
     decimal_settings: DEC,
+    udf_metadata: { header: [], rows: [] },
     warnings: [],
     series: [],
     states: [],
@@ -292,6 +302,7 @@ function APInvoice() {
     lines: {},
     form: '',
   });
+  useValidationHighlights(valErrors);
   const [loadedSnapshot, setLoadedSnapshot] = useState('');
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -391,7 +402,8 @@ function APInvoice() {
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
-  const markDirty = useCallback(() => {
+  const markDirty = useCallback((event) => {
+    if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
     if (currentDocEntry) setIsDirty(true);
   }, [currentDocEntry]);
 
@@ -407,6 +419,29 @@ function APInvoice() {
         ]);
 
         if (!ignore) {
+          const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
+          const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          setHeaderUdfDefinitions(nextHeaderUdfs);
+          setRowUdfDefinitions(nextRowUdfs);
+          setHeaderUdfs((prev) => createUdfState(nextHeaderUdfs, prev));
+          setLines((prev) => prev.map((line) => ({
+            ...line,
+            udf: createUdfState(nextRowUdfs, line.udf || {}),
+          })));
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs);
+          setFormSettings((prev) => ({
+            ...nextDefaults,
+            ...prev,
+            headerUdfs: {
+              ...nextDefaults.headerUdfs,
+              ...(prev.headerUdfs || {}),
+            },
+            rowUdfs: {
+              ...nextDefaults.rowUdfs,
+              ...(prev.rowUdfs || {}),
+            },
+          }));
+
           setRefData({
             company: refDataRes.data.company || '',
             company_state: refDataRes.data.company_state || '',
@@ -427,6 +462,7 @@ function APInvoice() {
             states: refDataRes.data.states || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
+            udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             warnings: refDataRes.data.warnings || [],
             series: seriesRes.data.series || [],
           });
@@ -470,14 +506,14 @@ function APInvoice() {
         setLines(
           Array.isArray(po.lines) && po.lines.length
             ? po.lines.map(l => ({
-              ...createLine(),
+              ...createLine(rowUdfDefinitions),
               ...l,
               taxCodeManuallyOverridden: true,
-              udf: { ...createUdfState(ROW_UDF_DEFINITIONS), ...(l.udf || {}) },
+              udf: { ...createUdfState(rowUdfDefinitions), ...(l.udf || {}) },
             }))
-            : [createLine()]
+            : [createLine(rowUdfDefinitions)]
         );
-        setHeaderUdfs({ ...createUdfState(HEADER_UDF_DEFINITIONS), ...(po.header_udfs || {}) });
+        setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(po.header_udfs || {}) });
         setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
@@ -499,14 +535,16 @@ function APInvoice() {
   }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {
-    const copyFrom = location.state?.copyFrom;
+    const routedCopyFrom = location.state?.copyFrom;
+    const persistedCopyState = routedCopyFrom ? null : consumeCopyToState(location.pathname, ['/ap-invoice']);
+    const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
     if (!copyFrom) return;
 
     const sourceType = copyFrom.type || 'grpo';
     const normalizedHeader = normaliseDocumentHeader(copyFrom.header || {});
     const sourceLines = Array.isArray(copyFrom.lines) ? copyFrom.lines : [];
     const copiedLines = sourceLines.map((line, index) => ({
-      ...createLine(),
+      ...createLine(rowUdfDefinitions),
       ...normaliseDocumentLine(
         line,
         index,
@@ -516,11 +554,11 @@ function APInvoice() {
       ),
       openQty: String(line.openQty ?? line.OpenQty ?? line.quantity ?? line.Quantity ?? ''),
       taxCodeManuallyOverridden: false,
-      udf: { ...createUdfState(ROW_UDF_DEFINITIONS), ...(line.udf || {}) },
+      udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
     }));
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
-    setLines(copiedLines.length ? copiedLines : [createLine()]);
+    setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
     setFreightModal({ open: false, freightCharges: [], loading: false });
     setValErrors({ header: {}, lines: {}, form: '' });
 
@@ -601,10 +639,9 @@ function APInvoice() {
 
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
   const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
-  const FALLBACK_TAX = [{ Code: 'GST18', Name: 'GST 18%', Rate: 18 }];
   const FALLBACK_WAREHOUSES = [{ WhsCode: 'WH01', WhsName: 'Main Warehouse' }];
 
-  const effectiveTaxCodes = refData.tax_codes.length ? refData.tax_codes : FALLBACK_TAX;
+  const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES;
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
@@ -1002,7 +1039,7 @@ function APInvoice() {
   const addLine = () => {
     markDirty();
     setValErrors(p => ({ ...p, form: '' }));
-    setLines(p => [...p, { ...createLine(), whse: header.warehouse || '', branch: header.branch || '', loc: header.branch || '' }]);
+    setLines(p => [...p, { ...createLine(rowUdfDefinitions), whse: header.warehouse || '', branch: header.branch || '', loc: header.branch || '' }]);
   };
 
   const removeLine = (i) => {
@@ -1019,7 +1056,13 @@ function APInvoice() {
     markDirty();
     setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
   };
-  const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...p[g], [k]: { ...p[g][k], [prop]: val } } }));
+  const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({
+    ...p,
+    [g]: {
+      ...(p[g] || {}),
+      [k]: { ...((p[g] || {})[k] || {}), [prop]: val },
+    },
+  }));
   const toggleHeaderUdfs = () => {
     setFormSettingsOpen(false);
     setSidebarOpen(p => !p);
@@ -1145,30 +1188,30 @@ function APInvoice() {
   const handleItemSelect = async (item) => {
     const lineIndex = itemModal.lineIndex;
     if (lineIndex < 0) return;
+    const mergedItem = mergeItemMaster(item, refData.items);
     try {
-      const hsnResponse = await fetchHSNCodeFromItem(item.ItemCode);
-      const hsnCode = hsnResponse.data?.hsnCode || item.HSNCode || '';
+      const hsnResponse = await fetchHSNCodeFromItem(mergedItem.ItemCode);
+      const hsnCode = hsnResponse.data?.hsnCode || mergedItem.HSNCode || '';
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        const next = { ...line };
-        next.itemNo = item.ItemCode;
-        next.itemDescription = item.ItemName || '';
-        next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
-        next.hsnCode = hsnCode;
-        if (item.DefaultWarehouse) next.whse = item.DefaultWarehouse;
-        next.total = fmtDec(calcLineTotal(next), numDec.total);
-        return next;
+        return hydrateDocumentLineFromItem(line, mergedItem, {
+          side: 'purchase',
+          hsnCode,
+          fallbackWarehouse: header.warehouse,
+          calcLineTotal,
+          formatTotal: (value) => fmtDec(value, numDec.total),
+        });
       }));
     } catch {
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        return {
-          ...line,
-          itemNo: item.ItemCode,
-          itemDescription: item.ItemName || '',
-          uomCode: String(item.PurchaseUnit || item.InventoryUOM || '').trim(),
-          hsnCode: item.HSNCode || '',
-        };
+        return hydrateDocumentLineFromItem(line, mergedItem, {
+          side: 'purchase',
+          hsnCode: mergedItem.HSNCode || '',
+          fallbackWarehouse: header.warehouse,
+          calcLineTotal,
+          formatTotal: (value) => fmtDec(value, numDec.total),
+        });
       }));
     }
     closeItemModal();
@@ -1217,18 +1260,19 @@ function APInvoice() {
 
   // ── validation ────────────────────────────────────────────────────────────
   const handleCopyFrom = (data, docType) => {
-    const normalizedHeader = normaliseDocumentHeader(data);
-    const rawLines = data.DocumentLines || data.lines || [];
+    const copySource = unwrapCopyFromDocument(data);
+    const normalizedHeader = normaliseDocumentHeader(copySource.header);
+    const rawLines = copySource.lines;
     const copiedLines = rawLines.map((line, index) => ({
-      ...createLine(),
-      ...normaliseDocumentLine(line, index, data.DocEntry || data.docEntry, AP_INVOICE_COPY_BASE_TYPE[docType] || 20, normalizedHeader.branch),
+      ...createLine(rowUdfDefinitions),
+      ...normaliseDocumentLine(line, index, copySource.docEntry, AP_INVOICE_COPY_BASE_TYPE[docType] || 20, normalizedHeader.branch),
       openQty: String(line.OpenQty ?? line.openQty ?? line.Quantity ?? line.quantity ?? ''),
       taxCodeManuallyOverridden: false,
-      udf: createUdfState(ROW_UDF_DEFINITIONS),
+      udf: createUdfState(rowUdfDefinitions),
     }));
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
-    setLines(copiedLines.length ? copiedLines : [createLine()]);
+    setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
     setFreightModal({ open: false, freightCharges: [], loading: false });
 
     if (normalizedHeader.vendor) {
@@ -1270,24 +1314,21 @@ function APInvoice() {
     throw new Error(`Unsupported copy from type: ${docType}`);
   };
 
-  const handleCopyTo = (targetType) => {
-    if (!currentDocEntry) return;
-
-    const copyState = {
-      copyFrom: {
-        type: 'apInvoice',
-        docEntry: currentDocEntry,
-        header: { ...header },
-        lines: lines.map((line, index) => ({ ...line, lineNum: index })),
-        baseDocument: {
-          baseType: 20,
-        },
-      },
-    };
-
-    if (targetType === 'apCreditMemo') {
-      navigate('/ap-credit-memo', { state: copyState });
-    }
+  const handleCopyTo = async (targetType) => {
+    await copyToDocument({
+      sourceDocType: 'apInvoice',
+      targetType,
+      sourceDocEntry: currentDocEntry,
+      sourceDocNo: header.docNo,
+      sourcePath: location.pathname,
+      sourceSnapshot: { header, lines },
+      restoreState: { APInvoiceDocEntry: currentDocEntry },
+      navigate,
+      upsertTask,
+      removeTask,
+      setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
+      errorMessage: 'Please save the A/P invoice first before copying to another document.',
+    });
   };
 
   const validate = () => {
@@ -1405,8 +1446,8 @@ function APInvoice() {
       setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
-      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-      setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+      setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [] }));
       setValErrors({ header: {}, lines: {}, form: '' });
 
@@ -1426,18 +1467,18 @@ function APInvoice() {
     setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
-    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-    setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
     setFreightModal({ open: false, freightCharges: [], loading: false });
   };
 
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
-  const visHdrUdfs = HEADER_UDF_DEFINITIONS.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
   const visibleColumns = BASE_MATRIX_COLUMNS.filter(c => formSettings.matrixColumns?.[c.key]?.visible !== false);
-  const visibleRowUdfs = ROW_UDF_DEFINITIONS.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
+  const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
 
   // Continue in next message with render...
 
@@ -1448,17 +1489,16 @@ function APInvoice() {
       {/* ── Toolbar ── */}
       <div className="po-toolbar sap-document-toolbar">
         <span className="po-toolbar__title sap-document-toolbar__title">A/P Invoice{currentDocEntry ? ` — #${header.docNo || currentDocEntry}` : ''}</span>
-        <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting}>
+        <button type="submit" className="po-btn po-btn--primary sap-document-toolbar__primary" disabled={pageState.posting}>
           {primaryActionLabel}
         </button>
-        <button type="button" className="po-btn" disabled={pageState.posting}>Add Draft & New</button>
-        <button type="button" className="po-btn po-btn--danger" onClick={resetForm}>Cancel</button>
-        <button type="button" className="po-btn" onClick={() => navigate('/ap-invoice/find')}>Find</button>
-        <button type="button" className="po-btn" onClick={resetForm}>New</button>
-        <button type="button" className="po-btn" onClick={toggleHeaderUdfs}>
+        <button type="button" className="po-btn po-btn--danger sap-document-toolbar__cancel" onClick={resetForm}>Cancel</button>
+        <button type="button" className="po-btn sap-document-toolbar__find" onClick={() => navigate('/ap-invoice/find')}>Find</button>
+        <button type="button" className="po-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
+        <button type="button" className="po-btn sap-document-toolbar__udf" onClick={toggleHeaderUdfs}>
           {sidebarOpen ? 'Hide UDFs' : 'Show UDFs'}
         </button>
-        <button type="button" className="po-btn" onClick={toggleFormSettings}>Form Settings</button>
+        <button type="button" className="po-btn sap-document-toolbar__settings" onClick={toggleFormSettings}>Form Settings</button>
         <div className="po-dropdown">
           <button
             type="button"
@@ -1519,6 +1559,14 @@ function APInvoice() {
             </button>
           </div>
         </div>
+        <PurchasePrintLayoutActions
+          documentKey="apInvoice"
+          docEntry={currentDocEntry}
+          docNumber={header.docNo}
+          disabled={pageState.posting || pageState.loading}
+          onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
+          onError={(message) => setPageState(p => ({ ...p, error: message, success: '' }))}
+        />
         <span className={`po-mode-badge po-mode-badge--${currentDocEntry ? 'update' : 'add'}`}>
           {currentDocEntry ? 'Update' : 'Add'}
         </span>
@@ -1685,6 +1733,8 @@ function APInvoice() {
                 onOpenHSNModal={(i) => {/* HSN modal not implemented in AP Invoice */}}
                 onOpenItemModal={openItemModal}
                 getBranchName={getBranchName}
+                rowUdfFields={visibleRowUdfs}
+                onRowUdfChange={handleRowUdfChange}
               />
             )}
 
@@ -1813,7 +1863,6 @@ function APInvoice() {
                 <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting}>
                   {secondaryActionLabel}
                 </button>
-                <button type="button" className="po-btn" disabled={pageState.posting}>Add Draft & New</button>
                 <button type="button" className="po-btn po-btn--danger" onClick={resetForm}>Cancel</button>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
@@ -1899,8 +1948,8 @@ function APInvoice() {
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={BASE_MATRIX_COLUMNS}
-            headerUdfFields={HEADER_UDF_DEFINITIONS}
-            rowUdfFields={ROW_UDF_DEFINITIONS}
+            headerUdfFields={headerUdfDefinitions}
+            rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}
             onSettingChange={updateFormSetting}
           />

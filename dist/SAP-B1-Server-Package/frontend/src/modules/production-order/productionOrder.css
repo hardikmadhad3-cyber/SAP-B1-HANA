@@ -1,0 +1,247 @@
+/* ── Production Order Module — SAP B1 style ── */
+
+.po-header-layout {
+  display: flex;
+  gap: 40px;
+  align-items: flex-start;
+}
+
+.po-header-left,
+.po-header-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.po-lbl   { flex: 0 0 150px !important; text-align: right; }
+.po-lbl-r { flex: 0 0 130px !important; text-align: right; }
+
+.po-readonly { background: #f0f2f5 !important; color: #555; }
+
+/* ── Tab panel ── */
+.po-tab-panel {
+  padding: 0 !important;
+  min-height: 380px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Lines wrap ── */
+.po-lines-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  position: relative;
+}
+
+.po-grid-scroll {
+  overflow-x: auto;
+  overflow-y: auto;
+  flex: 1;
+  max-height: 380px;
+}
+
+.po-grid {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;
+}
+
+.po-th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #e8edf2;
+  border: 1px solid #c8d0da;
+  padding: 4px 5px;
+  text-align: left;
+  font-weight: 700;
+  color: #003366;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.po-th--type    { width: 60px;  }
+.po-th--no      { width: 120px; }
+.po-th--desc    { width: 160px; }
+.po-th--baseqty { width: 80px;  }
+.po-th--planqty { width: 80px;  }
+.po-th--issued  { width: 80px;  }
+.po-th--uom     { width: 60px;  }
+.po-th--wh      { width: 90px;  }
+.po-th--issue   { width: 90px;  }
+.po-th--dr      { width: 100px; }
+.po-th--proj    { width: 90px;  }
+.po-th--addqty  { width: 80px;  }
+.po-th--stage   { width: 60px;  }
+
+.po-grid__row:hover { background: #f5f8fc; }
+.po-grid__row:nth-child(even) { background: #fafbfc; }
+.po-grid__row:nth-child(even):hover { background: #f0f4f8; }
+.po-grid__row--empty { height: 22px; }
+
+.po-grid__cell {
+  border: 1px solid #e8ecf0;
+  padding: 1px 3px;
+  vertical-align: middle;
+  height: 22px;
+}
+.po-grid__cell--empty    { background: #fafbfc; }
+.po-grid__cell--num      { text-align: right; font-variant-numeric: tabular-nums; }
+.po-grid__cell--muted    { color: #bbb; font-size: 11px; text-align: center; }
+.po-grid__cell--readonly { background: #f5f7fa; color: #555; }
+.po-grid__cell--total    { font-weight: 700; color: #003366; background: #eef3f8; }
+
+.po-cell-input {
+  width: 100%;
+  height: 20px;
+  padding: 0 3px;
+  font-size: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 1px;
+  box-sizing: border-box;
+  color: #1a1a1a;
+}
+.po-cell-input:focus {
+  outline: none;
+  border-color: #0070c0;
+  background: #fff;
+}
+.po-cell-input--num { text-align: right; }
+
+.po-cell-select {
+  width: 100%;
+  height: 22px;
+  padding: 0 2px;
+  font-size: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 1px;
+  box-sizing: border-box;
+}
+.po-cell-select:focus {
+  outline: none;
+  border-color: #0070c0;
+  background: #fff;
+}
+
+.po-cell-lookup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.po-cell-lookup .po-cell-input { flex: 1; }
+
+/* ── Row +/- buttons ── */
+.po-row-btns {
+  position: absolute;
+  right: -28px;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 28px;
+}
+
+.po-row-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fff 0%, #e8ecf0 100%);
+  color: #333;
+  cursor: pointer;
+  text-align: center;
+}
+.po-row-btn:hover { background: #d8e2ec; }
+.po-row-btn--del  { color: #c00; border-color: #e0a0a0; }
+
+/* ── Bottom bar ── */
+.po-bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 5px 36px 5px 12px;
+  border-top: 1px solid #e0e6ed;
+  background: #f8fafc;
+  gap: 8px;
+}
+
+/* ── Status badge ── */
+.po-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 8px;
+}
+.po-status-badge--planned    { background: #e8f4fd; color: #0070c0; border: 1px solid #b3d9f5; }
+.po-status-badge--released   { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+.po-status-badge--closed     { background: #f5f5f5; color: #757575; border: 1px solid #bdbdbd; }
+.po-status-badge--cancelled  { background: #fce4ec; color: #c62828; border: 1px solid #ef9a9a; }
+
+/* ── List view ── */
+.po-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: #fff;
+}
+.po-list-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.po-list-table th {
+  background: #e8edf2;
+  border: 1px solid #c8d0da;
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 700;
+  color: #003366;
+  white-space: nowrap;
+  font-size: 12px;
+  position: sticky;
+  top: 0;
+}
+.po-list-table td {
+  border: 1px solid #e8ecf0;
+  padding: 8px 10px;
+  vertical-align: middle;
+  color: #1a1a1a;
+  white-space: nowrap;
+}
+.po-list-row {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.po-list-row:hover td { 
+  background: #e8f4fd !important;
+}
+.po-list-table tbody tr:nth-child(even) td { 
+  background: #fafbfc; 
+}
+.po-list-table tbody tr:nth-child(odd) td { 
+  background: #fff; 
+}
+
+.po-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 12px;
+}
+.po-list-toolbar input {
+  flex: 1;
+  max-width: 280px;
+}

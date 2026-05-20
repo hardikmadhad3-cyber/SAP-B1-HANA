@@ -1,0 +1,3 @@
+@import '../../purchase-order/styles/purchaseOrder.css';
+
+/* Purchase Quotation uses the shared purchase-side document shell. Keep only workflow-specific overrides here. */

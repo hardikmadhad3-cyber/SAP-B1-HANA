@@ -25,6 +25,7 @@ import {
   submitGoodsReceipt,
   updateGoodsReceipt,
 } from '../../api/goodsReceiptApi';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 
 const TAB_NAMES = ['Contents', 'Attachments'];
 const today = () => new Date().toISOString().split('T')[0];
@@ -108,6 +109,7 @@ function GoodsReceipt() {
     lines: {},
     form: '',
   });
+  useValidationHighlights(valErrors);
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [selectedCopyDocEntry, setSelectedCopyDocEntry] = useState(null);
   const [copyLoading, setCopyLoading] = useState(false);
@@ -783,14 +785,14 @@ function GoodsReceipt() {
     setCopyFromModal(true);
   };
 
-  const handleCopyFrom = async () => {
-    if (!selectedCopyDocEntry) return;
+  const handleCopyFrom = async (docEntry = selectedCopyDocEntry) => {
+    if (!docEntry) return;
 
     setCopyLoading(true);
     setPageState((current) => ({ ...current, error: '', success: '' }));
 
     try {
-      const response = await fetchGoodsReceiptCopySource('goods-issue', selectedCopyDocEntry);
+      const response = await fetchGoodsReceiptCopySource('goods-issue', docEntry);
       const payload = response.data || {};
 
       setHeader((current) => ({

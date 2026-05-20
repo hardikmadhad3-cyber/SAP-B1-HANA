@@ -7,11 +7,11 @@ const createHttpError = (statusCode, message) => {
 const APP_MENU_DEFINITIONS = [
   { key: 'dashboard', menuName: 'Dashboard', menuPath: '/dashboard', icon: 'dashboard', sortOrder: -1 },
   { key: 'sales', menuName: 'Sales', aliases: ['Sales - A/R', 'Sales A/R'], icon: 'sales', sortOrder: 1 },
-  { key: 'sales-order', parentKey: 'sales', menuName: 'Sales Order', menuPath: '/sales-order', icon: 'document', sortOrder: 1 },
-  { key: 'sales-quotation', parentKey: 'sales', menuName: 'Sales Quotation', menuPath: '/sales-quotation', icon: 'document', sortOrder: 2 },
-  { key: 'delivery', parentKey: 'sales', menuName: 'Delivery', menuPath: '/delivery', icon: 'delivery', sortOrder: 3 },
-  { key: 'ar-invoice', parentKey: 'sales', menuName: 'A/R Invoice', menuPath: '/ar-invoice', icon: 'invoice', sortOrder: 4 },
-  { key: 'ar-credit-memo', parentKey: 'sales', menuName: 'A/R Credit Memo', menuPath: '/ar-credit-memo', icon: 'invoice', sortOrder: 5 },
+  { key: 'sales-quotation', parentKey: 'sales', menuName: 'Sales Quotation', menuPath: '/sales-quotation', icon: 'document', sortOrder: 1, enforceSortOrder: true },
+  { key: 'sales-order', parentKey: 'sales', menuName: 'Sales Order', menuPath: '/sales-order', icon: 'document', sortOrder: 2, enforceSortOrder: true },
+  { key: 'delivery', parentKey: 'sales', menuName: 'Delivery', menuPath: '/delivery', icon: 'delivery', sortOrder: 3, enforceSortOrder: true },
+  { key: 'ar-invoice', parentKey: 'sales', menuName: 'A/R Invoice', menuPath: '/ar-invoice', icon: 'invoice', sortOrder: 4, enforceSortOrder: true },
+  { key: 'ar-credit-memo', parentKey: 'sales', menuName: 'A/R Credit Memo', menuPath: '/ar-credit-memo', icon: 'invoice', sortOrder: 5, enforceSortOrder: true },
 
   { key: 'purchase', menuName: 'Purchase', aliases: ['Purchase - A/P', 'Purchase A/P', 'Purchasing', 'Purchasing - A/P', 'Purchasing A/P'], icon: 'purchase', sortOrder: 2 },
   { key: 'purchase-request', parentKey: 'purchase', menuName: 'Purchase Request', menuPath: '/purchase-request', icon: 'document', sortOrder: 1 },
@@ -55,6 +55,8 @@ const APP_MENU_DEFINITIONS = [
     legacyPaths: ['/incoming-payment', '/banking/incoming-payment', '/banking/incoming-payments'],
     icon: 'payments',
     sortOrder: 1,
+    enforceSortOrder: true,
+    enforceMenuName: true,
   },
   {
     key: 'outgoing-payments',
@@ -133,14 +135,17 @@ const insertMenu = async (db, definition, parentId) => {
 };
 
 const updateMenuMetadata = async (db, menu, definition, parentId, shouldUseCanonicalPath) => {
-  const nextMenuName = normalizeText(menu.MenuName) || normalizeText(definition.menuName);
+  const nextMenuName = definition.enforceMenuName
+    ? normalizeText(definition.menuName)
+    : (normalizeText(menu.MenuName) || normalizeText(definition.menuName));
   const nextMenuPath = shouldUseCanonicalPath
     ? (normalizeText(definition.menuPath) || null)
     : (normalizeText(menu.MenuPath) || normalizeText(definition.menuPath) || null);
   const nextIcon = normalizeText(menu.Icon) || normalizeText(definition.icon) || null;
-  const nextSortOrder = Number.isFinite(Number(menu.SortOrder))
-    ? Number(menu.SortOrder)
-    : (Number.isFinite(Number(definition.sortOrder)) ? Number(definition.sortOrder) : 0);
+  const definitionSortOrder = Number.isFinite(Number(definition.sortOrder)) ? Number(definition.sortOrder) : 0;
+  const nextSortOrder = definition.enforceSortOrder
+    ? definitionSortOrder
+    : (Number.isFinite(Number(menu.SortOrder)) ? Number(menu.SortOrder) : definitionSortOrder);
   const nextParentId = parentId ?? null;
 
   if (

@@ -56,8 +56,10 @@ const fetchSalesOrderForCopy = (docEntry) =>
   apiClient.get(`/delivery/sales-order/${encodeURIComponent(docEntry)}/copy`);
 
 // ─────────── Copy From Sales Quotation ───────────
-const fetchOpenSalesQuotationsForDelivery = () =>
-  apiClient.get('/sales-quotation/open');
+const fetchOpenSalesQuotationsForDelivery = (customerCode = null) =>
+  apiClient.get('/sales-quotation/open', {
+    params: customerCode ? { customerCode } : {},
+  });
 
 const fetchSalesQuotationForDeliveryCopy = (docEntry) =>
   apiClient.get(`/sales-quotation/${encodeURIComponent(docEntry)}/copy`);

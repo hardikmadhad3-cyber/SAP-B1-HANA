@@ -2,10 +2,30 @@ const sapService = require('./sapService');
 const arInvoiceDb = require('./arInvoiceDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { getUdfDefinitions } = require('./udfMetadataService');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
   return normalized === '' ? -1 : Number(normalized);
+};
+
+const isUdfValuePresent = (value) => {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  return true;
+};
+
+const applyUdfs = (target, udfValues = {}, allowedKeys = null) => {
+  Object.entries(udfValues || {}).forEach(([key, value]) => {
+    if (String(key || '').startsWith('U_') && isUdfValuePresent(value) && (!allowedKeys || allowedKeys.has(key))) {
+      target[key] = value;
+    }
+  });
+};
+
+const getAllowedUdfKeys = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Set(definitions.map((field) => field.key));
 };
 
 // ───────── REFERENCE DATA (USING ODBC) ─────────
@@ -106,6 +126,8 @@ const getARInvoiceList = async ({
   docNum = '',
   customerCode = '',
   customerName = '',
+  sellerCode = '',
+  sellerName = '',
   status = '',
   postingDateFrom = '',
   postingDateTo = '',
@@ -119,6 +141,8 @@ const getARInvoiceList = async ({
       docNum,
       customerCode,
       customerName,
+      sellerCode,
+      sellerName,
       status,
       postingDateFrom,
       postingDateTo,
@@ -176,6 +200,10 @@ const submitARInvoice = async (payload) => {
     
     console.log("🔍 [ARInvoiceService] Using customer code:", customerCode);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
+    const [allowedHeaderUdfs, allowedLineUdfs] = await Promise.all([
+      getAllowedUdfKeys('OINV'),
+      getAllowedUdfKeys('INV1'),
+    ]);
 
     // Transform payload to SAP format
     const sapPayload = {
@@ -211,15 +239,19 @@ const submitARInvoice = async (payload) => {
 
       DocumentLines: payload.lines.map((l, index) => {
         console.log(`🔍 [ARInvoiceService] Processing line ${index}:`, l);
-        
+        const warehouseCode = String(l.whse || l.warehouse || '').trim();
+
         const line = {
           ItemCode: l.itemNo,
           Quantity: Number(l.quantity),
           UnitPrice: Number(l.unitPrice),
-          WarehouseCode: l.whse || l.warehouse || "01",
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
         };
+
+        if (warehouseCode) {
+          line.WarehouseCode = warehouseCode;
+        }
 
         // Add discount if present
         if (l.stdDiscount && Number(l.stdDiscount) > 0) {
@@ -236,16 +268,14 @@ const submitARInvoice = async (payload) => {
         }
 
         console.log(`🔍 [ARInvoiceService] Transformed line ${index}:`, line);
+        applyUdfs(line, l.udf, allowedLineUdfs);
         return line;
       })
     };
 
     console.log("🔥 [ARInvoiceService] SAP AR INVOICE PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
-    // Add header UDFs if any
-    if (payload.header_udfs && Object.keys(payload.header_udfs).length > 0) {
-      Object.assign(sapPayload, payload.header_udfs);
-    }
+    applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
 
     // Use Service Layer for POST operations - Invoices endpoint
     const response = await sapService.request({
@@ -294,6 +324,10 @@ const updateARInvoice = async (docEntry, payload) => {
     // Use vendor or customerCode (frontend sends vendor)
     const customerCode = payload.header.vendor || payload.header.customerCode || payload.header.customer;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
+    const [allowedHeaderUdfs, allowedLineUdfs] = await Promise.all([
+      getAllowedUdfKeys('OINV'),
+      getAllowedUdfKeys('INV1'),
+    ]);
 
     // Transform payload to SAP format (similar to submit)
     const sapPayload = {
@@ -313,24 +347,28 @@ const updateARInvoice = async (docEntry, payload) => {
       Comments: payload.header.otherInstruction || payload.header.comments || undefined,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
 
-      DocumentLines: payload.lines.map((l) => ({
-        ItemCode: l.itemNo,
-        Quantity: Number(l.quantity),
-        UnitPrice: Number(l.unitPrice),
-        WarehouseCode: l.whse || l.warehouse || "01",
-        TaxCode: l.taxCode || undefined,
-        MeasureUnit: l.uomCode || undefined,
-        DiscountPercent: l.stdDiscount ? Number(l.stdDiscount) : (l.discountPercent ? Number(l.discountPercent) : 0),
-        BaseType: l.baseType ? Number(l.baseType) : undefined,
-        BaseEntry: l.baseEntry ? Number(l.baseEntry) : undefined,
-        BaseLine: l.baseLine !== undefined ? Number(l.baseLine) : undefined,
-      }))
+      DocumentLines: payload.lines.map((l) => {
+        const warehouseCode = String(l.whse || l.warehouse || '').trim();
+        const line = {
+          ItemCode: l.itemNo,
+          Quantity: Number(l.quantity),
+          UnitPrice: Number(l.unitPrice),
+          TaxCode: l.taxCode || undefined,
+          MeasureUnit: l.uomCode || undefined,
+          DiscountPercent: l.stdDiscount ? Number(l.stdDiscount) : (l.discountPercent ? Number(l.discountPercent) : 0),
+          BaseType: l.baseType ? Number(l.baseType) : undefined,
+          BaseEntry: l.baseEntry ? Number(l.baseEntry) : undefined,
+          BaseLine: l.baseLine !== undefined ? Number(l.baseLine) : undefined,
+        };
+        if (warehouseCode) {
+          line.WarehouseCode = warehouseCode;
+        }
+        applyUdfs(line, l.udf, allowedLineUdfs);
+        return line;
+      })
     };
 
-    // Add header UDFs if any
-    if (payload.header_udfs && Object.keys(payload.header_udfs).length > 0) {
-      Object.assign(sapPayload, payload.header_udfs);
-    }
+    applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
 
     // Use Service Layer for PATCH operations
     const response = await sapService.request({
@@ -459,6 +497,6 @@ module.exports = {
     } 
   },
   getDeliveryForCopy:      async (d) => arInvoiceDb.getDeliveryForCopy(d),
-  getOpenSalesQuotations:  async () => { try { return { documents: await arInvoiceDb.getOpenSalesQuotations() }; } catch(e) { return { documents: [] }; } },
+  getOpenSalesQuotations:  async (customerCode = null) => { try { return { documents: await arInvoiceDb.getOpenSalesQuotations(customerCode) }; } catch(e) { return { documents: [] }; } },
   getSalesQuotationForCopy:async (d) => arInvoiceDb.getSalesQuotationForCopy(d),
 };

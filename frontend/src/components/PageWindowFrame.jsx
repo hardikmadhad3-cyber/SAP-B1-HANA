@@ -64,6 +64,7 @@ function PageWindowFrame({ children }) {
   const { closeActiveAndRestorePrevious } = useSapWindowTaskbarActions();
   const normalizedPath = normalizePath(location.pathname);
   const isExcludedPath = WINDOW_FRAME_EXCLUDED_PATHS.has(normalizedPath);
+  const routedWindow = location.state?.sapWindow || null;
 
   const flattenedMenus = useMemo(
     () => flattenMenuTree(menus).filter((menu) => menu?.menuPath),
@@ -83,9 +84,9 @@ function PageWindowFrame({ children }) {
       .sort((left, right) => normalizePath(right.menuPath).length - normalizePath(left.menuPath).length)[0] || null;
   }, [flattenedMenus, normalizedPath]);
 
-  const pageTitle = currentMenu?.menuName
+  const pageTitle = routedWindow?.title || (currentMenu?.menuName
     ? getDisplayMenuName(currentMenu.menuName)
-    : prettifyPathTitle(normalizedPath);
+    : prettifyPathTitle(normalizedPath));
 
   const availablePaths = useMemo(
     () => Array.from(new Set((menuPaths || []).map(normalizePath).filter(Boolean))),
@@ -109,8 +110,9 @@ function PageWindowFrame({ children }) {
     isOpen: !isExcludedPath,
     defaultTop: 10,
     resetOnClose: false,
-    taskId: `page-window:${normalizedPath}`,
-    taskPath: normalizedPath,
+    taskId: routedWindow?.id || `page-window:${normalizedPath}`,
+    taskPath: routedWindow?.path || normalizedPath,
+    taskState: location.state || undefined,
     taskTitle: pageTitle,
   });
 
@@ -134,10 +136,6 @@ function PageWindowFrame({ children }) {
 
   const handleMinimize = () => {
     windowFrame.toggleMinimize();
-    const nextPath = getFallbackPath();
-    if (nextPath && nextPath !== normalizedPath) {
-      navigate(nextPath);
-    }
   };
 
   const handleClose = () => {
@@ -152,17 +150,39 @@ function PageWindowFrame({ children }) {
   };
 
   if (windowFrame.isMinimized) {
-    return null;
+    return (
+      <section
+        className="page-window-frame is-minimized"
+        aria-hidden="true"
+        {...windowFrame.windowProps}
+        style={{
+          ...(windowFrame.windowProps?.style || {}),
+          display: "none",
+        }}
+      >
+        <div className="page-window-frame__body">
+          {children}
+        </div>
+      </section>
+    );
   }
+
+  const routeWindowProps = windowFrame.isMaximized
+    ? windowFrame.windowProps
+    : {
+        ...windowFrame.windowProps,
+        style: undefined,
+      };
 
   return (
     <section
       className={`page-window-frame${windowFrame.isMaximized ? " is-maximized" : ""}`}
-      ref={windowFrame.windowProps.ref}
+      {...routeWindowProps}
     >
       <header
         className="page-window-frame__titlebar"
         aria-label={`${pageTitle} window controls`}
+        {...(windowFrame.isMaximized ? windowFrame.titleBarProps : {})}
       >
         <div className="page-window-frame__controls">
           <button
