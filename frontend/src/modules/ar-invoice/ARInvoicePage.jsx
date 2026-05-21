@@ -40,8 +40,6 @@ import {
   updateARInvoice,
   fetchDocumentSeries,
   fetchNextNumber,
-  fetchStateFromAddress,
-  fetchStateFromWarehouse,
   fetchFreightCharges,
   fetchItemsForModal,
   fetchOpenSalesQuotationsForARInvoice,
@@ -53,7 +51,7 @@ import {
   fetchOpenBlanketAgreementsForARInvoice,
   fetchBlanketAgreementForARInvoiceCopy,
 } from '../../api/arInvoiceApi';
-import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
+import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { AR_INVOICE_COMPANY_ID } from '../../config/appConfig';
 import { arInvoiceCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
@@ -190,7 +188,6 @@ function ARInvoicePage() {
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
   useValidationHighlights(valErrors);
-  const [loadedSnapshot, setLoadedSnapshot] = useState('');
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -292,7 +289,6 @@ function ARInvoicePage() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-    setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
@@ -472,7 +468,6 @@ function ARInvoicePage() {
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
-        setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
         if (so.header?.customerCode || so.header?.customer) {
@@ -598,9 +593,6 @@ function ARInvoicePage() {
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -940,25 +932,6 @@ function ARInvoicePage() {
     }
   };
   
-  const handleShipToChange = async (addressCode) => {
-    if (!addressCode || !header.vendor) {
-      setHeader(p => ({ ...p, shipToCode: addressCode, placeOfSupply: '' }));
-      return;
-    }
-    
-    const addr = effectiveWhseAddrs.find(w => String(w.WhsCode) === addressCode);
-    setHeader(p => ({ ...p, shipToCode: addressCode, shipTo: fmtAddr(addr) }));
-    
-    try {
-      const res = await fetchStateFromWarehouse(addressCode);
-      if (res.data.state) {
-        setHeader(p => ({ ...p, placeOfSupply: res.data.state }));
-      }
-    } catch (err) {
-      // Failed to fetch state from address
-    }
-  };
-  
   const handleSeriesChange = async (seriesValue) => {
     if (!seriesValue) return;
     
@@ -1285,8 +1258,8 @@ function ARInvoicePage() {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode || p.shipToCode,
-        shipToAddress: addressForm.shipToAddress || formatted,
-        shipTo: addressForm.shipToAddress || formatted,
+        shipToAddress: formatted || addressForm.shipToAddress,
+        shipTo: formatted || addressForm.shipToAddress,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
@@ -1301,8 +1274,8 @@ function ARInvoicePage() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
-        billToAddress: addressForm.billToAddress || formatted,
-        payTo: addressForm.billToAddress || formatted,
+        billToAddress: formatted || addressForm.billToAddress,
+        payTo: formatted || addressForm.billToAddress,
         placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
       }));
     }
@@ -1926,7 +1899,6 @@ function ARInvoicePage() {
       };
       const r = currentDocEntry ? await updateARInvoice(currentDocEntry, payload) : await submitARInvoice(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-      setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -1948,7 +1920,6 @@ function ARInvoicePage() {
   };
 
   const resetForm = () => {
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);

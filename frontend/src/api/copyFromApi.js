@@ -65,6 +65,9 @@ export const BASE_TYPE = {
   salesQuotation: 23,
   salesOrder:     17,
   delivery:       15,
+  purchaseQuotation: 540000006,
+  purchaseOrder:  22,
+  grpo:           20,
   invoice:        13,
   returns:        14,
   return:         16,
@@ -156,7 +159,7 @@ const pickUdfs = (source = {}) => Object.entries(source || {}).reduce((acc, [key
 }, {});
 
 export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranch = '') => ({
-  itemNo:          firstString(line.ItemCode, line.itemNo),
+  itemNo:          firstString(line.ItemCode, line.AccountCode, line.AcctCode, line.itemNo, line.glAccount),
   itemDescription: firstString(line.ItemDescription, line.Dscription, line.itemDescription),
   sellerQuality:   firstString(line.sellerQuality, line.SellerQuality),
   buyerQuality:    firstString(line.buyerQuality, line.BuyerQuality),

@@ -138,8 +138,6 @@ export default function CopyFromModal({
         <div className="sap-copy-from-titlebar">
           <span>{modalTitle}</span>
           <div className="sap-copy-from-titlebar__actions">
-            <button type="button" aria-label="Minimize" />
-            <button type="button" aria-label="Maximize" />
             <button type="button" aria-label="Close" onClick={onClose} />
           </div>
         </div>

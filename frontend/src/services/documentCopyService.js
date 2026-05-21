@@ -51,6 +51,30 @@ const copyTargetConfig = {
       targetPath: '/ar-credit-memo',
     },
   },
+  serviceArInvoice: {
+    arCreditMemo: {
+      targetDocType: 'arCreditMemo',
+      targetLabel: 'A/R Credit Memo',
+      targetPath: '/ar-credit-memo',
+    },
+    'ar-credit-memo': {
+      targetDocType: 'arCreditMemo',
+      targetLabel: 'A/R Credit Memo',
+      targetPath: '/ar-credit-memo',
+    },
+  },
+  serviceApInvoice: {
+    apCreditMemo: {
+      targetDocType: 'apCreditMemo',
+      targetLabel: 'A/P Credit Memo',
+      targetPath: '/ap-credit-memo',
+    },
+    'ap-credit-memo': {
+      targetDocType: 'apCreditMemo',
+      targetLabel: 'A/P Credit Memo',
+      targetPath: '/ap-credit-memo',
+    },
+  },
   purchaseQuotation: {
     'purchase-order': {
       targetDocType: 'purchaseOrder',
@@ -101,6 +125,8 @@ const sourceLabels = {
   salesOrder: 'Sales Order',
   delivery: 'Delivery',
   arInvoice: 'A/R Invoice',
+  serviceArInvoice: 'Service A/R Invoice',
+  serviceApInvoice: 'Service A/P Invoice',
   purchaseQuotation: 'Purchase Quotation',
   purchaseOrder: 'Purchase Order',
   grpo: 'Goods Receipt PO',
@@ -112,6 +138,8 @@ const sourceBaseTypes = {
   salesOrder: 17,
   delivery: 15,
   arInvoice: 13,
+  serviceArInvoice: 13,
+  serviceApInvoice: 18,
   purchaseQuotation: 540000006,
   purchaseOrder: 22,
   grpo: 20,

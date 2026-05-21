@@ -6,7 +6,7 @@
 const sql = require('mssql');
 const env = require('../config/env');
 const authDbService = require('./authDbService');
-const { getRequestContext } = require('./requestContextService');
+const { getRequestContext, getOrSetContextValue } = require('./requestContextService');
 
 const buildConfig = (databaseName = env.dbName) => ({
   server: env.dbServer,
@@ -43,7 +43,10 @@ const resolveDatabaseName = async (options = {}) => {
   const companyId = Number(context?.req?.auth?.companyId);
 
   if (Number.isFinite(userId) && Number.isFinite(companyId)) {
-    const assignedCompany = await authDbService.getAssignedCompanyForUser(userId, companyId);
+    const assignedCompany = await getOrSetContextValue(
+      `assignedCompany:${userId}:${companyId}`,
+      () => authDbService.getAssignedCompanyForUser(userId, companyId),
+    );
     const resolvedFromAssignment = String(assignedCompany?.DbName || '').trim();
 
     if (resolvedFromAssignment) {

@@ -16,9 +16,7 @@ export default function SalesEmployeeSetupModal({
         <div className="sap-setup-titlebar">
           <span>Sales Employees/Buyers - Setup</span>
           <div className="sap-setup-window-actions">
-            <button type="button" aria-label="Minimize">_</button>
-            <button type="button" aria-label="Maximize">□</button>
-            <button type="button" aria-label="Close" onClick={onClose}>×</button>
+            <button type="button" aria-label="Close" onClick={onClose}>x</button>
           </div>
         </div>
         <div className="sap-setup-body">

@@ -45,7 +45,6 @@ import {
   updateSalesQuotation,
   fetchDocumentSeries,
   fetchNextNumber,
-  fetchStateFromAddress,
   fetchItemsForModal,
   fetchFreightCharges,
   createSalesQuotationLookupValue,
@@ -178,7 +177,7 @@ const INIT_HEADER = {
   paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
   totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
-  billToAddress: '', billToCode: '', shipToAddress: '', shipToCode: '',
+  billToAddress: '', billToCode: '', shipToAddress: '',
 };
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
@@ -220,7 +219,6 @@ function SalesQuotation() {
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
   useValidationHighlights(valErrors, { rootRef: formRef });
-  const [loadedSnapshot, setLoadedSnapshot] = useState('');
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -365,7 +363,6 @@ function SalesQuotation() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-    setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
@@ -647,7 +644,6 @@ function SalesQuotation() {
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
-        setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
         
@@ -707,9 +703,6 @@ function SalesQuotation() {
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -728,8 +721,6 @@ function SalesQuotation() {
   // Filter warehouses by selected branch
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
   
-  // NOTE: no warehouse-based fast fill for Ship-To here
-  const effectiveWhseAddrs = refData.warehouse_addresses.length ? refData.warehouse_addresses : [];
   const payTermOpts = refData.payment_terms.length
     ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
     : FALLBACK_PAYMENT_TERMS;
@@ -816,21 +807,6 @@ function SalesQuotation() {
   const totals = calcTotals();
 
   // ── GST determination logic ───────────────────────────────────────────────
-  const determineGSTState = () => {
-    if (!header.vendor) return '';
-
-    const shipToAddr = vendorEffectiveShipToAddresses.find(a => String(a.Address || '') === String(header.shipToCode || ''))
-      || vendorEffectiveBillToAddresses.find(a => String(a.Address || '') === String(header.shipToCode || ''));
-    const billToAddr = vendorEffectiveBillToAddresses.find(a => String(a.Address || '') === String(header.billToCode || ''))
-      || vendorEffectiveShipToAddresses.find(a => String(a.Address || '') === String(header.billToCode || ''));
-
-    if (header.useBillToForTax) {
-      return billToAddr?.State || shipToAddr?.State || '';
-    }
-
-    return shipToAddr?.State || billToAddr?.State || '';
-  };
-
   const determineGSTType = (gstState) => {
     if (!gstState) return 'IGST';
 
@@ -841,44 +817,6 @@ function SalesQuotation() {
       return 'CGST_SGST'; // CGST + SGST
     } else {
       return 'IGST';
-    }
-  };
-
-  const getApplicableTaxCodes = (gstType) => {
-    const taxCodes = effectiveTaxCodes.filter(code => {
-      if (gstType === 'CGST_SGST') {
-        return String(code.GSTType || '').trim().toUpperCase() === 'INTRASTATE'
-          || taxCodeHasComponent(effectiveTaxCodes, code.Code, 'CGST')
-          || taxCodeHasComponent(effectiveTaxCodes, code.Code, 'SGST');
-      } else if (gstType === 'IGST') {
-        return String(code.GSTType || '').trim().toUpperCase() === 'INTERSTATE'
-          || taxCodeHasComponent(effectiveTaxCodes, code.Code, 'IGST');
-      }
-      return false;
-    });
-
-    // Return tax codes sorted by rate
-    return taxCodes.sort((a, b) => (a.Rate || 0) - (b.Rate || 0));
-  };
-
-  // New GST logic based on Place of Supply
-  const determineGSTTypeFromPOS = () => {
-    if (!header.vendor || !header.placeOfSupply) return 'IGST';
-
-    // Get company state from company address or first branch
-    const companyState = refData.company_address?.State || selectedBranch?.State || '';
-    const customerState = header.placeOfSupply;
-
-    console.log('GST Determination:', {
-      companyState,
-      customerState,
-      match: companyState === customerState
-    });
-
-    if (companyState === customerState) {
-      return 'CGST_SGST'; // Intra-state: CGST + SGST
-    } else {
-      return 'IGST'; // Inter-state: IGST
     }
   };
 
@@ -1501,8 +1439,8 @@ function SalesQuotation() {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode || p.shipToCode,
-        shipToAddress: addressForm.shipToAddress || formatted,
-        shipTo: addressForm.shipToAddress || formatted,
+        shipToAddress: formatted || addressForm.shipToAddress,
+        shipTo: formatted || addressForm.shipToAddress,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
@@ -1517,8 +1455,8 @@ function SalesQuotation() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
-        billToAddress: addressForm.billToAddress || formatted,
-        payTo: addressForm.billToAddress || formatted,
+        billToAddress: formatted || addressForm.billToAddress,
+        payTo: formatted || addressForm.billToAddress,
         placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
       }));
     }
@@ -2104,7 +2042,6 @@ function SalesQuotation() {
       
       const r = currentDocEntry ? await updateSalesQuotation(currentDocEntry, payload) : await submitSalesQuotation(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-      setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -2127,7 +2064,6 @@ function SalesQuotation() {
   };
 
   const resetForm = () => {
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);

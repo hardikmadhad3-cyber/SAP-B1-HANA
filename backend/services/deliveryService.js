@@ -16,11 +16,16 @@ const hasValue = (value) => value !== undefined && value !== null && String(valu
 const normalizeBranchValue = (value) => {
   const normalized = String(value ?? '').trim();
   const lowered = normalized.toLowerCase();
-  if (!normalized || lowered === '0' || lowered === 'no branch' || lowered === 'select branch') {
+  if (!normalized || lowered === '0' || lowered === '-1' || lowered === 'no branch' || lowered === 'select branch') {
     return '';
   }
 
   return normalized;
+};
+
+const normalizeBranchId = (branch) => {
+  const normalized = normalizeBranchValue(branch);
+  return normalized === '' ? -1 : Number(normalized);
 };
 
 const normalizeHeaderBranch = (header = {}) => ({
@@ -719,7 +724,8 @@ console.log("SAP Payload:", sapPayload);
     if (header.series && Number(header.series) > 0) {
       sapPayload.Series = parseInt(header.series);
     }
-    if (header.branch) sapPayload.BPL_IDAssignedToInvoice  = parseInt(header.branch);
+    sapPayload.BPLId = normalizeBranchId(header.branch);
+    sapPayload.BPL_IDAssignedToInvoice = normalizeBranchId(header.branch);
     if (header.paymentTerms) sapPayload.PaymentGroupCode = parseInt(header.paymentTerms);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';

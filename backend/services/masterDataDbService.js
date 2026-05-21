@@ -913,7 +913,7 @@ const searchAccounts = async (query = "", accountType = "", top = 50, skip = 0) 
   }[accountType] ?? null;
 
   const rows = await queryRows(`
-    SELECT AcctCode, AcctName, FatherNum, GroupMask, FrozenFor, ExportCode, Levels, Postable
+    SELECT AcctCode, AcctName, FatherNum, GroupMask, FrozenFor, ExportCode, Levels, Postable, CurrTotal
     FROM OACT
     WHERE (@query = ''
       OR AcctCode LIKE @like
@@ -933,6 +933,7 @@ const searchAccounts = async (query = "", accountType = "", top = 50, skip = 0) 
     ExternalCode: row.ExportCode || "",
     Level: row.Levels ?? "",
     IsTitleAccount: row.Postable === "N" ? "tYES" : "tNO",
+    Balance: row.CurrTotal ?? 0,
   }));
 };
 

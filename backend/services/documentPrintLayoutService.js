@@ -27,6 +27,24 @@ const DOCUMENT_PRINT_CONFIG = {
     tableName: 'OINV',
     filePrefix: 'ar-invoice',
   },
+  serviceArInvoice: {
+    aliases: ['service-ar-invoice', 'servicearinvoice', 'services-ar-invoice', 'service-invoice', 'serviceinv'],
+    label: 'Service A/R Invoice',
+    objectType: '13',
+    typeCode: 'INV2',
+    tableName: 'OINV',
+    filePrefix: 'service-ar-invoice',
+    layoutFilter: 'service-ar-invoice',
+  },
+  serviceApInvoice: {
+    aliases: ['service-ap-invoice', 'serviceapinvoice', 'services-ap-invoice', 'service-purchase-invoice', 'servicepch'],
+    label: 'Service A/P Invoice',
+    objectType: '18',
+    typeCode: 'PCH2',
+    tableName: 'OPCH',
+    filePrefix: 'service-ap-invoice',
+    layoutFilter: 'service-ap-invoice',
+  },
   arCreditMemo: {
     aliases: ['ar-credit-memo', 'arcreditmemo', 'a/r-credit-memo', 'credit-memo', 'rin', '14'],
     label: 'A/R Credit Memo',
@@ -141,9 +159,37 @@ const requirePrintPermission = (auth) => {
   }
 };
 
-const getLayouts = async (documentType) => {
-  const config = getDocumentPrintConfig(documentType);
-  const result = await dbService.query(`
+const getLayoutText = (layout = {}) =>
+  `${layout.layout_id || layout.DocCode || ''} ${layout.layout_name || layout.DocName || ''}`.trim();
+
+const isServiceArInvoiceLayout = (layout = {}) => {
+  const text = getLayoutText(layout).toLowerCase();
+  return text.includes('service') || text.includes('in_vat_invoice') || text.includes('in_vat invoice');
+};
+
+const getLayoutPriority = (layout = {}) => {
+  const text = getLayoutText(layout).toLowerCase();
+  if (text.includes('service')) return 0;
+  if (text.includes('in_vat_invoice') || text.includes('in_vat invoice')) return 1;
+  return 2;
+};
+
+const filterDocumentLayouts = (config, layouts = []) => {
+  if (config.layoutFilter !== 'service-ar-invoice') return layouts;
+
+  return layouts
+    .filter(isServiceArInvoiceLayout)
+    .sort((left, right) => {
+      const priorityDelta = getLayoutPriority(left) - getLayoutPriority(right);
+      if (priorityDelta !== 0) return priorityDelta;
+      return String(left.layout_id || left.DocCode || '').localeCompare(String(right.layout_id || right.DocCode || ''));
+    });
+};
+
+const getLayoutsQuery = (config) => {
+  if (config.layoutFilter !== 'service-ar-invoice') {
+    return {
+      sql: `
     SELECT
       DocCode AS layout_id,
       DocName AS layout_name,
@@ -170,7 +216,54 @@ const getLayouts = async (documentType) => {
     WHERE TypeCode = @typeCode
       AND Status = 'A'
     ORDER BY DocCode
-  `, { typeCode: config.typeCode });
+  `,
+      params: { typeCode: config.typeCode },
+    };
+  }
+
+  return {
+    sql: `
+    SELECT
+      DocCode AS layout_id,
+      DocName AS layout_name,
+      CASE
+        WHEN Category = 'P' THEN 'PLD'
+        WHEN Category = 'C' THEN 'Crystal Reports'
+        ELSE Category
+      END AS layout_type,
+      CASE Language
+        WHEN 8 THEN 'English (UK)'
+        WHEN 3 THEN 'English'
+        WHEN 1 THEN 'Default'
+        ELSE ''
+      END AS language_name,
+      TypeCode AS type_code,
+      Category AS category_code,
+      Language AS language_code,
+      Status AS status_code,
+      CASE
+        WHEN Category = 'C' THEN CAST(1 AS bit)
+        ELSE CAST(0 AS bit)
+      END AS is_export_supported
+    FROM RDOC
+    WHERE Status = 'A'
+      AND (
+        TypeCode = @typeCode
+        OR DocCode LIKE 'INV%'
+        OR DocName LIKE '%Invoice%Service%'
+        OR DocName LIKE '%Service%Invoice%'
+      )
+    ORDER BY DocCode
+  `,
+    params: { typeCode: config.typeCode },
+  };
+};
+
+const getLayouts = async (documentType) => {
+  const config = getDocumentPrintConfig(documentType);
+  const query = getLayoutsQuery(config);
+  const result = await dbService.query(query.sql, query.params);
+  const layouts = filterDocumentLayouts(config, result.recordset || []);
 
   return {
     documentType: config.key,
@@ -179,7 +272,7 @@ const getLayouts = async (documentType) => {
     typeCode: config.typeCode,
     defaultDocCode: config.defaultDocCode || '',
     defaultSchema: env.reportServiceDefaultSchema,
-    layouts: result.recordset || [],
+    layouts,
   };
 };
 
@@ -202,11 +295,14 @@ const getDocumentSummary = async (config, docEntry) => {
 
 const getLayoutForDocument = async (config, docCode) => {
   const normalizedDocCode = toRequiredString(docCode, 'Layout DocCode');
+  const typeFilter = config.layoutFilter === 'service-ar-invoice'
+    ? ''
+    : 'AND TypeCode = @typeCode';
   const result = await dbService.query(`
     SELECT TOP 1 DocCode, DocName, TypeCode, Category, Status
     FROM RDOC
     WHERE DocCode = @docCode
-      AND TypeCode = @typeCode
+      ${typeFilter}
       AND Status = 'A'
   `, {
     docCode: normalizedDocCode,
@@ -217,6 +313,10 @@ const getLayoutForDocument = async (config, docCode) => {
 
   if (!layout) {
     throw createHttpError(404, `Layout ${normalizedDocCode} was not found for ${config.label}.`);
+  }
+
+  if (!filterDocumentLayouts(config, [layout]).length) {
+    throw createHttpError(404, `Layout ${normalizedDocCode} is not assigned to ${config.label}.`);
   }
 
   if (String(layout.Category || '').trim().toUpperCase() !== 'C') {

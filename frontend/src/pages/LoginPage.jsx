@@ -251,6 +251,12 @@ const LoginPage = () => {
             </div>
           </form>
         </div>
+
+        <div className="sap-login__statusbar" aria-label="Current company connection">
+          <span>Server: {selectedCompany?.serverName || 'Not selected'}</span>
+          <span>Database: {selectedCompany?.dbName || 'Not selected'}</span>
+          <span>Version: Web Client</span>
+        </div>
       </div>
 
       {isChooserOpen ? (

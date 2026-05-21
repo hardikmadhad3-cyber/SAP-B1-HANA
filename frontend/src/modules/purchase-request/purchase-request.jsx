@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import './styles/purchase-request.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
@@ -16,7 +16,7 @@ import StateSelectionModal from './components/StateSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
-import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
+import { recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
@@ -74,6 +74,7 @@ const fmtAddr = (a) => {
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
+const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
 
 const createLine = () => ({
   itemNo: '',
@@ -185,6 +186,7 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 function PurchaseRequest() {
   const location = useLocation();
   const navigate = useNavigate();
+  const initialPurchaseRequestDocEntryRef = useRef(location.state?.purchaseRequestDocEntry || null);
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
@@ -317,7 +319,7 @@ function PurchaseRequest() {
             series: seriesRes.data.series || [],
           });
 
-          if (seriesRes.data.series && seriesRes.data.series.length > 0 && !currentDocEntry) {
+          if (seriesRes.data.series && seriesRes.data.series.length > 0 && !initialPurchaseRequestDocEntryRef.current) {
             const defaultSeries = getDefaultSeriesForCurrentYear(seriesRes.data.series);
             if (defaultSeries?.Series != null) {
               handleSeriesChange(defaultSeries.Series);
@@ -416,13 +418,10 @@ function PurchaseRequest() {
 
     loadSavedFreightCharges();
     return () => { ignore = true; };
-  }, [currentDocEntry]);
+  }, [currentDocEntry, numDec.freight]);
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -449,8 +448,6 @@ function PurchaseRequest() {
   }, {});
 
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
-  const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
-
   const getUomOptions = useCallback((line) => {
     const item = refData.items.find(i => String(i.ItemCode || '') === String(line.itemNo || ''));
     if (item) {
@@ -461,11 +458,6 @@ function PurchaseRequest() {
     }
     return FALLBACK_UOM;
   }, [refData.items, uomGroupMap]);
-
-  const uomOptions = lines.reduce((acc, line, i) => {
-    acc[i] = getUomOptions(line);
-    return acc;
-  }, {});
 
   const fmtTaxLabel = (t) => {
     const code = String(t?.Code || '').trim();
@@ -547,22 +539,20 @@ function PurchaseRequest() {
       placeOfSupply: header.placeOfSupply,
       companyState,
       gstType: getGSTTypeLabel(companyState, header.placeOfSupply),
-      lineCount: lines.filter(l => l.itemNo).length
+      status: 'starting'
     });
 
     // Recalculate tax codes for all lines with items
-    const updatedLines = recalculateAllTaxCodes(
-      lines,
+    setLines(prevLines => recalculateAllTaxCodes(
+      prevLines,
       refData.items,
       header.placeOfSupply,  // shipToState (using placeOfSupply)
       header.placeOfSupply,  // billToState (using placeOfSupply)
       header.usePayToForTax || false,  // useBillToForTax
       companyState,
       effectiveTaxCodes
-    );
-
-    setLines(updatedLines);
-  }, [header.placeOfSupply, header.vendor, refData.company_address, selectedBranch, refData.items, effectiveTaxCodes]);
+    ));
+  }, [header.placeOfSupply, header.vendor, header.usePayToForTax, refData.company_address, selectedBranch, refData.items, effectiveTaxCodes]);
 
   // ── address sync ──────────────────────────────────────────────────────────
   // Sync branch to all lines when header branch changes
@@ -901,7 +891,6 @@ function PurchaseRequest() {
   };
 
   const handleHeaderUdfChange = (k, v) => setHeaderUdfs(p => ({ ...p, [k]: v }));
-  const handleRowUdfChange = (i, k, v) => setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
   const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...p[g], [k]: { ...p[g][k], [prop]: val } } }));
   const toggleHeaderUdfs = () => {
     setFormSettingsOpen(false);
@@ -964,13 +953,15 @@ function PurchaseRequest() {
       [addressForm.streetNo, addressForm.buildingFloorRoom].filter(Boolean).join(', '),
       [addressForm.block, addressForm.city].filter(Boolean).join(', '),
       [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion
+      addressForm.countryRegion,
+      addressForm.addressName2,
+      addressForm.addressName3,
     ].filter(Boolean).join('\n');
 
     if (addressModal.type === 'shipTo') {
-      setHeader(p => ({ ...p, shipTo: formatted }));
+      setHeader(p => ({ ...p, shipTo: formatted, shipToAddress: formatted }));
     } else {
-      setHeader(p => ({ ...p, payTo: formatted }));
+      setHeader(p => ({ ...p, payTo: formatted, billTo: formatted, billToAddress: formatted }));
     }
     closeAddressModal();
   };
@@ -1252,8 +1243,6 @@ function PurchaseRequest() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const visHdrUdfs = HEADER_UDF_DEFINITIONS.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
-  const visibleColumns = BASE_MATRIX_COLUMNS.filter(c => formSettings.matrixColumns?.[c.key]?.visible !== false);
-  const visibleRowUdfs = ROW_UDF_DEFINITIONS.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
 
   // ── render ────────────────────────────────────────────────────────────────
   return (

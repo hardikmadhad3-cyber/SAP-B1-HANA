@@ -106,6 +106,76 @@ const getRoleGroupLabel = (record, lookupLabelMaps) => {
   return lookupLabelMaps.RoleId?.get(String(roleValue)) || String(roleValue || 'Unassigned Role');
 };
 
+const COMMON_MENU_ICONS = [
+  'dashboard',
+  'sales',
+  'purchase',
+  'invoice',
+  'document',
+  'delivery',
+  'payments',
+  'inventory',
+  'production',
+  'banking',
+  'reports',
+  'master',
+  'admin',
+  'tax',
+  'warehouse',
+  'branch',
+  'uom',
+  'price',
+];
+
+const slugifyMenuName = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+const getRecordId = (record) => record?.MenuId ?? record?.menuId ?? record?.id;
+
+const getMenuRecordById = (records, menuId) =>
+  records.find((record) => String(getRecordId(record)) === String(menuId));
+
+const buildMenuOptionLabel = (record, records) => {
+  const parent = record.ParentId ? getMenuRecordById(records, record.ParentId) : null;
+  const suffix = record.MenuPath ? record.MenuPath : 'section';
+  const parentName = parent?.MenuName ? `${parent.MenuName} / ` : '';
+  return `${parentName}${record.MenuName || 'Untitled'} (${suffix})`;
+};
+
+const getMenuParentOptions = (records, selectedRecord) =>
+  records
+    .filter((record) => String(getRecordId(record)) !== String(getRecordId(selectedRecord)))
+    .sort((first, second) => {
+      const firstParent = Number(first.ParentId || 0);
+      const secondParent = Number(second.ParentId || 0);
+      if (firstParent !== secondParent) return firstParent - secondParent;
+      const firstOrder = Number(first.SortOrder || 0);
+      const secondOrder = Number(second.SortOrder || 0);
+      if (firstOrder !== secondOrder) return firstOrder - secondOrder;
+      return String(first.MenuName || '').localeCompare(String(second.MenuName || ''));
+    });
+
+const buildSuggestedMenuPath = (formData, records) => {
+  const menuSlug = slugifyMenuName(formData.MenuName);
+  if (!menuSlug) return '';
+
+  const parent = formData.ParentId ? getMenuRecordById(records, formData.ParentId) : null;
+  if (!parent) return `/${menuSlug}`;
+
+  const parentPath = String(parent.MenuPath || '').trim();
+  if (parentPath && parentPath !== '-') {
+    return `${parentPath.replace(/\/+$/g, '')}/${menuSlug}`;
+  }
+
+  const parentSlug = slugifyMenuName(parent.MenuName);
+  return parentSlug ? `/${parentSlug}/${menuSlug}` : `/${menuSlug}`;
+};
+
 const AdminMultiSelectDropdown = ({ column, value, options, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -203,8 +273,9 @@ const AdminMultiSelectDropdown = ({ column, value, options, onChange }) => {
   );
 };
 
-const renderField = (column, value, selectedRecord, isCreating, lookups, handleFieldChange) => {
+const renderField = (column, value, selectedRecord, isCreating, lookups, handleFieldChange, context = {}) => {
   const fieldId = `admin-field-${column.name}`;
+  const isMenusEntity = context.entityKey === 'menus';
 
   if (!column.editable) {
     return (
@@ -216,6 +287,103 @@ const renderField = (column, value, selectedRecord, isCreating, lookups, handleF
           value={isCreating ? 'Auto generated' : selectedRecord?.[column.name] ?? ''}
           readOnly
         />
+      </div>
+    );
+  }
+
+  if (isMenusEntity && column.name === 'ParentId') {
+    const parentOptions = getMenuParentOptions(context.records || EMPTY_RECORDS, selectedRecord);
+
+    return (
+      <div key={column.name} className="admin-form-field">
+        <label htmlFor={fieldId}>{column.label}</label>
+        <select
+          id={fieldId}
+          className="admin-panel-input"
+          value={value ?? ''}
+          onChange={(event) => handleFieldChange(column, event.target.value)}
+        >
+          <option value="">Root section</option>
+          {parentOptions.map((option) => (
+            <option key={`menu-parent-${getRecordId(option)}`} value={getRecordId(option)}>
+              {buildMenuOptionLabel(option, context.records || EMPTY_RECORDS)}
+            </option>
+          ))}
+        </select>
+        <small>Select the sidebar section this screen belongs under. Use Root section for a top-level menu.</small>
+      </div>
+    );
+  }
+
+  if (isMenusEntity && column.name === 'MenuPath') {
+    const suggestedPath = buildSuggestedMenuPath(context.formData || {}, context.records || EMPTY_RECORDS);
+
+    return (
+      <div key={column.name} className="admin-form-field admin-form-field--wide">
+        <label htmlFor={fieldId}>{column.label}</label>
+        <div className="admin-input-with-action">
+          <input
+            id={fieldId}
+            className="admin-panel-input"
+            value={value ?? ''}
+            maxLength={column.maxLength && column.maxLength > 0 ? column.maxLength : undefined}
+            placeholder={suggestedPath || 'Leave blank for a menu section'}
+            onChange={(event) => handleFieldChange(column, event.target.value)}
+          />
+          <button
+            type="button"
+            className="admin-panel-button admin-panel-button--ghost"
+            onClick={() => handleFieldChange(column, suggestedPath)}
+            disabled={!suggestedPath}
+          >
+            Generate Path
+          </button>
+        </div>
+        <small>For a parent section leave this blank. For a screen, generate from menu name and parent.</small>
+      </div>
+    );
+  }
+
+  if (isMenusEntity && column.name === 'Icon') {
+    const iconOptions = COMMON_MENU_ICONS.includes(String(value || ''))
+      ? COMMON_MENU_ICONS
+      : [String(value || '').trim(), ...COMMON_MENU_ICONS].filter(Boolean);
+
+    return (
+      <div key={column.name} className="admin-form-field">
+        <label htmlFor={fieldId}>{column.label}</label>
+        <select
+          id={fieldId}
+          className="admin-panel-input"
+          value={value ?? ''}
+          onChange={(event) => handleFieldChange(column, event.target.value)}
+        >
+          <option value="">Select icon</option>
+          {iconOptions.map((iconName) => (
+            <option key={`menu-icon-${iconName}`} value={iconName}>
+              {iconName}
+            </option>
+          ))}
+        </select>
+        <small>Choose the icon key used by the sidebar.</small>
+      </div>
+    );
+  }
+
+  if (isMenusEntity && column.name === 'SortOrder') {
+    return (
+      <div key={column.name} className="admin-form-field">
+        <label htmlFor={fieldId}>{column.label}</label>
+        <input
+          id={fieldId}
+          className="admin-panel-input"
+          type="number"
+          min="0"
+          step="1"
+          value={value ?? ''}
+          onChange={(event) => handleFieldChange(column, event.target.value)}
+        />
+        <small>Lower numbers appear first inside the selected parent section.</small>
       </div>
     );
   }
@@ -822,7 +990,15 @@ const AdminPanelEntity = () => {
             {(schema?.columns || []).map((column) =>
               column.hidden
                 ? null
-                : renderField(column, formData[column.name], selectedRecord, pageMode === 'create', lookups, handleFieldChange)
+                : renderField(
+                  column,
+                  formData[column.name],
+                  selectedRecord,
+                  pageMode === 'create',
+                  lookups,
+                  handleFieldChange,
+                  { entityKey, records, formData },
+                )
             )}
 
             <div className="admin-form-actions">

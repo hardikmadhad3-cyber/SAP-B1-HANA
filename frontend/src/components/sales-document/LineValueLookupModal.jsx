@@ -56,6 +56,7 @@ export default function LineValueLookupModal({
   searchPlaceholder = 'Search values',
   emptyMessage = 'No values found',
   allowCreate = true,
+  columns = null,
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(-1);
@@ -73,7 +74,10 @@ export default function LineValueLookupModal({
       const value = String(option?.value || '').toLowerCase();
       const description = String(option?.description || '').toLowerCase();
       const label = String(option?.label || '').toLowerCase();
-      return value.includes(query) || description.includes(query) || label.includes(query);
+      const searchableValues = Object.values(option || {})
+        .map((item) => String(item ?? '').toLowerCase());
+      return value.includes(query) || description.includes(query) || label.includes(query)
+        || searchableValues.some((item) => item.includes(query));
     });
   }, [options, searchQuery]);
 
@@ -141,9 +145,14 @@ export default function LineValueLookupModal({
     }
   };
 
-  const showDescriptionColumn = filteredOptions.some(
+  const effectiveColumns = Array.isArray(columns) && columns.length
+    ? columns
+    : null;
+
+  const showDescriptionColumn = !effectiveColumns && filteredOptions.some(
     (option) => option?.description && option.description !== option.value
   );
+  const totalColumns = effectiveColumns ? effectiveColumns.length + 1 : (showDescriptionColumn ? 3 : 2);
 
   if (!isOpen) return null;
 
@@ -186,14 +195,32 @@ export default function LineValueLookupModal({
             <thead>
               <tr style={{ background: 'var(--sap-toolbar-bg)', borderBottom: '1px solid var(--sap-border)' }}>
                 <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, width: 40 }}>#</th>
-                <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600 }}>Value</th>
-                {showDescriptionColumn && <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, width: '35%' }}>Description</th>}
+                {effectiveColumns ? (
+                  effectiveColumns.map((column) => (
+                    <th
+                      key={column.key}
+                      style={{
+                        padding: '6px 8px',
+                        textAlign: column.align || 'left',
+                        fontWeight: 600,
+                        width: column.width,
+                      }}
+                    >
+                      {column.label}
+                    </th>
+                  ))
+                ) : (
+                  <>
+                    <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600 }}>Value</th>
+                    {showDescriptionColumn && <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, width: '35%' }}>Description</th>}
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
               {filteredOptions.length === 0 ? (
                 <tr>
-                  <td colSpan={showDescriptionColumn ? 3 : 2} style={{ padding: 20, textAlign: 'center', color: 'var(--sap-text-muted)' }}>{emptyMessage}</td>
+                  <td colSpan={totalColumns} style={{ padding: 20, textAlign: 'center', color: 'var(--sap-text-muted)' }}>{emptyMessage}</td>
                 </tr>
               ) : (
                 filteredOptions.map((option, index) => (
@@ -204,8 +231,25 @@ export default function LineValueLookupModal({
                     style={{ backgroundColor: selectedIndex === index ? 'var(--sap-primary-soft)' : index % 2 === 0 ? 'var(--sap-surface)' : 'var(--sap-row-even)', cursor: 'pointer', borderBottom: '1px solid var(--sap-border-soft)' }}
                   >
                     <td style={{ padding: '6px 8px', color: 'var(--sap-text-muted)' }}>{index + 1}</td>
-                    <td style={{ padding: '6px 8px', fontWeight: 500 }}>{option.value}</td>
-                    {showDescriptionColumn && <td style={{ padding: '6px 8px' }}>{option.description || ''}</td>}
+                    {effectiveColumns ? (
+                      effectiveColumns.map((column) => (
+                        <td
+                          key={column.key}
+                          style={{
+                            padding: '6px 8px',
+                            fontWeight: column.primary ? 500 : 400,
+                            textAlign: column.align || 'left',
+                          }}
+                        >
+                          {option[column.key] ?? ''}
+                        </td>
+                      ))
+                    ) : (
+                      <>
+                        <td style={{ padding: '6px 8px', fontWeight: 500 }}>{option.value}</td>
+                        {showDescriptionColumn && <td style={{ padding: '6px 8px' }}>{option.description || ''}</td>}
+                      </>
+                    )}
                   </tr>
                 ))
               )}

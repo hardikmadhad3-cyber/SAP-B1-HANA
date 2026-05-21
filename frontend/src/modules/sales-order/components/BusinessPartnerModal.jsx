@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+const PAGE_SIZE = 200;
+
 export default function BusinessPartnerModal({
   isOpen,
   onClose,
@@ -12,13 +14,37 @@ export default function BusinessPartnerModal({
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRow, setSelectedRow] = useState(null);
+  const [page, setPage] = useState(0);
+  const [isTableReady, setIsTableReady] = useState(false);
 
   useEffect(() => {
     if (!isOpen) {
       setSearchTerm('');
       setSelectedRow(null);
+      setPage(0);
+      setIsTableReady(false);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || typeof window === 'undefined') return undefined;
+
+    setIsTableReady(false);
+    let timeoutId;
+    const frameId = window.requestAnimationFrame(() => {
+      timeoutId = window.setTimeout(() => setIsTableReady(true), 0);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    setPage(0);
+    setSelectedRow(null);
+  }, [searchTerm]);
 
   useEffect(() => {
     if (!isOpen || typeof document === 'undefined') return undefined;
@@ -32,6 +58,7 @@ export default function BusinessPartnerModal({
   }, [isOpen]);
 
   const filteredPartners = useMemo(() => {
+    if (!isTableReady) return [];
     if (!searchTerm.trim()) return businessPartners;
 
     const term = searchTerm.toLowerCase();
@@ -40,7 +67,17 @@ export default function BusinessPartnerModal({
       String(bp.CardName || '').toLowerCase().includes(term) ||
       String(bp.CardType || '').toLowerCase().includes(term)
     );
-  }, [businessPartners, searchTerm]);
+  }, [businessPartners, isTableReady, searchTerm]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredPartners.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageStart = safePage * PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + PAGE_SIZE, filteredPartners.length);
+  const visiblePartners = filteredPartners.slice(pageStart, pageEnd);
+
+  useEffect(() => {
+    if (page !== safePage) setPage(safePage);
+  }, [page, safePage]);
 
   const handleChoose = () => {
     if (selectedRow === null || !filteredPartners[selectedRow]) return;
@@ -80,6 +117,7 @@ export default function BusinessPartnerModal({
     '';
 
   const isSellerVariant = variant === 'seller';
+  const selectedPartnerVisible = selectedRow !== null && selectedRow >= pageStart && selectedRow < pageEnd;
 
   if (!isOpen) return null;
 
@@ -187,83 +225,94 @@ export default function BusinessPartnerModal({
           </div>
 
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid #c8d0da' }}>
-            <table className="table table-sm table-hover mb-0" style={{ fontSize: 11 }}>
-              <thead style={{ position: 'sticky', top: 0, backgroundColor: '#e8edf2', zIndex: 1 }}>
-                <tr>
-                  {isSellerVariant ? (
-                    <>
-                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '130px', padding: '4px 8px' }}>BP Code</th>
-                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '240px', padding: '4px 8px' }}>BP Name</th>
-                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '220px', padding: '4px 8px' }}>Bill-to Street</th>
-                    </>
-                  ) : (
-                    <>
-                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '40px', padding: '4px 8px' }}>#</th>
-                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '200px', padding: '4px 8px' }}>
-                        BP name
-                        <span style={{ marginLeft: 4 }}>^</span>
-                      </th>
-                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '120px', padding: '4px 8px' }}>BP Code</th>
-                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '120px', padding: '4px 8px', textAlign: 'right' }}>
-                        Account Balance
-                      </th>
-                      <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '100px', padding: '4px 8px' }}>BP Type</th>
-                    </>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredPartners.length === 0 ? (
+            {!isTableReady ? (
+              <div style={{ display: 'grid', placeItems: 'center', minHeight: 180, color: '#5d6f82', fontSize: 12, fontWeight: 700 }}>
+                Opening business partner list...
+              </div>
+            ) : (
+              <table className="table table-sm table-hover mb-0" style={{ fontSize: 11 }}>
+                <thead style={{ position: 'sticky', top: 0, backgroundColor: '#e8edf2', zIndex: 1 }}>
                   <tr>
-                    <td colSpan={isSellerVariant ? 3 : 5} className="text-center" style={{ padding: '20px', color: '#888' }}>
-                      No business partners found
-                    </td>
+                    {isSellerVariant ? (
+                      <>
+                        <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '130px', padding: '4px 8px' }}>BP Code</th>
+                        <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '240px', padding: '4px 8px' }}>BP Name</th>
+                        <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '220px', padding: '4px 8px' }}>Bill-to Street</th>
+                      </>
+                    ) : (
+                      <>
+                        <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '40px', padding: '4px 8px' }}>#</th>
+                        <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '200px', padding: '4px 8px' }}>
+                          BP name
+                          <span style={{ marginLeft: 4 }}>^</span>
+                        </th>
+                        <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '120px', padding: '4px 8px' }}>BP Code</th>
+                        <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '120px', padding: '4px 8px', textAlign: 'right' }}>
+                          Account Balance
+                        </th>
+                        <th style={{ fontSize: 11, fontWeight: 700, color: '#003366', width: '100px', padding: '4px 8px' }}>BP Type</th>
+                      </>
+                    )}
                   </tr>
-                ) : (
-                  filteredPartners.map((bp, index) => (
-                    <tr
-                      key={`${bp.CardCode || 'bp'}-${index}`}
-                      onClick={() => setSelectedRow(index)}
-                      onDoubleClick={() => handleRowDoubleClick(bp)}
-                      style={{
-                        cursor: 'pointer',
-                        backgroundColor: selectedRow === index ? '#ffffcc' : index % 2 === 0 ? '#fff' : '#fafbfc',
-                      }}
-                    >
-                      {isSellerVariant ? (
-                        <>
-                          <td style={{ padding: '3px 8px' }}>{bp.CardCode || ''}</td>
-                          <td style={{ padding: '3px 8px', fontWeight: selectedRow === index ? 600 : 400 }}>
-                            {bp.CardName || ''}
-                          </td>
-                          <td style={{ padding: '3px 8px' }}>{getBillToStreet(bp)}</td>
-                        </>
-                      ) : (
-                        <>
-                          <td style={{ padding: '3px 8px' }}>{index + 1}</td>
-                          <td style={{ padding: '3px 8px', fontWeight: selectedRow === index ? 600 : 400 }}>
-                            {bp.CardName || ''}
-                          </td>
-                          <td style={{ padding: '3px 8px' }}>{bp.CardCode || ''}</td>
-                          <td style={{ padding: '3px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {formatCurrency(getBalanceValue(bp))}
-                          </td>
-                          <td style={{ padding: '3px 8px' }}>
-                            {bp.CardType === 'C'
-                              ? 'Customer'
-                              : bp.CardType === 'S'
-                                ? 'Supplier'
-                                : bp.CardType === 'L'
-                                  ? 'Lead'
-                                  : bp.CardType || 'Customer'}
-                          </td>
-                        </>
-                      )}
+                </thead>
+                <tbody>
+                  {filteredPartners.length === 0 ? (
+                    <tr>
+                      <td colSpan={isSellerVariant ? 3 : 5} className="text-center" style={{ padding: '20px', color: '#888' }}>
+                        No business partners found
+                      </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    visiblePartners.map((bp, index) => {
+                      const filteredIndex = pageStart + index;
+                      const isSelected = selectedRow === filteredIndex;
+
+                      return (
+                        <tr
+                          key={`${bp.CardCode || 'bp'}-${filteredIndex}`}
+                          onClick={() => setSelectedRow(filteredIndex)}
+                          onDoubleClick={() => handleRowDoubleClick(bp)}
+                          style={{
+                            cursor: 'pointer',
+                            backgroundColor: isSelected ? '#ffffcc' : filteredIndex % 2 === 0 ? '#fff' : '#fafbfc',
+                          }}
+                        >
+                          {isSellerVariant ? (
+                            <>
+                              <td style={{ padding: '3px 8px' }}>{bp.CardCode || ''}</td>
+                              <td style={{ padding: '3px 8px', fontWeight: isSelected ? 600 : 400 }}>
+                                {bp.CardName || ''}
+                              </td>
+                              <td style={{ padding: '3px 8px' }}>{getBillToStreet(bp)}</td>
+                            </>
+                          ) : (
+                            <>
+                              <td style={{ padding: '3px 8px' }}>{filteredIndex + 1}</td>
+                              <td style={{ padding: '3px 8px', fontWeight: isSelected ? 600 : 400 }}>
+                                {bp.CardName || ''}
+                              </td>
+                              <td style={{ padding: '3px 8px' }}>{bp.CardCode || ''}</td>
+                              <td style={{ padding: '3px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                                {formatCurrency(getBalanceValue(bp))}
+                              </td>
+                              <td style={{ padding: '3px 8px' }}>
+                                {bp.CardType === 'C'
+                                  ? 'Customer'
+                                  : bp.CardType === 'S'
+                                    ? 'Supplier'
+                                    : bp.CardType === 'L'
+                                      ? 'Lead'
+                                      : bp.CardType || 'Customer'}
+                              </td>
+                            </>
+                          )}
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            )}
           </div>
 
           <div className="d-flex justify-content-between align-items-center" style={{ fontSize: 11, color: '#666' }}>
@@ -272,20 +321,28 @@ export default function BusinessPartnerModal({
                 className="btn btn-sm"
                 type="button"
                 style={{ padding: '2px 8px', fontSize: 11, border: '1px solid #ccc' }}
+                onClick={() => setPage((currentPage) => Math.max(0, currentPage - 1))}
+                disabled={!isTableReady || safePage === 0}
               >
                 {'<'}
               </button>
-              <span style={{ margin: '0 8px' }}>...</span>
+              <span style={{ margin: '0 8px' }}>
+                {isTableReady ? `${safePage + 1} / ${totalPages}` : '...'}
+              </span>
               <button
                 className="btn btn-sm"
                 type="button"
                 style={{ padding: '2px 8px', fontSize: 11, border: '1px solid #ccc' }}
+                onClick={() => setPage((currentPage) => Math.min(totalPages - 1, currentPage + 1))}
+                disabled={!isTableReady || safePage >= totalPages - 1}
               >
                 {'>'}
               </button>
             </div>
             <div>
-              Showing {filteredPartners.length} of {businessPartners.length} business partners
+              {isTableReady
+                ? `Showing ${filteredPartners.length === 0 ? 0 : pageStart + 1}-${pageEnd} of ${filteredPartners.length} business partners`
+                : `Preparing ${businessPartners.length} business partners`}
             </div>
           </div>
         </div>
@@ -296,7 +353,7 @@ export default function BusinessPartnerModal({
             className="btn btn-warning btn-sm px-4"
             style={{ fontSize: 11 }}
             onClick={handleChoose}
-            disabled={selectedRow === null}
+            disabled={!isTableReady || selectedRow === null || !selectedPartnerVisible}
           >
             Choose
           </button>

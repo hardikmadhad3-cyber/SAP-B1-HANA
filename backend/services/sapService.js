@@ -7,9 +7,14 @@ const { URL } = require('url');
 const env = require('../config/env');
 const authDbService = require('./authDbService');
 const dbService = require('./dbService');
-const { getRequestContext } = require('./requestContextService');
+const { getRequestContext, getOrSetContextValue } = require('./requestContextService');
 
 const httpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 50,
+  maxFreeSockets: 10,
+  timeout: 60000,
   rejectUnauthorized: env.sapRejectUnauthorized,
 });
 
@@ -106,7 +111,10 @@ const resolveCompanyDb = async (requestConfig = {}) => {
   const authCompanyId = Number(context?.req?.auth?.companyId);
 
   if (Number.isFinite(authUserId) && Number.isFinite(authCompanyId)) {
-    const assignedCompany = await authDbService.getAssignedCompanyForUser(authUserId, authCompanyId);
+    const assignedCompany = await getOrSetContextValue(
+      `assignedCompany:${authUserId}:${authCompanyId}`,
+      () => authDbService.getAssignedCompanyForUser(authUserId, authCompanyId),
+    );
     const companyDb = String(assignedCompany?.DbName || '').trim();
 
     if (companyDb) {
@@ -319,6 +327,7 @@ const rawRequest = (method, fullUrl, headers, body) =>
       path: parsed.pathname + parsed.search,
       method: method.toUpperCase(),
       headers: { 'Content-Type': 'application/json', ...headers },
+      agent: httpsAgent,
       rejectUnauthorized: env.sapRejectUnauthorized,
     };
 

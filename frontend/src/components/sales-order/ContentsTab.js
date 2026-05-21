@@ -45,7 +45,6 @@ function ContentsTab({
           </thead>
           <tbody>
             {lines.map((line, index) => {
-              const uomOptions = getUomOptions(line);
               const lineErrors = validationErrors[index] || {};
 
               return (

@@ -21,7 +21,6 @@ import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
-import CopyToModal from './components/CopyToModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
 import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/warehouseBranch';
@@ -45,7 +44,6 @@ import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../..
 import {
   fetchDeliveryReferenceData,
   fetchDeliveryByDocEntry,
-  fetchDeliveries,
   fetchDeliveryCustomerDetails,
   fetchItemsForModal,
   fetchUomConversionFactor,
@@ -53,8 +51,6 @@ import {
   updateDelivery,
   fetchDocumentSeries,
   fetchNextNumber,
-  fetchStateFromWarehouse,
-  fetchCompanyState,
   fetchOpenSalesOrders,
   fetchSalesOrderForCopy,
   fetchOpenSalesQuotationsForDelivery,
@@ -64,14 +60,13 @@ import {
   fetchOpenBlanketAgreementsForDelivery,
   fetchBlanketAgreementForDeliveryCopy,
   fetchBatchesByItem,
-  fetchItemManagementType,
   fetchFreightCharges,
   validateDeliveryDocument,
   createDeliveryLookupValue,
   saveDeliverySalesEmployeesSetup
 } from '../../api/deliveryApi';
 import { fetchSalesOrderByDocEntry } from '../../api/salesOrderApi';
-import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
+import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { SALES_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { deliveryCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, BASE_TYPE } from '../../api/copyFromApi';
 import {
@@ -154,7 +149,7 @@ const mergeSalesOrderCopyUdfs = (copyData = {}, detailData = {}) => {
 };
 const isEmptyBranchValue = (value) => {
   const normalized = String(value ?? '').trim().toLowerCase();
-  return !normalized || normalized === '0' || normalized === 'no branch' || normalized === 'select branch';
+  return !normalized || normalized === '0' || normalized === '-1' || normalized === 'no branch' || normalized === 'select branch';
 };
 const normalizeSubmitBranch = (value) =>
   isEmptyBranchValue(value) ? '' : String(value).trim();
@@ -325,7 +320,7 @@ const INIT_HEADER = {
   paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
   totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
-  billToAddress: '', billToCode: '', shipToAddress: '', shipToCode: '',
+  billToAddress: '', billToCode: '', shipToAddress: '',
 };
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
@@ -368,7 +363,6 @@ function Delivery() {
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
   useValidationHighlights(valErrors, { rootRef: formRef });
-  const [loadedSnapshot, setLoadedSnapshot] = useState('');
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -392,7 +386,6 @@ function Delivery() {
   const [salesEmployeeSetup, setSalesEmployeeSetup] = useState({ open: false, rows: [], saving: false });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyFromDocType, setCopyFromDocType] = useState('salesOrder');
-  const [copyToModal, setCopyToModal] = useState(false);
   const [addressForm, setAddressForm] = useState({
     shipToCode: '', shipToAddress: '', billToCode: '', billToAddress: '',
     streetPoBox: '', streetNo: '', buildingFloorRoom: '', block: '', city: '', zipCode: '', county: '',
@@ -468,7 +461,6 @@ function Delivery() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-    setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
   const markDirty = useCallback((event) => {
@@ -777,7 +769,6 @@ function Delivery() {
         console.log('📦 [Delivery] Lines after mapping:', lines);
         
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
-        setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
         if (so.header?.customerCode || so.header?.customer) {
@@ -888,13 +879,11 @@ function Delivery() {
 
     setCurrentDocEntry(null);
     setActiveTab('Contents');
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setValErrors({ header: {}, lines: {}, form: '' });
     setFreightModal({ open: false, freightCharges: [], loading: false });
     setCopyFromModal(false);
-    setCopyToModal(false);
 
     // Populate header for a new Delivery copied from the source document.
     setHeader(prev => ({
@@ -969,9 +958,6 @@ function Delivery() {
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -981,7 +967,6 @@ function Delivery() {
   const vendorEffectiveShipToAddresses = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
   const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
   const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
-  const shouldShowBranchField = refData.branches.length > 0 || Boolean(normalizeSubmitBranch(header.branch));
   const hasSelectedBranchOption =
     !normalizeSubmitBranch(header.branch) ||
     refData.branches.some(b => String(b.BPLId || '') === String(header.branch || ''));
@@ -997,7 +982,6 @@ function Delivery() {
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES;
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
-  const effectiveWhseAddrs = refData.warehouse_addresses.length ? refData.warehouse_addresses : FALLBACK_WAREHOUSES;
   const payTermOpts = refData.payment_terms.length
     ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
     : FALLBACK_PAYMENT_TERMS;
@@ -1847,8 +1831,8 @@ function Delivery() {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode,
-        shipTo: addressForm.shipToAddress || formatted,
-        shipToAddress: addressForm.shipToAddress || formatted,
+        shipTo: formatted || addressForm.shipToAddress,
+        shipToAddress: formatted || addressForm.shipToAddress,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
@@ -1863,8 +1847,8 @@ function Delivery() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode,
         payToCode: addressForm.billToCode,
-        billToAddress: addressForm.billToAddress || formatted,
-        payTo: addressForm.billToAddress || formatted,
+        billToAddress: formatted || addressForm.billToAddress,
+        payTo: formatted || addressForm.billToAddress,
       }));
     }
     closeAddressModal();
@@ -3182,7 +3166,6 @@ function Delivery() {
       };
       const r = currentDocEntry ? await updateDelivery(currentDocEntry, payload) : await submitDelivery(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-      setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -3214,7 +3197,6 @@ function Delivery() {
   };
 
   const resetForm = () => {
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -3485,22 +3467,20 @@ function Delivery() {
                       </select>
                     </div>
 
-                    {shouldShowBranchField && (
-                      <div className="del-field">
-                        <label className="del-field__label">Branch</label>
-                        <select name="branch" className={`del-field__select${valErrors.header.branch ? ' del-field__select--error' : ''}`} value={header.branch} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
-                          <option value="">No Branch</option>
-                          {!hasSelectedBranchOption && (
-                            <option value={header.branch}>{`Branch ${header.branch}`}</option>
-                          )}
-                          {refData.branches.map(b => (
-                            <option key={b.BPLId} value={b.BPLId}>
-                              {b.BPLName}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
+                    <div className="del-field">
+                      <label className="del-field__label">Branch</label>
+                      <select name="branch" className={`del-field__select${valErrors.header.branch ? ' del-field__select--error' : ''}`} value={normalizeSubmitBranch(header.branch)} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
+                        <option value="">Select Branch</option>
+                        {!hasSelectedBranchOption && (
+                          <option value={header.branch}>{`Branch ${header.branch}`}</option>
+                        )}
+                        {refData.branches.map(b => (
+                          <option key={b.BPLId} value={b.BPLId}>
+                            {b.BPLName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
                     {/* Warehouse */}
                     <div className="del-field">
@@ -3989,9 +3969,7 @@ function Delivery() {
             <div className="sap-setup-titlebar">
               <span>Sales Employees/Buyers - Setup</span>
               <div className="sap-setup-window-actions">
-                <button type="button" aria-label="Minimize">_</button>
-                <button type="button" aria-label="Maximize">□</button>
-                <button type="button" aria-label="Close" onClick={closeSalesEmployeeSetup}>×</button>
+                <button type="button" aria-label="Close" onClick={closeSalesEmployeeSetup}>x</button>
               </div>
             </div>
             <div className="sap-setup-body">

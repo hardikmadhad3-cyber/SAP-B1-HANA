@@ -299,7 +299,7 @@ export const applySmartDefaults = (form, fieldName, value) => {
   return newForm;
 };
 
-export default {
+const itemValidation = {
   validateItemForm,
   validateRequired,
   validatePositiveNumber,
@@ -310,3 +310,5 @@ export default {
   validateDateFields,
   applySmartDefaults,
 };
+
+export default itemValidation;

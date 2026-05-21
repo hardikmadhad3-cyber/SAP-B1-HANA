@@ -13,6 +13,8 @@ module.exports = {
   jwtSecret: process.env.JWT_SECRET || 'sap-b1-auth-dev-secret',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
   pendingJwtExpiresIn: process.env.PENDING_JWT_EXPIRES_IN || '15m',
+  verboseRequestLogs: parseBoolean(process.env.VERBOSE_REQUEST_LOGS, false),
+  verboseSapLogs: parseBoolean(process.env.VERBOSE_SAP_LOGS, false),
   sapBaseUrl: process.env.SAP_BASE_URL || '',
   sapUsername: process.env.SAP_USERNAME || '',
   sapPassword: process.env.SAP_PASSWORD || '',

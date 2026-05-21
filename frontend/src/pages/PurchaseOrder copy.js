@@ -7,10 +7,6 @@ const Input = (props) => (
   <input {...props} className="form-control form-control-sm" />
 );
 
-const Select = (props) => (
-  <select {...props} className="form-control form-control-sm" />
-);
-
 /* ================= MAIN ================= */
 const getTodayDate = () => new Date().toISOString().split("T")[0];
 

@@ -1,10 +1,9 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import "./styles/uomGroupSetup.css";
 import UoMGroupsGrid from "./components/UoMGroupsGrid";
 import GroupDefinitionModal from "./components/GroupDefinitionModal";
 import {
   createUoMGroup,
-  getUoMGroup,
   updateUoMGroup,
   searchUoMGroups,
   fetchUoMs,
