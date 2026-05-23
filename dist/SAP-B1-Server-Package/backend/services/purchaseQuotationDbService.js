@@ -365,6 +365,15 @@ const getPurchaseQuotation = async (docEntry) => {
     }
   }
 
+  const firstUdfValue = (udfs, keys) => {
+    for (const key of keys) {
+      if (udfs[key] !== undefined && udfs[key] !== null && String(udfs[key]) !== '') {
+        return String(udfs[key]);
+      }
+    }
+    return '';
+  };
+
   const result = {
     purchase_quotation: {
       doc_entry: header.DocEntry,
@@ -393,19 +402,53 @@ const getPurchaseQuotation = async (docEntry) => {
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
       },
-      lines: lineRows.map(l => ({
-        itemNo: l.ItemCode || '',
-        itemDescription: l.ItemDescription || '',
-        hsnCode: itemHsnMap[l.ItemCode] || '',
-        quantity: l.Quantity != null ? String(l.Quantity) : '',
-        unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
-        stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
-        taxCode: l.TaxCode || '',
-        total: l.LineTotal != null ? String(l.LineTotal) : '',
-        whse: l.Warehouse || '',
-        uomCode: l.UoMCode || '',
-        udf: lineUdfsByLineNum[l.LineNum] || {},
-      })),
+      lines: lineRows.map(l => {
+        const lineUdf = lineUdfsByLineNum[l.LineNum] || {};
+        return {
+          itemNo: l.ItemCode || '',
+          itemDescription: l.ItemDescription || '',
+          hsnCode: firstUdfValue(lineUdf, ['U_HSNCode', 'U_HSN']) || itemHsnMap[l.ItemCode] || '',
+          sacCode: firstUdfValue(lineUdf, ['U_SACCode', 'U_SAC']),
+          quantity: l.Quantity != null ? String(l.Quantity) : '',
+          requiredQty: firstUdfValue(lineUdf, ['U_Req_Qty', 'U_ReqQty']),
+          sellerQty: firstUdfValue(lineUdf, ['U_S_Qty']),
+          unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
+          unitPriceUdf: firstUdfValue(lineUdf, ['U_Unit_Price']),
+          stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
+          taxCode: l.TaxCode || '',
+          total: l.LineTotal != null ? String(l.LineTotal) : '',
+          totalLC: l.LineTotal != null ? String(l.LineTotal) : '',
+          whse: l.Warehouse || '',
+          uomCode: l.UoMCode || '',
+          specialRebate: firstUdfValue(lineUdf, ['U_SPLRBT']),
+          commission: firstUdfValue(lineUdf, ['U_COMPRC']),
+          sellerBrokeragePerQty: firstUdfValue(lineUdf, ['U_S_BrokPerQty']),
+          sellerBrokerage: firstUdfValue(lineUdf, ['U_Brok_Seller']),
+          buyerBrokerage: firstUdfValue(lineUdf, ['U_Brok_Buyer']),
+          buyerDelivery: firstUdfValue(lineUdf, ['U_Buyer_Delivery']),
+          sellerDelivery: firstUdfValue(lineUdf, ['U_Seller_Delivery']),
+          buyerPaymentTerms: firstUdfValue(lineUdf, ['U_Buyer_Payment_Terms']),
+          sellerPaymentTerms: firstUdfValue(lineUdf, ['U_Seller_Payment_Terms']),
+          buyerQuality: firstUdfValue(lineUdf, ['U_Buyer_Quality']),
+          sellerQuality: firstUdfValue(lineUdf, ['U_Seller_Quality']),
+          buyerPrice: firstUdfValue(lineUdf, ['U_Buyer_Price']),
+          sellerPrice: firstUdfValue(lineUdf, ['U_Seller_Price']),
+          buyerSpecialInstruction: firstUdfValue(lineUdf, ['U_Buyer_SPINS']),
+          sellerSpecialInstruction: firstUdfValue(lineUdf, ['U_Seller_SPINS']),
+          sellerBrokerageAmtPer: firstUdfValue(lineUdf, ['U_Sel_Brok_AP']),
+          sellerBrokeragePercent: firstUdfValue(lineUdf, ['U_Seller_Brok_Per']),
+          buyerBillDiscount: firstUdfValue(lineUdf, ['U_Buyer_Bill_Disc']),
+          sellerBillDiscount: firstUdfValue(lineUdf, ['U_Seller_Bill_Disc']),
+          stcode: firstUdfValue(lineUdf, ['U_SELLTCODE']),
+          sellerItem: firstUdfValue(lineUdf, ['U_S_Item']),
+          freightPurchase: firstUdfValue(lineUdf, ['U_Freight_pur']),
+          freightSales: firstUdfValue(lineUdf, ['U_Freight_sales']),
+          freightProvider: firstUdfValue(lineUdf, ['U_Fr_trans']),
+          freightProviderName: firstUdfValue(lineUdf, ['U_Fr_trans_name']),
+          brokerageNumber: firstUdfValue(lineUdf, ['U_BDNum']),
+          udf: lineUdf,
+        };
+      }),
       header_udfs: headerUdfs,
     }
   };

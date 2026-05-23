@@ -22,6 +22,7 @@ import {
   submitGoodsIssue,
   updateGoodsIssue,
 } from '../../api/goodsIssueApi';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 
 const TAB_NAMES = ['Contents', 'Attachments'];
 const today = () => new Date().toISOString().split('T')[0];
@@ -104,6 +105,7 @@ function GoodsIssue() {
     lines: {},
     form: '',
   });
+  useValidationHighlights(valErrors);
   const [batchModal, setBatchModal] = useState({
     open: false,
     lineIndex: null,

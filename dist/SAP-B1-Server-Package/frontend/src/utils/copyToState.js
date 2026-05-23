@@ -135,13 +135,19 @@ export const buildCopyToState = ({
     docEntry: sourceDocEntry,
     header: { ...(header || {}) },
     lines: Array.isArray(lines)
-      ? lines.map((line, index) => ({
-          ...line,
-          lineNum: line?.lineNum ?? line?.LineNum ?? index,
-          baseType: line?.baseType ?? line?.BaseType ?? baseType,
-          baseEntry: line?.baseEntry ?? line?.BaseEntry ?? sourceDocEntry,
-          baseLine: line?.baseLine ?? line?.BaseLine ?? line?.lineNum ?? line?.LineNum ?? index,
-        }))
+      ? lines.map((line, index) => {
+          const sourceLineNum = line?.lineNum ?? line?.LineNum ?? index;
+          return {
+            ...line,
+            lineNum: sourceLineNum,
+            previousBaseType: line?.baseType ?? line?.BaseType,
+            previousBaseEntry: line?.baseEntry ?? line?.BaseEntry,
+            previousBaseLine: line?.baseLine ?? line?.BaseLine,
+            baseType,
+            baseEntry: sourceDocEntry,
+            baseLine: sourceLineNum,
+          };
+        })
       : [],
     ...(headerUdfs ? { headerUdfs: { ...headerUdfs } } : {}),
     ...(loadMode ? { loadMode } : {}),
@@ -184,7 +190,9 @@ export const openCopyToDocument = ({
 
   const normalizedSourcePath = normalizeCopyToPath(sourcePath || (typeof window !== 'undefined' ? window.location.pathname : ''));
   const normalizedTargetPath = normalizeCopyToPath(targetPath);
-  const sourceWindowId = createDocumentWindowId(sourceDocType, sourceDocEntry);
+  const activeSourceWindowId = restoreState?.sapWindow?.id || `page-window:${normalizedSourcePath}`;
+  const legacySourceWindowId = createDocumentWindowId(sourceDocType, sourceDocEntry);
+  const sourceWindowId = activeSourceWindowId;
   const targetWindowId = createCopyToWindowId(targetDocType, sourceDocType, sourceDocEntry);
   const sourceTitle = `${sourceLabel}${sourceDocNo || sourceDocEntry ? ` #${sourceDocNo || sourceDocEntry}` : ''}`;
   const targetTitle = `${targetLabel}${sourceDocNo || sourceDocEntry ? ` - ${sourceLabel} #${sourceDocNo || sourceDocEntry}` : ''}`;
@@ -220,11 +228,13 @@ export const openCopyToDocument = ({
   });
 
   beforeNavigate?.();
+  removeTask?.(legacySourceWindowId);
   minimizeSourceDocumentWindow({
     pathname: normalizedSourcePath,
     title: sourceTitle,
     restoreState: sourceRestoreState,
     upsertTask,
+    dispatchEvent: true,
   });
   restoreTargetWindowState(normalizedTargetPath, targetWindowId);
   [normalizedTargetPath, ...targetAliases.map(normalizeCopyToPath)].forEach((path) => {

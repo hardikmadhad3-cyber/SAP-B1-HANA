@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { normalizePath } from '../auth/routeUtils';
+import { useSapWindowTaskbar, useSapWindowTaskbarActions } from './SapWindowTaskbarContext';
 import '../styles/sidebar.css';
 
 const DASHBOARD_PATH = '/dashboard';
@@ -19,17 +20,18 @@ const TOP_LEVEL_MENU_PRIORITY = new Map([
   ['dashboard', 0],
   ['sales', 1],
   ['sales a r', 1],
-  ['purchase', 2],
-  ['purchase a p', 2],
-  ['purchasing', 2],
-  ['purchasing a p', 2],
-  ['master', 3],
-  ['production', 4],
-  ['inventory', 5],
-  ['banking', 6],
-  ['reports', 7],
-  ['report layout manager', 8],
-  ['admin panel', 9],
+  ['services', 2],
+  ['purchase', 3],
+  ['purchase a p', 3],
+  ['purchasing', 3],
+  ['purchasing a p', 3],
+  ['master', 4],
+  ['production', 5],
+  ['inventory', 6],
+  ['banking', 7],
+  ['reports', 8],
+  ['report layout manager', 9],
+  ['admin panel', 10],
 ]);
 
 const buildShortLabel = (label, fallback = 'MN') => {
@@ -46,6 +48,21 @@ const REPORT_STUDIO_NAME = 'report studio';
 const MASTER_MENU_NAME = 'master';
 const MASTER_VISIBLE_CHILDREN = new Set(['item master', 'business partner']);
 const MASTER_VISIBLE_PATHS = new Set(['/item-master', '/business-partner']);
+const SALES_MENU_NAMES = new Set(['sales', 'sales a r']);
+const SALES_CHILD_PRIORITY = new Map([
+  ['sales quotation', 1],
+  ['sales order', 2],
+  ['delivery', 3],
+  ['a r invoice', 4],
+  ['a r credit memo', 5],
+]);
+const SALES_CHILD_PATH_PRIORITY = new Map([
+  ['/sales-quotation', 1],
+  ['/sales-order', 2],
+  ['/delivery', 3],
+  ['/ar-invoice', 4],
+  ['/ar-credit-memo', 5],
+]);
 const isAdminMenuPath = (menuPath = '') => normalizePath(menuPath).startsWith('/admin');
 const getDisplayMenuName = (menu) => {
   const normalized = String(menu?.menuName || '').trim().toLowerCase();
@@ -118,6 +135,33 @@ const sortTopLevelMenus = (menus = []) =>
     return String(a.menuId).localeCompare(String(b.menuId), undefined, { numeric: true });
   });
 
+const getSalesChildPriority = (menu) => {
+  const menuPath = menu?.menuPath ? normalizePath(menu.menuPath) : '';
+  return SALES_CHILD_PATH_PRIORITY.get(menuPath)
+    ?? SALES_CHILD_PRIORITY.get(normalizeMenuPriorityName(menu?.menuName))
+    ?? Number.MAX_SAFE_INTEGER;
+};
+
+const sortSalesMenuChildren = (items = [], parentMenu = null) => {
+  const isSalesBranch = SALES_MENU_NAMES.has(normalizeMenuPriorityName(parentMenu?.menuName));
+  const nextItems = items.map((item) => ({
+    ...item,
+    children: sortSalesMenuChildren(item.children || [], item),
+  }));
+
+  if (!isSalesBranch) {
+    return nextItems;
+  }
+
+  return nextItems.sort((a, b) => {
+    const priorityA = getSalesChildPriority(a);
+    const priorityB = getSalesChildPriority(b);
+    if (priorityA !== priorityB) return priorityA - priorityB;
+    if ((a.sortOrder ?? 0) !== (b.sortOrder ?? 0)) return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+    return String(a.menuId).localeCompare(String(b.menuId), undefined, { numeric: true });
+  });
+};
+
 const buildSidebarMenus = (menus = []) => {
   const { dashboardMenu, remainingMenus } = extractDashboardMenu(menus);
 
@@ -147,7 +191,7 @@ const buildSidebarMenus = (menus = []) => {
       return nextItems;
     }, []);
 
-  const visibleMenus = removeHiddenSidebarItems(remainingMenus);
+  const visibleMenus = sortSalesMenuChildren(removeHiddenSidebarItems(remainingMenus));
 
   return [
     dashboardMenu,
@@ -164,7 +208,7 @@ const hasActiveChild = (menu, pathname) => {
   return menu.children?.some((child) => hasActiveChild(child, pathname));
 };
 
-const SidebarMenuNode = ({ menu, collapsed, openState, setOpenState, pathname, depth = 0 }) => {
+const SidebarMenuNode = ({ menu, collapsed, openState, restoreMinimizedMenuPath, setOpenState, pathname, depth = 0 }) => {
   const hasChildren = Boolean(menu.children?.length);
   const menuPath = menu.menuPath ? normalizePath(menu.menuPath) : '';
   const isOpen = openState[menu.menuId] ?? hasActiveChild(menu, pathname);
@@ -200,6 +244,7 @@ const SidebarMenuNode = ({ menu, collapsed, openState, setOpenState, pathname, d
                 menu={child}
                 collapsed={collapsed}
                 openState={openState}
+                restoreMinimizedMenuPath={restoreMinimizedMenuPath}
                 setOpenState={setOpenState}
                 pathname={pathname}
                 depth={depth + 1}
@@ -234,6 +279,11 @@ const SidebarMenuNode = ({ menu, collapsed, openState, setOpenState, pathname, d
     <NavLink
       to={menuPath}
       end={menuPath === DASHBOARD_PATH}
+      onClick={(event) => {
+        if (restoreMinimizedMenuPath?.(menuPath)) {
+          event.preventDefault();
+        }
+      }}
       className={({ isActive }) =>
         `sidebar__link${isActive ? ' sidebar__link--active' : ''}${isNested ? ' sidebar__link--nested' : ''}`
       }
@@ -248,6 +298,8 @@ const SidebarMenuNode = ({ menu, collapsed, openState, setOpenState, pathname, d
 export default function Sidebar() {
   const location = useLocation();
   const { menus, company } = useAuth();
+  const taskbar = useSapWindowTaskbar();
+  const { restoreTask } = useSapWindowTaskbarActions();
   const collapsed = false;
   const [openState, setOpenState] = useState({});
 
@@ -255,6 +307,18 @@ export default function Sidebar() {
     () => buildSidebarMenus(menus),
     [menus],
   );
+
+  const restoreMinimizedMenuPath = (menuPath) => {
+    const normalizedMenuPath = normalizePath(menuPath);
+    const task = [...(taskbar?.tasks || [])]
+      .reverse()
+      .find((entry) => normalizePath(entry?.path) === normalizedMenuPath);
+
+    if (!task) return false;
+
+    restoreTask(task);
+    return true;
+  };
 
   return (
     <aside className={`sidebar-shell${collapsed ? ' is-collapsed' : ''}`}>
@@ -278,6 +342,7 @@ export default function Sidebar() {
                   menu={menu}
                   collapsed={collapsed}
                   openState={openState}
+                  restoreMinimizedMenuPath={restoreMinimizedMenuPath}
                   setOpenState={setOpenState}
                   pathname={location.pathname}
                   depth={0}

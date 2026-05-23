@@ -21,6 +21,7 @@ import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { copyToDocument } from '../../services/documentCopyService';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
@@ -56,7 +57,8 @@ import {
   readSavedFormSettings,
 } from '../../config/grpoForm';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
-import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../utils/copyToState';
+import { consumeCopyToState } from '../../utils/copyToState';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
@@ -235,6 +237,8 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 }));
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
+
 function GoodsReceiptPO() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -287,7 +291,7 @@ function GoodsReceiptPO() {
     lines: {},
     form: '',
   });
-  const [loadedSnapshot, setLoadedSnapshot] = useState('');
+  useValidationHighlights(valErrors);
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -383,7 +387,6 @@ function GoodsReceiptPO() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-    setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
@@ -494,7 +497,6 @@ function GoodsReceiptPO() {
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(grpo.header_udfs || {}) });
-        setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
         if (grpo.header?.vendor) {
@@ -598,9 +600,6 @@ function GoodsReceiptPO() {
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -624,7 +623,6 @@ function GoodsReceiptPO() {
   }, {});
 
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
-  const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
 
   const getUomOptions = useCallback((line) => {
     const item = refData.items.find(i => String(i.ItemCode || '') === String(line.itemNo || ''));
@@ -1145,13 +1143,15 @@ function GoodsReceiptPO() {
       addressForm.buildingFloorRoom,
       [addressForm.block, addressForm.city].filter(Boolean).join(', '),
       [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion
+      addressForm.countryRegion,
+      addressForm.addressName2,
+      addressForm.addressName3,
     ].filter(Boolean).join('\n');
 
     if (addressModal.type === 'shipTo') {
-      setHeader(p => ({ ...p, shipTo: formatted }));
+      setHeader(p => ({ ...p, shipTo: formatted, shipToAddress: formatted }));
     } else {
-      setHeader(p => ({ ...p, payTo: formatted }));
+      setHeader(p => ({ ...p, payTo: formatted, billTo: formatted, billToAddress: formatted }));
     }
     closeAddressModal();
   };
@@ -1311,31 +1311,14 @@ function GoodsReceiptPO() {
     setCopyFromModal(true);
   };
 
-  const handleCopyTo = (targetType) => {
-    const targetConfig = {
-      apInvoice: { docType: 'apInvoice', label: 'A/P Invoice', path: '/ap-invoice' },
-      apCreditMemo: { docType: 'apCreditMemo', label: 'A/P Credit Memo', path: '/ap-credit-memo' },
-    }[targetType];
-
-    const copyState = buildCopyToState({
+  const handleCopyTo = async (targetType) => {
+    await copyToDocument({
       sourceDocType: 'grpo',
-      sourceLabel: 'Goods Receipt PO',
-      sourceDocEntry: currentDocEntry,
-      header,
-      lines,
-      baseType: 20,
-    });
-
-    openCopyToDocument({
-      sourceDocType: 'grpo',
-      sourceLabel: 'Goods Receipt PO',
+      targetType,
       sourceDocEntry: currentDocEntry,
       sourceDocNo: header.docNo,
       sourcePath: location.pathname,
-      targetDocType: targetConfig?.docType,
-      targetLabel: targetConfig?.label,
-      targetPath: targetConfig?.path,
-      copyState,
+      sourceSnapshot: { header, lines },
       restoreState: { grpoDocEntry: currentDocEntry },
       navigate,
       upsertTask,
@@ -1533,7 +1516,6 @@ function GoodsReceiptPO() {
       const payload = { company_id: PURCHASE_ORDER_COMPANY_ID, header: prep, lines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
       const r = currentDocEntry ? await updateGRPO(currentDocEntry, payload) : await submitGRPO(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-      setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -1560,7 +1542,6 @@ function GoodsReceiptPO() {
   };
 
   const resetForm = () => {
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -1652,17 +1633,6 @@ function GoodsReceiptPO() {
               }}
             >
               A/P Invoice
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                handleCopyTo('apCreditMemo');
-                document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
-              }}
-            >
-              A/P Credit Memo
             </button>
           </div>
         </div>
@@ -2025,17 +1995,6 @@ function GoodsReceiptPO() {
                       }}
                     >
                       A/P Invoice
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        handleCopyTo('apCreditMemo');
-                        document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
-                      }}
-                    >
-                      A/P Credit Memo
                     </button>
                   </div>
                 </div>

@@ -24,11 +24,13 @@ import CopyToModal from './components/CopyToModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
 import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../utils/copyToState';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import {
   fetchARCreditMemoReferenceData,
@@ -38,8 +40,6 @@ import {
   updateARCreditMemo,
   fetchDocumentSeries,
   fetchNextNumber,
-  fetchStateFromAddress,
-  fetchStateFromWarehouse,
   fetchFreightCharges,
   fetchItemsForModal,
   fetchBatchesByItem,
@@ -47,10 +47,10 @@ import {
   fetchOpenARInvoicesForCreditMemo,
   fetchARInvoiceForCreditMemoCopy,
 } from '../../api/arCreditMemoApi';
-import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
+import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { fetchDeliveryForCopyToCreditMemo } from '../../api/deliveryApi';
 import { AR_INVOICE_COMPANY_ID } from '../../config/appConfig';
-import { normaliseDocumentHeader, normaliseDocumentLine, BASE_TYPE } from '../../api/copyFromApi';
+import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
   FORM_SETTINGS_STORAGE_KEY,
   HEADER_UDF_DEFINITIONS,
@@ -213,7 +213,7 @@ function ARCreditMemo() {
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
-  const [loadedSnapshot, setLoadedSnapshot] = useState('');
+  useValidationHighlights(valErrors);
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -314,7 +314,6 @@ function ARCreditMemo() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-    setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
@@ -493,7 +492,6 @@ function ARCreditMemo() {
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
-        setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
         if (so.header?.customerCode || so.header?.customer) {
@@ -697,9 +695,6 @@ function ARCreditMemo() {
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -1035,25 +1030,6 @@ function ARCreditMemo() {
       }));
     } else {
       setHeader(p => ({ ...p, billToCode: addressCode }));
-    }
-  };
-  
-  const handleShipToChange = async (addressCode) => {
-    if (!addressCode || !header.vendor) {
-      setHeader(p => ({ ...p, shipToCode: addressCode, placeOfSupply: '' }));
-      return;
-    }
-    
-    const addr = effectiveWhseAddrs.find(w => String(w.WhsCode) === addressCode);
-    setHeader(p => ({ ...p, shipToCode: addressCode, shipTo: fmtAddr(addr) }));
-    
-    try {
-      const res = await fetchStateFromWarehouse(addressCode);
-      if (res.data.state) {
-        setHeader(p => ({ ...p, placeOfSupply: res.data.state }));
-      }
-    } catch (err) {
-      // Failed to fetch state from address
     }
   };
   
@@ -1444,8 +1420,8 @@ function ARCreditMemo() {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode || p.shipToCode,
-        shipToAddress: addressForm.shipToAddress || formatted,
-        shipTo: addressForm.shipToAddress || formatted,
+        shipToAddress: formatted || addressForm.shipToAddress,
+        shipTo: formatted || addressForm.shipToAddress,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
@@ -1460,8 +1436,8 @@ function ARCreditMemo() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
-        billToAddress: addressForm.billToAddress || formatted,
-        payTo: addressForm.billToAddress || formatted,
+        billToAddress: formatted || addressForm.billToAddress,
+        payTo: formatted || addressForm.billToAddress,
         placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
       }));
     }
@@ -1596,29 +1572,30 @@ function ARCreditMemo() {
     if (itemModal.lineIndex < 0) return;
     
     const lineIndex = itemModal.lineIndex;
+    const mergedItem = mergeItemMaster(item, refData.items);
     const currentLine = lines[lineIndex];
     
     try {
-      const hsnRes = await fetchHSNCodeFromItem(item.ItemCode);
+      const hsnRes = await fetchHSNCodeFromItem(mergedItem.ItemCode);
       const hsnData = hsnRes.data;
       
       // Check if item is batch-managed
-      const itemIsBatchManaged = isBatchManaged(item);
+      const itemIsBatchManaged = isBatchManaged(mergedItem);
       
       // Get UoM - use SalesUnit or InventoryUOM
-      const selectedUoM = item.SalesUnit || item.InventoryUOM || '';
+      const selectedUoM = mergedItem.SalesUnit || mergedItem.InventoryUOM || '';
       
       // Fetch UoM conversion factor if UoM is set
       let uomFactor = 1;
-      let inventoryUOM = item.InventoryUOM || '';
+      let inventoryUOM = mergedItem.InventoryUOM || '';
       
-      if (selectedUoM && item.ItemCode) {
+      if (selectedUoM && mergedItem.ItemCode) {
         try {
-          const uomRes = await fetchUomConversionFactor(item.ItemCode, selectedUoM);
+          const uomRes = await fetchUomConversionFactor(mergedItem.ItemCode, selectedUoM);
           uomFactor = uomRes.data.factor || 1;
-          inventoryUOM = uomRes.data.inventoryUOM || item.InventoryUOM || '';
+          inventoryUOM = uomRes.data.inventoryUOM || mergedItem.InventoryUOM || '';
           console.log('📦 [AR Credit Memo - handleItemSelect] UoM conversion:', { 
-            itemCode: item.ItemCode, 
+            itemCode: mergedItem.ItemCode, 
             uomCode: selectedUoM, 
             factor: uomFactor,
             inventoryUOM 
@@ -1632,7 +1609,7 @@ function ARCreditMemo() {
       let hasBatchesAvailable = false;
       if (itemIsBatchManaged && currentLine.whse) {
         try {
-          hasBatchesAvailable = await checkBatchAvailability(item.ItemCode, currentLine.whse);
+          hasBatchesAvailable = await checkBatchAvailability(mergedItem.ItemCode, currentLine.whse);
         } catch (batchError) {
           console.error('❌ [AR Credit Memo - handleItemSelect] Error checking batch availability:', batchError);
         }
@@ -1641,10 +1618,13 @@ function ARCreditMemo() {
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
           const updatedLine = {
-            ...line,
-            itemNo: item.ItemCode || '',
-            itemDescription: item.ItemName || '',
-            hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
+            ...hydrateDocumentLineFromItem(line, mergedItem, {
+              side: 'sales',
+              hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
+              fallbackWarehouse: header.warehouse,
+              calcLineTotal,
+              formatTotal: (value) => fmtDec(value, numDec.total),
+            }),
             uomCode: selectedUoM,
             batchManaged: itemIsBatchManaged,
             hasBatchesAvailable: hasBatchesAvailable,
@@ -1671,11 +1651,12 @@ function ARCreditMemo() {
       console.error('Error selecting item:', error);
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
-          return {
-            ...line,
-            itemNo: item.ItemCode || '',
-            itemDescription: item.ItemName || '',
-          };
+          return hydrateDocumentLineFromItem(line, mergedItem, {
+            side: 'sales',
+            fallbackWarehouse: header.warehouse,
+            calcLineTotal,
+            formatTotal: (value) => fmtDec(value, numDec.total),
+          });
         }
         return line;
       }));
@@ -1998,14 +1979,15 @@ function ARCreditMemo() {
   const handleCopyFrom = (data, sourceType) => {
     console.log('📥 Copy From:', sourceType, data);
     
+    const copySource = unwrapCopyFromDocument(data);
     const baseType = BASE_TYPE[sourceType] || 13;
-    const normHeader = normaliseDocumentHeader(data);
+    const normHeader = normaliseDocumentHeader(copySource.header);
 
     setHeader(prev => ({ ...prev, ...normHeader }));
 
-    const rawLines = data.DocumentLines || data.lines || [];
+    const rawLines = copySource.lines;
     const newLines = rawLines.map((line, idx) =>
-      ({ ...createLine(rowUdfDefinitions), ...normaliseDocumentLine(line, idx, data.DocEntry || data.docEntry, baseType, normHeader.branch) })
+      ({ ...createLine(rowUdfDefinitions), ...normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch) })
     );
     setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
 
@@ -2108,7 +2090,6 @@ function ARCreditMemo() {
       };
       const r = currentDocEntry ? await updateARCreditMemo(currentDocEntry, payload) : await submitARCreditMemo(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-      setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -2130,7 +2111,6 @@ function ARCreditMemo() {
   };
 
   const resetForm = () => {
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -2208,12 +2188,11 @@ function ARCreditMemo() {
             </button>
           </div>
         </div>
-        <button 
-          type="button" 
+        <button
+          type="button"
           className="del-btn sap-document-toolbar__copy"
-          onClick={() => setCopyToModal(true)}
-          disabled={!currentDocEntry}
-          title={!currentDocEntry ? 'Save the AR Credit Memo first' : 'Copy to another document'}
+          disabled
+          title="No SAP Copy To target is configured for A/R Credit Memo."
         >
           Copy To
         </button>
@@ -2663,12 +2642,11 @@ function ARCreditMemo() {
                     ))}
                   </div>
                 </div>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="del-btn"
-                  onClick={() => setCopyToModal(true)}
-                  disabled={!currentDocEntry}
-                  title={!currentDocEntry ? 'Save the AR Credit Memo first' : 'Copy to another document'}
+                  disabled
+                  title="No SAP Copy To target is configured for A/R Credit Memo."
                 >
                   Copy To
                 </button>

@@ -696,6 +696,18 @@
   box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.12);
 }
 
+.admin-input-with-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.admin-input-with-action .admin-panel-button {
+  min-height: 48px;
+  white-space: nowrap;
+}
+
 .admin-multi-select {
   position: relative;
 }
@@ -1291,6 +1303,10 @@
   box-shadow: 0 0 0 2px rgba(0, 110, 184, 0.16);
 }
 
+.admin-input-with-action .admin-panel-button {
+  min-height: 28px;
+}
+
 .admin-multi-select__panel {
   border-radius: 4px;
   border-color: #9fb2c5;
@@ -1337,6 +1353,10 @@
 }
 
 @media (max-width: 900px) {
+  .admin-input-with-action {
+    grid-template-columns: 1fr;
+  }
+
   .admin-panel-toolbar {
     grid-template-columns: 1fr;
   }

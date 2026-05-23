@@ -1,6 +1,7 @@
 const env = require('../config/env');
 const dbService = require('./dbService');
 const reportService = require('./reportService');
+const { getActiveCompanyConfig } = require('./companyConfigService');
 
 const DOCUMENT_PRINT_CONFIG = {
   salesQuotation: {
@@ -143,6 +144,23 @@ const getDocumentPrintConfig = (documentType) => {
   };
 };
 
+const resolveActiveDatabaseSchema = async () => {
+  try {
+    const databaseName = await dbService.resolveDatabaseName();
+    if (databaseName) return String(databaseName).trim();
+  } catch (_error) {
+    // Fall back to static report configuration below.
+  }
+
+  const companyConfig = await getActiveCompanyConfig();
+  return String(
+    companyConfig.reportService.defaultSchema ||
+    companyConfig.reportService.companyDb ||
+    companyConfig.serviceLayer.companyDb ||
+    '',
+  ).trim();
+};
+
 const toRequiredString = (value, fieldName) => {
   const normalized = String(value ?? '').trim();
 
@@ -262,7 +280,10 @@ const getLayoutsQuery = (config) => {
 const getLayouts = async (documentType) => {
   const config = getDocumentPrintConfig(documentType);
   const query = getLayoutsQuery(config);
-  const result = await dbService.query(query.sql, query.params);
+  const [defaultSchema, result] = await Promise.all([
+    resolveActiveDatabaseSchema(),
+    dbService.query(query.sql, query.params),
+  ]);
   const layouts = filterDocumentLayouts(config, result.recordset || []);
 
   return {
@@ -271,7 +292,8 @@ const getLayouts = async (documentType) => {
     objectType: config.objectType,
     typeCode: config.typeCode,
     defaultDocCode: config.defaultDocCode || '',
-    defaultSchema: env.reportServiceDefaultSchema,
+    defaultSchema,
+    companyDatabase: defaultSchema,
     layouts,
   };
 };
@@ -342,7 +364,8 @@ const printDocument = async ({
   const config = getDocumentPrintConfig(documentType);
   const normalizedDocEntry = toRequiredString(docEntry, 'DocEntry');
   const normalizedDocCode = toRequiredString(docCode, 'Layout DocCode');
-  const normalizedSchema = toRequiredString(schema || env.reportServiceDefaultSchema, 'Schema');
+  const defaultSchema = await resolveActiveDatabaseSchema();
+  const normalizedSchema = toRequiredString(schema || defaultSchema, 'Schema');
   const document = await getDocumentSummary(config, normalizedDocEntry);
 
   const layout = await getLayoutForDocument(config, normalizedDocCode);

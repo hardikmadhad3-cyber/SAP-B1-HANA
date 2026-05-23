@@ -1,5 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
+import {
+  buildCompanyScopedSessionKey,
+  buildCompanyStorageScope,
+  createActiveCompanyScopedRouteState,
+  getActiveCompanyStorageScope,
+} from "../utils/companyStorageScope";
 
 const SapWindowTaskbarContext = createContext(null);
 const TASKBAR_STORAGE_KEY = "sap-window-taskbar/tasks";
@@ -41,11 +48,11 @@ const getCurrentRouteState = () => {
   return null;
 };
 
-const readStoredTasks = () => {
+const readStoredTasks = (storageKey) => {
   if (typeof window === "undefined") return [];
 
   try {
-    const rawValue = window.sessionStorage.getItem(TASKBAR_STORAGE_KEY);
+    const rawValue = window.sessionStorage.getItem(storageKey);
     if (!rawValue) return [];
 
     const parsedValue = JSON.parse(rawValue);
@@ -56,12 +63,26 @@ const readStoredTasks = () => {
 };
 
 export function SapWindowTaskbarProvider({ children }) {
-  const [tasks, setTasks] = useState(readStoredTasks);
+  const { company } = useAuth();
+  const companyScope = useMemo(
+    () => buildCompanyStorageScope(company),
+    [company?.companyId, company?.dbName, company?.serverName],
+  );
+  const taskbarStorageKey = useMemo(
+    () => buildCompanyScopedSessionKey(TASKBAR_STORAGE_KEY, companyScope),
+    [companyScope],
+  );
+  const [taskStore, setTaskStore] = useState(() => ({
+    storageKey: taskbarStorageKey,
+    tasks: readStoredTasks(taskbarStorageKey),
+  }));
+  const tasks = taskStore.tasks;
 
   const upsertTask = useCallback((task) => {
     if (!task?.id) return;
 
-    setTasks((current) => {
+    setTaskStore((store) => {
+      const current = store.tasks;
       const normalizedTask = {
         id: task.id,
         title: task.title || "Window",
@@ -71,7 +92,10 @@ export function SapWindowTaskbarProvider({ children }) {
       const existingIndex = current.findIndex((entry) => entry.id === normalizedTask.id);
 
       if (existingIndex === -1) {
-        return [...current, { ...normalizedTask, state: normalizedTask.state ?? null }];
+        return {
+          ...store,
+          tasks: [...current, { ...normalizedTask, state: normalizedTask.state ?? null }],
+        };
       }
 
       const next = [...current];
@@ -88,33 +112,51 @@ export function SapWindowTaskbarProvider({ children }) {
         && existingTask.path === mergedTask.path
         && JSON.stringify(existingTask.state || null) === JSON.stringify(mergedTask.state || null)
       ) {
-        return current;
+        return store;
       }
 
       next[existingIndex] = mergedTask;
-      return next;
+      return {
+        ...store,
+        tasks: next,
+      };
     });
   }, []);
 
   const removeTask = useCallback((taskId) => {
-    setTasks((current) => {
+    setTaskStore((store) => {
+      const current = store.tasks;
       const next = current.filter((task) => task.id !== taskId);
-      return next.length === current.length ? current : next;
+      return next.length === current.length
+        ? store
+        : {
+            ...store,
+            tasks: next,
+          };
     });
   }, []);
 
   useEffect(() => {
+    setTaskStore({
+      storageKey: taskbarStorageKey,
+      tasks: readStoredTasks(taskbarStorageKey),
+    });
+  }, [taskbarStorageKey]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
-    window.sessionStorage.setItem(TASKBAR_STORAGE_KEY, JSON.stringify(tasks));
-  }, [tasks]);
+    if (taskStore.storageKey !== taskbarStorageKey) return;
+    window.sessionStorage.setItem(taskStore.storageKey, JSON.stringify(taskStore.tasks));
+  }, [taskStore, taskbarStorageKey]);
 
   const value = useMemo(
     () => ({
+      companyScope,
       tasks,
       upsertTask,
       removeTask,
     }),
-    [removeTask, tasks, upsertTask],
+    [companyScope, removeTask, tasks, upsertTask],
   );
 
   return (
@@ -131,6 +173,11 @@ export function useSapWindowTaskbar() {
 export function useSapWindowTaskbarActions() {
   const taskbar = useSapWindowTaskbar();
   const navigate = useNavigate();
+  const companyScope = taskbar?.companyScope || getActiveCompanyStorageScope();
+  const getWindowStateStorageKey = useCallback(
+    (taskId) => buildCompanyScopedSessionKey(`${WINDOW_STATE_STORAGE_PREFIX}${taskId}`, companyScope),
+    [companyScope],
+  );
 
   const minimizeCurrentRouteTask = useCallback((excludeId = null) => {
     if (typeof window === "undefined") return;
@@ -145,7 +192,7 @@ export function useSapWindowTaskbarActions() {
     }
 
     window.sessionStorage.setItem(
-      `${WINDOW_STATE_STORAGE_PREFIX}${currentTaskId}`,
+      getWindowStateStorageKey(currentTaskId),
       JSON.stringify({ isMaximized: false, isMinimized: true })
     );
 
@@ -153,9 +200,9 @@ export function useSapWindowTaskbarActions() {
       id: currentTaskId,
       path: currentWindow?.path || currentPath,
       title: currentWindow?.title || prettifyTaskTitle(currentPath),
-      state: currentRouteState || undefined,
+      state: currentRouteState ? createActiveCompanyScopedRouteState(currentRouteState) : undefined,
     });
-  }, [taskbar]);
+  }, [getWindowStateStorageKey, taskbar]);
 
   const restoreTask = useCallback((task, { minimizeActive = true } = {}) => {
     if (!task) return false;
@@ -164,7 +211,7 @@ export function useSapWindowTaskbarActions() {
       window.dispatchEvent(new CustomEvent("sap-window-minimize-active", { detail: { excludeId: task.id } }));
     }
     if (typeof window !== "undefined") {
-      const storageKey = `${WINDOW_STATE_STORAGE_PREFIX}${task.id}`;
+      const storageKey = getWindowStateStorageKey(task.id);
       const nextState = {
         isMaximized: false,
         isMinimized: false,
@@ -178,7 +225,7 @@ export function useSapWindowTaskbarActions() {
       navigate(task.path, task.state ? { state: task.state } : undefined);
     }
     return true;
-  }, [minimizeCurrentRouteTask, navigate, taskbar]);
+  }, [getWindowStateStorageKey, minimizeCurrentRouteTask, navigate, taskbar]);
 
   const closeActiveAndRestorePrevious = useCallback(() => {
     const previousTask = taskbar?.tasks?.[taskbar.tasks.length - 1];

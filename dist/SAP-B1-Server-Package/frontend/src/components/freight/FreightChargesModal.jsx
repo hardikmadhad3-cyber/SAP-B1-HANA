@@ -14,44 +14,116 @@ const modalOverlayStyle = {
   left: 0,
   right: 0,
   bottom: 0,
-  backgroundColor: 'rgba(0, 0, 0, 0.35)',
+  backgroundColor: 'rgba(16, 32, 48, 0.45)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   zIndex: 9999,
+  padding: 16,
 };
 
 const modalBoxStyle = {
-  background: '#f3f3f3',
-  border: '1px solid #8b8b8b',
-  boxShadow: '0 10px 20px rgba(0,0,0,0.18)',
+  background: 'var(--sap-surface)',
+  border: '1px solid var(--sap-border-strong)',
+  borderRadius: 'var(--sap-radius-md)',
+  boxShadow: 'var(--sap-shadow-modal)',
+  color: 'var(--sap-text)',
+  fontFamily: 'var(--sap-font-family)',
+  overflow: 'hidden',
 };
 
 const sapButtonStyle = {
-  padding: '4px 18px',
+  padding: '6px 18px',
   fontSize: 12,
-  border: '1px solid #8b8b8b',
-  background: 'linear-gradient(180deg, #fff7d6 0%, #ffc93a 100%)',
+  fontWeight: 600,
+  border: '1px solid var(--sap-primary-dark)',
+  borderRadius: 'var(--sap-radius-xs)',
+  background: 'linear-gradient(180deg, var(--sap-primary) 0%, var(--sap-primary-dark) 100%)',
+  color: '#fff',
   cursor: 'pointer',
 };
 
 const secondaryButtonStyle = {
   ...sapButtonStyle,
-  background: 'linear-gradient(180deg, #ffffff 0%, #e6e6e6 100%)',
+  border: '1px solid var(--sap-border-strong)',
+  background: 'linear-gradient(180deg, #ffffff 0%, #e8edf2 100%)',
+  color: 'var(--sap-text)',
 };
 
 const inputCellStyle = {
   width: '100%',
-  height: 24,
-  border: '1px solid #c7c7c7',
+  height: 'var(--sap-control-height)',
+  border: '1px solid var(--sap-border-strong)',
+  borderRadius: 'var(--sap-radius-xs)',
   padding: '0 6px',
-  fontSize: 12,
-  background: '#fffef2',
+  fontSize: 'var(--sap-control-font-size)',
+  background: '#fff',
+  color: 'var(--sap-text)',
+  boxSizing: 'border-box',
 };
 
 const readOnlyCellStyle = {
   ...inputCellStyle,
-  background: '#f5f5f5',
+  background: '#f5f8fc',
+};
+
+const modalHeaderStyle = {
+  padding: '10px 14px',
+  borderBottom: '1px solid var(--sap-border)',
+  background: 'var(--sap-toolbar-bg)',
+  color: 'var(--sap-heading)',
+  fontWeight: 700,
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+};
+
+const modalBodyStyle = {
+  padding: 12,
+  background: 'var(--sap-surface)',
+};
+
+const tableWrapStyle = {
+  maxHeight: 320,
+  overflow: 'auto',
+  border: '1px solid var(--sap-border)',
+  background: '#fff',
+};
+
+const tableStyle = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  fontSize: 'var(--sap-grid-font-size)',
+  background: '#fff',
+};
+
+const thStyle = {
+  border: '1px solid var(--sap-border)',
+  padding: '6px 8px',
+  textAlign: 'left',
+  background: 'var(--sap-toolbar-bg)',
+  color: 'var(--sap-heading)',
+  fontWeight: 700,
+};
+
+const tdStyle = {
+  border: '1px solid var(--sap-border-soft)',
+  padding: '5px 7px',
+};
+
+const footerStyle = {
+  padding: 12,
+  display: 'flex',
+  gap: 8,
+  borderTop: '1px solid var(--sap-border)',
+  background: 'var(--sap-toolbar-bg)',
+};
+
+const lookupButtonStyle = {
+  ...secondaryButtonStyle,
+  padding: '2px 8px',
+  minWidth: 28,
+  height: 'var(--sap-control-height)',
 };
 
 function DistributionRuleListModal({ isOpen, onClose, onChoose, rules, title = 'List of Distribution Rules' }) {
@@ -78,20 +150,20 @@ function DistributionRuleListModal({ isOpen, onClose, onChoose, rules, title = '
   return (
     <div style={modalOverlayStyle} onClick={onClose}>
       <div style={{ ...modalBoxStyle, width: 580 }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ padding: '8px 12px', borderBottom: '4px solid #f3ba00', background: '#6d6d6d', color: '#fff', fontWeight: 600 }}>
+        <div style={modalHeaderStyle}>
           {title}
         </div>
-        <div style={{ padding: 12 }}>
+        <div style={modalBodyStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
             <label style={{ minWidth: 38, fontSize: 12 }}>Find</label>
             <input value={query} onChange={(e) => setQuery(e.target.value)} style={{ ...inputCellStyle, height: 22 }} />
           </div>
-          <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid #c7c7c7', background: '#fff' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <div style={tableWrapStyle}>
+            <table style={tableStyle}>
               <thead>
-                <tr style={{ background: '#efefef' }}>
-                  <th style={{ border: '1px solid #c7c7c7', padding: '4px 6px', textAlign: 'left' }}>Distribution Rule</th>
-                  <th style={{ border: '1px solid #c7c7c7', padding: '4px 6px', textAlign: 'left' }}>Distribution Rule Name</th>
+                <tr>
+                  <th style={thStyle}>Distribution Rule</th>
+                  <th style={thStyle}>Distribution Rule Name</th>
                 </tr>
               </thead>
               <tbody>
@@ -103,13 +175,13 @@ function DistributionRuleListModal({ isOpen, onClose, onChoose, rules, title = '
                       key={code}
                       style={{
                         cursor: 'pointer',
-                        background: selectedRule?.code === code ? '#fff1b8' : '#fff',
+                        background: selectedRule?.code === code ? 'var(--sap-primary-soft)' : '#fff',
                       }}
                       onClick={() => setSelectedRule({ code, name })}
                       onDoubleClick={() => onChoose({ code, name })}
                     >
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>{code}</td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>{name}</td>
+                      <td style={tdStyle}>{code}</td>
+                      <td style={tdStyle}>{name}</td>
                     </tr>
                   );
                 })}
@@ -117,7 +189,7 @@ function DistributionRuleListModal({ isOpen, onClose, onChoose, rules, title = '
             </table>
           </div>
         </div>
-        <div style={{ padding: 12, display: 'flex', gap: 8 }}>
+        <div style={footerStyle}>
           <button type="button" style={sapButtonStyle} onClick={() => selectedRule && onChoose(selectedRule)} disabled={!selectedRule}>
             Choose
           </button>
@@ -160,26 +232,26 @@ function DistributionRuleAssignmentModal({ isOpen, onClose, onSave, value, rules
     <>
       <div style={modalOverlayStyle} onClick={onClose}>
         <div style={{ ...modalBoxStyle, width: 740 }} onClick={(e) => e.stopPropagation()}>
-          <div style={{ padding: '8px 12px', borderBottom: '4px solid #f3ba00', background: '#6d6d6d', color: '#fff', fontWeight: 600 }}>
+          <div style={modalHeaderStyle}>
             Select Distr. Rule
           </div>
-          <div style={{ padding: 12 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: '#fff' }}>
+          <div style={modalBodyStyle}>
+            <table style={tableStyle}>
               <thead>
-                <tr style={{ background: '#efefef' }}>
-                  <th style={{ border: '1px solid #c7c7c7', padding: '4px 6px', width: 40 }}>#</th>
-                  <th style={{ border: '1px solid #c7c7c7', padding: '4px 6px', textAlign: 'left' }}>Dimensions</th>
-                  <th style={{ border: '1px solid #c7c7c7', padding: '4px 6px', textAlign: 'left' }}>Distr. Rule Code</th>
-                  <th style={{ border: '1px solid #c7c7c7', padding: '4px 6px', textAlign: 'left' }}>Distr. Rule Name</th>
-                  <th style={{ border: '1px solid #c7c7c7', padding: '4px 6px', width: 36 }}></th>
+                <tr>
+                  <th style={{ ...thStyle, width: 40 }}>#</th>
+                  <th style={thStyle}>Dimensions</th>
+                  <th style={thStyle}>Distr. Rule Code</th>
+                  <th style={thStyle}>Distr. Rule Name</th>
+                  <th style={{ ...thStyle, width: 36 }}></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row, index) => (
                   <tr key={row.id || index}>
-                    <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px', textAlign: 'center' }}>{index + 1}</td>
-                    <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>{row.name}</td>
-                    <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                    <td style={{ ...tdStyle, textAlign: 'center' }}>{index + 1}</td>
+                    <td style={tdStyle}>{row.name}</td>
+                    <td style={tdStyle}>
                       <input
                         style={inputCellStyle}
                         value={row.code || ''}
@@ -187,22 +259,22 @@ function DistributionRuleAssignmentModal({ isOpen, onClose, onSave, value, rules
                         onClick={() => setActiveDimension(index)}
                       />
                     </td>
-                    <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                    <td style={tdStyle}>
                       <input
                         style={readOnlyCellStyle}
                         value={row.displayName || ''}
                         readOnly
                       />
                     </td>
-                    <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px', textAlign: 'center' }}>
-                      <button type="button" style={{ ...secondaryButtonStyle, padding: '2px 8px' }} onClick={() => setActiveDimension(index)}>...</button>
+                    <td style={{ ...tdStyle, textAlign: 'center' }}>
+                      <button type="button" style={lookupButtonStyle} onClick={() => setActiveDimension(index)}>...</button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <div style={{ padding: 12, display: 'flex', gap: 8 }}>
+          <div style={footerStyle}>
             <button type="button" style={sapButtonStyle} onClick={() => onSave(rows)}>OK</button>
             <button type="button" style={secondaryButtonStyle} onClick={onClose}>Cancel</button>
           </div>
@@ -243,20 +315,20 @@ function ProjectListModal({ isOpen, onClose, onChoose, projects }) {
   return (
     <div style={modalOverlayStyle} onClick={onClose}>
       <div style={{ ...modalBoxStyle, width: 640 }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ padding: '8px 12px', borderBottom: '4px solid #f3ba00', background: '#6d6d6d', color: '#fff', fontWeight: 600 }}>
+        <div style={modalHeaderStyle}>
           List of Projects
         </div>
-        <div style={{ padding: 12 }}>
+        <div style={modalBodyStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
             <label style={{ minWidth: 38, fontSize: 12 }}>Find</label>
             <input value={query} onChange={(e) => setQuery(e.target.value)} style={{ ...inputCellStyle, height: 22 }} />
           </div>
-          <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid #c7c7c7', background: '#fff' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <div style={tableWrapStyle}>
+            <table style={tableStyle}>
               <thead>
-                <tr style={{ background: '#efefef' }}>
-                  <th style={{ border: '1px solid #c7c7c7', padding: '4px 6px', textAlign: 'left' }}>Project Code</th>
-                  <th style={{ border: '1px solid #c7c7c7', padding: '4px 6px', textAlign: 'left' }}>Project Name</th>
+                <tr>
+                  <th style={thStyle}>Project Code</th>
+                  <th style={thStyle}>Project Name</th>
                 </tr>
               </thead>
               <tbody>
@@ -268,13 +340,13 @@ function ProjectListModal({ isOpen, onClose, onChoose, projects }) {
                       key={code}
                       style={{
                         cursor: 'pointer',
-                        background: selectedProject?.code === code ? '#fff1b8' : '#fff',
+                        background: selectedProject?.code === code ? 'var(--sap-primary-soft)' : '#fff',
                       }}
                       onClick={() => setSelectedProject({ code, name })}
                       onDoubleClick={() => onChoose({ code, name })}
                     >
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>{code}</td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>{name}</td>
+                      <td style={tdStyle}>{code}</td>
+                      <td style={tdStyle}>{name}</td>
                     </tr>
                   );
                 })}
@@ -282,7 +354,7 @@ function ProjectListModal({ isOpen, onClose, onChoose, projects }) {
             </table>
           </div>
         </div>
-        <div style={{ padding: 12, display: 'flex', gap: 8 }}>
+        <div style={footerStyle}>
           <button type="button" style={sapButtonStyle} onClick={() => selectedProject && onChoose(selectedProject)} disabled={!selectedProject}>
             Choose
           </button>
@@ -394,12 +466,12 @@ export default function FreightChargesModal({
           style={{ ...modalBoxStyle, width: '92vw', maxWidth: 1620, maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div style={{ padding: '8px 12px', borderBottom: '4px solid #f3ba00', background: '#6d6d6d', color: '#fff', fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
+          <div style={modalHeaderStyle}>
             <span>{title}</span>
-            <button type="button" onClick={onClose} style={{ background: 'transparent', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 16 }}>X</button>
+            <button type="button" onClick={onClose} style={{ background: 'transparent', color: 'var(--sap-text-muted)', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}>x</button>
           </div>
 
-          <div style={{ padding: '10px 12px 0' }}>
+          <div style={{ padding: '10px 12px 0', background: 'var(--sap-surface)' }}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
               <input type="checkbox" checked={hideZeroAmounts} onChange={(e) => setHideZeroAmounts(e.target.checked)} />
               Do Not Display Freight Charges with Zero Amount
@@ -407,11 +479,11 @@ export default function FreightChargesModal({
           </div>
 
           <div style={{ padding: 12, overflow: 'auto', flex: 1 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: '#fff' }}>
+            <table style={tableStyle}>
               <thead>
-                <tr style={{ background: '#efefef' }}>
+                <tr>
                   {['#', 'Freight Name', 'Remarks', 'Tax Code', 'Total Tax Amount', 'Distrib. Method', 'Net Amount', 'Status', 'Freight Tax Distrib. Method', 'Distr. Rule', 'Project', 'Gross Amount'].map((label) => (
-                    <th key={label} style={{ border: '1px solid #c7c7c7', padding: '4px 6px', textAlign: label.includes('Amount') ? 'right' : 'left' }}>{label}</th>
+                    <th key={label} style={{ ...thStyle, textAlign: label.includes('Amount') ? 'right' : 'left' }}>{label}</th>
                   ))}
                 </tr>
               </thead>
@@ -425,14 +497,14 @@ export default function FreightChargesModal({
                   const distrRuleLabel = row.distributionRules.filter((rule) => rule.code).map((rule) => rule.code).join(' / ');
                   return (
                     <tr key={row.id}>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px', textAlign: 'center' }}>{index + 1}</td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                      <td style={{ ...tdStyle, textAlign: 'center' }}>{index + 1}</td>
+                      <td style={tdStyle}>
                         <input style={readOnlyCellStyle} value={row.expnsName} readOnly />
                       </td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                      <td style={tdStyle}>
                         <input style={inputCellStyle} value={row.remarks} onChange={(e) => updateRow(actualIndex, { remarks: e.target.value })} />
                       </td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                      <td style={tdStyle}>
                         <select style={{ ...inputCellStyle, background: '#fff' }} value={row.taxCode} onChange={(e) => updateRow(actualIndex, { taxCode: e.target.value })}>
                           <option value="">Select</option>
                           {taxCodes.map((taxCode) => (
@@ -443,32 +515,32 @@ export default function FreightChargesModal({
                         </select>
                         {errors[actualIndex] && <div style={{ color: '#b42318', fontSize: 10, marginTop: 2 }}>{errors[actualIndex]}</div>}
                       </td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                      <td style={tdStyle}>
                         <input style={{ ...readOnlyCellStyle, textAlign: 'right' }} value={`INR ${Number(row.totalTaxAmount || 0).toFixed(2)}`} readOnly />
                       </td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                      <td style={tdStyle}>
                         <select style={{ ...inputCellStyle, background: '#fff' }} value={row.distributionMethod} onChange={(e) => updateRow(actualIndex, { distributionMethod: e.target.value })}>
                           {FREIGHT_DISTRIBUTION_METHOD_OPTIONS.map((option) => (
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
                         </select>
                       </td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                      <td style={tdStyle}>
                         <input
                           style={{ ...inputCellStyle, textAlign: 'right' }}
                           value={row.netAmount}
                           onChange={(e) => updateRow(actualIndex, { netAmount: e.target.value })}
                         />
                       </td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px', textAlign: 'center' }}>{row.status ? '○' : ''}</td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                      <td style={{ ...tdStyle, textAlign: 'center' }}>{row.status ? 'Open' : ''}</td>
+                      <td style={tdStyle}>
                         <select style={{ ...inputCellStyle, background: '#fff' }} value={row.freightTaxDistributionMethod} onChange={(e) => updateRow(actualIndex, { freightTaxDistributionMethod: e.target.value })}>
                           {FREIGHT_DISTRIBUTION_METHOD_OPTIONS.map((option) => (
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
                         </select>
                       </td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                      <td style={tdStyle}>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <input
                             style={{ ...inputCellStyle, flex: 1 }}
@@ -476,10 +548,10 @@ export default function FreightChargesModal({
                             readOnly
                             onClick={() => setActiveDistributionRow(actualIndex)}
                           />
-                          <button type="button" style={{ ...secondaryButtonStyle, padding: '2px 8px' }} onClick={() => setActiveDistributionRow(actualIndex)}>...</button>
+                          <button type="button" style={lookupButtonStyle} onClick={() => setActiveDistributionRow(actualIndex)}>...</button>
                         </div>
                       </td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                      <td style={tdStyle}>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <input
                             style={{ ...inputCellStyle, flex: 1 }}
@@ -487,10 +559,10 @@ export default function FreightChargesModal({
                             readOnly
                             onClick={() => setActiveProjectRow(actualIndex)}
                           />
-                          <button type="button" style={{ ...secondaryButtonStyle, padding: '2px 8px' }} onClick={() => setActiveProjectRow(actualIndex)}>...</button>
+                          <button type="button" style={lookupButtonStyle} onClick={() => setActiveProjectRow(actualIndex)}>...</button>
                         </div>
                       </td>
-                      <td style={{ border: '1px solid #d5d5d5', padding: '4px 6px' }}>
+                      <td style={tdStyle}>
                         <input style={{ ...readOnlyCellStyle, textAlign: 'right' }} value={`INR ${Number(row.grossAmount || 0).toFixed(2)}`} readOnly />
                       </td>
                     </tr>
@@ -500,8 +572,8 @@ export default function FreightChargesModal({
             </table>
           </div>
 
-          <div style={{ padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #c7c7c7' }}>
-            <div style={{ fontSize: 12, color: '#555' }}>
+          <div style={{ ...footerStyle, justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ fontSize: 12, color: 'var(--sap-text-muted)' }}>
               {lookupLoading ? 'Loading distribution rules and projects...' : `Net: INR ${totals.totalNet.toFixed(2)} | Tax: INR ${totals.totalTax.toFixed(2)} | Gross: INR ${totals.totalGross.toFixed(2)}`}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -535,3 +607,4 @@ export default function FreightChargesModal({
     </>
   );
 }
+

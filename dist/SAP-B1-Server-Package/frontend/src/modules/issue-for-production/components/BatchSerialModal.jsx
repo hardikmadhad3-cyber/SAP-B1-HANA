@@ -58,17 +58,6 @@ export default function BatchSerialModal({ line, onSave, onClose }) {
     });
   };
 
-  const handleSerialToggle = (serialNumber) => {
-    setSelectedSerials(prev => {
-      const exists = prev.find(s => s.serial_number === serialNumber);
-      if (exists) {
-        return prev.filter(s => s.serial_number !== serialNumber);
-      } else {
-        return [...prev, { serial_number: serialNumber }];
-      }
-    });
-  };
-
   const handleAutoSelectBatches = () => {
     let remaining = requiredQty;
     const selected = [];

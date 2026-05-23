@@ -12,6 +12,7 @@ router.get('/series/next', salesQuotationController.getNextNumber);
 router.get('/state-from-address', salesQuotationController.getStateFromAddress);
 router.get('/items-modal', salesQuotationController.getItemsForModal);
 router.get('/freight-charges', salesQuotationController.getFreightCharges);
+router.post('/lookup-values', salesQuotationController.createLookupValue);
 router.get('/customers/:customerCode', salesQuotationController.getCustomerDetails);
 router.get('/:docEntry/copy', salesQuotationController.getSalesQuotationForCopy);
 router.get('/:docEntry', salesQuotationController.getSalesQuotation);

@@ -89,6 +89,59 @@ const getHSNCode = async (code) => {
   };
 };
 
+const mapSACRows = (rows = []) => rows.map((item) => ({
+  absEntry: item.AbsEntry || null,
+  code: item.ServiceCode || item.ServCode || item.ChapterID || '',
+  serviceCode: item.ServiceCode || item.ServCode || item.ChapterID || '',
+  serviceName: item.ServiceName || item.ServName || item.Description || '',
+  description: item.ServiceName || item.ServName || item.Description || '',
+}));
+
+const getSACCodes = async (query = '', top = 5000, skip = 0) => {
+  const trimmed = String(query || '').trim();
+  const params = {
+    query: trimmed,
+    like: `%${trimmed}%`,
+    top: Math.max(1, Number(top) || 5000),
+    skip: Math.max(0, Number(skip) || 0),
+  };
+
+  const osacQueries = [
+    `
+      SELECT AbsEntry, ServCode AS ServiceCode, ServName AS ServiceName
+      FROM OSAC
+      WHERE @query = ''
+        OR ServCode LIKE @like
+        OR ISNULL(ServName, '') LIKE @like
+      ORDER BY ServName, ServCode
+      OFFSET @skip ROWS FETCH NEXT @top ROWS ONLY
+    `,
+    `
+      SELECT AbsEntry, ServiceCode, ServiceName
+      FROM OSAC
+      WHERE @query = ''
+        OR ServiceCode LIKE @like
+        OR ISNULL(ServiceName, '') LIKE @like
+      ORDER BY ServiceName, ServiceCode
+      OFFSET @skip ROWS FETCH NEXT @top ROWS ONLY
+    `,
+  ];
+
+  for (const sqlText of osacQueries) {
+    const rows = await safe(db.query(sqlText, params));
+    if (rows.length) return mapSACRows(rows);
+  }
+
+  const hsnRows = await getHSNCodes(trimmed, params.top, params.skip);
+  return hsnRows.map((item) => ({
+    absEntry: item.absEntry,
+    code: item.code,
+    serviceCode: item.code,
+    serviceName: item.description,
+    description: item.description,
+  }));
+};
+
 const resolveHSNCodeToAbsEntry = async (value) => {
   if (value == null) {
     return null;
@@ -122,6 +175,52 @@ const resolveHSNCodeToAbsEntry = async (value) => {
   }
 
   return null;
+};
+
+const resolveSACCodeToAbsEntry = async (value) => {
+  if (value == null) {
+    return null;
+  }
+
+  const raw = String(value).trim();
+  if (!raw || raw === '-1') {
+    return null;
+  }
+
+  const osacQueries = [
+    {
+      sql: `
+        SELECT TOP 1 AbsEntry
+        FROM OSAC
+        WHERE ServCode = @code
+           OR ServName = @code
+           OR (@absEntry IS NOT NULL AND AbsEntry = @absEntry)
+      `,
+    },
+    {
+      sql: `
+        SELECT TOP 1 AbsEntry
+        FROM OSAC
+        WHERE ServiceCode = @code
+           OR ServiceName = @code
+           OR (@absEntry IS NOT NULL AND AbsEntry = @absEntry)
+      `,
+    },
+  ];
+
+  const params = {
+    code: raw,
+    absEntry: /^\d+$/.test(raw) ? Number(raw) : null,
+  };
+
+  for (const queryConfig of osacQueries) {
+    const result = await safe(db.query(queryConfig.sql, params));
+    if (result.length > 0 && result[0].AbsEntry != null) {
+      return Number(result[0].AbsEntry);
+    }
+  }
+
+  return resolveHSNCodeToAbsEntry(raw);
 };
 
 /**
@@ -165,7 +264,9 @@ const getHSNCodeFromItem = async (itemCode) => {
 
 module.exports = {
   getHSNCodes,
+  getSACCodes,
   getHSNCode,
   getHSNCodeFromItem,
   resolveHSNCodeToAbsEntry,
+  resolveSACCodeToAbsEntry,
 };

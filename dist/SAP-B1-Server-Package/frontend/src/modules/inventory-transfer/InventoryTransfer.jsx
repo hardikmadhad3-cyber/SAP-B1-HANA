@@ -17,6 +17,7 @@ import {
   submitInventoryTransfer,
   updateInventoryTransfer,
 } from '../../api/inventoryTransferApi';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 
 const TAB_NAMES = ['Contents', 'Attachments'];
 const today = () => new Date().toISOString().split('T')[0];
@@ -165,6 +166,7 @@ function InventoryTransfer() {
     lines: {},
     form: '',
   });
+  useValidationHighlights(valErrors);
   const [itemModal, setItemModal] = useState({
     open: false,
     lineIndex: -1,

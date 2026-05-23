@@ -21,10 +21,12 @@ import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmploy
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { consumeCopyToState } from '../../utils/copyToState';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   fetchAPCreditMemoReferenceData,
   fetchAPCreditMemoVendorDetails,
@@ -40,7 +42,7 @@ import {
 } from '../../api/apCreditMemoApi';
 import { PURCHASE_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
-import { normaliseDocumentHeader, normaliseDocumentLine } from '../../api/copyFromApi';
+import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument } from '../../api/copyFromApi';
 import {
   BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
@@ -246,6 +248,8 @@ const AP_CREDIT_MEMO_COPY_BASE_TYPE = {
 };
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
+
 function APCreditMemo() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -297,7 +301,7 @@ function APCreditMemo() {
     lines: {},
     form: '',
   });
-  const [loadedSnapshot, setLoadedSnapshot] = useState('');
+  useValidationHighlights(valErrors);
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -392,7 +396,6 @@ function APCreditMemo() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-    setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
@@ -508,7 +511,6 @@ function APCreditMemo() {
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(po.header_udfs || {}) });
-        setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
         if (po.header?.vendor) {
@@ -604,9 +606,6 @@ function APCreditMemo() {
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -632,7 +631,6 @@ function APCreditMemo() {
   }, {});
 
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
-  const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
   const FALLBACK_WAREHOUSES = [{ WhsCode: 'WH01', WhsName: 'Main Warehouse' }];
 
   const effectiveTaxCodes = refData.tax_codes || [];
@@ -656,11 +654,6 @@ function APCreditMemo() {
     }
     return FALLBACK_UOM;
   }, [refData.items, uomGroupMap]);
-
-  const uomOptions = lines.reduce((acc, line, i) => {
-    acc[i] = getUomOptions(line);
-    return acc;
-  }, {});
 
   const fmtTaxLabel = (t) => {
     const code = String(t?.Code || '').trim();
@@ -715,7 +708,6 @@ function APCreditMemo() {
   };
 
   const totals = calcTotals();
-  const gstTaxCodeOptions = refData.tax_codes.filter(t => isGstTaxCode(t.Code));
   const derivedGstType = getDerivedGstType(header.vendorState, header.placeOfSupply);
   const inferredGstType = formatDerivedGstType(derivedGstType);
 
@@ -1135,13 +1127,15 @@ function APCreditMemo() {
       addressForm.buildingFloorRoom,
       [addressForm.block, addressForm.city].filter(Boolean).join(', '),
       [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion
+      addressForm.countryRegion,
+      addressForm.addressName2,
+      addressForm.addressName3,
     ].filter(Boolean).join('\n');
 
     if (addressModal.type === 'shipTo') {
-      setHeader(p => ({ ...p, shipTo: formatted }));
+      setHeader(p => ({ ...p, shipTo: formatted, shipToAddress: formatted }));
     } else {
-      setHeader(p => ({ ...p, payTo: formatted }));
+      setHeader(p => ({ ...p, payTo: formatted, billTo: formatted, billToAddress: formatted }));
     }
     closeAddressModal();
   };
@@ -1182,30 +1176,30 @@ function APCreditMemo() {
   const handleItemSelect = async (item) => {
     const lineIndex = itemModal.lineIndex;
     if (lineIndex < 0) return;
+    const mergedItem = mergeItemMaster(item, refData.items);
     try {
-      const hsnResponse = await fetchHSNCodeFromItem(item.ItemCode);
-      const hsnCode = hsnResponse.data?.hsnCode || item.HSNCode || '';
+      const hsnResponse = await fetchHSNCodeFromItem(mergedItem.ItemCode);
+      const hsnCode = hsnResponse.data?.hsnCode || mergedItem.HSNCode || '';
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        const next = { ...line };
-        next.itemNo = item.ItemCode;
-        next.itemDescription = item.ItemName || '';
-        next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
-        next.hsnCode = hsnCode;
-        if (item.DefaultWarehouse) next.whse = item.DefaultWarehouse;
-        next.total = fmtDec(calcLineTotal(next), numDec.total);
-        return next;
+        return hydrateDocumentLineFromItem(line, mergedItem, {
+          side: 'purchase',
+          hsnCode,
+          fallbackWarehouse: header.warehouse,
+          calcLineTotal,
+          formatTotal: (value) => fmtDec(value, numDec.total),
+        });
       }));
     } catch {
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        return {
-          ...line,
-          itemNo: item.ItemCode,
-          itemDescription: item.ItemName || '',
-          uomCode: String(item.PurchaseUnit || item.InventoryUOM || '').trim(),
-          hsnCode: item.HSNCode || '',
-        };
+        return hydrateDocumentLineFromItem(line, mergedItem, {
+          side: 'purchase',
+          hsnCode: mergedItem.HSNCode || '',
+          fallbackWarehouse: header.warehouse,
+          calcLineTotal,
+          formatTotal: (value) => fmtDec(value, numDec.total),
+        });
       }));
     }
     closeItemModal();
@@ -1254,11 +1248,12 @@ function APCreditMemo() {
 
   // ── validation ────────────────────────────────────────────────────────────
   const handleCopyFrom = (data, docType) => {
-    const normalizedHeader = normaliseDocumentHeader(data);
-    const rawLines = data.DocumentLines || data.lines || [];
+    const copySource = unwrapCopyFromDocument(data);
+    const normalizedHeader = normaliseDocumentHeader(copySource.header);
+    const rawLines = copySource.lines;
     const copiedLines = rawLines.map((line, index) => ({
       ...createLine(rowUdfDefinitions),
-      ...normaliseDocumentLine(line, index, data.DocEntry || data.docEntry, AP_CREDIT_MEMO_COPY_BASE_TYPE[docType] || 20, normalizedHeader.branch),
+      ...normaliseDocumentLine(line, index, copySource.docEntry, AP_CREDIT_MEMO_COPY_BASE_TYPE[docType] || 20, normalizedHeader.branch),
       openQty: String(line.OpenQty ?? line.openQty ?? line.Quantity ?? line.quantity ?? ''),
       taxCodeManuallyOverridden: false,
       udf: createUdfState(rowUdfDefinitions),
@@ -1419,7 +1414,6 @@ function APCreditMemo() {
       const r = currentDocEntry ? await updateAPCreditMemo(currentDocEntry, payload) : await submitAPCreditMemo(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       const warningMsg = r.data.warning?.message ? ` Warning: ${r.data.warning.message}` : '';
-      setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -1440,7 +1434,6 @@ function APCreditMemo() {
   };
 
   const resetForm = () => {
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -1453,7 +1446,6 @@ function APCreditMemo() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
-  const visibleColumns = BASE_MATRIX_COLUMNS.filter(c => formSettings.matrixColumns?.[c.key]?.visible !== false);
   const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
 
   // Continue in next message with render...

@@ -62,7 +62,7 @@ const LoginPage = () => {
 
   const selectedCompany =
     (Array.isArray(publicCompanies) ? publicCompanies : []).find((company) => company.companyId === selectedCompanyId) || null;
-  const canSubmitLogin = form.username.trim() && form.password && !isSigningIn;
+  const canSubmitLogin = !isSigningIn;
 
   const filteredCompanies = useMemo(() => {
     const companies = Array.isArray(publicCompanies) ? publicCompanies : [];
@@ -81,8 +81,27 @@ const LoginPage = () => {
     setForm((current) => ({ ...current, [name]: value }));
   };
 
-  const executeLogin = async ({ preferredCompanyId, requireSelectedCompany }) => {
-    const pending = await login(form.username, form.password);
+  const readCredentials = (formElement) => {
+    const formData = formElement ? new FormData(formElement) : null;
+    const nextForm = {
+      username: String(formData?.get('username') ?? form.username).trim(),
+      password: String(formData?.get('password') ?? form.password),
+    };
+
+    setForm(nextForm);
+    return nextForm;
+  };
+
+  const executeLogin = async ({ preferredCompanyId, requireSelectedCompany, credentials }) => {
+    const nextCredentials = credentials || form;
+    const username = nextCredentials.username.trim();
+    const password = nextCredentials.password;
+
+    if (!username || !password) {
+      throw new Error('Enter User ID and Password.');
+    }
+
+    const pending = await login(username, password);
     const assignedCompanies = await loadCompanies(pending.user.userId);
 
     if (!assignedCompanies.length) {
@@ -115,6 +134,7 @@ const LoginPage = () => {
 
   const handlePrimaryLogin = async (event) => {
     event.preventDefault();
+    const credentials = readCredentials(event.currentTarget);
     setError('');
     setIsSigningIn(true);
 
@@ -122,6 +142,7 @@ const LoginPage = () => {
       await executeLogin({
         preferredCompanyId: selectedCompanyId,
         requireSelectedCompany: false,
+        credentials,
       });
     } catch (submitError) {
       setError(submitError.response?.data?.message || submitError.message || 'Unable to sign in.');
@@ -130,7 +151,10 @@ const LoginPage = () => {
     }
   };
 
-  const handleChooserConfirm = async () => {
+  const handleChooserConfirm = async (event) => {
+    event.preventDefault();
+    const credentials = readCredentials(event.currentTarget);
+
     if (!selectedCompanyId) {
       setError('Select a company to continue.');
       return;
@@ -143,6 +167,7 @@ const LoginPage = () => {
       await executeLogin({
         preferredCompanyId: selectedCompanyId,
         requireSelectedCompany: true,
+        credentials,
       });
     } catch (submitError) {
       setError(submitError.response?.data?.message || submitError.message || 'Unable to sign in.');
@@ -226,11 +251,17 @@ const LoginPage = () => {
             </div>
           </form>
         </div>
+
+        <div className="sap-login__statusbar" aria-label="Current company connection">
+          <span>Server: {selectedCompany?.serverName || 'Not selected'}</span>
+          <span>Database: {selectedCompany?.dbName || 'Not selected'}</span>
+          <span>Version: Web Client</span>
+        </div>
       </div>
 
       {isChooserOpen ? (
         <div className="sap-modal">
-          <div className="sap-chooser">
+          <form className="sap-chooser" onSubmit={handleChooserConfirm}>
             <div className="sap-chooser__titlebar">Choose/Create Company</div>
 
             <div className="sap-chooser__top">
@@ -309,9 +340,8 @@ const LoginPage = () => {
 
             <div className="sap-chooser__actions">
               <button
-                type="button"
+                type="submit"
                 className="sap-button sap-button--primary"
-                onClick={handleChooserConfirm}
                 disabled={!canSubmitLogin || !selectedCompanyId}
                 aria-busy={isSigningIn}
               >
@@ -327,7 +357,7 @@ const LoginPage = () => {
                 Cancel
               </button>
             </div>
-          </div>
+          </form>
         </div>
       ) : null}
     </div>

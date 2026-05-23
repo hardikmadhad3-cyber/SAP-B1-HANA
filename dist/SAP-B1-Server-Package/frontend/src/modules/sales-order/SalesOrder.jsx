@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import './styles/salesOrder.css';
 import '../../modules/item-master/styles/itemMaster.css';
+import './styles/salesOrder.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
@@ -16,22 +16,24 @@ import TaxInfoModal from './components/TaxInfoModal';
 import StateSelectionModal from './components/StateSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import CopyFromModal from './components/CopyFromModal';
-import CopyToModal from './components/CopyToModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
-import QualitySelectionModal from './components/QualitySelectionModal';
+import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import PrintSalesOrderActions from './components/PrintSalesOrderActions';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
-import { replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
 import { copyToDocument } from '../../services/documentCopyService';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import {
     fetchSalesOrderByDocEntry,
@@ -41,18 +43,13 @@ import {
     updateSalesOrder,
     fetchDocumentSeries,
     fetchNextNumber,
-    fetchStateFromAddress,
     fetchItemsForModal,
     fetchFreightCharges,
     createSalesOrderLookupValue,
-    fetchOpenSalesQuotations,
-    fetchOpenBlanketAgreements,
-    fetchSalesQuotationForCopy,
-    fetchBlanketAgreementForCopy,
 } from '../../api/salesOrderApi';
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { SALES_ORDER_COMPANY_ID } from '../../config/appConfig';
-import { salesOrderCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, BASE_TYPE } from '../../api/copyFromApi';
+import { salesOrderCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
     FORM_SETTINGS_STORAGE_KEY,
     HEADER_UDF_DEFINITIONS,
@@ -170,7 +167,7 @@ const INIT_HEADER = {
     paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
     totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
     placeOfSupply: '', currency: 'INR', useBillToForTax: false,
-    billToAddress: '', billToCode: '', shipToAddress: '', shipToCode: '',
+    billToAddress: '', billToCode: '', shipToAddress: '',
 };
 
 const createInitialHeader = () => ({
@@ -195,6 +192,7 @@ function SalesOrder() {
     const navigate = useNavigate();
     const { removeTask, upsertTask } = useSapWindowTaskbarActions();
     const formRef = useRef(null);
+    const handledCopyFromRef = useRef('');
     const [isCopyFromClick, setIsCopyFromClick] = useState(false);
     const [currentDocEntry, setCurrentDocEntry] = useState(null);
     const [header, setHeader] = useState(() => createInitialHeader());
@@ -216,7 +214,6 @@ function SalesOrder() {
     });
     const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
     const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
-    const [loadedSnapshot, setLoadedSnapshot] = useState('');
     const [snapshotPending, setSnapshotPending] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
     const [addressModal, setAddressModal] = useState(null);
@@ -227,21 +224,11 @@ function SalesOrder() {
     const [bpModal, setBpModal] = useState(false);
     const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1 });
     const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
-    const [qualityModal, setQualityModal] = useState({
-        open: false,
-        lineIndex: -1,
-        field: '',
-        title: 'List of User-Defined Values',
-        options: [],
-        searchPlaceholder: 'Search values',
-        emptyMessage: 'No values found',
-        allowCreate: true,
-    });
     const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
     const [copyFromModal, setCopyFromModal] = useState(false);
     const [copyFromMode, setCopyFromMode] = useState(false);
     const [copyFromDocType, setCopyFromDocType] = useState('quotation'); // 'quotation' or 'blanket'
-    const [copyToModal, setCopyToModal] = useState(false);
+    useValidationHighlights(valErrors, { enabled: !copyFromMode, rootRef: formRef });
     const [addressForm, setAddressForm] = useState({
         shipToCode: '', shipToAddress: '', billToCode: '', billToAddress: '',
         streetPoBox: '', streetNo: '', buildingFloorRoom: '', block: '', city: '', zipCode: '', county: '',
@@ -251,6 +238,19 @@ function SalesOrder() {
         panNo: '', panCircleNo: '', panWardNo: '', panAssessingOfficer: '', deducteeRefNo: '',
         lstVatNo: '', cstNo: '', tanNo: '', serviceTaxNo: '', companyType: '', natureOfBusiness: '',
         assesseeType: '', tinNo: '', itrFiling: '', gstType: '', gstin: ''
+    });
+    const {
+        lineLookupModal,
+        openQualityModal,
+        openPaymentTermsModal,
+        closeLineLookupModal,
+        handleLineLookupSelect,
+        handleLineLookupCreate,
+    } = useSalesDocumentLineLookups({
+        refData,
+        setRefData,
+        setLines,
+        createLookupValue: createSalesOrderLookupValue,
     });
 
     useEffect(() => {
@@ -321,9 +321,6 @@ function SalesOrder() {
     const isDocumentEditable = !currentDocEntry || String(header.status || '').toLowerCase() === 'open';
     const hasBuyerCode = Boolean(String(header.vendor || '').trim());
     const isUpdateMode = Boolean(currentDocEntry);
-    const currentDocumentSnapshot = currentDocEntry
-        ? JSON.stringify({ header, lines, headerUdfs })
-        : '';
     const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
     const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
     const primaryActionLabel = pageState.posting
@@ -339,7 +336,6 @@ function SalesOrder() {
 
     useEffect(() => {
         if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-        setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
         setSnapshotPending(false);
     }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
@@ -631,7 +627,6 @@ function SalesOrder() {
                         : [createLine(rowUdfDefinitions)]
                 );
                 setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
-                setLoadedSnapshot('');
                 setSnapshotPending(true);
                 setIsDirty(false);
 
@@ -691,9 +686,6 @@ function SalesOrder() {
 
     // ── derived / computed ────────────────────────────────────────────────────
     const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-    const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-        ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-        : refData.vendors;
     const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
         ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
         : vendorContacts;
@@ -712,8 +704,6 @@ function SalesOrder() {
     // Filter warehouses by selected branch
     const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
 
-    // NOTE: no warehouse-based fast fill for Ship-To here
-    const effectiveWhseAddrs = refData.warehouse_addresses.length ? refData.warehouse_addresses : [];
     const payTermOpts = refData.payment_terms.length
         ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
         : FALLBACK_PAYMENT_TERMS;
@@ -824,21 +814,6 @@ function SalesOrder() {
     const totals = calcTotals();
 
     // ── GST determination logic ───────────────────────────────────────────────
-    const determineGSTState = () => {
-        if (!header.vendor) return '';
-
-        const shipToAddr = vendorEffectiveShipToAddresses.find(a => String(a.Address || '') === String(header.shipToCode || ''))
-            || vendorEffectiveBillToAddresses.find(a => String(a.Address || '') === String(header.shipToCode || ''));
-        const billToAddr = vendorEffectiveBillToAddresses.find(a => String(a.Address || '') === String(header.billToCode || ''))
-            || vendorEffectiveShipToAddresses.find(a => String(a.Address || '') === String(header.billToCode || ''));
-
-        if (header.useBillToForTax) {
-            return billToAddr?.State || shipToAddr?.State || '';
-        }
-
-        return shipToAddr?.State || billToAddr?.State || '';
-    };
-
     const determineGSTType = (gstState) => {
         if (!gstState) return 'IGST';
 
@@ -849,44 +824,6 @@ function SalesOrder() {
             return 'CGST_SGST'; // CGST + SGST
         } else {
             return 'IGST';
-        }
-    };
-
-    const getApplicableTaxCodes = (gstType) => {
-        const taxCodes = effectiveTaxCodes.filter(code => {
-            if (gstType === 'CGST_SGST') {
-                return String(code.GSTType || '').trim().toUpperCase() === 'INTRASTATE'
-                    || taxCodeHasComponent(effectiveTaxCodes, code.Code, 'CGST')
-                    || taxCodeHasComponent(effectiveTaxCodes, code.Code, 'SGST');
-            } else if (gstType === 'IGST') {
-                return String(code.GSTType || '').trim().toUpperCase() === 'INTERSTATE'
-                    || taxCodeHasComponent(effectiveTaxCodes, code.Code, 'IGST');
-            }
-            return false;
-        });
-
-        // Return tax codes sorted by rate
-        return taxCodes.sort((a, b) => (a.Rate || 0) - (b.Rate || 0));
-    };
-
-    // New GST logic based on Place of Supply
-    const determineGSTTypeFromPOS = () => {
-        if (!header.vendor || !header.placeOfSupply) return 'IGST';
-
-        // Get company state from company address or first branch
-        const companyState = refData.company_address?.State || selectedBranch?.State || '';
-        const customerState = header.placeOfSupply;
-
-        console.log('GST Determination:', {
-            companyState,
-            customerState,
-            match: companyState === customerState
-        });
-
-        if (companyState === customerState) {
-            return 'CGST_SGST'; // Intra-state: CGST + SGST
-        } else {
-            return 'IGST'; // Inter-state: IGST
         }
     };
 
@@ -1114,7 +1051,7 @@ function SalesOrder() {
             if (contacts.length > 0) {
                 setHeader(prev => ({
                     ...prev,
-                    contactPerson: contacts[0].CntctCode
+                    contactPerson: prev.contactPerson || contacts[0].CntctCode
                 }));
             }
 
@@ -1546,8 +1483,8 @@ function SalesOrder() {
             setHeader(p => ({
                 ...p,
                 shipToCode: addressForm.shipToCode || p.shipToCode,
-                shipToAddress: addressForm.shipToAddress || formatted,
-                shipTo: addressForm.shipToAddress || formatted,
+                shipToAddress: formatted || addressForm.shipToAddress,
+                shipTo: formatted || addressForm.shipToAddress,
                 billToCode: addressForm.billToCode || p.billToCode,
                 payToCode: addressForm.billToCode || p.payToCode,
                 billToAddress: addressForm.billToAddress || p.billToAddress,
@@ -1562,8 +1499,8 @@ function SalesOrder() {
                 shipTo: addressForm.shipToAddress || p.shipTo,
                 billToCode: addressForm.billToCode || p.billToCode,
                 payToCode: addressForm.billToCode || p.payToCode,
-                billToAddress: addressForm.billToAddress || formatted,
-                payTo: addressForm.billToAddress || formatted,
+                billToAddress: formatted || addressForm.billToAddress,
+                payTo: formatted || addressForm.billToAddress,
                 placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
             }));
         }
@@ -1667,177 +1604,6 @@ function SalesOrder() {
     };
 
     // ── Item Selection Modal handlers ─────────────────────────────────────────
-    const getPaymentTermsLookupOptions = () => {
-        const sourceTerms = refData.payment_terms.length
-            ? refData.payment_terms.map((term) => ({
-                code: String(term.GroupNum ?? ''),
-                name: term.PymntGroup || String(term.GroupNum ?? ''),
-            }))
-            : FALLBACK_PAYMENT_TERMS.map((term) => ({
-                code: term.value,
-                name: term.label,
-            }));
-
-        return sourceTerms
-            .filter((term) => term.name)
-            .map((term) => ({
-                value: term.name,
-                description: term.code ? `Code: ${term.code}` : '',
-                label: term.code ? `${term.name} (${term.code})` : term.name,
-            }));
-    };
-
-    const openPaymentTermsModal = (field, lineIndex) => {
-        const isSellerField = field === 'sellerPaymentTerms';
-        setQualityModal({
-            open: true,
-            lineIndex,
-            field,
-            title: isSellerField ? 'List of Seller Terms of Payment' : 'List of Buyer Terms of Payment',
-            options: getPaymentTermsLookupOptions(),
-            searchPlaceholder: 'Search payment terms',
-            emptyMessage: 'No payment terms found',
-            allowCreate: false,
-        });
-    };
-
-    const openQualityModal = (field, lineIndex) => {
-        const optionMap = {
-            buyerQuality: {
-                title: 'List of Buyer Quality Values',
-                options: refData.quality_options?.buyer || [],
-                searchPlaceholder: 'Search buyer quality values',
-                emptyMessage: 'No buyer quality values found',
-            },
-            sellerQuality: {
-                title: 'List of Seller Quality Values',
-                options: refData.quality_options?.seller || [],
-                searchPlaceholder: 'Search seller quality values',
-                emptyMessage: 'No seller quality values found',
-            },
-            buyerPrice: {
-                title: 'List of Buyer Price Values',
-                options: refData.price_options?.buyer || [],
-                searchPlaceholder: 'Search buyer price values',
-                emptyMessage: 'No buyer price values found',
-            },
-            sellerPrice: {
-                title: 'List of Seller Price Values',
-                options: refData.price_options?.seller || [],
-                searchPlaceholder: 'Search seller price values',
-                emptyMessage: 'No seller price values found',
-            },
-        };
-
-        const nextConfig = optionMap[field] || {
-            title: 'List of User-Defined Values',
-            options: [],
-            searchPlaceholder: 'Search values',
-            emptyMessage: 'No values found',
-            allowCreate: true,
-        };
-
-        setQualityModal({
-            open: true,
-            lineIndex,
-            field,
-            title: nextConfig.title,
-            options: nextConfig.options,
-            searchPlaceholder: nextConfig.searchPlaceholder,
-            emptyMessage: nextConfig.emptyMessage,
-            allowCreate: nextConfig.allowCreate !== false,
-        });
-    };
-
-    const closeQualityModal = () => {
-        setQualityModal({
-            open: false,
-            lineIndex: -1,
-            field: '',
-            title: 'List of User-Defined Values',
-            options: [],
-            searchPlaceholder: 'Search values',
-            emptyMessage: 'No values found',
-            allowCreate: true,
-        });
-    };
-
-    const handleQualitySelect = (option) => {
-        if (qualityModal.lineIndex < 0 || !qualityModal.field) return;
-
-        setLines(prev => prev.map((line, idx) => {
-            if (idx !== qualityModal.lineIndex) return line;
-
-            return { ...line, [qualityModal.field]: option?.value || '' };
-        }));
-    };
-
-    const handleQualityCreate = async ({ value, description }) => {
-        const field = qualityModal.field;
-        if (!field) return null;
-
-        const response = await createSalesOrderLookupValue(field, value, description);
-        const createdOption = response?.data?.option || {
-            value,
-            description: description || value,
-            label: description && description !== value ? `${value} - ${description}` : value,
-        };
-        const nextOptions = response?.data?.options || [];
-
-        setRefData((prev) => {
-            const next = { ...prev };
-
-            if (field === 'buyerQuality' || field === 'sellerQuality') {
-                next.quality_options = {
-                    ...(prev.quality_options || { buyer: [], seller: [] }),
-                    [field === 'buyerQuality' ? 'buyer' : 'seller']: nextOptions,
-                };
-            }
-
-            if (field === 'buyerPrice' || field === 'sellerPrice') {
-                next.price_options = {
-                    ...(prev.price_options || { buyer: [], seller: [] }),
-                    [field === 'buyerPrice' ? 'buyer' : 'seller']: nextOptions,
-                };
-            }
-
-            return next;
-        });
-
-        setQualityModal((prev) => ({
-            ...prev,
-            options: nextOptions,
-        }));
-
-        return createdOption;
-    };
-
-    const openItemModal = async (lineIndex) => {
-        console.log('🔍 Opening item modal for line:', lineIndex);
-        setItemModal({ open: true, lineIndex, items: [], loading: true });
-
-        try {
-            console.log('📡 Fetching items from API...');
-            const response = await fetchItemsForModal();
-            console.log('✅ Items received:', response.data);
-            console.log('📊 Items count:', response.data.items?.length || 0);
-
-            setItemModal(prev => ({
-                ...prev,
-                items: response.data.items || [],
-                loading: false
-            }));
-        } catch (error) {
-            console.error('❌ Failed to load items:', error);
-            console.error('Error details:', error.response?.data || error.message);
-            setItemModal(prev => ({
-                ...prev,
-                items: [],
-                loading: false
-            }));
-        }
-    };
-
     const closeItemModal = () => {
         setItemModal({ open: false, lineIndex: -1, items: [], loading: false });
     };
@@ -1853,7 +1619,8 @@ function SalesOrder() {
         });
 
         try {
-            const response = await fetchItemsForModal();
+            const selectedWarehouse = lines[lineIndex]?.whse || header.warehouse || '';
+            const response = await fetchItemsForModal(selectedWarehouse);
             const payload = response?.data;
             const normalizedItems = Array.isArray(payload?.items)
                 ? payload.items
@@ -1880,10 +1647,7 @@ function SalesOrder() {
         if (itemModal.lineIndex < 0) return;
 
         const lineIndex = itemModal.lineIndex;
-        const itemMaster = (refData.items || []).find(
-            (candidate) => String(candidate.ItemCode || '') === String(item.ItemCode || '')
-        ) || {};
-        const mergedItem = { ...itemMaster, ...item };
+        const mergedItem = mergeItemMaster(item, refData.items);
 
         try {
             // Fetch HSN code from database
@@ -1893,18 +1657,15 @@ function SalesOrder() {
             setLines(prev => prev.map((line, idx) => {
                 if (idx !== lineIndex) return line;
 
-                const next = { ...line };
-                next.itemNo = mergedItem.ItemCode;
-                next.itemDescription = mergedItem.ItemName || '';
-                next.sellerItem = next.sellerItem || mergedItem.ItemCode;
-                next.uomCode = mergedItem.SalesUnit || mergedItem.InventoryUOM || '';
-                next.uomName = next.uomName || next.uomCode;
-                next.hsnCode = hsnData.hsnCode || mergedItem.HSNCode || '';
-                next.countryOfOrigin = mergedItem.ItemCountryOrg || next.countryOfOrigin || '';
-                next.sacCode = mergedItem.SACEntry || next.sacCode || '';
-                next.distRule = next.distRule || mergedItem.DistributionRule || '';
-                next.whse = next.whse || mergedItem.DefaultWarehouse || header.warehouse || '';
-                next.loc = resolveLineLocation(next.whse, next.branch || header.branch);
+                const next = hydrateDocumentLineFromItem(line, mergedItem, {
+                    side: 'sales',
+                    hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
+                    fallbackWarehouse: header.warehouse,
+                    resolveLineLocation,
+                    headerBranch: header.branch,
+                    calcLineTotal,
+                    formatTotal: (value) => fmtDec(value, numDec.total),
+                });
 
                 // Auto-determine tax code
                 const gstState = header.placeOfSupply;
@@ -1942,27 +1703,14 @@ function SalesOrder() {
                 if (idx !== lineIndex) return line;
                 return {
                     ...line,
-                    itemNo: mergedItem.ItemCode,
-                    itemDescription: mergedItem.ItemName || '',
-                    sellerItem: line.sellerItem || mergedItem.ItemCode,
-                    uomCode: mergedItem.SalesUnit || mergedItem.InventoryUOM || '',
-                    uomName: line.uomName || mergedItem.SalesUnit || mergedItem.InventoryUOM || '',
-                    hsnCode: mergedItem.HSNCode || '',
-                    countryOfOrigin: mergedItem.ItemCountryOrg || line.countryOfOrigin || '',
-                    sacCode: mergedItem.SACEntry || line.sacCode || '',
-                    distRule: line.distRule || mergedItem.DistributionRule || '',
-                    whse: line.whse || mergedItem.DefaultWarehouse || header.warehouse || '',
-                    loc: resolveLineLocation(line.whse || mergedItem.DefaultWarehouse || header.warehouse || '', line.branch || header.branch),
-                    stcode: line.stcode || mergedItem.TaxCodeAR || mergedItem.SalTaxCode || line.taxCode || '',
-                    total: fmtDec(calcLineTotal({
-                        ...line,
-                        itemNo: mergedItem.ItemCode,
-                        itemDescription: mergedItem.ItemName || '',
-                        uomCode: mergedItem.SalesUnit || mergedItem.InventoryUOM || '',
-                        uomName: line.uomName || mergedItem.SalesUnit || mergedItem.InventoryUOM || '',
-                        hsnCode: mergedItem.HSNCode || '',
-                        whse: line.whse || mergedItem.DefaultWarehouse || header.warehouse || '',
-                    }), numDec.total)
+                    ...hydrateDocumentLineFromItem(line, mergedItem, {
+                        side: 'sales',
+                        fallbackWarehouse: header.warehouse,
+                        resolveLineLocation,
+                        headerBranch: header.branch,
+                        calcLineTotal,
+                        formatTotal: (value) => fmtDec(value, numDec.total),
+                    }),
                 };
             }));
             closeItemModal();
@@ -2021,21 +1769,30 @@ function SalesOrder() {
 
     // ── Copy From Handler ──────────────────────────────────────────────────────
     const handleCopyFrom = (data, docType) => {
+        const copySource = unwrapCopyFromDocument(data);
         const baseType = BASE_TYPE[docType] || 23;
-        const normHeader = normaliseDocumentHeader(data);
+        const normHeader = normaliseDocumentHeader(copySource.header);
+        const sourceHeaderUdfs = copySource.document?.header_udfs || copySource.source?.header_udfs || data?.header_udfs || {};
+        const sourceFreightCharges = copySource.document?.freightCharges || copySource.source?.freightCharges || data?.freightCharges || [];
 
-        setHeader(prev => ({ ...prev, ...normHeader }));
-
-        const rawLines = data.DocumentLines || data.lines || [];
+        const rawLines = copySource.lines;
         const copiedLines = rawLines.map((line, idx) => ({
             ...createLine(rowUdfDefinitions),
-            ...normaliseDocumentLine(line, idx, data.DocEntry || data.docEntry, baseType, normHeader.branch),
-            stcode: line.STCODE || line.STACode || line.TaxCode || line.VatGroup || '',
-            documentCreated: line.DocumentCreated || line.documentCreated || data.DocumentCreated || normHeader.documentCreated || '',
+            ...normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch),
+            stcode: line.STCODE || line.STACode || line.stcode || line.TaxCode || line.VatGroup || line.taxCode || '',
+            documentCreated: line.DocumentCreated || line.documentCreated || copySource.header.DocumentCreated || normHeader.documentCreated || '',
             loc: line.loc || resolveLineLocation(line.WarehouseCode || line.WhsCode || line.whse || '', normHeader.branch),
         }));
+        const firstLineWarehouse = copiedLines.find(line => String(line.whse || '').trim())?.whse || '';
+
+        setHeader(prev => ({
+            ...prev,
+            ...normHeader,
+            warehouse: normHeader.warehouse || firstLineWarehouse || prev.warehouse || '',
+        }));
         setLines(copiedLines.length > 0 ? copiedLines : [createLine(rowUdfDefinitions)]);
-        setFreightModal({ open: false, freightCharges: [], loading: false });
+        setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, sourceHeaderUdfs));
+        setFreightModal({ open: false, freightCharges: Array.isArray(sourceFreightCharges) ? sourceFreightCharges : [], loading: false });
 
         if (normHeader.vendor) loadVendorDetails(normHeader.vendor);
 
@@ -2044,11 +1801,49 @@ function SalesOrder() {
     };
 
     // ── Copy From Modal Handlers ───────────────────────────────────────────────
+    useEffect(() => {
+        const routedCopyFrom = location.state?.copyFrom;
+        const persistedCopyState = routedCopyFrom ? null : consumeCopyToState(location.pathname, ['/sales-order']);
+        const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
+
+        if (!copyFrom || copyFrom.type !== 'salesQuotation') return;
+
+        const copyFromKey = JSON.stringify({
+            path: location.pathname,
+            type: copyFrom.type,
+            docEntry: copyFrom.docEntry,
+            lineCount: Array.isArray(copyFrom.lines) ? copyFrom.lines.length : 0,
+        });
+
+        if (handledCopyFromRef.current === copyFromKey) {
+            return;
+        }
+
+        handledCopyFromRef.current = copyFromKey;
+        setCurrentDocEntry(null);
+        setSnapshotPending(false);
+        setIsDirty(false);
+        setValErrors({ header: {}, lines: {}, form: '' });
+        setFreightModal({ open: false, freightCharges: [], loading: false });
+        handleCopyFrom({
+            ...(copyFrom.header || {}),
+            header: copyFrom.header || {},
+            DocumentLines: copyFrom.lines || [],
+            DocEntry: copyFrom.docEntry,
+        }, copyFrom.type);
+
+        const sourceLabel = copyFrom.sourceLabel || 'Sales Quotation';
+        setPageState(p => ({ ...p, error: '', success: `Copied from ${sourceLabel}. Please review and save.` }));
+        replaceRouteStatePreservingWindow(navigate, location.pathname, location.state || persistedCopyState);
+    }, [location.pathname, location.state?.copyFrom, navigate]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const openCopyFromModal = (docType) => {
         console.log('🟢 Copy From Clicked');
 
         // ✅ ONLY BUYER VALIDATION
-        if (!header.vendor) {
+        const buyerCode = String(header.vendor || '').trim();
+
+        if (!buyerCode) {
             setValErrors({
                 header: { vendor: 'Select Buyer first' },
                 lines: {},
@@ -2069,7 +1864,9 @@ function SalesOrder() {
     };
     const fetchCopyFromDocuments = async (docType) => {
         try {
-            return await salesOrderCopyFromApi.fetchOpenDocuments(docType);
+            const buyerCode = String(header.vendor || '').trim();
+            if (!buyerCode) return [];
+            return await salesOrderCopyFromApi.fetchOpenDocuments(docType, buyerCode);
         } catch (error) {
             console.error('Error fetching documents:', error);
             throw error;
@@ -2128,7 +1925,6 @@ function SalesOrder() {
             return { header: {}, lines: {}, form: '' };
         }
 
-        let errors = { header: {}, lines: {}, form: '' };
         const isUpdate = !!currentDocEntry;
         const e = { header: {}, lines: {}, form: '' };
 
@@ -2370,7 +2166,6 @@ function SalesOrder() {
             const r = currentDocEntry ? await updateSalesOrder(currentDocEntry, payload) : await submitSalesOrder(payload);
             const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
             const resetHeader = createInitialHeader();
-            setLoadedSnapshot('');
             setSnapshotPending(false);
             setIsDirty(false);
             setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
@@ -2396,7 +2191,6 @@ function SalesOrder() {
 
     const resetForm = () => {
         const resetHeader = createInitialHeader();
-        setLoadedSnapshot('');
         setSnapshotPending(false);
         setIsDirty(false);
         setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
@@ -2566,12 +2360,6 @@ function SalesOrder() {
                         </button>
                         <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyTo('ar-invoice'); document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active')); }}>
                             A/R Invoice
-                        </button>
-                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyTo('ar-dpm-request'); document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active')); }}>
-                            A/R DPM Request
-                        </button>
-                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyTo('ar-dpm-invoice'); document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active')); }}>
-                            A/R DPM Invoice
                         </button>
                     </div>
                 </div>
@@ -3147,12 +2935,6 @@ function SalesOrder() {
                                         <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyTo('ar-invoice'); document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active')); }}>
                                             A/R Invoice
                                         </button>
-                                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyTo('ar-dpm-request'); document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active')); }}>
-                                            A/R DPM Request
-                                        </button>
-                                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyTo('ar-dpm-invoice'); document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active')); }}>
-                                            A/R DPM Invoice
-                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -3264,16 +3046,16 @@ function SalesOrder() {
                 loading={itemModal.loading}
             />
 
-            <QualitySelectionModal
-                isOpen={qualityModal.open}
-                onClose={closeQualityModal}
-                onSelect={handleQualitySelect}
-                onCreate={handleQualityCreate}
-                options={qualityModal.options}
-                title={qualityModal.title}
-                searchPlaceholder={qualityModal.searchPlaceholder}
-                emptyMessage={qualityModal.emptyMessage}
-                allowCreate={qualityModal.allowCreate}
+            <LineValueLookupModal
+                isOpen={lineLookupModal.open}
+                onClose={closeLineLookupModal}
+                onSelect={handleLineLookupSelect}
+                onCreate={handleLineLookupCreate}
+                options={lineLookupModal.options}
+                title={lineLookupModal.title}
+                searchPlaceholder={lineLookupModal.searchPlaceholder}
+                emptyMessage={lineLookupModal.emptyMessage}
+                allowCreate={lineLookupModal.allowCreate}
             />
 
             <SalesEmployeeSetupModal

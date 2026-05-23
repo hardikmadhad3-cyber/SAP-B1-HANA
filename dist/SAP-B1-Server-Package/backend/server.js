@@ -3,8 +3,42 @@ require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
 const env     = require('./config/env');
+
+if (!env.verboseSapLogs) {
+  const originalLog = console.log.bind(console);
+  console.debug = () => {};
+  console.log = (...args) => {
+    const first = String(args[0] ?? '');
+    const noisyPatterns = [
+      'RECEIVED PAYLOAD',
+      'SAP PAYLOAD',
+      'Constructed SAP Payload',
+      'Validated Payload',
+      'Service Layer search result',
+      'FINAL CONVERTED VALUES',
+      'ODBC Data Loaded',
+      'Available Sales Employees',
+      'Reference data:',
+      'response keys',
+      '════════',
+      '🔥',
+      '🔍',
+      '✅',
+      '⚠️',
+    ];
+
+    if (noisyPatterns.some((pattern) => first.includes(pattern))) {
+      return;
+    }
+
+    originalLog(...args);
+  };
+}
+
 const { authenticateAccessToken } = require('./middleware/authMiddleware');
 const { runWithRequestContext } = require('./services/requestContextService');
+const apiTimingMiddleware = require('./middleware/apiTiming');
+const { cacheMiddleware, invalidateCacheMiddleware } = require('./middleware/cacheMiddleware');
 
 const authRoutes            = require('./routes/authRoutes');
 const menuRoutes            = require('./routes/menuRoutes');
@@ -37,6 +71,8 @@ const grpoRoutes                 = require('./routes/grpo');
 const deliveryRoutes             = require('./routes/delivery');
 const apInvoiceRoutes            = require('./routes/apInvoice');
 const arInvoiceRoutes            = require('./routes/arInvoice');
+const serviceArInvoiceRoutes      = require('./routes/serviceArInvoice');
+const serviceApInvoiceRoutes      = require('./routes/serviceApInvoice');
 const incomingPaymentsRoutes      = require('./routes/incomingPayments');
 const outgoingPaymentsRoutes      = require('./routes/outgoingPayments');
 const apCreditMemoRoutes         = require('./routes/apCreditMemo');
@@ -52,8 +88,38 @@ const purchaseRequestReportRoutes = require('./routes/reports/purchaseRequestRep
 const reportStudioRoutes         = require('./routes/reportStudioRoutes');
 const reportLookupsRoutes        = require('./routes/reportLookups');
 const adminPanelRoutes           = require('./routes/adminPanelRoutes');
+const performanceRoutes          = require('./routes/performanceRoutes');
 
 const app = express();
+
+const masterDataCache = (namespace, ttlSeconds) => [
+  cacheMiddleware({ namespace, ttlSeconds }),
+  invalidateCacheMiddleware(namespace),
+];
+
+const isReusableLookupRequest = (req) => {
+  if (req.method !== 'GET') return false;
+
+  const path = req.path.toLowerCase();
+  return (
+    path.endsWith('/reference-data') ||
+    path.includes('/lookup/') ||
+    path.endsWith('/metadata') ||
+    path.endsWith('/series') ||
+    path.includes('/series/') ||
+    path.endsWith('/items-modal') ||
+    path.endsWith('/freight-charges') ||
+    path.endsWith('/print-layouts') ||
+    path.includes('/warehouse-state') ||
+    path.includes('/state-from-address')
+  );
+};
+
+const reusableLookupCache = cacheMiddleware({
+  namespace: (req) => `lookup:${req.path.toLowerCase()}`,
+  ttlSeconds: 300,
+  shouldCache: isReusableLookupRequest,
+});
 
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
@@ -119,13 +185,17 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+app.use(apiTimingMiddleware);
 app.use((req, res, next) => runWithRequestContext(req, next));
 
 // Request logging middleware
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  if (req.method === 'POST' || req.method === 'PATCH') {
+  const isWriteRequest = req.method === 'POST' || req.method === 'PATCH' || req.method === 'PUT';
+  if (isWriteRequest) {
+    console.log(`[${req.method}] ${req.path}`);
     console.log('Request body:', JSON.stringify(redactSensitiveFields(req.body), null, 2));
+  } else if (env.verboseRequestLogs) {
+    console.log(`[${req.method}] ${req.path}`);
   }
   next();
 });
@@ -144,21 +214,23 @@ app.use((req, res, next) => {
   return authenticateAccessToken(req, res, next);
 });
 
+app.use('/api', reusableLookupCache);
+
 // Routes
 app.use('/api',                    authRoutes);
 app.use('/api/menu',               menuRoutes);
-app.get('/api/items',              goodsReceiptController.getItems);
-app.use('/api/items',              itemRoutes);
-app.use('/api/business-partners',  businessPartnerRoutes);
-app.get('/api/warehouses',         goodsReceiptController.getWarehouses);
-app.use('/api/warehouses',         warehouseRoutes);
-app.use('/api/price-lists',        priceListRoutes);
-app.use('/api/tax-codes',          taxCodeRoutes);
-app.use('/api/uom-groups',         uomGroupRoutes);
-app.use('/api/payment-terms',      paymentTermsRoutes);
-app.use('/api/shipping-types',     shippingTypeRoutes);
-app.use('/api/branches',           branchRoutes);
-app.use('/api/chart-of-accounts',  chartOfAccountsRoutes);
+app.get('/api/items',              cacheMiddleware({ namespace: 'items', ttlSeconds: 3600 }), goodsReceiptController.getItems);
+app.use('/api/items',              ...masterDataCache('items', 3600), itemRoutes);
+app.use('/api/business-partners',  ...masterDataCache('business-partners', 3600), businessPartnerRoutes);
+app.get('/api/warehouses',         cacheMiddleware({ namespace: 'warehouses', ttlSeconds: 7200 }), goodsReceiptController.getWarehouses);
+app.use('/api/warehouses',         ...masterDataCache('warehouses', 7200), warehouseRoutes);
+app.use('/api/price-lists',        ...masterDataCache('price-lists', 3600), priceListRoutes);
+app.use('/api/tax-codes',          ...masterDataCache('tax-codes', 14400), taxCodeRoutes);
+app.use('/api/uom-groups',         ...masterDataCache('uom-groups', 14400), uomGroupRoutes);
+app.use('/api/payment-terms',      ...masterDataCache('payment-terms', 14400), paymentTermsRoutes);
+app.use('/api/shipping-types',     ...masterDataCache('shipping-types', 14400), shippingTypeRoutes);
+app.use('/api/branches',           ...masterDataCache('branches', 28800), branchRoutes);
+app.use('/api/chart-of-accounts',  ...masterDataCache('chart-of-accounts', 28800), chartOfAccountsRoutes);
 app.get('/api/series',             goodsReceiptController.getSeries);
 app.get('/api/purchase-orders',    goodsReceiptController.getPurchaseOrders);
 app.use('/api/purchase-order',     purchaseOrderRoutes);
@@ -180,6 +252,8 @@ app.use('/api/grpo',               grpoRoutes);
 app.use('/api/delivery',           deliveryRoutes);
 app.use('/api/ap-invoice',         apInvoiceRoutes);
 app.use('/api/ar-invoice',         arInvoiceRoutes);
+app.use('/api/services/ar-invoice', serviceArInvoiceRoutes);
+app.use('/api/services/ap-invoice', serviceApInvoiceRoutes);
 app.use('/api/incoming-payments',  incomingPaymentsRoutes);
 app.use('/api/outgoing-payments',  outgoingPaymentsRoutes);
 app.use('/api/ap-credit-memo',     apCreditMemoRoutes);
@@ -193,6 +267,7 @@ app.use('/api/reports',            purchaseAnalysisRoutes);
 app.use('/api/reports',            purchaseRequestReportRoutes);
 app.use('/api/lookups',            reportLookupsRoutes);
 app.use('/api/admin-panel',        adminPanelRoutes);
+app.use('/api/performance',        performanceRoutes);
 app.use('/api',                    sapRoutes);
 
 // Health check
@@ -221,20 +296,48 @@ app.get('/api/debug/production-orders', async (_req, res) => {
 
 // Serve static files from the React frontend build for single-port LAN access
 const path = require('path');
+const fs = require('fs');
+const frontendBuildPath = path.join(__dirname, '../frontend/build');
+
 app.use((req, res, next) => {
-  if (!req.path.startsWith('/api')) {
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.set('Pragma', 'no-cache');
-    res.set('Expires', '0');
+  if (!['GET', 'HEAD'].includes(req.method)) return next();
+  if (!/\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) return next();
+  if (!/\.(js|css|html|svg)$/.test(req.path)) return next();
+
+  const requestedPath = path.normalize(path.join(frontendBuildPath, decodeURIComponent(req.path)));
+  if (!requestedPath.startsWith(frontendBuildPath)) return next();
+
+  const gzipPath = `${requestedPath}.gz`;
+  if (!fs.existsSync(gzipPath)) return next();
+
+  if (requestedPath.includes(`${path.sep}static${path.sep}`)) {
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  } else {
+    res.set('Cache-Control', 'no-cache');
   }
-  next();
+
+  res.set('Content-Encoding', 'gzip');
+  res.set('Vary', 'Accept-Encoding');
+  res.type(requestedPath);
+  return res.sendFile(gzipPath);
 });
-app.use(express.static(path.join(__dirname, '../frontend/build')));
+
+app.use(express.static(frontendBuildPath, {
+  setHeaders(res, filePath) {
+    if (filePath.includes(`${path.sep}static${path.sep}`)) {
+      res.set('Cache-Control', 'public, max-age=31536000, immutable');
+      return;
+    }
+
+    res.set('Cache-Control', 'no-cache');
+  },
+}));
 
 // Catch-all route to serve the React index.html for frontend routing
 app.use((req, res, next) => {
   if (req.path.startsWith('/api')) return next();
-  res.sendFile(path.join(__dirname, '../frontend/build', 'index.html'));
+  res.set('Cache-Control', 'no-cache');
+  res.sendFile(path.join(frontendBuildPath, 'index.html'));
 });
 
 // Global error handler middleware

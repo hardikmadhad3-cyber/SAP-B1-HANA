@@ -46,11 +46,15 @@ const mergeNestedSettings = (defaults, saved = {}) =>
     return acc;
   }, {});
 
-const readSavedFormSettings = (headerUdfs = HEADER_UDF_DEFINITIONS, rowUdfs = ROW_UDF_DEFINITIONS) => {
+const readSavedFormSettings = (
+  headerUdfs = HEADER_UDF_DEFINITIONS,
+  rowUdfs = ROW_UDF_DEFINITIONS,
+  storageKey = FORM_SETTINGS_STORAGE_KEY,
+) => {
   const defaults = createDefaultFormSettings(headerUdfs, rowUdfs);
 
   try {
-    const raw = localStorage.getItem(FORM_SETTINGS_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return defaults;
     return mergeNestedSettings(defaults, JSON.parse(raw));
   } catch (error) {

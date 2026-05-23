@@ -21,13 +21,16 @@ import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmploy
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { copyToDocument } from '../../services/documentCopyService';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
-import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../utils/copyToState';
+import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import {
   fetchARInvoiceReferenceData,
@@ -37,8 +40,6 @@ import {
   updateARInvoice,
   fetchDocumentSeries,
   fetchNextNumber,
-  fetchStateFromAddress,
-  fetchStateFromWarehouse,
   fetchFreightCharges,
   fetchItemsForModal,
   fetchOpenSalesQuotationsForARInvoice,
@@ -50,9 +51,9 @@ import {
   fetchOpenBlanketAgreementsForARInvoice,
   fetchBlanketAgreementForARInvoiceCopy,
 } from '../../api/arInvoiceApi';
-import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
+import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { AR_INVOICE_COMPANY_ID } from '../../config/appConfig';
-import { arInvoiceCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, BASE_TYPE } from '../../api/copyFromApi';
+import { arInvoiceCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
   FORM_SETTINGS_STORAGE_KEY,
   HEADER_UDF_DEFINITIONS,
@@ -113,6 +114,10 @@ const normalizeAddressText = (value) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+const normalizeBaseLine = (line, fallbackIndex) =>
+  line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? fallbackIndex;
+const normalizeWarehouse = (line = {}, header = {}) =>
+  line.whse || line.WarehouseCode || line.WhsCode || line.warehouse || header.warehouse || header.WarehouseCode || '';
 
 // ─── static fallbacks ────────────────────────────────────────────────────────
 const FALLBACK_PAYMENT_TERMS = [
@@ -182,7 +187,7 @@ function ARInvoicePage() {
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
-  const [loadedSnapshot, setLoadedSnapshot] = useState('');
+  useValidationHighlights(valErrors);
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -284,7 +289,6 @@ function ARInvoicePage() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-    setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
@@ -464,7 +468,6 @@ function ARInvoicePage() {
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
-        setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
         if (so.header?.customerCode || so.header?.customer) {
@@ -541,14 +544,20 @@ function ARInvoicePage() {
 
     handledCopyFromRef.current = copyFromKey;
 
-    const { header: srcHeader, lines: srcLines, baseDocument } = copyFrom;
+    const { header: srcHeader = {}, lines: srcLines = [], baseDocument } = copyFrom;
+    const firstSourceLine = Array.isArray(srcLines) && srcLines.length ? srcLines[0] : {};
+    const copiedWarehouse = normalizeWarehouse(firstSourceLine, srcHeader);
+    const copiedBranch = srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || srcHeader.BPLId || firstSourceLine.branch || '';
+    const copiedBaseType = baseDocument?.baseType || BASE_TYPE[copyFrom.type] || firstSourceLine.baseType || 15;
+    const copiedBaseEntry = baseDocument?.baseEntry || copyFrom.docEntry;
 
     setHeader(prev => ({
       ...prev,
       vendor:           srcHeader.vendor        || srcHeader.CardCode  || '',
       name:             srcHeader.name          || srcHeader.CardName  || '',
       contactPerson:    srcHeader.contactPerson || srcHeader.CntctCode || '',
-      branch:           srcHeader.branch        || srcHeader.BPL_IDAssignedToInvoice || '',
+      branch:           copiedBranch,
+      warehouse:        copiedWarehouse,
       paymentTerms:     srcHeader.paymentTerms  || srcHeader.GroupNum  || '',
       placeOfSupply:    srcHeader.placeOfSupply || '',
       otherInstruction: srcHeader.otherInstruction || srcHeader.Comments || '',
@@ -564,12 +573,13 @@ function ARInvoicePage() {
         uomCode:         l.uomCode         || l.UomCode         || l.unitMsr || '',
         hsnCode:         l.hsnCode         || l.HSNCode         || '',
         taxCode:         l.taxCode         || l.TaxCode         || '',
-        whse:            l.whse            || l.WarehouseCode   || l.WhsCode || '',
+        whse:            normalizeWarehouse(l, srcHeader),
         discount:        String(l.discount || l.DiscountPercent || l.DiscPrcnt || 0),
-        baseEntry:       baseDocument?.baseEntry || copyFrom.docEntry,
-        baseType:        baseDocument?.baseType  || 17,
-        baseLine:        l.lineNum         ?? l.LineNum         ?? idx,
-        branch:          l.branch          || srcHeader.branch  || '',
+        stdDiscount:     String(l.stdDiscount || l.discount || l.DiscountPercent || l.DiscPrcnt || 0),
+        baseEntry:       l.baseEntry ?? l.BaseEntry ?? copiedBaseEntry,
+        baseType:        l.baseType ?? l.BaseType ?? copiedBaseType,
+        baseLine:        normalizeBaseLine(l, idx),
+        branch:          l.branch || copiedBranch,
       })));
     }
 
@@ -578,14 +588,11 @@ function ARInvoicePage() {
 
     const sourceLabel = copyFrom.sourceLabel || copyFrom.type || 'source document';
     setPageState(p => ({ ...p, success: `Copied from ${sourceLabel}. Please review and save.` }));
-    navigate(location.pathname, { replace: true, state: null });
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state || persistedCopyState);
   }, [location.pathname, location.state?.copyFrom, navigate, rowUdfDefinitions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -925,25 +932,6 @@ function ARInvoicePage() {
     }
   };
   
-  const handleShipToChange = async (addressCode) => {
-    if (!addressCode || !header.vendor) {
-      setHeader(p => ({ ...p, shipToCode: addressCode, placeOfSupply: '' }));
-      return;
-    }
-    
-    const addr = effectiveWhseAddrs.find(w => String(w.WhsCode) === addressCode);
-    setHeader(p => ({ ...p, shipToCode: addressCode, shipTo: fmtAddr(addr) }));
-    
-    try {
-      const res = await fetchStateFromWarehouse(addressCode);
-      if (res.data.state) {
-        setHeader(p => ({ ...p, placeOfSupply: res.data.state }));
-      }
-    } catch (err) {
-      // Failed to fetch state from address
-    }
-  };
-  
   const handleSeriesChange = async (seriesValue) => {
     if (!seriesValue) return;
     
@@ -1270,8 +1258,8 @@ function ARInvoicePage() {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode || p.shipToCode,
-        shipToAddress: addressForm.shipToAddress || formatted,
-        shipTo: addressForm.shipToAddress || formatted,
+        shipToAddress: formatted || addressForm.shipToAddress,
+        shipTo: formatted || addressForm.shipToAddress,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
@@ -1286,8 +1274,8 @@ function ARInvoicePage() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
-        billToAddress: addressForm.billToAddress || formatted,
-        payTo: addressForm.billToAddress || formatted,
+        billToAddress: formatted || addressForm.billToAddress,
+        payTo: formatted || addressForm.billToAddress,
         placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
       }));
     }
@@ -1432,19 +1420,21 @@ function ARInvoicePage() {
     if (itemModal.lineIndex < 0) return;
     
     const lineIndex = itemModal.lineIndex;
+    const mergedItem = mergeItemMaster(item, refData.items);
     
     try {
-      const hsnRes = await fetchHSNCodeFromItem(item.ItemCode);
+      const hsnRes = await fetchHSNCodeFromItem(mergedItem.ItemCode);
       const hsnData = hsnRes.data;
       
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
-          const updatedLine = {
-            ...line,
-            itemNo: item.ItemCode || '',
-            itemDescription: item.ItemName || '',
+          const updatedLine = hydrateDocumentLineFromItem(line, mergedItem, {
+            side: 'sales',
             hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
-          };
+            fallbackWarehouse: header.warehouse,
+            calcLineTotal,
+            formatTotal: (value) => fmtDec(value, numDec.total),
+          });
           
           // Auto-populate tax code based on HSN
           if (updatedLine.hsnCode) {
@@ -1464,11 +1454,12 @@ function ARInvoicePage() {
       console.error('Error selecting item:', error);
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
-          return {
-            ...line,
-            itemNo: item.ItemCode || '',
-            itemDescription: item.ItemName || '',
-          };
+          return hydrateDocumentLineFromItem(line, mergedItem, {
+            side: 'sales',
+            fallbackWarehouse: header.warehouse,
+            calcLineTotal,
+            formatTotal: (value) => fmtDec(value, numDec.total),
+          });
         }
         return line;
       }));
@@ -1764,14 +1755,15 @@ function ARInvoicePage() {
 
   // ── Copy From handler ─────────────────────────────────────────────────────
   const handleCopyFrom = (data, sourceType) => {
+    const copySource = unwrapCopyFromDocument(data);
     const baseType = BASE_TYPE[sourceType] || 17;
-    const normHeader = normaliseDocumentHeader(data);
+    const normHeader = normaliseDocumentHeader(copySource.header);
 
     setHeader(prev => ({ ...prev, ...normHeader }));
 
-    const rawLines = data.DocumentLines || data.lines || [];
+    const rawLines = copySource.lines;
     const newLines = rawLines.map((line, idx) =>
-      ({ ...createLine(rowUdfDefinitions), ...normaliseDocumentLine(line, idx, data.DocEntry || data.docEntry, baseType, normHeader.branch) })
+      ({ ...createLine(rowUdfDefinitions), ...normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch) })
     );
     setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
 
@@ -1785,19 +1777,22 @@ function ARInvoicePage() {
   // ── Copy From fetch handlers ───────────────────────────────────────────────
   const fetchCopyFromDocuments = async (docType) => {
     try {
+      const bpCode = String(header.vendor || '').trim();
+      if (!bpCode) return [];
+
       // Sales Quotations: use dedicated API
       if (docType === 'salesQuotation') {
-        const res = await fetchOpenSalesQuotationsForARInvoice();
-        return res?.data?.quotations || [];
+        const res = await fetchOpenSalesQuotationsForARInvoice(bpCode);
+        return res?.data?.quotations || res?.data?.documents || [];
       }
       // Sales Orders: filter by current customer for relevance
       if (docType === 'salesOrder') {
-        const res = await fetchOpenSalesOrdersForARInvoice(header.vendor || null);
+        const res = await fetchOpenSalesOrdersForARInvoice(bpCode);
         return res?.data?.orders || res?.data?.documents || [];
       }
       // Deliveries: filter by current customer for relevance
       if (docType === 'delivery') {
-        const res = await fetchOpenDeliveriesForARInvoice(header.vendor || null);
+        const res = await fetchOpenDeliveriesForARInvoice(bpCode);
         return res?.data?.deliveries || res?.data?.documents || [];
       }
       // Blanket Agreements: use dedicated API
@@ -1805,7 +1800,7 @@ function ARInvoicePage() {
         const res = await fetchOpenBlanketAgreementsForARInvoice();
         return res?.data?.agreements || [];
       }
-      return await arInvoiceCopyFromApi.fetchOpenDocuments(docType);
+      return await arInvoiceCopyFromApi.fetchOpenDocuments(docType, bpCode);
     } catch (err) {
       console.error('Error fetching documents:', err);
       throw err;
@@ -1838,36 +1833,25 @@ function ARInvoicePage() {
   };
 
   // ── Copy To handler ───────────────────────────────────────────────────────
-  const handleCopyTo = (targetType = 'arCreditMemo') => {
-    const copyState = buildCopyToState({
+  const handleCopyTo = async (targetType = 'ar-credit-memo') => {
+    await copyToDocument({
       sourceDocType: 'arInvoice',
-      sourceLabel: 'A/R Invoice',
+      targetType,
       sourceDocEntry: currentDocEntry,
-      header,
-      lines: lines.map((line) => ({ ...line, stdDiscount: line.stdDiscount ?? line.discount ?? '' })),
-      headerUdfs,
-      baseType: 13,
+      sourceDocNo: header.docNo,
+      sourcePath: location.pathname,
+      sourceSnapshot: {
+        header,
+        lines: lines.map((line) => ({ ...line, stdDiscount: line.stdDiscount ?? line.discount ?? '' })),
+        headerUdfs,
+      },
+      restoreState: { arInvoiceDocEntry: currentDocEntry },
+      navigate,
+      upsertTask,
+      removeTask,
+      setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
+      errorMessage: 'Please save the AR invoice first before copying to another document',
     });
-
-    if (targetType === 'arCreditMemo') {
-      openCopyToDocument({
-        sourceDocType: 'arInvoice',
-        sourceLabel: 'A/R Invoice',
-        sourceDocEntry: currentDocEntry,
-        sourceDocNo: header.docNo,
-        sourcePath: location.pathname,
-        targetDocType: 'arCreditMemo',
-        targetLabel: 'A/R Credit Memo',
-        targetPath: '/ar-credit-memo',
-        copyState,
-        restoreState: { arInvoiceDocEntry: currentDocEntry },
-        navigate,
-        upsertTask,
-        removeTask,
-        setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
-        errorMessage: 'Please save the AR invoice first before copying to another document',
-      });
-    }
   };
 
   // ── submit ────────────────────────────────────────────────────────────────
@@ -1915,7 +1899,6 @@ function ARInvoicePage() {
       };
       const r = currentDocEntry ? await updateARInvoice(currentDocEntry, payload) : await submitARInvoice(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-      setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -1937,7 +1920,6 @@ function ARInvoicePage() {
   };
 
   const resetForm = () => {
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);

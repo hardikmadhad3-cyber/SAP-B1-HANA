@@ -30,6 +30,7 @@ import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
 import { copyToDocument } from '../../services/documentCopyService';
@@ -206,7 +207,10 @@ function SalesQuotation() {
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
-  const [formSettings, setFormSettings] = useState(() => readSavedFormSettings());
+  const [formSettings, setFormSettings] = useCompanyScopedFormSettings(
+    FORM_SETTINGS_STORAGE_KEY,
+    readSavedFormSettings,
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
@@ -266,8 +270,6 @@ function SalesQuotation() {
       ));
     }
   }, [header.placeOfSupply, refData.states]);
-
-  useEffect(() => { localStorage.setItem(FORM_SETTINGS_STORAGE_KEY, JSON.stringify(formSettings)); }, [formSettings]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {

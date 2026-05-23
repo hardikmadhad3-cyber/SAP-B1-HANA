@@ -27,8 +27,10 @@ import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/ware
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
+import { isRouteStateForActiveCompany } from '../../utils/companyStorageScope';
 import {
   consumeCopyToState as consumePersistedCopyToState,
   replaceRouteStatePreservingWindow,
@@ -336,10 +338,16 @@ function Delivery() {
   const formRef = useRef(null);
   const isHydratingDocumentRef = useRef(false);
   const handledCopyFromRef = useRef('');
-  const requestedEditDocEntry =
+  const requestedEditDocEntry = isRouteStateForActiveCompany(location.state) ? (
     location.state?.deliveryDocEntry ||
     location.state?.document?.docEntry ||
-    location.state?.document?.DocEntry;
+    location.state?.document?.DocEntry
+  ) : null;
+  const staleRequestedEditDocEntry = !requestedEditDocEntry && (
+    location.state?.deliveryDocEntry ||
+    location.state?.document?.docEntry ||
+    location.state?.document?.DocEntry
+  );
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
@@ -349,7 +357,10 @@ function Delivery() {
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
-  const [formSettings, setFormSettings] = useState(() => readSavedFormSettings());
+  const [formSettings, setFormSettings] = useCompanyScopedFormSettings(
+    FORM_SETTINGS_STORAGE_KEY,
+    readSavedFormSettings,
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
@@ -408,8 +419,6 @@ function Delivery() {
       ));
     }
   }, [header.placeOfSupply, refData.states]);
-
-  useEffect(() => { localStorage.setItem(FORM_SETTINGS_STORAGE_KEY, JSON.stringify(formSettings)); }, [formSettings]);
 
   // Close Copy From dropdown when clicking outside
   useEffect(() => {
@@ -678,6 +687,12 @@ function Delivery() {
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
+    if (staleRequestedEditDocEntry) {
+      setPageState(p => ({ ...p, loading: false, error: '', success: '' }));
+      replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+      return;
+    }
+
     const docEntry = requestedEditDocEntry;
     if (!docEntry) return;
     let ignore = false;
@@ -842,6 +857,11 @@ function Delivery() {
   // ── Copy To: populate form from Sales Order / other source ────────────────
   useEffect(() => {
     const routedCopyFrom = location.state?.copyFrom;
+    if (routedCopyFrom && !isRouteStateForActiveCompany(location.state)) {
+      replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+      return;
+    }
+
     const persistedCopyState = consumePersistedCopyToState(location.pathname, ['/delivery/new', '/delivery']);
     const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
 
@@ -3506,7 +3526,7 @@ function Delivery() {
 
                 {/* RIGHT COLUMN */}
                 <div className="col-md-6">
-                  <fieldset disabled={!hasBuyerCode} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+                  <fieldset style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
                   <div className="del-field-grid" style={{ gridTemplateColumns: '1fr' }}>
 
                     {/* Series */}

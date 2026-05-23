@@ -30,9 +30,11 @@ export default function TaxCodeLookup({
   const selected = taxCodes.find((tax) => String(tax.Code || '') === String(value || ''));
   const inputRef = useRef(null);
   const menuRef = useRef(null);
+  const optionRefs = useRef([]);
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState(null);
+  const [activeIndex, setActiveIndex] = useState(0);
   const displayValue = open ? search : (selected ? formatTaxCodeOption(selected) : (value || ''));
   const needle = normalize(search);
 
@@ -50,6 +52,7 @@ export default function TaxCodeLookup({
     setOpen(false);
     setSearch('');
     setMenuStyle(null);
+    setActiveIndex(0);
   }, []);
 
   const updateMenuPosition = useCallback(() => {
@@ -125,6 +128,20 @@ export default function TaxCodeLookup({
     }
   }, [closeMenu, disabled, open]);
 
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [needle]);
+
+  useEffect(() => {
+    if (!open || !options.length) return;
+    setActiveIndex((index) => Math.min(index, options.length - 1));
+  }, [open, options.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    optionRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex, open]);
+
   const commit = (code) => {
     onChange({
       target: {
@@ -138,11 +155,43 @@ export default function TaxCodeLookup({
   const canShowEmptyMessage = needle.length > 0;
   const shouldRenderMenu = open && !disabled && menuStyle && (options.length > 0 || canShowEmptyMessage);
 
+  const handleKeyDown = (event) => {
+    if (disabled) return;
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((index) => (options.length ? Math.min(index + 1, options.length - 1) : 0));
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((index) => Math.max(index - 1, 0));
+      return;
+    }
+
+    if (event.key === 'Enter' && open && options[activeIndex]) {
+      event.preventDefault();
+      commit(options[activeIndex].Code);
+      return;
+    }
+
+    if (event.key === 'Escape' && open) {
+      event.preventDefault();
+      closeMenu();
+    }
+  };
+
   const menu = shouldRenderMenu ? (
     <div ref={menuRef} style={menuStyle}>
-      {options.length ? options.map((tax) => (
+      {options.length ? options.map((tax, index) => (
         <button
           key={tax.Code}
+          ref={(node) => {
+            optionRefs.current[index] = node;
+          }}
           type="button"
           onMouseDown={(event) => {
             event.preventDefault();
@@ -155,7 +204,11 @@ export default function TaxCodeLookup({
             padding: '4px 8px',
             border: 0,
             borderBottom: '1px solid #edf1f5',
-            background: String(tax.Code || '') === String(value || '') ? '#dfeaf6' : '#fff',
+            background: options[activeIndex] === tax
+              ? '#fff8c5'
+              : String(tax.Code || '') === String(value || '')
+                ? '#dfeaf6'
+                : '#fff',
             color: '#111',
             textAlign: 'left',
             fontSize: 11,
@@ -179,10 +232,14 @@ export default function TaxCodeLookup({
     <div style={{ position: 'relative', width: '100%' }}>
       <input
         ref={inputRef}
+        name={name}
         className={className}
         style={style}
         value={displayValue}
         disabled={disabled}
+        autoComplete="off"
+        data-lpignore="true"
+        data-form-type="other"
         aria-invalid={error ? 'true' : undefined}
         onFocus={() => {
           setSearch('');
@@ -202,6 +259,7 @@ export default function TaxCodeLookup({
             }
           }, 120);
         }}
+        onKeyDown={handleKeyDown}
         placeholder="Search tax code"
       />
       {menu ? createPortal(menu, document.body) : null}

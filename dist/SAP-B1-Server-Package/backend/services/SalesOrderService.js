@@ -1107,9 +1107,9 @@ const getStateFromAddress = async (cardCode, addressCode) => {
   }
 };
 
-const getItemsForModal = async () => {
+const getItemsForModal = async (whsCode = '') => {
   try {
-    const items = await salesOrderDb.getItemsForModal();
+    const items = await salesOrderDb.getItemsForModal(whsCode);
     return { items };
   } catch (error) {
     console.error('[Sales Order Service] Failed to get items for modal:', error);
@@ -1172,8 +1172,8 @@ module.exports = {
   getFreightCharges,
   getSalesOrderPrintLayouts,
   createLookupValue,
-  getOpenSalesOrders:          async () => { try { return { documents: await salesOrderDb.getOpenSalesOrders() }; } catch(e) { return { documents: [] }; } },
+  getOpenSalesOrders:          async (customerCode = '') => { try { return { documents: await salesOrderDb.getOpenSalesOrders(customerCode) }; } catch(e) { return { documents: [] }; } },
   getSalesOrderForCopy:        async (d) => salesOrderDb.getSalesOrderForCopy(d),
-  getOpenSalesQuotations:      async () => { try { const sq = require('./salesQuotationDbService'); return { documents: await sq.getOpenSalesQuotations() }; } catch(e) { return { documents: [] }; } },
+  getOpenSalesQuotations:      async (customerCode = '') => { try { const sq = require('./salesQuotationDbService'); return { documents: await sq.getOpenSalesQuotations(customerCode) }; } catch(e) { return { documents: [] }; } },
   getSalesQuotationForCopy:    async (d) => { const sq = require('./salesQuotationDbService'); return sq.getSalesQuotationForCopy(d); },
 };

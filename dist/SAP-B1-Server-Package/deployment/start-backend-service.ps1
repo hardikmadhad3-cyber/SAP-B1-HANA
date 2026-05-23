@@ -114,9 +114,10 @@ if ($existingProcessIds.Count -gt 0) {
   Write-Host "[start] Port $Port is already listening. Backend may already be running. PID(s): $($existingProcessIds -join ', ')"
 } else {
   Write-Host "[start] Starting backend on port $Port"
+  $startArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$RunnerScript`""
   Start-Process `
     -FilePath 'powershell.exe' `
-    -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $RunnerScript) `
+    -ArgumentList $startArgs `
     -WorkingDirectory $RootDir `
     -WindowStyle Hidden | Out-Null
 }

@@ -20,6 +20,37 @@ const authDbConfig = {
 
 let authPool = null;
 let authPoolPromise = null;
+const cache = new Map();
+const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const getCached = (key) => {
+  const entry = cache.get(key);
+  if (!entry) return undefined;
+
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return undefined;
+  }
+
+  return entry.value;
+};
+
+const setCached = (key, value, ttlMs = DEFAULT_CACHE_TTL_MS) => {
+  cache.set(key, {
+    value,
+    expiresAt: Date.now() + ttlMs,
+  });
+
+  return value;
+};
+
+const cachedQuery = async (key, queryFn, ttlMs) => {
+  const cachedValue = getCached(key);
+  if (cachedValue !== undefined) return cachedValue;
+
+  const value = await queryFn();
+  return setCached(key, value, ttlMs);
+};
 
 const getPool = async () => {
   if (authPool && authPool.connected) return authPool;
@@ -104,7 +135,7 @@ const findUserByUsername = async (username) => queryOne(`
   WHERE Username = @username
 `, { username });
 
-const getActiveCompanies = async () => queryRows(`
+const getActiveCompanies = async () => cachedQuery('activeCompanies', () => queryRows(`
   SELECT
     CompanyId,
     CompanyName,
@@ -119,9 +150,9 @@ const getActiveCompanies = async () => queryRows(`
   FROM dbo.Companies
   WHERE IsActive = 1
   ORDER BY CompanyName ASC
-`);
+`));
 
-const getUserCompanies = async (userId) => queryRows(`
+const getUserCompanies = async (userId) => cachedQuery(`userCompanies:${userId}`, () => queryRows(`
   SELECT
     c.CompanyId,
     c.CompanyName,
@@ -140,9 +171,9 @@ const getUserCompanies = async (userId) => queryRows(`
   WHERE uc.UserId = @userId
     AND c.IsActive = 1
   ORDER BY uc.IsDefault DESC, c.CompanyName ASC
-`, { userId });
+`, { userId }));
 
-const getAssignedCompanyForUser = async (userId, companyId) => queryOne(`
+const getAssignedCompanyForUser = async (userId, companyId) => cachedQuery(`assignedCompany:${userId}:${companyId}`, () => queryOne(`
   SELECT
     c.CompanyId,
     c.CompanyName,
@@ -161,34 +192,34 @@ const getAssignedCompanyForUser = async (userId, companyId) => queryOne(`
   WHERE uc.UserId = @userId
     AND uc.CompanyId = @companyId
     AND c.IsActive = 1
-`, { userId, companyId });
+`, { userId, companyId }));
 
-const getUserRoleForCompany = async (userId, companyId) => queryOne(`
+const getUserRoleForCompany = async (userId, companyId) => cachedQuery(`userRole:${userId}:${companyId}`, () => queryOne(`
   SELECT TOP 1 ur.RoleId, r.RoleName
   FROM dbo.UserRoles ur
   INNER JOIN dbo.Roles r
     ON r.RoleId = ur.RoleId
   WHERE ur.UserId = @userId
     AND ur.CompanyId = @companyId
-`, { userId, companyId });
+`, { userId, companyId }));
 
-const getRoleById = async (roleId) => queryOne(`
+const getRoleById = async (roleId) => cachedQuery(`role:${roleId}`, () => queryOne(`
   SELECT RoleId, RoleName
   FROM dbo.Roles
   WHERE RoleId = @roleId
-`, { roleId });
+`, { roleId }));
 
-const getAllMenus = async () => queryRows(`
+const getAllMenus = async () => cachedQuery('allMenus', () => queryRows(`
   SELECT MenuId, MenuName, MenuPath, ParentId, Icon, SortOrder
   FROM dbo.Menus
   ORDER BY SortOrder, MenuId
-`);
+`));
 
-const getRoleRights = async (roleId) => queryRows(`
+const getRoleRights = async (roleId) => cachedQuery(`roleRights:${roleId}`, () => queryRows(`
   SELECT RoleId, MenuId, CanView, CanAdd, CanEdit, CanDelete
   FROM dbo.RoleRights
   WHERE RoleId = @roleId
-`, { roleId });
+`, { roleId }));
 
 module.exports = {
   query,

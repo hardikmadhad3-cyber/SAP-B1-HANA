@@ -7,6 +7,7 @@ const SELLER_CODE_KEY = 'U_Seller_Code';
 const SELLER_NAME_KEY = 'U_Seller_Name';
 const SELLER_ADDRESS_ID_KEY = 'U_Seller_AddressId';
 const SELLER_ADDRESS_KEY = 'U_Seller_Address';
+const SELLER_BP_TYPE = 'cSupplier';
 
 const normalizeFieldText = (value) =>
   String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -445,7 +446,7 @@ function HeaderUdfSidebar({
     setSellerLookupLoading(true);
 
     try {
-      const rows = await searchBP('', '', 5000, 0);
+      const rows = await searchBP('', SELLER_BP_TYPE, 5000, 0);
       setSellerPartners((Array.isArray(rows) ? rows : []).map((bp) => ({
         ...bp,
         CardType: normalizeBPCardType(bp.CardType),
@@ -588,6 +589,8 @@ function HeaderUdfSidebar({
         onClose={() => setSellerLookupOpen(false)}
         onSelect={handleSellerSelect}
         businessPartners={sellerPartners}
+        title="Ven(Code)FMS"
+        variant="seller"
       />
       <SellerAddressModal
         isOpen={sellerAddressLookupOpen}

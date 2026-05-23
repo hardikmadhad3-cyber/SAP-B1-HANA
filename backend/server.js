@@ -57,6 +57,7 @@ const purchaseOrderRoutes   = require('./routes/purchaseOrder');
 const purchaseQuotationRoutes = require('./routes/purchaseQuotation');
 const purchaseRequestRoutes = require('./routes/purchaseRequest');
 const salesOrderRoutes      = require('./routes/salesOrder');
+const dcSalesOrderRoutes    = require('./routes/dcSalesOrder');
 const salesQuotationRoutes  = require('./routes/salesQuotation');
 const blanketAgreementRoutes = require('./routes/blanketAgreement');
 const printRoutes           = require('./routes/printRoutes');
@@ -89,6 +90,7 @@ const reportStudioRoutes         = require('./routes/reportStudioRoutes');
 const reportLookupsRoutes        = require('./routes/reportLookups');
 const adminPanelRoutes           = require('./routes/adminPanelRoutes');
 const performanceRoutes          = require('./routes/performanceRoutes');
+const formSettingsRoutes         = require('./routes/formSettings');
 
 const app = express();
 
@@ -237,6 +239,7 @@ app.use('/api/purchase-order',     purchaseOrderRoutes);
 app.use('/api/purchase-quotation', purchaseQuotationRoutes);
 app.use('/api/purchase-request',   purchaseRequestRoutes);
 app.use('/api/sales-order',        salesOrderRoutes);
+app.use('/api/dc-sales-order',     dcSalesOrderRoutes);
 app.use('/api/sales-quotation',    salesQuotationRoutes);
 app.use('/api/blanket-agreements', blanketAgreementRoutes);
 app.use('/api',                    printRoutes);
@@ -268,6 +271,7 @@ app.use('/api/reports',            purchaseRequestReportRoutes);
 app.use('/api/lookups',            reportLookupsRoutes);
 app.use('/api/admin-panel',        adminPanelRoutes);
 app.use('/api/performance',        performanceRoutes);
+app.use('/api/form-settings',      formSettingsRoutes);
 app.use('/api',                    sapRoutes);
 
 // Health check

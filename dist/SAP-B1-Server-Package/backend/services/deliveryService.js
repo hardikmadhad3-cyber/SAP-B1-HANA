@@ -13,6 +13,26 @@ const formatDateForSAP = (value) => {
 
 const hasValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
 
+const normalizeBranchValue = (value) => {
+  const normalized = String(value ?? '').trim();
+  const lowered = normalized.toLowerCase();
+  if (!normalized || lowered === '0' || lowered === '-1' || lowered === 'no branch' || lowered === 'select branch') {
+    return '';
+  }
+
+  return normalized;
+};
+
+const normalizeBranchId = (branch) => {
+  const normalized = normalizeBranchValue(branch);
+  return normalized === '' ? -1 : Number(normalized);
+};
+
+const normalizeHeaderBranch = (header = {}) => ({
+  ...(header || {}),
+  branch: normalizeBranchValue(header?.branch),
+});
+
 const toOptionalNumber = (value) => {
   if (value === undefined || value === null || String(value).trim() === '') {
     return undefined;
@@ -666,7 +686,8 @@ const getBatchesByItem = async (itemCode, whsCode) => {
 
 const submitDelivery = async (payload) => {
   try {
-    const { company_id, header, lines, header_udfs } = payload;
+    const { company_id, lines, header_udfs } = payload;
+    const header = normalizeHeaderBranch(payload.header);
     const customerCode =
       String(
         header.customerCode ||
@@ -703,7 +724,8 @@ console.log("SAP Payload:", sapPayload);
     if (header.series && Number(header.series) > 0) {
       sapPayload.Series = parseInt(header.series);
     }
-    if (header.branch) sapPayload.BPL_IDAssignedToInvoice  = parseInt(header.branch);
+    sapPayload.BPLId = normalizeBranchId(header.branch);
+    sapPayload.BPL_IDAssignedToInvoice = normalizeBranchId(header.branch);
     if (header.paymentTerms) sapPayload.PaymentGroupCode = parseInt(header.paymentTerms);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
@@ -785,7 +807,8 @@ console.log("SAP Payload:", sapPayload);
 
 const updateDelivery = async (docEntry, payload) => {
   try {
-    const { header, lines, header_udfs } = payload;
+    const { lines, header_udfs } = payload;
+    const header = normalizeHeaderBranch(payload.header);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const [documentLines, allowedHeaderUdfs] = await Promise.all([
       buildDocumentLinesPayload(lines, true),
@@ -904,7 +927,8 @@ const getUomConversionFactor = async (itemCode, uomCode) => {
 // ─── Validation Service Functions ───────────────────────────────────────────────
 
 const validateDeliveryDocument = async (payload) => {
-  const { header, lines } = payload;
+  const header = normalizeHeaderBranch(payload.header);
+  const { lines } = payload;
   const errors = [];
   
   // 1. Mandatory fields validation

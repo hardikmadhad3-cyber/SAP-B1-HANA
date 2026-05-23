@@ -1,3 +1,8 @@
+import {
+  buildActiveCompanyScopedSessionKey,
+  createActiveCompanyScopedRouteState,
+} from './companyStorageScope';
+
 const COPY_TO_STORAGE_PREFIX = 'sap-copy-to:';
 const WINDOW_STATE_STORAGE_PREFIX = 'sap-window-state:';
 const TASKBAR_STORAGE_KEY = 'sap-window-taskbar/tasks';
@@ -25,7 +30,7 @@ export const persistCopyToState = (path, state) => {
 
   const normalizedPath = normalizeCopyToPath(path);
   window.sessionStorage.setItem(
-    `${COPY_TO_STORAGE_PREFIX}${normalizedPath}`,
+    buildActiveCompanyScopedSessionKey(`${COPY_TO_STORAGE_PREFIX}${normalizedPath}`),
     JSON.stringify(state)
   );
 };
@@ -38,7 +43,7 @@ export const consumeCopyToState = (pathname, aliases = []) => {
   const uniquePaths = Array.from(new Set(paths));
 
   for (const path of uniquePaths) {
-    const storageKey = `${COPY_TO_STORAGE_PREFIX}${path}`;
+    const storageKey = buildActiveCompanyScopedSessionKey(`${COPY_TO_STORAGE_PREFIX}${path}`);
     const rawValue = window.sessionStorage.getItem(storageKey);
     window.sessionStorage.removeItem(storageKey);
 
@@ -58,7 +63,7 @@ export const consumeCopyToState = (pathname, aliases = []) => {
 };
 
 export const getWindowOnlyRouteState = (state) =>
-  state?.sapWindow ? { sapWindow: state.sapWindow } : null;
+  state?.sapWindow ? createActiveCompanyScopedRouteState({ sapWindow: state.sapWindow }) : null;
 
 export const replaceRouteStatePreservingWindow = (navigate, pathname, state) => {
   if (!navigate) return;
@@ -71,7 +76,7 @@ export const restoreTargetWindowState = (path, taskId = null) => {
   const normalizedPath = normalizeCopyToPath(path);
   const normalizedTaskId = taskId || `page-window:${normalizedPath}`;
   window.sessionStorage.setItem(
-    `${WINDOW_STATE_STORAGE_PREFIX}${normalizedTaskId}`,
+    buildActiveCompanyScopedSessionKey(`${WINDOW_STATE_STORAGE_PREFIX}${normalizedTaskId}`),
     JSON.stringify({ isMaximized: false, isMinimized: false })
   );
 };
@@ -80,7 +85,8 @@ const getStoredTask = (taskId) => {
   if (!taskId || typeof window === 'undefined') return null;
 
   try {
-    const tasks = JSON.parse(window.sessionStorage.getItem(TASKBAR_STORAGE_KEY) || '[]');
+    const storageKey = buildActiveCompanyScopedSessionKey(TASKBAR_STORAGE_KEY);
+    const tasks = JSON.parse(window.sessionStorage.getItem(storageKey) || '[]');
     return Array.isArray(tasks) ? tasks.find((task) => task?.id === taskId) || null : null;
   } catch (_error) {
     return null;
@@ -100,7 +106,7 @@ export const minimizeSourceDocumentWindow = ({
   const taskId = restoreState?.sapWindow?.id || `page-window:${normalizedPath}`;
 
   window.sessionStorage.setItem(
-    `${WINDOW_STATE_STORAGE_PREFIX}${taskId}`,
+    buildActiveCompanyScopedSessionKey(`${WINDOW_STATE_STORAGE_PREFIX}${taskId}`),
     JSON.stringify({ isMaximized: false, isMinimized: true })
   );
 
@@ -206,14 +212,14 @@ export const openCopyToDocument = ({
     path: normalizedTargetPath,
     title: targetTitle,
   };
-  const sourceRestoreState = {
+  const sourceRestoreState = createActiveCompanyScopedRouteState({
     ...restoreState,
     sapWindow: sourceWindow,
-  };
-  const targetState = {
+  });
+  const targetState = createActiveCompanyScopedRouteState({
     ...copyState,
     sapWindow: targetWindow,
-  };
+  });
   const existingTargetTask = getStoredTask(targetWindowId);
 
   // Temporary trace for Copy To hardening.

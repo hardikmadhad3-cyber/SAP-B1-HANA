@@ -6,7 +6,12 @@ const db = require('./dbService');
 const masterDataDbService = require('./masterDataDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
-const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
+const {
+  getHeaderUdfValues,
+  getLineUdfValues,
+  getMarketingDocumentUdfs,
+  getUdfDefinitions,
+} = require('./udfMetadataService');
 
 const safe = async (promise) => {
   try {
@@ -15,6 +20,33 @@ const safe = async (promise) => {
   } catch (e) {
     return [];
   }
+};
+
+const quoteSqlIdentifier = (identifier) => `[${String(identifier || '').replace(/]/g, ']]')}]`;
+const normalizeUdfNameForMatch = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const unique = (values = []) => [...new Set(values.filter(Boolean))];
+
+const buildNullableTrimmedTextExpression = (expression) => (
+  `NULLIF(LTRIM(RTRIM(CAST(${expression} AS NVARCHAR(254)))), '')`
+);
+
+const resolveColumnName = (fieldMetadata = {}, candidateColumnName) => {
+  const normalizedCandidate = normalizeUdfNameForMatch(candidateColumnName);
+  return Object.keys(fieldMetadata).find(
+    (columnName) => normalizeUdfNameForMatch(columnName) === normalizedCandidate
+  );
+};
+
+const buildDeliverySellerExpression = (columnNames, fallbackExpression) => {
+  const udfExpressions = unique(columnNames).map((columnName) => (
+    buildNullableTrimmedTextExpression(`T0.${quoteSqlIdentifier(columnName)}`)
+  ));
+
+  return `
+  COALESCE(
+    ${[...udfExpressions, fallbackExpression, "''"].join(',\n    ')}
+  )
+`;
 };
 
 // ── REFERENCE DATA QUERIES ────────────────────────────────────────────────────
@@ -113,24 +145,132 @@ const getUomGroups = () => safe(db.query(`
 const resolveDeliveryLineUomEntry = async (itemCode, uomValue) =>
   salesOrderDb.resolveSalesOrderLineUomEntry(itemCode, uomValue);
 
-let dln1FieldMetadataPromise = null;
+const tableFieldMetadataPromises = new Map();
 
-const getDeliveryLineFieldMetadata = async () => {
-  if (!dln1FieldMetadataPromise) {
-    dln1FieldMetadataPromise = safe(db.query(`
+const getTableFieldMetadata = async (tableName) => {
+  const normalizedTableName = String(tableName || '').trim();
+  if (!normalizedTableName) return {};
+
+  const databaseName = await db.resolveDatabaseName();
+  const cacheKey = `${databaseName || 'default'}:${normalizedTableName}`;
+
+  if (!tableFieldMetadataPromises.has(cacheKey)) {
+    tableFieldMetadataPromises.set(cacheKey, safe(db.query(`
       SELECT COLUMN_NAME, DATA_TYPE
       FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_NAME = 'DLN1'
+      WHERE TABLE_NAME = @tableName
       ORDER BY ORDINAL_POSITION
-    `)).then((rows) => rows.reduce((acc, row) => {
+    `, { tableName: normalizedTableName })).then((rows) => rows.reduce((acc, row) => {
       const columnName = String(row.COLUMN_NAME || '').trim();
       if (!columnName) return acc;
       acc[columnName] = String(row.DATA_TYPE || '').trim().toLowerCase();
       return acc;
-    }, {}));
+    }, {})));
   }
 
-  return dln1FieldMetadataPromise;
+  return tableFieldMetadataPromises.get(cacheKey);
+};
+
+const getDeliveryLineFieldMetadata = () => getTableFieldMetadata('DLN1');
+
+const getDeliverySellerExpressions = async () => {
+  try {
+    const [fieldMetadata, udfDefinitions] = await Promise.all([
+      getTableFieldMetadata('ODLN'),
+      getUdfDefinitions('ODLN'),
+    ]);
+
+    const resolveExplicitColumns = (candidates) => unique(
+      candidates.map((candidate) => resolveColumnName(fieldMetadata, candidate))
+    );
+
+    const resolveDefinitionColumns = (acceptedMatches) => unique(
+      udfDefinitions
+        .filter((field) => {
+          const aliasMatch = normalizeUdfNameForMatch(field.aliasId || field.key);
+          const keyMatch = normalizeUdfNameForMatch(field.key);
+          const labelMatch = normalizeUdfNameForMatch(field.label || field.Descr);
+          return [aliasMatch, keyMatch, labelMatch].some((match) => acceptedMatches.has(match));
+        })
+        .map((field) => resolveColumnName(fieldMetadata, field.key))
+    );
+
+    const codeColumns = unique([
+      ...resolveExplicitColumns([
+        'U_Seller_Code',
+        'U_To_Code_Vendor',
+        'U_ToCodeVendor',
+        'U_To_Code',
+        'U_ToCode',
+        'U_To_Vendor_Code',
+        'U_Vendor_Code',
+        'U_Party_Code',
+      ]),
+      ...resolveDefinitionColumns(new Set([
+        'SELLERCODE',
+        'USELLERCODE',
+        'TOCODEVENDOR',
+        'UTOCODEVENDOR',
+        'TOCODE',
+        'UTOCODE',
+        'TOVENDORCODE',
+        'UTOVENDORCODE',
+        'VENDORCODE',
+        'UVENDORCODE',
+        'PARTYCODE',
+        'UPARTYCODE',
+      ])),
+    ]);
+
+    const nameColumns = unique([
+      ...resolveExplicitColumns([
+        'U_Seller_Name',
+        'U_To_Name',
+        'U_ToName',
+        'U_Vendor_Name',
+        'U_Party_Name',
+      ]),
+      ...resolveDefinitionColumns(new Set([
+        'SELLERNAME',
+        'USELLERNAME',
+        'TONAME',
+        'UTONAME',
+        'VENDORNAME',
+        'UVENDORNAME',
+        'PARTYNAME',
+        'UPARTYNAME',
+      ])),
+    ]);
+
+    return {
+      codeExpression: buildDeliverySellerExpression(
+        codeColumns,
+        `CASE
+      WHEN T0.SlpCode IS NOT NULL AND T0.SlpCode <> -1 THEN CAST(T0.SlpCode AS NVARCHAR(50))
+      ELSE ''
+    END`
+      ),
+      nameExpression: buildDeliverySellerExpression(
+        nameColumns,
+        `CASE
+      WHEN T0.SlpCode IS NOT NULL AND T0.SlpCode <> -1 THEN NULLIF(LTRIM(RTRIM(SLP.SlpName)), '')
+      ELSE ''
+    END`
+      ),
+    };
+  } catch (error) {
+    console.warn('[Delivery List] Falling back to sales employee seller fields:', error.message);
+    return {
+      codeExpression: `CASE
+      WHEN T0.SlpCode IS NOT NULL AND T0.SlpCode <> -1 THEN CAST(T0.SlpCode AS NVARCHAR(50))
+      ELSE ''
+    END`,
+      nameExpression: `CASE
+      WHEN T0.SlpCode IS NOT NULL AND T0.SlpCode <> -1 THEN NULLIF(LTRIM(RTRIM(SLP.SlpName)), '')
+      ELSE ''
+    END`,
+    };
+  }
 };
 
 const LOOKUP_UDF_CONFIG = {
@@ -702,6 +842,10 @@ const getDeliveryList = async ({
   const normalizedPage = Math.max(1, Number(page) || 1);
   const normalizedPageSize = Math.min(200, Math.max(1, Number(pageSize) || 25));
   const skip = (normalizedPage - 1) * normalizedPageSize;
+  const {
+    codeExpression: sellerCodeExpression,
+    nameExpression: sellerNameExpression,
+  } = await getDeliverySellerExpressions();
   const { whereClauses, params } = buildMarketingDocumentListFilterQuery({
     query,
     openOnly,
@@ -713,11 +857,16 @@ const getDeliveryList = async ({
     status,
     postingDateFrom,
     postingDateTo,
-  }, { includeSellerFields: true });
+  }, {
+    includeSellerFields: true,
+    sellerCodeField: sellerCodeExpression,
+    sellerNameField: sellerNameExpression,
+  });
 
   const countRows = await safe(db.query(`
     SELECT COUNT(*) AS total_count
     FROM ODLN T0
+    LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     WHERE ${whereClauses.join('\n      AND ')}
   `, params));
 
@@ -729,8 +878,8 @@ const getDeliveryList = async ({
       T0.DocNum AS doc_num,
       T0.CardCode AS customer_code,
       T0.CardName AS customer_name,
-      T0.U_Seller_Code AS seller_code,
-      T0.U_Seller_Name AS seller_name,
+      ${sellerCodeExpression} AS seller_code,
+      ${sellerNameExpression} AS seller_name,
       T0.DocDate AS posting_date,
       T0.DocDueDate AS delivery_date,
       T0.DocTotal AS total_amount,
@@ -746,6 +895,7 @@ const getDeliveryList = async ({
         WHERE T1.DocEntry = T0.DocEntry
       ) AS line_count
     FROM ODLN T0
+    LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     WHERE ${whereClauses.join('\n      AND ')}
     ORDER BY T0.DocEntry DESC
     OFFSET @skip ROWS FETCH NEXT @top ROWS ONLY
@@ -969,39 +1119,46 @@ const getDelivery = async (docEntry) => {
 
   let lineUdfs = {};
   try {
-    const udfLineRows = await db.query(`
-      SELECT
-        LineNum,
-        U_SPLRBT,
-        U_COMPRC,
-        U_S_BrokPerQty,
-        U_Unit_Price,
-        U_Brok_Seller,
-        U_Brok_Buyer,
-        U_Buyer_Delivery,
-        U_Seller_Delivery,
-        U_Buyer_Payment_Terms,
-        U_Buyer_Quality,
-        U_Seller_Quality,
-        U_Buyer_Price,
-        U_Seller_Price,
-        U_Buyer_SPINS,
-        U_Seller_SPINS,
-        U_Sel_Brok_AP,
-        U_Seller_Brok_Per,
-        U_Buyer_Bill_Disc,
-        U_Seller_Bill_Disc,
-        U_SELLTCODE,
-        U_S_Item,
-        U_S_Qty,
-        U_Freight_pur,
-        U_Freight_sales,
-        U_Fr_trans,
-        U_Fr_trans_name,
-        U_BDNum
-      FROM DLN1
-      WHERE DocEntry = @docEntry
-    `, { docEntry: resolvedDocEntry });
+    const deliveryLineUdfColumns = [
+      'U_SPLRBT',
+      'U_COMPRC',
+      'U_S_BrokPerQty',
+      'U_Unit_Price',
+      'U_Brok_Seller',
+      'U_Brok_Buyer',
+      'U_Buyer_Delivery',
+      'U_Seller_Delivery',
+      'U_Buyer_Payment_Terms',
+      'U_Seller_Payment_Terms',
+      'U_Buyer_Quality',
+      'U_Seller_Quality',
+      'U_Buyer_Price',
+      'U_Seller_Price',
+      'U_Buyer_SPINS',
+      'U_Seller_SPINS',
+      'U_Sel_Brok_AP',
+      'U_Seller_Brok_Per',
+      'U_Buyer_Bill_Disc',
+      'U_Seller_Bill_Disc',
+      'U_SELLTCODE',
+      'U_S_Item',
+      'U_S_Qty',
+      'U_Freight_pur',
+      'U_Freight_sales',
+      'U_Fr_trans',
+      'U_Fr_trans_name',
+      'U_BDNum',
+    ].filter(hasDln1Column);
+
+    const udfLineRows = deliveryLineUdfColumns.length
+      ? await db.query(`
+        SELECT
+          LineNum,
+          ${deliveryLineUdfColumns.map(quoteSqlIdentifier).join(',\n          ')}
+        FROM DLN1
+        WHERE DocEntry = @docEntry
+      `, { docEntry: resolvedDocEntry })
+      : { recordset: [] };
 
     if (udfLineRows.recordset) {
       udfLineRows.recordset.forEach((row) => {
@@ -1220,7 +1377,7 @@ const getSavedDeliveryQuantities = async (docEntry) => {
 const getDocumentSeries = async (targetDate = null) => {
   const effectiveTargetDate = targetDate || new Date().toISOString().split('T')[0];
 
-  const result = await safe(db.query(`
+  let result = await safe(db.query(`
     SELECT 
     T0.Series,
     T0.SeriesName,
@@ -1237,6 +1394,23 @@ WHERE T0.ObjectCode = '15'
     AND CAST(@targetDate AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate
 ORDER BY T0.SeriesName
   `, { targetDate: effectiveTargetDate }));
+
+  if (!result.length) {
+    result = await safe(db.query(`
+      SELECT
+        T0.Series,
+        T0.SeriesName,
+        T0.Indicator,
+        T0.NextNumber,
+        NULL AS FinancialYear,
+        NULL AS FromDate,
+        NULL AS ToDate
+      FROM NNM1 T0
+      WHERE T0.ObjectCode = '15'
+        AND T0.Locked = 'N'
+      ORDER BY T0.SeriesName
+    `));
+  }
 
   return { series: result };
 };

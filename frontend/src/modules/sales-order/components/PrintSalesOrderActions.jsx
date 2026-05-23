@@ -2,7 +2,7 @@ import React from 'react';
 import PrintLayoutToolbar from '../../../components/print-layout/PrintLayoutToolbar';
 
 const DEFAULT_DOC_CODE = 'RDR20010';
-const DEFAULT_SCHEMA = process.env.REACT_APP_SAP_REPORT_SCHEMA || 'NCPL_110126';
+const DEFAULT_SCHEMA = process.env.REACT_APP_SAP_REPORT_SCHEMA || '';
 
 function PrintSalesOrderActions({
   docEntry,

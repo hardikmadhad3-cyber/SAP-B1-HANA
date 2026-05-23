@@ -44,6 +44,7 @@ function useFloatingWindow({
   taskId,
   taskTitle,
   taskPath,
+  taskState,
 } = {}) {
   const taskbar = useSapWindowTaskbar();
   const removeTask = taskbar?.removeTask;
@@ -117,13 +118,14 @@ function useFloatingWindow({
       upsertTask?.({
         id: taskId,
         path: taskPath || (typeof window !== "undefined" ? window.location.pathname : ""),
+        state: taskState,
         title: taskTitle || "Window",
       });
       return;
     }
 
     removeTask?.(taskId);
-  }, [isMinimized, isOpen, removeTask, taskId, taskPath, taskTitle, upsertTask]);
+  }, [isMinimized, isOpen, removeTask, taskId, taskPath, taskState, taskTitle, upsertTask]);
 
   useEffect(() => {
     if (!isOpen) {

@@ -1,0 +1,21 @@
+[UNCAUGHT_EXCEPTION] uncaughtException
+Error [ERR_HTTP_HEADERS_SENT]: Cannot set headers after they are sent to the client
+    at ServerResponse.setHeader (node:_http_outgoing:700:11)
+    at res.end (C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\middleware\apiTiming.js:12:9)
+    at ReadStream.onend (node:internal/streams/readable:948:10)
+    at Object.onceWrapper (node:events:632:28)
+    at ReadStream.emit (node:events:530:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+[ERROR] Your session has expired. Please sign in again.
+[ERROR_STACK] Error: Your session has expired. Please sign in again.
+    at unauthorized (C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\middleware\authMiddleware.js:5:17)
+    at authenticateAccessToken (C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\middleware\authMiddleware.js:38:9)
+    at C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\server.js:214:10
+    at Layer.handleRequest (C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\node_modules\router\lib\layer.js:152:17)
+    at trimPrefix (C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\node_modules\router\index.js:342:13)
+    at C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\node_modules\router\index.js:297:9
+    at processParams (C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\node_modules\router\index.js:582:12)
+    at next (C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\node_modules\router\index.js:291:5)
+    at C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\server.js:200:3
+    at Layer.handleRequest (C:\Users\STTL\Desktop\SAP-B1 Web Client\SAP-B1\backend\node_modules\router\lib\layer.js:152:17)

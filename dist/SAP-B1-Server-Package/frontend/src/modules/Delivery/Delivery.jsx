@@ -21,19 +21,19 @@ import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
-import CopyToModal from './components/CopyToModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
-import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { copyToDocument } from '../../services/documentCopyService';
+import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
 import {
   consumeCopyToState as consumePersistedCopyToState,
-  buildCopyToState,
-  openCopyToDocument,
   replaceRouteStatePreservingWindow,
 } from '../../utils/copyToState';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   BATCH_QTY_TOLERANCE,
   getLineUomFactor,
@@ -44,7 +44,6 @@ import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../..
 import {
   fetchDeliveryReferenceData,
   fetchDeliveryByDocEntry,
-  fetchDeliveries,
   fetchDeliveryCustomerDetails,
   fetchItemsForModal,
   fetchUomConversionFactor,
@@ -52,8 +51,6 @@ import {
   updateDelivery,
   fetchDocumentSeries,
   fetchNextNumber,
-  fetchStateFromWarehouse,
-  fetchCompanyState,
   fetchOpenSalesOrders,
   fetchSalesOrderForCopy,
   fetchOpenSalesQuotationsForDelivery,
@@ -63,14 +60,13 @@ import {
   fetchOpenBlanketAgreementsForDelivery,
   fetchBlanketAgreementForDeliveryCopy,
   fetchBatchesByItem,
-  fetchItemManagementType,
   fetchFreightCharges,
   validateDeliveryDocument,
   createDeliveryLookupValue,
   saveDeliverySalesEmployeesSetup
 } from '../../api/deliveryApi';
 import { fetchSalesOrderByDocEntry } from '../../api/salesOrderApi';
-import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
+import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { SALES_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { deliveryCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, BASE_TYPE } from '../../api/copyFromApi';
 import {
@@ -149,6 +145,52 @@ const mergeSalesOrderCopyUdfs = (copyData = {}, detailData = {}) => {
     header_udfs: mergedHeaderUdfs,
     headerUdfs: mergedHeaderUdfs,
     DocumentLines: mergedLines.length ? mergedLines : copyLines,
+  };
+};
+const isEmptyBranchValue = (value) => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return !normalized || normalized === '0' || normalized === '-1' || normalized === 'no branch' || normalized === 'select branch';
+};
+const normalizeSubmitBranch = (value) =>
+  isEmptyBranchValue(value) ? '' : String(value).trim();
+const getWarehouseCode = (warehouse = {}) =>
+  !warehouse || typeof warehouse !== 'object'
+    ? ''
+    :
+  warehouse.WhsCode ?? warehouse.whsCode ?? warehouse.code ?? '';
+const findWarehouse = (warehouses = [], warehouseCode = '') => {
+  const normalizedWarehouse = String(warehouseCode || '').trim();
+  if (!normalizedWarehouse) return null;
+  return (warehouses || []).find((entry) => String(getWarehouseCode(entry) || '').trim() === normalizedWarehouse) || null;
+};
+const getWarehouseBranchValue = (warehouses = [], warehouseCode = '') =>
+  normalizeSubmitBranch(getWarehouseBranchId(findWarehouse(warehouses, warehouseCode)));
+const alignBranchWithWarehouse = (branch, warehouseCode, warehouses = []) => {
+  const normalizedBranch = normalizeSubmitBranch(branch);
+  if (!normalizedBranch) return '';
+
+  const normalizedWarehouse = String(warehouseCode || '').trim();
+  if (!normalizedWarehouse) return normalizedBranch;
+
+  const warehouseBranch = getWarehouseBranchValue(warehouses, warehouseCode);
+
+  if (!warehouseBranch) return normalizedBranch;
+  return normalizedBranch === warehouseBranch ? normalizedBranch : warehouseBranch;
+};
+const resolveCopiedBranchWarehouse = ({
+  sourceBranch,
+  sourceWarehouse,
+  fallbackWarehouse,
+  warehouses = [],
+} = {}) => {
+  const warehouse = String(sourceWarehouse || fallbackWarehouse || '').trim();
+  const branch = normalizeSubmitBranch(sourceBranch)
+    ? alignBranchWithWarehouse(sourceBranch, warehouse, warehouses)
+    : '';
+
+  return {
+    branch: isEmptyBranchValue(branch) ? '' : String(branch),
+    warehouse,
   };
 };
 const fmtDec = (v, d) => { if (v === '' || v == null) return ''; const n = Number(v); return Number.isNaN(n) ? '' : n.toFixed(Math.max(d, 0)); };
@@ -278,7 +320,7 @@ const INIT_HEADER = {
   paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
   totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
-  billToAddress: '', billToCode: '', shipToAddress: '', shipToCode: '',
+  billToAddress: '', billToCode: '', shipToAddress: '',
 };
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
@@ -320,7 +362,7 @@ function Delivery() {
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
-  const [loadedSnapshot, setLoadedSnapshot] = useState('');
+  useValidationHighlights(valErrors, { rootRef: formRef });
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -344,7 +386,6 @@ function Delivery() {
   const [salesEmployeeSetup, setSalesEmployeeSetup] = useState({ open: false, rows: [], saving: false });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyFromDocType, setCopyFromDocType] = useState('salesOrder');
-  const [copyToModal, setCopyToModal] = useState(false);
   const [addressForm, setAddressForm] = useState({
     shipToCode: '', shipToAddress: '', billToCode: '', billToAddress: '',
     streetPoBox: '', streetNo: '', buildingFloorRoom: '', block: '', city: '', zipCode: '', county: '',
@@ -420,7 +461,6 @@ function Delivery() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-    setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
   const markDirty = useCallback((event) => {
@@ -729,7 +769,6 @@ function Delivery() {
         console.log('📦 [Delivery] Lines after mapping:', lines);
         
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
-        setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
         if (so.header?.customerCode || so.header?.customer) {
@@ -804,76 +843,7 @@ function Delivery() {
   useEffect(() => {
     const routedCopyFrom = location.state?.copyFrom;
     const persistedCopyState = consumePersistedCopyToState(location.pathname, ['/delivery/new', '/delivery']);
-    const copyToDraft = location.state?.copyToDraft || persistedCopyState?.copyToDraft;
     const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
-
-    if (copyToDraft?.targetDocType === 'delivery') {
-      const draftKey = JSON.stringify({
-        path: location.pathname,
-        targetDocType: copyToDraft.targetDocType,
-        sourceDocType: copyToDraft.source?.docType,
-        sourceDocEntry: copyToDraft.source?.docEntry,
-        lineCount: Array.isArray(copyToDraft.lines) ? copyToDraft.lines.length : 0,
-      });
-
-      if (handledCopyFromRef.current === draftKey) {
-        return;
-      }
-
-      handledCopyFromRef.current = draftKey;
-      console.info('[CopyTo][Delivery] applying mapped draft', {
-        sourceDocEntry: copyToDraft.source?.docEntry,
-        sourceDocNum: copyToDraft.source?.docNum,
-        finalWindowId: location.state?.sapWindow?.id || persistedCopyState?.sapWindow?.id,
-        mappedHeader: copyToDraft.header,
-        mappedRows: copyToDraft.lines,
-      });
-
-      const draftHeader = copyToDraft.header || {};
-      const draftLines = Array.isArray(copyToDraft.lines) ? copyToDraft.lines : [];
-
-      setCurrentDocEntry(null);
-      setActiveTab('Contents');
-      setLoadedSnapshot('');
-      setSnapshotPending(false);
-      setIsDirty(false);
-      setValErrors({ header: {}, lines: {}, form: '' });
-      setFreightModal({ open: false, freightCharges: [], loading: false });
-      setCopyFromModal(false);
-      setCopyToModal(false);
-      setHeader({
-        ...INIT_HEADER,
-        ...draftHeader,
-        postingDate: draftHeader.postingDate || today(),
-        documentDate: draftHeader.documentDate || today(),
-        deliveryDate: draftHeader.deliveryDate || today(),
-      });
-      setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, copyToDraft.headerUdfs || {}));
-      setLines(draftLines.length
-        ? draftLines.map((line, index) => ({
-            ...createLine(rowUdfDefinitions),
-            ...line,
-            lineNum: line.lineNum ?? line.LineNum ?? index,
-            baseEntry: line.baseEntry ?? line.BaseEntry ?? copyToDraft.source?.docEntry ?? null,
-            baseType: line.baseType ?? line.BaseType ?? BASE_TYPE.salesOrder,
-            baseLine: line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? index,
-            udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
-          }))
-        : [createLine(rowUdfDefinitions)]
-      );
-
-      const cardCode = draftHeader.vendor || draftHeader.customerCode || draftHeader.CardCode;
-      if (cardCode) loadVendorDetails(cardCode, { preserveExisting: true });
-
-      setPageState(p => ({
-        ...p,
-        loading: false,
-        error: '',
-        success: `Copied from ${copyToDraft.source?.label || 'source document'}. Please review and save.`,
-      }));
-      replaceRouteStatePreservingWindow(navigate, location.pathname, location.state || persistedCopyState);
-      return;
-    }
 
     if (!copyFrom) return;
 
@@ -890,161 +860,6 @@ function Delivery() {
 
     handledCopyFromRef.current = copyFromKey;
 
-    if (copyFrom.type === 'salesOrder' && copyFrom.docEntry && copyFrom.loadMode === 'server') {
-      let ignore = false;
-
-      const toDateInputValue = (value) => {
-        if (!value) return '';
-        const text = String(value);
-        return text.includes('T') ? text.split('T')[0] : text.slice(0, 10);
-      };
-
-      const applySalesOrderCopy = (sourceDocument = {}, usedFallback = false) => {
-        const unwrappedDocument = sourceDocument.sales_order || sourceDocument.salesOrder || sourceDocument.document || sourceDocument;
-        const serverLines = unwrappedDocument.DocumentLines || unwrappedDocument.lines || sourceDocument.DocumentLines || sourceDocument.lines || [];
-        const hasServerHeader = Boolean(unwrappedDocument.header) || Boolean(unwrappedDocument.CardCode || unwrappedDocument.cardCode || unwrappedDocument.vendor);
-        const hasServerLines = Array.isArray(serverLines) && serverLines.length > 0;
-        const srcHeader = unwrappedDocument.header
-          ? { ...(copyFrom.header || {}), ...(unwrappedDocument.header || {}) }
-          : { ...(copyFrom.header || {}), ...(hasServerHeader ? unwrappedDocument : {}) };
-        const srcLines = hasServerLines ? serverLines : (copyFrom.lines || []);
-        const { baseDocument } = copyFrom;
-        const normalizedHeader = normaliseDocumentHeader(srcHeader || {});
-        const baseEntry = unwrappedDocument.DocEntry ?? unwrappedDocument.docEntry ?? sourceDocument.DocEntry ?? sourceDocument.docEntry ?? baseDocument?.baseEntry ?? copyFrom.docEntry;
-        const baseType = baseDocument?.baseType || BASE_TYPE[copyFrom.type] || 17;
-        const firstSourceLine = Array.isArray(srcLines) && srcLines.length ? srcLines[0] : {};
-        const firstLineWarehouse =
-          firstSourceLine?.whse ||
-          firstSourceLine?.WarehouseCode ||
-          firstSourceLine?.WhsCode ||
-          '';
-
-        setCurrentDocEntry(null);
-        setActiveTab('Contents');
-        setLoadedSnapshot('');
-        setSnapshotPending(false);
-        setIsDirty(false);
-        setValErrors({ header: {}, lines: {}, form: '' });
-        setFreightModal({ open: false, freightCharges: [], loading: false });
-        setCopyFromModal(false);
-        setCopyToModal(false);
-
-        setHeader(prev => ({
-          ...INIT_HEADER,
-          postingDate: today(),
-          documentDate: today(),
-          deliveryDate: toDateInputValue(srcHeader.deliveryDate || srcHeader.DocDueDate || prev.deliveryDate || ''),
-          vendor:           normalizedHeader.vendor || srcHeader.vendor || srcHeader.CardCode || '',
-          name:             normalizedHeader.name || srcHeader.name || srcHeader.CardName || '',
-          contactPerson:    normalizedHeader.contactPerson || srcHeader.contactPerson || srcHeader.CntctCode || '',
-          branch:           normalizedHeader.branch || srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || '',
-          warehouse:        srcHeader.warehouse || firstLineWarehouse || '',
-          paymentTerms:     normalizedHeader.paymentTerms || srcHeader.paymentTerms || srcHeader.GroupNum || '',
-          placeOfSupply:    normalizedHeader.placeOfSupply || srcHeader.placeOfSupply || '',
-          otherInstruction: normalizedHeader.otherInstruction || srcHeader.otherInstruction || srcHeader.Comments || '',
-          discount:         srcHeader.discount || srcHeader.DiscPrcnt || '',
-          freight:          srcHeader.freight || srcHeader.Freight || '',
-          tax:              srcHeader.tax || srcHeader.TaxAmount || '',
-          currency:         srcHeader.currency || srcHeader.DocCur || 'INR',
-          shipTo:           srcHeader.shipTo || srcHeader.shipToAddress || srcHeader.Address || '',
-          shipToCode:       srcHeader.shipToCode || srcHeader.ShipToCode || '',
-          shipToAddress:    srcHeader.shipToAddress || srcHeader.shipTo || srcHeader.Address || '',
-          payTo:            srcHeader.payTo || srcHeader.billToAddress || srcHeader.Address2 || '',
-          payToCode:        srcHeader.payToCode || srcHeader.billToCode || srcHeader.PayToCode || '',
-          billToCode:       srcHeader.billToCode || srcHeader.payToCode || srcHeader.PayToCode || '',
-          billToAddress:    srcHeader.billToAddress || srcHeader.payTo || srcHeader.Address2 || '',
-        }));
-        setHeaderUdfs(normalizeUdfState(
-          headerUdfDefinitions,
-          mergeUdfValues(
-            copyFrom.headerUdfs,
-            copyFrom.header_udfs,
-            sourceDocument.header_udfs,
-            sourceDocument.headerUdfs,
-            unwrappedDocument.header_udfs,
-            unwrappedDocument.headerUdfs
-          )
-        ));
-
-        if (Array.isArray(srcLines) && srcLines.length > 0) {
-          setLines(srcLines.map((l, idx) => {
-            const normalizedLine = normaliseDocumentLine(
-              l,
-              idx,
-              baseEntry,
-              baseType,
-              normalizedHeader.branch || srcHeader.branch || ''
-            );
-
-            return {
-              ...createLine(rowUdfDefinitions),
-              ...normalizedLine,
-              taxCode: normalizedLine.taxCode || l.taxCode || l.TaxCode || l.VatGroup || '',
-              stcode: normalizedLine.stcode || l.stcode || l.TaxCode || l.VatGroup || '',
-              baseEntry: l.baseEntry ?? l.BaseEntry ?? baseEntry,
-              baseType: l.baseType ?? l.BaseType ?? baseType,
-              baseLine: l.baseLine ?? l.BaseLine ?? l.lineNum ?? l.LineNum ?? normalizedLine.baseLine ?? idx,
-              udf: normalizeUdfState(rowUdfDefinitions, mergeUdfValues(l.line_udfs, l.lineUdfs, l.udf)),
-            };
-          }));
-        } else {
-          setLines([createLine(rowUdfDefinitions)]);
-        }
-
-        const cardCode = normalizedHeader.vendor || srcHeader.vendor || srcHeader.CardCode;
-        if (cardCode) loadVendorDetails(cardCode, { preserveExisting: true });
-
-        const sourceLabel = copyFrom.sourceLabel || 'Sales Order';
-        const fallbackNote = usedFallback ? ' using loaded screen data' : '';
-        setPageState(p => ({
-          ...p,
-          loading: false,
-          error: '',
-          success: `Copied from ${sourceLabel}${fallbackNote}. Please review and save.`,
-        }));
-      };
-
-      const loadFreshSalesOrderCopy = async () => {
-        setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
-
-        try {
-          const response = await fetchSalesOrderForCopy(copyFrom.docEntry);
-          if (!ignore) {
-            let sourceData = response.data || {};
-            try {
-              const detailResponse = await fetchSalesOrderByDocEntry(copyFrom.docEntry);
-              sourceData = mergeSalesOrderCopyUdfs(sourceData, detailResponse.data || {});
-            } catch (detailError) {
-              console.warn('Failed to load full sales order UDF detail. Using copy payload only.', detailError);
-            }
-            applySalesOrderCopy(sourceData, false);
-          }
-        } catch (error) {
-          if (!ignore && Array.isArray(copyFrom.lines) && copyFrom.lines.length) {
-            console.warn('Failed to load fresh sales order copy data. Falling back to current screen data.', error);
-            applySalesOrderCopy({ ...(copyFrom.header || {}), DocumentLines: copyFrom.lines }, true);
-          } else if (!ignore) {
-            setPageState(p => ({
-              ...p,
-              loading: false,
-              success: '',
-              error: getErrMsg(error, 'Failed to load sales order data for delivery.'),
-            }));
-          }
-        } finally {
-          if (!ignore) {
-            replaceRouteStatePreservingWindow(navigate, location.pathname, location.state || persistedCopyState);
-          }
-        }
-      };
-
-      loadFreshSalesOrderCopy();
-
-      return () => {
-        ignore = true;
-      };
-    }
-
     const { header: srcHeader = {}, lines: srcLines = [], baseDocument } = copyFrom;
     const normalizedHeader = normaliseDocumentHeader(srcHeader || {});
     const baseEntry = baseDocument?.baseEntry || copyFrom.docEntry;
@@ -1055,16 +870,20 @@ function Delivery() {
       firstSourceLine?.WarehouseCode ||
       firstSourceLine?.WhsCode ||
       '';
+    const copiedLocation = resolveCopiedBranchWarehouse({
+      sourceBranch: normalizedHeader.branch || srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || srcHeader.BPLId,
+      sourceWarehouse: srcHeader.warehouse,
+      fallbackWarehouse: firstLineWarehouse,
+      warehouses: refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES,
+    });
 
     setCurrentDocEntry(null);
     setActiveTab('Contents');
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setValErrors({ header: {}, lines: {}, form: '' });
     setFreightModal({ open: false, freightCharges: [], loading: false });
     setCopyFromModal(false);
-    setCopyToModal(false);
 
     // Populate header for a new Delivery copied from the source document.
     setHeader(prev => ({
@@ -1075,8 +894,8 @@ function Delivery() {
       vendor:           normalizedHeader.vendor || srcHeader.vendor || srcHeader.CardCode || '',
       name:             normalizedHeader.name || srcHeader.name || srcHeader.CardName || '',
       contactPerson:    normalizedHeader.contactPerson || srcHeader.contactPerson || srcHeader.CntctCode || '',
-      branch:           normalizedHeader.branch || srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || '',
-      warehouse:        srcHeader.warehouse || firstLineWarehouse || '',
+      branch:           copiedLocation.branch,
+      warehouse:        copiedLocation.warehouse,
       paymentTerms:     normalizedHeader.paymentTerms || srcHeader.paymentTerms || srcHeader.GroupNum || '',
       placeOfSupply:    normalizedHeader.placeOfSupply || srcHeader.placeOfSupply || '',
       otherInstruction: normalizedHeader.otherInstruction || srcHeader.otherInstruction || srcHeader.Comments || '',
@@ -1105,7 +924,7 @@ function Delivery() {
           idx,
           baseEntry,
           baseType,
-          normalizedHeader.branch || srcHeader.branch || ''
+          copiedLocation.branch
         );
 
         return {
@@ -1113,6 +932,9 @@ function Delivery() {
           ...normalizedLine,
           taxCode: normalizedLine.taxCode || l.taxCode || l.TaxCode || l.VatGroup || '',
           stcode: normalizedLine.stcode || l.stcode || l.TaxCode || l.VatGroup || '',
+          branch: normalizedLine.branch || copiedLocation.branch,
+          loc: normalizedLine.loc || copiedLocation.branch,
+          whse: normalizedLine.whse || l.whse || l.WarehouseCode || l.WhsCode || copiedLocation.warehouse,
           baseEntry,
           baseType,
           baseLine: l.lineNum ?? l.LineNum ?? normalizedLine.baseLine ?? idx,
@@ -1132,13 +954,10 @@ function Delivery() {
 
     // Clear state so refresh doesn't re-populate
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state || persistedCopyState);
-  }, [location.pathname, location.state?.copyFrom, location.state?.copyToDraft, navigate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.state?.copyFrom, navigate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -1148,6 +967,9 @@ function Delivery() {
   const vendorEffectiveShipToAddresses = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
   const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
   const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
+  const hasSelectedBranchOption =
+    !normalizeSubmitBranch(header.branch) ||
+    refData.branches.some(b => String(b.BPLId || '') === String(header.branch || ''));
   const firstLineWhse = String(lines[0]?.whse || '').trim();
   const selectedWhseAddr = refData.warehouse_addresses.find(w => String(w.WhsCode || '') === firstLineWhse);
   const defaultShipTo = fmtAddr(refData.company_address);
@@ -1160,13 +982,22 @@ function Delivery() {
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES;
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
-  const effectiveWhseAddrs = refData.warehouse_addresses.length ? refData.warehouse_addresses : FALLBACK_WAREHOUSES;
   const payTermOpts = refData.payment_terms.length
     ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
     : FALLBACK_PAYMENT_TERMS;
   const shipTypeOpts = refData.shipping_types.length
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
     : FALLBACK_SHIPPING;
+
+  useEffect(() => {
+    if (isHydratingDocumentRef.current || currentDocEntry || !header.warehouse) return;
+
+    const alignedBranch = alignBranchWithWarehouse(header.branch, header.warehouse, effectiveWarehouses);
+    if (alignedBranch !== normalizeSubmitBranch(header.branch)) {
+      setHeader(prev => ({ ...prev, branch: alignedBranch }));
+    }
+  }, [currentDocEntry, effectiveWarehouses, header.branch, header.warehouse]);
+
   const resolveDeliveryAddress = useCallback((code, addresses = [], fallbackText = '') => {
     const normalizedCode = String(code || '').trim();
     if (normalizedCode) {
@@ -2000,8 +1831,8 @@ function Delivery() {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode,
-        shipTo: addressForm.shipToAddress || formatted,
-        shipToAddress: addressForm.shipToAddress || formatted,
+        shipTo: formatted || addressForm.shipToAddress,
+        shipToAddress: formatted || addressForm.shipToAddress,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
@@ -2016,8 +1847,8 @@ function Delivery() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode,
         payToCode: addressForm.billToCode,
-        billToAddress: addressForm.billToAddress || formatted,
-        payTo: addressForm.billToAddress || formatted,
+        billToAddress: formatted || addressForm.billToAddress,
+        payTo: formatted || addressForm.billToAddress,
       }));
     }
     closeAddressModal();
@@ -2412,6 +2243,7 @@ function Delivery() {
     if (itemModal.lineIndex < 0) return;
     
     const lineIndex = itemModal.lineIndex;
+    const mergedItem = mergeItemMaster(item, refData.items);
     
     console.log('🎯 [handleItemSelect] Item selected:', {
       ItemCode: item.ItemCode,
@@ -2424,16 +2256,16 @@ function Delivery() {
     });
     
     try {
-      const hsnRes = await fetchHSNCodeFromItem(item.ItemCode);
+      const hsnRes = await fetchHSNCodeFromItem(mergedItem.ItemCode);
       const hsnData = hsnRes.data;
       
       // Get the current line to check warehouse
       const currentLine = lines[lineIndex];
-      const itemIsBatchManaged = isBatchManaged(item);
+      const itemIsBatchManaged = isBatchManaged(mergedItem);
       
       // Get UoM - prefer SalesUnit, fallback to InventoryUOM
       // Note: UoM codes can be numeric (e.g., "5.6" meaning 5.6BOX)
-      const selectedUoM = item.SalesUnit || item.InventoryUOM || '';
+      const selectedUoM = mergedItem.SalesUnit || mergedItem.InventoryUOM || '';
       const displayUoM = selectedUoM;
       
       console.log('🔍 [handleItemSelect] Selected UoM:', {
@@ -2460,9 +2292,9 @@ function Delivery() {
       
       // Fetch UoM conversion factor
       let uomFactor = 1;
-      let inventoryUOM = item.InventoryUOM || '';
+      let inventoryUOM = mergedItem.InventoryUOM || '';
       
-      if (selectedUoM && item.ItemCode) {
+      if (selectedUoM && mergedItem.ItemCode) {
         try {
           console.log('🔍 [handleItemSelect] Fetching UoM conversion for:', {
             itemCode: item.ItemCode,
@@ -2470,12 +2302,12 @@ function Delivery() {
             itemInventoryUOM: item.InventoryUOM
           });
           
-          const uomRes = await fetchUomConversionFactor(item.ItemCode, selectedUoM);
+          const uomRes = await fetchUomConversionFactor(mergedItem.ItemCode, selectedUoM);
           
           console.log('📦 [handleItemSelect] UoM API Response:', uomRes.data);
           
           uomFactor = uomRes.data.factor || 1;
-          inventoryUOM = uomRes.data.inventoryUOM || item.InventoryUOM || '';
+          inventoryUOM = uomRes.data.inventoryUOM || mergedItem.InventoryUOM || '';
           
           const docQty = parseNum(currentLine.quantity);
           
@@ -2510,24 +2342,21 @@ function Delivery() {
           itemCode: item.ItemCode,
           warehouse: currentLine.whse
         });
-        hasBatchesAvailable = await checkBatchAvailability(item.ItemCode, currentLine.whse);
+        hasBatchesAvailable = await checkBatchAvailability(mergedItem.ItemCode, currentLine.whse);
         console.log('✅ [handleItemSelect] Batch availability result:', hasBatchesAvailable);
       }
       
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
           const updatedLine = {
-            ...line,
-            itemNo: item.ItemCode || '',
-            itemDescription: item.ItemName || '',
-            sellerItem: line.sellerItem || item.ItemCode || '',
+            ...hydrateDocumentLineFromItem(line, mergedItem, {
+              side: 'sales',
+              hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
+              fallbackWarehouse: header.warehouse,
+              calcLineTotal,
+              formatTotal: (value) => fmtDec(value, numDec.total),
+            }),
             uomCode: displayUoM, // Use the validated UoM for display
-            hsnCode: hsnData.hsnCode || item.HSNCode || '',
-            countryOfOrigin: item.ItemCountryOrg || line.countryOfOrigin || '',
-            sacCode: item.SACEntry || line.sacCode || '',
-            distRule: line.distRule || item.DistributionRule || '',
-            whse: line.whse || item.DefaultWarehouse || '',
-            stcode: line.stcode || item.TaxCodeAR || line.taxCode || '',
             batches: [],
             batchManaged: itemIsBatchManaged,
             hasBatchesAvailable: itemIsBatchManaged ? hasBatchesAvailable : false,
@@ -2576,18 +2405,18 @@ function Delivery() {
       console.error('❌ [handleItemSelect] Error selecting item:', error);
       // Still set basic item info even if HSN fetch fails
       const currentLine = lines[lineIndex];
-      const itemIsBatchManaged = isBatchManaged(item);
-      const selectedUoM = item.SalesUnit || item.InventoryUOM || '';
+      const itemIsBatchManaged = isBatchManaged(mergedItem);
+      const selectedUoM = mergedItem.SalesUnit || mergedItem.InventoryUOM || '';
       
       // Try to get UoM conversion in error case
       let uomFactor = 1;
-      let inventoryUOM = item.InventoryUOM || '';
+      let inventoryUOM = mergedItem.InventoryUOM || '';
       
-      if (selectedUoM && item.ItemCode) {
+      if (selectedUoM && mergedItem.ItemCode) {
         try {
-          const uomRes = await fetchUomConversionFactor(item.ItemCode, selectedUoM);
+          const uomRes = await fetchUomConversionFactor(mergedItem.ItemCode, selectedUoM);
           uomFactor = uomRes.data.factor || 1;
-          inventoryUOM = uomRes.data.inventoryUOM || item.InventoryUOM || '';
+          inventoryUOM = uomRes.data.inventoryUOM || mergedItem.InventoryUOM || '';
         } catch (uomError) {
           console.error('❌ [handleItemSelect] Failed to fetch UoM conversion in error handler:', uomError);
         }
@@ -2597,7 +2426,7 @@ function Delivery() {
       let hasBatchesAvailable = false;
       if (itemIsBatchManaged && currentLine.whse) {
         try {
-          hasBatchesAvailable = await checkBatchAvailability(item.ItemCode, currentLine.whse);
+          hasBatchesAvailable = await checkBatchAvailability(mergedItem.ItemCode, currentLine.whse);
         } catch (batchError) {
           console.error('❌ [handleItemSelect] Error checking batch availability:', batchError);
         }
@@ -2606,25 +2435,22 @@ function Delivery() {
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
           const updatedLine = {
-            ...line,
-            itemNo: item.ItemCode || '',
-            itemDescription: item.ItemName || '',
-            sellerItem: line.sellerItem || item.ItemCode || '',
+            ...hydrateDocumentLineFromItem(line, mergedItem, {
+              side: 'sales',
+              hsnCode: mergedItem.HSNCode || '',
+              fallbackWarehouse: header.warehouse,
+              calcLineTotal,
+              formatTotal: (value) => fmtDec(value, numDec.total),
+            }),
             uomCode: selectedUoM,
-            hsnCode: item.HSNCode || '',
-            countryOfOrigin: item.ItemCountryOrg || line.countryOfOrigin || '',
-            sacCode: item.SACEntry || line.sacCode || '',
-            distRule: line.distRule || item.DistributionRule || '',
-            whse: line.whse || item.DefaultWarehouse || '',
-            stcode: line.stcode || item.TaxCodeAR || line.taxCode || '',
             batches: [],
             batchManaged: itemIsBatchManaged,
             hasBatchesAvailable: itemIsBatchManaged ? hasBatchesAvailable : false,
             inventoryUOM: inventoryUOM,
             uomFactor: uomFactor,
             taxAmount: '',
-            total: fmtDec(calcLineTotal(line), numDec.total)
           };
+          updatedLine.total = fmtDec(calcLineTotal(updatedLine), numDec.total);
           
           return updatedLine;
         }
@@ -2923,12 +2749,17 @@ function Delivery() {
     
     // If frontend validation passes, call backend validation
     try {
+      const submitBranch = alignBranchWithWarehouse(
+        header.branch,
+        header.warehouse || lines.find(l => String(l.whse || '').trim())?.whse,
+        effectiveWarehouses
+      );
       const validationPayload = {
         header: {
           customerCode: header.vendor,
           postingDate: header.postingDate,
           documentDate: header.documentDate,
-          branch: header.branch,
+          branch: submitBranch,
           series: header.series
         },
         lines: lines.filter(l => String(l.itemNo || '').trim()).map(l => ({
@@ -3111,6 +2942,12 @@ function Delivery() {
       firstSourceLine?.WarehouseCode ||
       firstSourceLine?.WhsCode ||
       '';
+    const copiedLocation = resolveCopiedBranchWarehouse({
+      sourceBranch: normHeader.branch || srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || srcHeader.BPLId,
+      sourceWarehouse: srcHeader.warehouse,
+      fallbackWarehouse: firstLineWarehouse,
+      warehouses: refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES,
+    });
 
     setHeader(prev => ({
       ...prev,
@@ -3119,8 +2956,8 @@ function Delivery() {
       vendor: normHeader.vendor || srcHeader.customerCode || srcHeader.customer || srcHeader.CardCode || '',
       name: normHeader.name || srcHeader.customerName || srcHeader.name || srcHeader.CardName || '',
       contactPerson: normHeader.contactPerson || srcHeader.contactPerson || srcHeader.CntctCode || '',
-      branch: normHeader.branch || srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || srcHeader.BPLId || '',
-      warehouse: srcHeader.warehouse || firstLineWarehouse || prev.warehouse || '',
+      branch: copiedLocation.branch,
+      warehouse: copiedLocation.warehouse || prev.warehouse || '',
       paymentTerms: normHeader.paymentTerms || srcHeader.paymentTerms || srcHeader.GroupNum || '',
       placeOfSupply: normHeader.placeOfSupply || srcHeader.placeOfSupply || srcHeader.PlaceOfSupply || '',
       salesContractNo: srcHeader.salesContractNo || srcHeader.customerRefNo || srcHeader.NumAtCard || '',
@@ -3150,7 +2987,7 @@ function Delivery() {
     ));
 
     const newLines = sourceLines.map((line, idx) => {
-      const normalizedLine = normaliseDocumentLine(line, idx, baseEntry, baseType, normHeader.branch);
+      const normalizedLine = normaliseDocumentLine(line, idx, baseEntry, baseType, copiedLocation.branch);
       return {
         ...createLine(rowUdfDefinitions),
         ...normalizedLine,
@@ -3159,6 +2996,9 @@ function Delivery() {
         baseLine: line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? normalizedLine.baseLine ?? idx,
         taxCode: normalizedLine.taxCode || line.taxCode || line.TaxCode || line.VatGroup || '',
         stcode: normalizedLine.stcode || line.stcode || line.TaxCode || line.VatGroup || '',
+        branch: normalizedLine.branch || copiedLocation.branch,
+        loc: normalizedLine.loc || copiedLocation.branch,
+        whse: normalizedLine.whse || line.whse || line.WarehouseCode || line.WhsCode || copiedLocation.warehouse,
         udf: normalizeUdfState(
           rowUdfDefinitions,
           mergeUdfValues(line.line_udfs, line.lineUdfs, line.udf)
@@ -3199,14 +3039,17 @@ function Delivery() {
   // ── Copy From fetch handlers ───────────────────────────────────────────────
   const fetchCopyFromDocuments = async (docType) => {
     try {
+      const bpCode = String(header.vendor || '').trim();
+      if (!bpCode) return [];
+
       // Sales Quotations: use dedicated API
       if (docType === 'salesQuotation') {
-        const res = await fetchOpenSalesQuotationsForDelivery();
-        return res?.data?.quotations || [];
+        const res = await fetchOpenSalesQuotationsForDelivery(bpCode);
+        return res?.data?.quotations || res?.data?.documents || [];
       }
       // Sales Orders: filter by current customer for relevance
       if (docType === 'salesOrder') {
-        const res = await fetchOpenSalesOrders(header.vendor || null);
+        const res = await fetchOpenSalesOrders(bpCode);
         return res?.data?.orders || [];
       }
       // Returns (AR Credit Memo): use dedicated API
@@ -3219,7 +3062,7 @@ function Delivery() {
         const res = await fetchOpenBlanketAgreementsForDelivery();
         return res?.data?.agreements || [];
       }
-      return await deliveryCopyFromApi.fetchOpenDocuments(docType);
+      return await deliveryCopyFromApi.fetchOpenDocuments(docType, bpCode);
     } catch (err) {
       console.error('Error fetching documents:', err);
       throw err;
@@ -3260,37 +3103,19 @@ function Delivery() {
   };
 
   // ── Copy To handler ───────────────────────────────────────────────────────
-  const handleCopyTo = (targetType) => {
-    const targetConfig = {
-      'ar-invoice': { docType: 'arInvoice', label: 'A/R Invoice', path: '/ar-invoice' },
-      'ar-credit-memo': { docType: 'arCreditMemo', label: 'A/R Credit Memo', path: '/ar-credit-memo' },
-      return: { docType: 'arCreditMemo', label: 'A/R Credit Memo', path: '/ar-credit-memo', extraState: { isReturn: true } },
-    }[targetType];
-
-    const copyState = buildCopyToState({
+  const handleCopyTo = async (targetType) => {
+    await copyToDocument({
       sourceDocType: 'delivery',
-      sourceLabel: 'Delivery',
-      sourceDocEntry: currentDocEntry,
-      header,
-      lines,
-      baseType: 15,
-      extraState: targetConfig?.extraState,
-    });
-
-    openCopyToDocument({
-      sourceDocType: 'delivery',
-      sourceLabel: 'Delivery',
+      targetType,
       sourceDocEntry: currentDocEntry,
       sourceDocNo: header.docNo,
       sourcePath: location.pathname,
-      targetDocType: targetConfig?.docType,
-      targetLabel: targetConfig?.label,
-      targetPath: targetConfig?.path,
-      copyState,
+      sourceSnapshot: { header, lines, headerUdfs },
       restoreState: { deliveryDocEntry: currentDocEntry },
       navigate,
       upsertTask,
       removeTask,
+      beforeNavigate: () => document.querySelectorAll('.del-dropdown').forEach(d => d.classList.remove('active')),
       setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
       errorMessage: 'Please save the delivery first before copying to another document.',
     });
@@ -3313,11 +3138,16 @@ function Delivery() {
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, posting: true, error: '', success: '' }));
     try {
+      const submitBranch = alignBranchWithWarehouse(
+        header.branch,
+        header.warehouse || lines.find(line => String(line.whse || '').trim())?.whse,
+        effectiveWarehouses
+      );
       const prep = { 
         ...header, 
         deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
         placeOfSupply: header.placeOfSupply,
-        branch: header.branch,
+        branch: submitBranch,
         contactPerson: header.contactPerson,
         series: header.series ? Number(header.series) : undefined,
         totalPaymentDue: fmtDec(totals.total, numDec.totalPaymentDue),
@@ -3336,7 +3166,6 @@ function Delivery() {
       };
       const r = currentDocEntry ? await updateDelivery(currentDocEntry, payload) : await submitDelivery(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-      setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -3350,14 +3179,24 @@ function Delivery() {
       
       setPageState(p => ({ ...p, success: `${r.data.message || 'Sales order saved.'}${dn}` }));
     } catch (e) {
-      setPageState(p => ({ ...p, error: getErrMsg(e, 'Sales order submission failed.') }));
+      const message = getErrMsg(e, 'Delivery submission failed.');
+      if (message.includes('Warehouse') && message.toLowerCase().includes('branch')) {
+        const lineIndex = lines.findIndex(line => String(line.whse || '').trim());
+        setValErrors({
+          header: {},
+          lines: lineIndex >= 0
+            ? { [lineIndex]: { whse: 'Warehouse does not belong to selected branch' } }
+            : {},
+          form: 'Please correct the highlighted fields.',
+        });
+      }
+      setPageState(p => ({ ...p, error: message, success: '' }));
     } finally {
       setPageState(p => ({ ...p, posting: false }));
     }
   };
 
   const resetForm = () => {
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -3485,9 +3324,7 @@ function Delivery() {
           </button>
           <div className="del-dropdown-menu">
             {[
-              { key: 'return',         label: 'Return Request' },
-              { key: 'ar-invoice',     label: 'A/R Invoice' },
-              { key: 'ar-credit-memo', label: 'A/R Credit Memo' },
+              { key: 'ar-invoice', label: 'A/R Invoice' },
             ].map(opt => (
               <button
                 key={opt.key}
@@ -3630,11 +3467,13 @@ function Delivery() {
                       </select>
                     </div>
 
-                    {/* Branch */}
                     <div className="del-field">
                       <label className="del-field__label">Branch</label>
-                      <select name="branch" className={`del-field__select${valErrors.header.branch ? ' del-field__select--error' : ''}`} value={header.branch} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
-                        <option value="">No Branch</option>
+                      <select name="branch" className={`del-field__select${valErrors.header.branch ? ' del-field__select--error' : ''}`} value={normalizeSubmitBranch(header.branch)} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
+                        <option value="">Select Branch</option>
+                        {!hasSelectedBranchOption && (
+                          <option value={header.branch}>{`Branch ${header.branch}`}</option>
+                        )}
                         {refData.branches.map(b => (
                           <option key={b.BPLId} value={b.BPLId}>
                             {b.BPLName}
@@ -3992,9 +3831,7 @@ function Delivery() {
                   </button>
                   <div className="del-dropdown-menu">
                     {[
-                      { key: 'return',        label: 'Return Request' },
-                      { key: 'ar-invoice',    label: 'A/R Invoice' },
-                      { key: 'ar-credit-memo',label: 'A/R Credit Memo' },
+                      { key: 'ar-invoice', label: 'A/R Invoice' },
                     ].map(opt => (
                       <button
                         key={opt.key}
@@ -4132,9 +3969,7 @@ function Delivery() {
             <div className="sap-setup-titlebar">
               <span>Sales Employees/Buyers - Setup</span>
               <div className="sap-setup-window-actions">
-                <button type="button" aria-label="Minimize">_</button>
-                <button type="button" aria-label="Maximize">□</button>
-                <button type="button" aria-label="Close" onClick={closeSalesEmployeeSetup}>×</button>
+                <button type="button" aria-label="Close" onClick={closeSalesEmployeeSetup}>x</button>
               </div>
             </div>
             <div className="sap-setup-body">

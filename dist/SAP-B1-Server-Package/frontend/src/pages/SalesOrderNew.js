@@ -50,7 +50,6 @@ function SalesOrderNew() {
   const [items, setItems] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
   const [taxCodes, setTaxCodes] = useState([]);
-  const [salesEmployees, setSalesEmployees] = useState([]);
   const [uomGroups, setUomGroups] = useState([]);
   const [refData, setRefData] = useState({ branches: [] });
 
@@ -78,7 +77,6 @@ function SalesOrderNew() {
           setItems(data.items || []);
           setWarehouses(data.warehouses || []);
           setTaxCodes(data.tax_codes || []);
-          setSalesEmployees(data.sales_employees || []);
           setUomGroups(data.uom_groups || []);
           setRefData({ branches: data.branches || [] });
         }

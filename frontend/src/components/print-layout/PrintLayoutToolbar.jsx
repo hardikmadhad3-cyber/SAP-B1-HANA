@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   downloadDocumentLayoutPdf,
   printDocumentLayout,
 } from '../../api/documentPrintApi';
 import useDocumentLayouts, { isLayoutExportSupported } from '../../hooks/useDocumentLayouts';
 import { base64ToPdfBlob, downloadPdfBlob, openPdfBlobInNewTab } from '../../utils/pdfUtils';
+import { useAuth } from '../../auth/AuthContext';
 
-const DEFAULT_SCHEMA = process.env.REACT_APP_SAP_REPORT_SCHEMA || 'NCPL_110126';
+const DEFAULT_SCHEMA = process.env.REACT_APP_SAP_REPORT_SCHEMA || '';
 
 const buildDefaultFileName = (documentType, docEntry, docNumber, docCode) =>
   `${String(documentType || 'document').replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`).replace(/^-/, '')}-${docNumber || docEntry || 'document'}-${docCode || 'layout'}.pdf`;
@@ -37,7 +38,13 @@ function PrintLayoutToolbar({
   onSuccess,
   onError,
 }) {
-  const [schema, setSchema] = useState(defaultSchema);
+  const { company } = useAuth();
+  const companySchema = String(company?.dbName || '').trim();
+  const layoutReloadKey = useMemo(
+    () => [company?.companyId, companySchema].filter(Boolean).join(':'),
+    [company?.companyId, companySchema],
+  );
+  const [schema, setSchema] = useState(() => companySchema || defaultSchema || DEFAULT_SCHEMA);
   const [loading, setLoading] = useState(false);
   const [cachedPdfByKey, setCachedPdfByKey] = useState({});
   const {
@@ -45,17 +52,26 @@ function PrintLayoutToolbar({
     setDocCode,
     layouts,
     layoutsLoading,
+    metadata,
     selectedLayout,
     canExportSelectedLayout,
   } = useDocumentLayouts({
     documentType,
     defaultDocCode,
+    reloadKey: layoutReloadKey,
     onError,
   });
+  const resolvedDefaultSchema = String(
+    metadata?.defaultSchema ||
+      companySchema ||
+      defaultSchema ||
+      DEFAULT_SCHEMA ||
+      '',
+  ).trim();
 
   useEffect(() => {
-    setSchema(defaultSchema || DEFAULT_SCHEMA);
-  }, [defaultSchema, documentType]);
+    setSchema(resolvedDefaultSchema);
+  }, [resolvedDefaultSchema, documentType, layoutReloadKey]);
 
   useEffect(() => {
     setCachedPdfByKey({});
@@ -267,7 +283,7 @@ function PrintLayoutToolbar({
           value={schema}
           onChange={(event) => setSchema(event.target.value)}
           disabled={loading || disabled}
-          placeholder={DEFAULT_SCHEMA}
+          placeholder={resolvedDefaultSchema || 'Schema'}
         />
       </div>
 

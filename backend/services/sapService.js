@@ -4,19 +4,28 @@
 const axios = require('axios');
 const https = require('https');
 const { URL } = require('url');
-const env = require('../config/env');
 const authDbService = require('./authDbService');
 const dbService = require('./dbService');
 const { getRequestContext, getOrSetContextValue } = require('./requestContextService');
+const { getActiveCompanyConfig } = require('./companyConfigService');
 
-const httpsAgent = new https.Agent({
-  keepAlive: true,
-  keepAliveMsecs: 30000,
-  maxSockets: 50,
-  maxFreeSockets: 10,
-  timeout: 60000,
-  rejectUnauthorized: env.sapRejectUnauthorized,
-});
+const httpsAgentsByRejectMode = new Map();
+
+const getHttpsAgent = (rejectUnauthorized) => {
+  const key = rejectUnauthorized ? 'strict' : 'relaxed';
+  if (!httpsAgentsByRejectMode.has(key)) {
+    httpsAgentsByRejectMode.set(key, new https.Agent({
+      keepAlive: true,
+      keepAliveMsecs: 30000,
+      maxSockets: 50,
+      maxFreeSockets: 10,
+      timeout: 60000,
+      rejectUnauthorized,
+    }));
+  }
+
+  return httpsAgentsByRejectMode.get(key);
+};
 
 const SESSION_TTL_MS = 25 * 60 * 1000;
 const sessionsByCompanyDb = new Map();
@@ -60,9 +69,9 @@ const getServiceLayerEntity = (url = '') => {
   return match ? match[1] : '';
 };
 
-const buildUrl = (path) => {
+const buildUrl = (baseUrl, path) => {
   const qIdx = path.indexOf('?');
-  if (qIdx === -1) return `${env.sapBaseUrl}${path}`;
+  if (qIdx === -1) return `${baseUrl}${path}`;
 
   const base = path.slice(0, qIdx);
   const qs = path.slice(qIdx + 1);
@@ -71,7 +80,7 @@ const buildUrl = (path) => {
     .replace(/ /g, '%20')
     .replace(/'/g, '%27');
 
-  return `${env.sapBaseUrl}${base}?${encodedQs}`;
+  return `${baseUrl}${base}?${encodedQs}`;
 };
 
 const extractCookie = (header) => {
@@ -79,14 +88,18 @@ const extractCookie = (header) => {
   return header.map((cookie) => String(cookie).split(';')[0]).filter(Boolean).join('; ');
 };
 
-const getSessionKey = (companyDb) => String(companyDb || '').trim().toLowerCase();
+const getSessionKey = (config) => [
+  config.baseUrl,
+  config.username,
+  config.companyDb,
+].map((value) => String(value || '').trim().toLowerCase()).join('|');
 
-const getSessionState = (companyDb) => {
-  const sessionKey = getSessionKey(companyDb);
+const getSessionState = (config) => {
+  const sessionKey = getSessionKey(config);
 
   if (!sessionsByCompanyDb.has(sessionKey)) {
     sessionsByCompanyDb.set(sessionKey, {
-      companyDb: String(companyDb || '').trim(),
+      companyDb: String(config.companyDb || '').trim(),
       sessionCookie: '',
       sessionActive: false,
       sessionExpireAt: 0,
@@ -125,7 +138,16 @@ const resolveCompanyDb = async (requestConfig = {}) => {
     }
   }
 
-  return String(env.sapCompanyDb || '').trim();
+  const activeConfig = await getActiveCompanyConfig();
+  return String(activeConfig.serviceLayer.companyDb || '').trim();
+};
+
+const resolveServiceLayerConfig = async (requestConfig = {}) => {
+  const activeConfig = await getActiveCompanyConfig();
+  return {
+    ...activeConfig.serviceLayer,
+    companyDb: String(requestConfig.companyDb || activeConfig.serviceLayer.companyDb || '').trim(),
+  };
 };
 
 const getUserStampFields = async (companyDb, tableName) => {
@@ -274,28 +296,31 @@ const withAuthenticatedUserStamp = async (config, companyDb) => {
   return stampedPayload;
 };
 
-const login = async (companyDb) => {
-  const resolvedCompanyDb = String(companyDb || '').trim();
-  if (!env.sapBaseUrl || !env.sapUsername || !env.sapPassword || !resolvedCompanyDb) {
-    throw new Error('Missing SAP configuration. Check backend/.env and company assignment.');
+const login = async (companyDbOrConfig) => {
+  const config = typeof companyDbOrConfig === 'object' && companyDbOrConfig !== null
+    ? companyDbOrConfig
+    : await resolveServiceLayerConfig({ companyDb: companyDbOrConfig });
+  const resolvedCompanyDb = String(config.companyDb || '').trim();
+  if (!config.baseUrl || !config.username || !config.password || !resolvedCompanyDb) {
+    throw new Error('Missing SAP configuration. Check backend/.env or Company Master credentials.');
   }
 
-  const loginKey = getSessionKey(resolvedCompanyDb);
+  const loginKey = getSessionKey(config);
   const pendingLogin = pendingLoginsByCompanyDb.get(loginKey);
   if (pendingLogin) {
     return pendingLogin;
   }
 
   const loginPromise = axios.post(
-    buildUrl('/Login'),
+    buildUrl(config.baseUrl, '/Login'),
     {
-      UserName: env.sapUsername,
-      Password: env.sapPassword,
+      UserName: config.username,
+      Password: config.password,
       CompanyDB: resolvedCompanyDb,
     },
-    { httpsAgent },
+    { httpsAgent: getHttpsAgent(config.rejectUnauthorized) },
   ).then((response) => {
-    const sessionState = getSessionState(resolvedCompanyDb);
+    const sessionState = getSessionState(config);
     sessionState.sessionCookie = extractCookie(response.headers['set-cookie']);
     sessionState.sessionActive = true;
     sessionState.sessionExpireAt = Date.now() + SESSION_TTL_MS;
@@ -310,15 +335,15 @@ const login = async (companyDb) => {
 };
 
 const ensureSession = async (companyDb) => {
-  const resolvedCompanyDb = String(companyDb || '').trim();
-  const sessionState = getSessionState(resolvedCompanyDb);
+  const config = await resolveServiceLayerConfig({ companyDb });
+  const sessionState = getSessionState(config);
 
   if (!sessionState.sessionActive || !sessionState.sessionCookie || Date.now() >= sessionState.sessionExpireAt) {
-    await login(resolvedCompanyDb);
+    await login(config);
   }
 };
 
-const rawRequest = (method, fullUrl, headers, body) =>
+const rawRequest = (method, fullUrl, headers, body, rejectUnauthorized) =>
   new Promise((resolve, reject) => {
     const parsed = new URL(fullUrl);
     const options = {
@@ -327,8 +352,8 @@ const rawRequest = (method, fullUrl, headers, body) =>
       path: parsed.pathname + parsed.search,
       method: method.toUpperCase(),
       headers: { 'Content-Type': 'application/json', ...headers },
-      agent: httpsAgent,
-      rejectUnauthorized: env.sapRejectUnauthorized,
+      agent: getHttpsAgent(rejectUnauthorized),
+      rejectUnauthorized,
     };
 
     const req = https.request(options, (res) => {
@@ -359,17 +384,19 @@ const rawRequest = (method, fullUrl, headers, body) =>
   });
 
 const request = async (config, retryOnAuth = true) => {
-  const companyDb = await resolveCompanyDb(config);
+  const serviceLayerConfig = await resolveServiceLayerConfig(config);
+  const companyDb = serviceLayerConfig.companyDb;
   await ensureSession(companyDb);
-  const sessionState = getSessionState(companyDb);
+  const sessionState = getSessionState(serviceLayerConfig);
   const requestData = await withAuthenticatedUserStamp(config, companyDb);
 
   try {
     return await rawRequest(
       config.method || 'get',
-      buildUrl(config.url),
+      buildUrl(serviceLayerConfig.baseUrl, config.url),
       { Cookie: sessionState.sessionCookie, ...(config.headers || {}) },
       requestData,
+      serviceLayerConfig.rejectUnauthorized,
     );
   } catch (error) {
     if (retryOnAuth && [401, 403].includes(error.response?.status)) {
@@ -377,7 +404,7 @@ const request = async (config, retryOnAuth = true) => {
       sessionState.sessionActive = false;
       sessionState.sessionCookie = '';
       sessionState.sessionExpireAt = 0;
-      await login(companyDb);
+      await login(serviceLayerConfig);
       return request(config, false);
     }
 
@@ -433,6 +460,7 @@ module.exports = {
   ensureSession,
   request,
   resolveCompanyDb,
+  resolveServiceLayerConfig,
   createItem,
   createItem_generic,
   getItem,

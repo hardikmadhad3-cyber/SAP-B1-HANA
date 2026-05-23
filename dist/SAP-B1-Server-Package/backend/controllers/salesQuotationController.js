@@ -153,9 +153,18 @@ const getFreightCharges = async (req, res) => {
   }
 };
 
+const createLookupValue = async (req, res) => {
+  try {
+    const result = await salesQuotationService.createLookupValue(req.body || {});
+    res.json(result);
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error, 'Failed to create lookup value.'));
+  }
+};
+
 const getOpenSalesQuotations = async (req, res) => {
   try {
-    const data = await salesQuotationService.getOpenSalesQuotations();
+    const data = await salesQuotationService.getOpenSalesQuotations(req.query.customerCode);
     res.json(data);
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load open sales quotations.'));
@@ -184,6 +193,7 @@ module.exports = {
   getStateFromAddress,
   getItemsForModal,
   getFreightCharges,
+  createLookupValue,
   getOpenSalesQuotations,
   getSalesQuotationForCopy,
 };

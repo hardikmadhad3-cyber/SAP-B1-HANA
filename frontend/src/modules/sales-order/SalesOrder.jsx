@@ -27,9 +27,11 @@ import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../..
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import { isRouteStateForActiveCompany } from '../../utils/companyStorageScope';
 import { copyToDocument } from '../../services/documentCopyService';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
@@ -202,7 +204,10 @@ function SalesOrder() {
     const [attachments] = useState(INIT_ATTACH);
     const [activeTab, setActiveTab] = useState('Contents');
     const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
-    const [formSettings, setFormSettings] = useState(() => readSavedFormSettings());
+    const [formSettings, setFormSettings] = useCompanyScopedFormSettings(
+        FORM_SETTINGS_STORAGE_KEY,
+        readSavedFormSettings,
+    );
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [formSettingsOpen, setFormSettingsOpen] = useState(false);
     const [refData, setRefData] = useState({
@@ -278,10 +283,6 @@ function SalesOrder() {
         const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
         return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
     };
-
-    useEffect(() => { localStorage.setItem(FORM_SETTINGS_STORAGE_KEY, JSON.stringify(formSettings)); }, [formSettings]);
-
-
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -515,6 +516,11 @@ function SalesOrder() {
             location.state?.document?.docEntry ||
             location.state?.document?.DocEntry;
         if (!docEntry) return;
+        if (!isRouteStateForActiveCompany(location.state)) {
+            setPageState(p => ({ ...p, loading: false, error: '', success: '' }));
+            replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+            return;
+        }
         let ignore = false;
         const load = async () => {
             setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
@@ -1803,6 +1809,11 @@ function SalesOrder() {
     // ── Copy From Modal Handlers ───────────────────────────────────────────────
     useEffect(() => {
         const routedCopyFrom = location.state?.copyFrom;
+        if (routedCopyFrom && !isRouteStateForActiveCompany(location.state)) {
+            replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+            return;
+        }
+
         const persistedCopyState = routedCopyFrom ? null : consumeCopyToState(location.pathname, ['/sales-order']);
         const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
 
@@ -2548,7 +2559,6 @@ function SalesOrder() {
                                 <div style={{ flex: '1 1 45%', minWidth: '300px', maxWidth: '100%' }}>
                                     <fieldset
                                         className="so-fieldset"
-                                        disabled={!hasBuyerCode}
                                         style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
                                     >
                                     <div className="so-field-grid" style={{ gridTemplateColumns: '1fr' }}>

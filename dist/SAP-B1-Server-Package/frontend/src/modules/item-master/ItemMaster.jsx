@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import "./styles/itemMaster.css";
 import GeneralTab        from "./components/GeneralTab";
 import PurchasingTab     from "./components/PurchasingTab";
@@ -145,10 +145,8 @@ export default function ItemMaster() {
   const [initialForm, setInitialForm] = useState(EMPTY_FORM); // For dirty detection
   const [alert, setAlert]     = useState(null);
   const [loading, setLoading] = useState(false);
-  const [visibleTabs, setVisibleTabs] = useState(loadVisibleTabs);
-  const [showTabSettings, setShowTabSettings] = useState(false);
+  const [visibleTabs] = useState(loadVisibleTabs);
   const [itemCodeError, setItemCodeError] = useState("");
-  const tabSettingsRef = useRef(null);
 
   const [prices, setPrices]         = useState([]);
   const [stock, setStock]           = useState([]);
@@ -679,44 +677,6 @@ export default function ItemMaster() {
   }, [isDirty]);
 
   // Close tab settings on click outside
-  useEffect(() => {
-    const handler = (e) => {
-      if (tabSettingsRef.current && !tabSettingsRef.current.contains(e.target))
-        setShowTabSettings(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  const toggleTab = (tabName) => {
-    if (REQUIRED_TABS.has(tabName)) return;
-    setVisibleTabs((prev) => {
-      const next = new Set(prev);
-      if (next.has(tabName)) {
-        next.delete(tabName);
-        const visibleList = TABS.filter((t) => next.has(t));
-        if (TABS[tab] === tabName && visibleList.length > 0)
-          setTab(TABS.indexOf(visibleList[0]));
-      } else {
-        next.add(tabName);
-      }
-      localStorage.setItem(LS_KEY, JSON.stringify([...next]));
-      return next;
-    });
-  };
-
-  const showAllTabs = () => {
-    const all = new Set(TABS);
-    setVisibleTabs(all);
-    localStorage.setItem(LS_KEY, JSON.stringify([...all]));
-  };
-
-  const hideOptionalTabs = () => {
-    setVisibleTabs(new Set(REQUIRED_TABS));
-    setTab(0);
-    localStorage.setItem(LS_KEY, JSON.stringify([...REQUIRED_TABS]));
-  };
-
   const handleItemCodeBlur = async () => {
     if (mode !== MODES.ADD || !String(form.ItemCode || "").trim()) return;
     try {

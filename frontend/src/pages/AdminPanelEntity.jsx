@@ -511,6 +511,7 @@ const AdminPanelEntity = () => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(location.state?.notice || '');
   const [openRoleGroups, setOpenRoleGroups] = useState(() => new Set());
+  const [activeFormSectionKey, setActiveFormSectionKey] = useState('');
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
   const schema = bootstrap?.schema || null;
@@ -606,6 +607,57 @@ const AdminPanelEntity = () => {
       first.label.localeCompare(second.label, undefined, { sensitivity: 'base' }),
     );
   }, [entityKey, filteredRecords, lookupLabelMaps]);
+
+  const formSections = useMemo(() => {
+    if (!schema) return [];
+
+    const visibleFormColumns = (schema.columns || []).filter((column) => !column.hidden);
+    const configuredSections = schema.entity?.formSections || bootstrap?.entity?.formSections || [];
+    if (!configuredSections.length) return [];
+
+    const usedColumnNames = new Set();
+    const sections = configuredSections
+      .map((section) => {
+        const sectionColumnNames = new Set(section.columns || []);
+        const columns = visibleFormColumns.filter((column) => sectionColumnNames.has(column.name));
+        columns.forEach((column) => usedColumnNames.add(column.name));
+
+        return {
+          key: section.key,
+          title: section.title,
+          columns,
+        };
+      })
+      .filter((section) => section.columns.length);
+
+    const uncategorizedColumns = visibleFormColumns.filter((column) => !usedColumnNames.has(column.name));
+    if (uncategorizedColumns.length) {
+      sections.push({
+        key: 'other-fields',
+        title: 'Other Fields',
+        columns: uncategorizedColumns,
+      });
+    }
+
+    return sections;
+  }, [bootstrap?.entity?.formSections, schema]);
+
+  useEffect(() => {
+    if (!formSections.length) {
+      setActiveFormSectionKey('');
+      return;
+    }
+
+    const hasActiveSection = formSections.some((section) => section.key === activeFormSectionKey);
+    if (!hasActiveSection) {
+      setActiveFormSectionKey(formSections[0].key);
+    }
+  }, [activeFormSectionKey, formSections]);
+
+  const activeFormSection = useMemo(() => {
+    if (!formSections.length) return null;
+    return formSections.find((section) => section.key === activeFormSectionKey) || formSections[0];
+  }, [activeFormSectionKey, formSections]);
 
   useEffect(() => {
     if (entityKey !== 'role-rights') return;
@@ -986,33 +1038,53 @@ const AdminPanelEntity = () => {
             ) : null}
           </div>
 
-          <form className="admin-form-grid" onSubmit={handleSubmit}>
-            {(schema?.columns || []).map((column) =>
-              column.hidden
-                ? null
-                : renderField(
-                  column,
-                  formData[column.name],
-                  selectedRecord,
-                  pageMode === 'create',
-                  lookups,
-                  handleFieldChange,
-                  { entityKey, records, formData },
-                )
-            )}
+          <form onSubmit={handleSubmit}>
+            {formSections.length ? (
+              <div className="admin-form-tabs" role="tablist" aria-label={`${bootstrap?.entity?.title || 'Record'} sections`}>
+                {formSections.map((section) => (
+                  <button
+                    key={section.key}
+                    type="button"
+                    className={`admin-form-tab${section.key === activeFormSection?.key ? ' is-active' : ''}`}
+                    onClick={() => setActiveFormSectionKey(section.key)}
+                    role="tab"
+                    aria-selected={section.key === activeFormSection?.key}
+                  >
+                    <span>{section.title}</span>
+                    <small>{section.columns.length}</small>
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
-            <div className="admin-form-actions">
-              <button type="submit" className="admin-panel-button" disabled={isSaving}>
-                {isSaving ? 'Saving...' : pageMode === 'create' ? 'Create Record' : 'Save Changes'}
-              </button>
-              <button
-                type="button"
-                className="admin-panel-button admin-panel-button--ghost"
-                onClick={handleResetForm}
-                disabled={isSaving}
-              >
-                Reset Form
-              </button>
+            <div className="admin-form-grid">
+              {(activeFormSection?.columns || schema?.columns || []).map((column) =>
+                column.hidden
+                  ? null
+                  : renderField(
+                    column,
+                    formData[column.name],
+                    selectedRecord,
+                    pageMode === 'create',
+                    lookups,
+                    handleFieldChange,
+                    { entityKey, records, formData },
+                  )
+              )}
+
+              <div className="admin-form-actions">
+                <button type="submit" className="admin-panel-button" disabled={isSaving}>
+                  {isSaving ? 'Saving...' : pageMode === 'create' ? 'Create Record' : 'Save Changes'}
+                </button>
+                <button
+                  type="button"
+                  className="admin-panel-button admin-panel-button--ghost"
+                  onClick={handleResetForm}
+                  disabled={isSaving}
+                >
+                  Reset Form
+                </button>
+              </div>
             </div>
           </form>
         </div>

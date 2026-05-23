@@ -341,6 +341,22 @@ const getLookupsForSchema = async (schema) => {
   return lookups;
 };
 
+const syncAdminRoleRights = async (db) => {
+  await db.query(`
+    INSERT INTO dbo.RoleRights (RoleId, MenuId, CanView, CanAdd, CanEdit, CanDelete)
+    SELECT R.RoleId, M.MenuId, 1, 1, 1, 0
+    FROM dbo.Roles R
+    CROSS JOIN dbo.Menus M
+    WHERE LOWER(R.RoleName) = 'admin'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM dbo.RoleRights RR
+        WHERE RR.RoleId = R.RoleId
+          AND RR.MenuId = M.MenuId
+      )
+  `);
+};
+
 const getEntityCount = async (tableName) => {
   const result = await authDbService.queryOne(`
     SELECT COUNT(1) AS totalRows
@@ -354,6 +370,7 @@ const getEntityList = async () => {
   await authDbService.transaction(async (db) => {
     await syncApplicationSidebarMenus(db);
     await syncAllReportMenuSidebarMenus(db);
+    await syncAdminRoleRights(db);
   });
 
   const entities = await Promise.all(
@@ -375,6 +392,7 @@ const getEntityBootstrap = async (entityKey) => {
     await authDbService.transaction(async (db) => {
       await syncApplicationSidebarMenus(db);
       await syncAllReportMenuSidebarMenus(db);
+      await syncAdminRoleRights(db);
     });
   }
 

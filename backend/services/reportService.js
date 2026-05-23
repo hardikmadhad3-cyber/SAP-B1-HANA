@@ -2,21 +2,34 @@ const axios = require('axios');
 const https = require('https');
 const env = require('../config/env');
 const dbService = require('./dbService');
+const { getActiveCompanyConfig } = require('./companyConfigService');
 
-const reportClient = axios.create({
-  baseURL: env.reportServiceBaseUrl,
-  timeout: env.reportServiceTimeoutMs,
-  responseType: 'text',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  httpsAgent: new https.Agent({
-    rejectUnauthorized: env.reportServiceRejectUnauthorized,
-  }),
-});
+const reportClientsByConfig = new Map();
 
-let reportSessionCookie = '';
-let reportSessionExpiresAt = 0;
+const getReportClient = (config) => {
+  const clientKey = [
+    config.baseUrl,
+    config.rejectUnauthorized ? 'strict' : 'relaxed',
+  ].join('|');
+
+  if (!reportClientsByConfig.has(clientKey)) {
+    reportClientsByConfig.set(clientKey, axios.create({
+      baseURL: config.baseUrl,
+      timeout: env.reportServiceTimeoutMs,
+      responseType: 'text',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      httpsAgent: new https.Agent({
+        rejectUnauthorized: config.rejectUnauthorized,
+      }),
+    }));
+  }
+
+  return reportClientsByConfig.get(clientKey);
+};
+
+const reportSessionsByCompany = new Map();
 
 const stripPdfPrefix = (value) =>
   String(value || '')
@@ -25,14 +38,53 @@ const stripPdfPrefix = (value) =>
     .replace(/\s+/g, '');
 
 const extractCookieHeader = (cookieHeader) => {
-  if (!Array.isArray(cookieHeader)) {
+  const cookieHeaders = Array.isArray(cookieHeader)
+    ? cookieHeader
+    : [cookieHeader].filter(Boolean);
+
+  if (!cookieHeaders.length) {
     return '';
   }
 
-  return cookieHeader
+  return cookieHeaders
     .map((cookie) => String(cookie).split(';')[0])
     .filter(Boolean)
     .join('; ');
+};
+
+const parseLoginPayload = (payload) => {
+  if (!payload || typeof payload !== 'string') {
+    return payload;
+  }
+
+  const trimmed = payload.trim();
+  if (!trimmed) {
+    return payload;
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch (_error) {
+    return payload;
+  }
+};
+
+const extractReportServiceMessage = (payload) => {
+  const parsedPayload = parseLoginPayload(payload);
+
+  if (!parsedPayload || typeof parsedPayload !== 'object') {
+    return '';
+  }
+
+  const candidates = [
+    parsedPayload?.error?.message?.value,
+    parsedPayload?.error?.message,
+    parsedPayload?.message?.value,
+    parsedPayload?.message,
+    parsedPayload?.detail,
+  ];
+
+  return String(candidates.find((candidate) => candidate) || '').trim();
 };
 
 const normalizeStringPayload = (value) => {
@@ -373,51 +425,87 @@ const isProbablyBase64 = (value) => {
   return /^[A-Za-z0-9+/=]+$/.test(normalized);
 };
 
-const ensureReportLoginConfig = () => {
+const resolveReportServiceConfig = async (companyDb = '') => {
+  const explicitCompanyDb = String(companyDb || '').trim();
+  const activeCompanyConfig = await getActiveCompanyConfig();
+
+  return {
+    ...activeCompanyConfig.reportService,
+    companyDb: explicitCompanyDb || activeCompanyConfig.reportService.companyDb,
+  };
+};
+
+const resolveReportCompanyDb = async (companyDb = '') => {
+  const config = await resolveReportServiceConfig(companyDb);
+  return String(config.companyDb || '').trim();
+};
+
+const getReportSessionKey = (config) => [
+  config.baseUrl,
+  config.username,
+  config.companyDb,
+].map((value) => String(value || '').trim().toLowerCase()).join('|');
+
+const ensureReportLoginConfig = (config) => {
   if (
-    !env.reportServiceBaseUrl ||
-    !env.reportServiceUsername ||
-    !env.reportServicePassword ||
-    !env.reportServiceCompanyDb
+    !config.baseUrl ||
+    !config.username ||
+    !config.password ||
+    !config.companyDb
   ) {
-    const error = new Error('Missing SAP Report Service login configuration. Check backend/.env.');
+    const error = new Error('Missing SAP Report Service login configuration. Check backend/.env or Company Master credentials.');
     error.statusCode = 500;
     throw error;
   }
 };
 
-const loginToReportService = async () => {
-  ensureReportLoginConfig();
+const loginToReportService = async (companyDb = '') => {
+  const reportConfig = await resolveReportServiceConfig(companyDb);
+  const normalizedCompanyDb = String(reportConfig.companyDb || '').trim();
+  ensureReportLoginConfig(reportConfig);
 
-  const response = await reportClient.post('/login', {
-    CompanyDB: env.reportServiceCompanyDb,
-    UserName: env.reportServiceUsername,
-    Password: env.reportServicePassword,
+  const response = await getReportClient(reportConfig).post('/login', {
+    CompanyDB: normalizedCompanyDb,
+    UserName: reportConfig.username,
+    Password: reportConfig.password,
   });
 
   const sessionCookie = extractCookieHeader(response.headers['set-cookie']);
 
   if (!sessionCookie) {
-    const error = new Error('SAP Report Service login did not return a session cookie.');
+    const sapMessage = extractReportServiceMessage(response.data);
+    const detail = sapMessage
+      ? `SAP Report Service login failed for company ${normalizedCompanyDb}: ${sapMessage}`
+      : 'SAP Report Service login did not return a session cookie.';
+    const error = new Error(detail);
     error.statusCode = 502;
     throw error;
   }
 
-  const sessionTimeoutMinutes = Number(response.data?.SessionTimeout);
+  const responsePayload = parseLoginPayload(response.data);
+  const sessionTimeoutMinutes = Number(responsePayload?.SessionTimeout);
   const ttlMinutes = Number.isFinite(sessionTimeoutMinutes) && sessionTimeoutMinutes > 0
     ? sessionTimeoutMinutes
     : 30;
 
-  reportSessionCookie = sessionCookie;
-  reportSessionExpiresAt = Date.now() + Math.max(ttlMinutes - 1, 1) * 60 * 1000;
+  reportSessionsByCompany.set(getReportSessionKey(reportConfig), {
+    cookie: sessionCookie,
+    expiresAt: Date.now() + Math.max(ttlMinutes - 1, 1) * 60 * 1000,
+  });
 
-  return reportSessionCookie;
+  return sessionCookie;
 };
 
-const ensureReportSession = async () => {
-  if (!reportSessionCookie || Date.now() >= reportSessionExpiresAt) {
-    await loginToReportService();
+const ensureReportSession = async (companyDb = '') => {
+  const reportConfig = await resolveReportServiceConfig(companyDb);
+  const sessionKey = getReportSessionKey(reportConfig);
+  const session = reportSessionsByCompany.get(sessionKey);
+
+  if (!session?.cookie || Date.now() >= session.expiresAt) {
+    return loginToReportService(reportConfig.companyDb);
   }
+
+  return session.cookie;
 };
 
 const toRequiredString = (value, fieldName) => {
@@ -527,8 +615,12 @@ const exportReportPdf = async ({
   docCode,
   parameters = [],
   fileName = '',
+  reportCompanyDb = '',
 } = {}, retryOnAuth = true) => {
   const normalizedDocCode = toRequiredString(docCode || env.reportServiceDefaultDocCode, 'DocCode');
+  const reportConfig = await resolveReportServiceConfig(reportCompanyDb);
+  const normalizedReportCompanyDb = String(reportConfig.companyDb || '').trim();
+  const reportSessionKey = getReportSessionKey(reportConfig);
   const layoutMetadata = await getLayoutMetadata(normalizedDocCode);
   const parameterNames = new Set(
     parameters.map((parameter) => String(parameter?.name || '').trim().toUpperCase()).filter(Boolean),
@@ -561,7 +653,8 @@ const exportReportPdf = async ({
     value: [[normalizeReportParameterValue(parameter?.value, parameter?.type)]],
   }));
 
-  await ensureReportSession();
+  const reportSessionCookie = await ensureReportSession(normalizedReportCompanyDb);
+  const reportClient = getReportClient(reportConfig);
 
   let response;
 
@@ -576,10 +669,9 @@ const exportReportPdf = async ({
     });
   } catch (error) {
     if (retryOnAuth && error.response?.status === 401) {
-      reportSessionCookie = '';
-      reportSessionExpiresAt = 0;
-      await loginToReportService();
-      return exportReportPdf({ docCode, parameters, fileName }, false);
+      reportSessionsByCompany.delete(reportSessionKey);
+      await loginToReportService(normalizedReportCompanyDb);
+      return exportReportPdf({ docCode, parameters, fileName, reportCompanyDb: normalizedReportCompanyDb }, false);
     }
 
     throw error;
@@ -646,11 +738,13 @@ const exportDocumentPdf = async ({
   fileName = '',
 } = {}, retryOnAuth = true) => {
   const normalizedDocEntry = toRequiredString(docEntry, 'DocEntry');
-  const normalizedSchema = toRequiredString(schema || env.reportServiceDefaultSchema, 'Schema');
+  const reportConfig = await resolveReportServiceConfig();
+  const normalizedSchema = toRequiredString(schema || reportConfig.defaultSchema, 'Schema');
   const normalizedDocCode = toRequiredString(docCode || env.reportServiceDefaultDocCode, 'DocCode');
 
   const genericResponse = await exportReportPdf({
     docCode: normalizedDocCode,
+    reportCompanyDb: normalizedSchema,
     parameters: [
       {
         name: 'Dockey@',
@@ -718,7 +812,11 @@ const parseJsonPayload = (payload) => {
 
 const loadReportParameters = async (docCode, retryOnAuth = true) => {
   const normalizedDocCode = toRequiredString(docCode, 'DocCode');
-  await ensureReportSession();
+  const reportConfig = await resolveReportServiceConfig();
+  const reportCompanyDb = String(reportConfig.companyDb || '').trim();
+  const reportSessionKey = getReportSessionKey(reportConfig);
+  const reportSessionCookie = await ensureReportSession(reportCompanyDb);
+  const reportClient = getReportClient(reportConfig);
 
   let response;
 
@@ -733,9 +831,8 @@ const loadReportParameters = async (docCode, retryOnAuth = true) => {
     });
   } catch (error) {
     if (retryOnAuth && error.response?.status === 401) {
-      reportSessionCookie = '';
-      reportSessionExpiresAt = 0;
-      await loginToReportService();
+      reportSessionsByCompany.delete(reportSessionKey);
+      await loginToReportService(reportCompanyDb);
       return loadReportParameters(normalizedDocCode, false);
     }
 
@@ -765,7 +862,11 @@ const loadReportParameters = async (docCode, retryOnAuth = true) => {
 };
 
 const loadAuthorizedCrList = async (query = '', retryOnAuth = true) => {
-  await ensureReportSession();
+  const reportConfig = await resolveReportServiceConfig();
+  const reportCompanyDb = String(reportConfig.companyDb || '').trim();
+  const reportSessionKey = getReportSessionKey(reportConfig);
+  const reportSessionCookie = await ensureReportSession(reportCompanyDb);
+  const reportClient = getReportClient(reportConfig);
 
   let response;
 
@@ -777,9 +878,8 @@ const loadAuthorizedCrList = async (query = '', retryOnAuth = true) => {
     });
   } catch (error) {
     if (retryOnAuth && error.response?.status === 401) {
-      reportSessionCookie = '';
-      reportSessionExpiresAt = 0;
-      await loginToReportService();
+      reportSessionsByCompany.delete(reportSessionKey);
+      await loginToReportService(reportCompanyDb);
       return loadAuthorizedCrList(query, false);
     }
 

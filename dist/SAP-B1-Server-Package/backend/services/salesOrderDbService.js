@@ -199,16 +199,20 @@ const getItems = () => safe(db.query(`
 `));
 
 // Enhanced item list for modal with all details
-const getItemsForModal = () => safe(db.query(`
+const getItemsForModal = (whsCode = '') => {
+  const hasWarehouse = String(whsCode || '').trim();
+
+  return safe(db.query(`
   SELECT 
     T0.ItemCode,
     T0.ItemName,
     T0.FrgnName AS ForeignName,
     T0.ItmsGrpCod AS ItemGroupCode,
     T1.ItmsGrpNam AS ItemGroup, 
-    CAST(T0.OnHand AS DECIMAL(19,2)) AS InStock,
-    T0.IsCommited AS Committed,
-    T0.OnOrder AS Ordered,
+    CAST(${hasWarehouse ? 'ISNULL(W.OnHand, 0)' : 'T0.OnHand'} AS DECIMAL(19,2)) AS InStock,
+    ${hasWarehouse ? 'ISNULL(W.IsCommited, 0)' : 'T0.IsCommited'} AS Committed,
+    ${hasWarehouse ? 'ISNULL(W.OnOrder, 0)' : 'T0.OnOrder'} AS Ordered,
+    CAST(${hasWarehouse ? 'ISNULL(W.OnHand, 0) - ISNULL(W.IsCommited, 0)' : 'T0.OnHand - T0.IsCommited'} AS DECIMAL(19,2)) AS Available,
     T0.SalUnitMsr AS SalesUnit,
     T0.InvntryUom AS InventoryUOM,
     T0.SUoMEntry AS UoMGroupEntry,
@@ -230,13 +234,15 @@ const getItemsForModal = () => safe(db.query(`
   FROM OITM T0
  LEFT JOIN OITB T1 ON T0.ItmsGrpCod = T1.ItmsGrpCod 
    LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID
+   ${hasWarehouse ? 'LEFT JOIN OITW W ON W.ItemCode = T0.ItemCode AND W.WhsCode = @WhsCode' : ''}
 
  WHERE T0.SellItem = 'Y'
     AND T0.validFor <> 'N'
   ORDER BY T0.ItemCode
 
  
-`));
+`, hasWarehouse ? { WhsCode: hasWarehouse } : {}));
+};
 
 // Get freight charges for modal
 const getFreightCharges = (docEntry) => {
@@ -1812,7 +1818,15 @@ ORDER BY T1.LineNum
 
 // ── OPEN SALES ORDERS (FOR COPY FROM) ────────────────────────────────────────
 
-const getOpenSalesOrders = () => safe(db.query(`
+const getOpenSalesOrders = (customerCode = '') => {
+  const normalizedCustomerCode = String(customerCode || '').trim();
+  const params = {};
+  const customerFilter = normalizedCustomerCode ? 'AND T0.CardCode = @customerCode' : '';
+  if (normalizedCustomerCode) {
+    params.customerCode = normalizedCustomerCode;
+  }
+
+  return safe(db.query(`
   SELECT TOP 200
     T0.DocEntry,
     T0.DocNum,
@@ -1825,8 +1839,10 @@ const getOpenSalesOrders = () => safe(db.query(`
   FROM ORDR T0
   WHERE T0.DocStatus = 'O'
     AND T0.CANCELED <> 'Y'
+    ${customerFilter}
   ORDER BY T0.DocDate DESC, T0.DocNum DESC
-`));
+`, params));
+};
 
 const getSalesOrderForCopy = async (docEntry) => {
   const headerFieldMetadata = await getTableFieldMetadata('ORDR');

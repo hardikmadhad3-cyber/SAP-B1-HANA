@@ -150,14 +150,39 @@ const getAllowedReportMenuIdsForCompany = async (companyId) => {
   );
 };
 
+const syncAdminRoleRightsForRole = async (db, roleId, roleName = '') => {
+  if (!isAdminRoleName(roleName) || !Number.isInteger(Number(roleId))) return;
+
+  await db.query(`
+    INSERT INTO dbo.RoleRights (RoleId, MenuId, CanView, CanAdd, CanEdit, CanDelete)
+    SELECT @roleId, M.MenuId, 1, 1, 1, 0
+    FROM dbo.Menus M
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM dbo.RoleRights RR
+      WHERE RR.RoleId = @roleId
+        AND RR.MenuId = M.MenuId
+    )
+  `, { roleId: Number(roleId) });
+};
+
 const buildAuthorizedMenus = async (roleId, roleName = '', companyId = null) => {
   await authDbService.transaction(async (db) => {
     await syncApplicationSidebarMenus(db);
+    await syncAdminRoleRightsForRole(db, roleId, roleName);
   });
 
   const [allMenus, roleRights] = await Promise.all([
-    authDbService.getAllMenus(),
-    authDbService.getRoleRights(roleId),
+    authDbService.queryRows(`
+      SELECT MenuId, MenuName, MenuPath, ParentId, Icon, SortOrder
+      FROM dbo.Menus
+      ORDER BY SortOrder, MenuId
+    `),
+    authDbService.queryRows(`
+      SELECT RoleId, MenuId, CanView, CanAdd, CanEdit, CanDelete
+      FROM dbo.RoleRights
+      WHERE RoleId = @roleId
+    `, { roleId }),
   ]);
 
   const allowedReportMenuIds = await getAllowedReportMenuIdsForCompany(companyId);

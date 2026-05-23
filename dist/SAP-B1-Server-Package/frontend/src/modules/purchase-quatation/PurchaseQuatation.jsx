@@ -19,11 +19,14 @@ import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { copyToDocument } from '../../services/documentCopyService';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   fetchPurchaseQuotationByDocEntry,
   fetchPurchaseQuotationReferenceData,
@@ -32,18 +35,16 @@ import {
   updatePurchaseQuotation,
   fetchDocumentSeries,
   fetchNextNumber,
-  fetchStateFromAddress,
   fetchFreightCharges,
 } from '../../api/purchaseQuotationApi';
 import {
   fetchOpenPurchaseRequestsForCopy,
   fetchPurchaseRequestForCopy,
 } from '../../api/purchaseOrderApi';
-import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
+import { fetchHSNCodes } from '../../api/hsnCodeApi';
 import { PURCHASE_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
-import { buildCopyToState, openCopyToDocument } from '../../utils/copyToState';
-import { normaliseDocumentHeader, normaliseDocumentLine } from '../../api/copyFromApi';
+import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument } from '../../api/copyFromApi';
 import {
   BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
@@ -51,7 +52,7 @@ import {
   ROW_UDF_DEFINITIONS,
   createUdfState,
   readSavedFormSettings,
-} from '../../config/purchaseOrderForm';
+} from '../../config/purchaseQuotationForm';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
@@ -117,16 +118,64 @@ const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Doc
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
   itemDescription: '',
+  requiredDate: '',
+  quotedDate: '',
+  requiredQty: '',
   hsnCode: '',
+  sacCode: '',
   quantity: '',
   uomCode: '',
+  uomName: '',
   unitPrice: '',
+  unitPriceUdf: '',
   stdDiscount: '',
   taxCode: '',
+  taxAmount: '',
+  totalBeforeTax: '',
+  totalLC: '',
   total: '',
   whse: '',
+  distRule: '',
+  countryOfOrigin: '',
   loc: '',
   branch: '',
+  blanketAgreementNo: '',
+  saudaNodeRef: '',
+  apInvDocKey: '',
+  apInvDocNum: '',
+  apInvLineNum: '',
+  assessableValue: '',
+  bedRate: '',
+  bedAmount: '',
+  rg23dNo: '',
+  specialRebate: '',
+  commission: '',
+  sellerItem: '',
+  sellerQty: '',
+  sellerBrokeragePerQty: '',
+  sellerBrokerage: '',
+  buyerBrokerage: '',
+  buyerDelivery: '',
+  sellerDelivery: '',
+  buyerPaymentTerms: '',
+  sellerPaymentTerms: '',
+  buyerQuality: '',
+  sellerQuality: '',
+  buyerPrice: '',
+  sellerPrice: '',
+  buyerSpecialInstruction: '',
+  sellerSpecialInstruction: '',
+  sellerBrokerageAmtPer: '',
+  sellerBrokeragePercent: '',
+  buyerBillDiscount: '',
+  sellerBillDiscount: '',
+  stcode: '',
+  freightPurchase: '',
+  freightSales: '',
+  freightProvider: '',
+  freightProviderName: '',
+  documentCreated: '',
+  brokerageNumber: '',
   taxCodeManuallyOverridden: false,
   udf: createUdfState(rowUdfDefinitions),
 });
@@ -231,6 +280,8 @@ const PURCHASE_QUOTATION_COPY_BASE_TYPE = {
 };
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
+
 function PurchaseOrder() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -284,7 +335,7 @@ function PurchaseOrder() {
     lines: {},
     form: '',
   });
-  const [loadedSnapshot, setLoadedSnapshot] = useState('');
+  useValidationHighlights(valErrors);
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -336,7 +387,23 @@ function PurchaseOrder() {
   const dec = { ...DEC, ...(refData.decimal_settings || {}) };
   const numDec = {
     quantity: Number(dec.QtyDec),
+    requiredQty: Number(dec.QtyDec),
+    sellerQty: Number(dec.QtyDec),
+    sellerBrokeragePerQty: Number(dec.PriceDec),
     unitPrice: Number(dec.PriceDec),
+    unitPriceUdf: Number(dec.PriceDec),
+    assessableValue: Number(dec.SumDec),
+    bedRate: Number(dec.PercentDec),
+    bedAmount: Number(dec.SumDec),
+    specialRebate: Number(dec.PercentDec),
+    commission: Number(dec.PercentDec),
+    sellerBrokerage: Number(dec.SumDec),
+    buyerBrokerage: Number(dec.SumDec),
+    sellerBrokeragePercent: Number(dec.PercentDec),
+    buyerBillDiscount: Number(dec.PercentDec),
+    sellerBillDiscount: Number(dec.PercentDec),
+    freightPurchase: Number(dec.SumDec),
+    freightSales: Number(dec.SumDec),
     stdDiscount: Number(dec.PercentDec),
     total: Number(dec.SumDec),
     discount: Number(dec.PercentDec),
@@ -379,7 +446,6 @@ function PurchaseOrder() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-    setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
@@ -484,7 +550,6 @@ function PurchaseOrder() {
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(quotation.header_udfs || {}) });
-        setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
         if (quotation.header?.vendor) {
@@ -543,9 +608,6 @@ function PurchaseOrder() {
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -572,7 +634,6 @@ function PurchaseOrder() {
   }, {});
 
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
-  const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
 
   const getUomOptions = useCallback((line) => {
     const item = refData.items.find(i => String(i.ItemCode || '') === String(line.itemNo || ''));
@@ -584,11 +645,6 @@ function PurchaseOrder() {
     }
     return FALLBACK_UOM;
   }, [refData.items, uomGroupMap]);
-
-  const uomOptions = lines.reduce((acc, line, i) => {
-    acc[i] = getUomOptions(line);
-    return acc;
-  }, {});
   const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : [];
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
@@ -973,14 +1029,13 @@ function PurchaseOrder() {
       if (name === 'itemNo') {
         const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
         if (item) {
-          next.itemDescription = item.ItemName || next.itemDescription;
-          next.hsnCode = item.HSNCode || next.hsnCode || '';
-          next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
-
-          // Auto-assign default warehouse
-          if (item.DefaultWarehouse) {
-            next.whse = item.DefaultWarehouse;
-          }
+          Object.assign(next, hydrateDocumentLineFromItem(next, mergeItemMaster(item, refData.items), {
+            side: 'purchase',
+            hsnCode: item.HSNCode || next.hsnCode || '',
+            fallbackWarehouse: header.warehouse,
+            calcLineTotal,
+            formatTotal: (lineTotal) => fmtDec(lineTotal, numDec.total),
+          }));
         }
 
         if (!next.taxCodeManuallyOverridden) {
@@ -1212,13 +1267,15 @@ function PurchaseOrder() {
       addressForm.buildingFloorRoom,
       [addressForm.block, addressForm.city].filter(Boolean).join(', '),
       [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion
+      addressForm.countryRegion,
+      addressForm.addressName2,
+      addressForm.addressName3,
     ].filter(Boolean).join('\n');
 
     if (addressModal.type === 'shipTo') {
-      setHeader(p => ({ ...p, shipTo: formatted }));
+      setHeader(p => ({ ...p, shipTo: formatted, shipToAddress: formatted }));
     } else {
-      setHeader(p => ({ ...p, payTo: formatted }));
+      setHeader(p => ({ ...p, payTo: formatted, billTo: formatted, billToAddress: formatted }));
     }
     closeAddressModal();
   };
@@ -1314,12 +1371,13 @@ function PurchaseOrder() {
 
   // ── validation ────────────────────────────────────────────────────────────
   const handleCopyFrom = (data, docType) => {
+    const copySource = unwrapCopyFromDocument(data);
     const baseType = PURCHASE_QUOTATION_COPY_BASE_TYPE[docType] || 1470000113;
-    const normalizedHeader = normaliseDocumentHeader(data);
-    const rawLines = data.DocumentLines || data.lines || [];
+    const normalizedHeader = normaliseDocumentHeader(copySource.header);
+    const rawLines = copySource.lines;
     const copiedLines = rawLines.map((line, index) => ({
       ...createLine(rowUdfDefinitions),
-      ...normaliseDocumentLine(line, index, data.DocEntry || data.docEntry, baseType, normalizedHeader.branch),
+      ...normaliseDocumentLine(line, index, copySource.docEntry, baseType, normalizedHeader.branch),
       taxCodeManuallyOverridden: false,
     }));
 
@@ -1366,35 +1424,21 @@ function PurchaseOrder() {
     throw new Error(`Unsupported copy from type: ${docType}`);
   };
 
-  const handleCopyTo = (targetType) => {
-    const copyState = buildCopyToState({
+  const handleCopyTo = async (targetType) => {
+    await copyToDocument({
       sourceDocType: 'purchaseQuotation',
-      sourceLabel: 'Purchase Quotation',
+      targetType,
       sourceDocEntry: currentDocEntry,
-      header,
-      lines,
-      baseType: 540000006,
+      sourceDocNo: header.docNo,
+      sourcePath: location.pathname,
+      sourceSnapshot: { header, lines },
+      restoreState: { purchaseQuotationDocEntry: currentDocEntry },
+      navigate,
+      upsertTask,
+      removeTask,
+      setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
+      errorMessage: 'Please save the purchase quotation first before copying to another document.',
     });
-
-    if (targetType === 'purchaseOrder') {
-      openCopyToDocument({
-        sourceDocType: 'purchaseQuotation',
-        sourceLabel: 'Purchase Quotation',
-        sourceDocEntry: currentDocEntry,
-        sourceDocNo: header.docNo,
-        sourcePath: location.pathname,
-        targetDocType: 'purchaseOrder',
-        targetLabel: 'Purchase Order',
-        targetPath: '/purchase-order',
-        copyState,
-        restoreState: { purchaseQuotationDocEntry: currentDocEntry },
-        navigate,
-        upsertTask,
-        removeTask,
-        setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
-        errorMessage: 'Please save the purchase quotation first before copying to another document.',
-      });
-    }
   };
 
   const validate = () => {
@@ -1498,7 +1542,6 @@ function PurchaseOrder() {
       const payload = { company_id: PURCHASE_ORDER_COMPANY_ID, header: prep, lines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
       const r = currentDocEntry ? await updatePurchaseQuotation(currentDocEntry, payload) : await submitPurchaseQuotation(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-      setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -1517,7 +1560,6 @@ function PurchaseOrder() {
   };
 
   const resetForm = () => {
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -1530,7 +1572,6 @@ function PurchaseOrder() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
-  const visibleColumns = BASE_MATRIX_COLUMNS.filter(c => formSettings.matrixColumns?.[c.key]?.visible !== false);
   const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
 
   // ── render ────────────────────────────────────────────────────────────────
@@ -1902,6 +1943,7 @@ function PurchaseOrder() {
                 getBranchName={getBranchName}
                 branches={refData.branches || []}
                 hsnCodes={refData.hsn_codes || []}
+                formSettings={formSettings}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
                 valErrors={valErrors}

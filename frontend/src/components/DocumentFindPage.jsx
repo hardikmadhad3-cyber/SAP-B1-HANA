@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
 import ComboBox from '../modules/item-master/components/ComboBox';
+import { createCompanyScopedRouteState } from '../utils/companyStorageScope';
 import '../modules/item-master/styles/itemMaster.css';
 import '../styles/sales-order-list.css';
 
@@ -48,6 +50,7 @@ function DocumentFindPage({
   sellerNameField = 'seller_name',
 }) {
   const navigate = useNavigate();
+  const { company } = useAuth();
   const [documents, setDocuments] = useState([]);
   const [filters, setFilters] = useState(INITIAL_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState(INITIAL_FILTERS);
@@ -424,7 +427,7 @@ function DocumentFindPage({
                         className="btn btn-outline-primary btn-sm"
                         onClick={() =>
                           navigate(editPath, {
-                            state: { [editStateKey]: document.doc_entry },
+                            state: createCompanyScopedRouteState({ [editStateKey]: document.doc_entry }, company),
                           })
                         }
                       >

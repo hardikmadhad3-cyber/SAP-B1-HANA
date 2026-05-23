@@ -51,7 +51,7 @@ const Header = () => {
     if (isAdminSearchPath(normalizedPath)) {
       window.open(normalizedPath, '_blank', 'noopener,noreferrer');
     } else {
-      navigate(normalizedPath);
+      navigate(normalizedPath, { state: null });
     }
     setSearchQuery('');
     setSearchOpen(false);

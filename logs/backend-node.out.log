@@ -1,0 +1,14 @@
+[dotenv@17.3.1] injecting env (16) from .env -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+[dotenv@17.3.1] injecting env (0) from .env -- tip: 🔐 encrypt with Dotenvx: https://dotenvx.com
+[Server] Running on http://0.0.0.0:5001 (accessible on LAN)
+[AUTH_DB] SQL Server pool connected to henny_master
+[POST] /api/login
+Request body: {
+  "username": "manager",
+  "password": "[REDACTED]"
+}
+[POST] /api/select-company
+Request body: {
+  "userId": 1,
+  "companyId": 1
+}

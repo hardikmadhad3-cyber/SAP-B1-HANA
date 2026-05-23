@@ -40,8 +40,13 @@ const fetchItemsForModal = () =>
 const fetchFreightCharges = (docEntry) =>
   apiClient.get('/sales-quotation/freight-charges', { params: { docEntry } });
 
-const fetchOpenSalesQuotations = () =>
-  apiClient.get('/sales-quotation/open');
+const createSalesQuotationLookupValue = (field, value, description = '') =>
+  apiClient.post('/sales-quotation/lookup-values', { field, value, description });
+
+const fetchOpenSalesQuotations = (customerCode = null) =>
+  apiClient.get('/sales-quotation/open', {
+    params: customerCode ? { customerCode } : {},
+  });
 
 const fetchSalesQuotationForCopy = (docEntry) =>
   apiClient.get(`/sales-quotation/${encodeURIComponent(docEntry)}/copy`);
@@ -59,6 +64,7 @@ export {
   fetchStateFromAddress,
   fetchItemsForModal,
   fetchFreightCharges,
+  createSalesQuotationLookupValue,
   fetchOpenSalesQuotations,
   fetchSalesQuotationForCopy,
 };

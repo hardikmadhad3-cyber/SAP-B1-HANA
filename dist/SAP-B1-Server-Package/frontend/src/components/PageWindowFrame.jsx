@@ -112,6 +112,7 @@ function PageWindowFrame({ children }) {
     resetOnClose: false,
     taskId: routedWindow?.id || `page-window:${normalizedPath}`,
     taskPath: routedWindow?.path || normalizedPath,
+    taskState: location.state || undefined,
     taskTitle: pageTitle,
   });
 

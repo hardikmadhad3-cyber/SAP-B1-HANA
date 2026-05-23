@@ -239,15 +239,19 @@ const submitARInvoice = async (payload) => {
 
       DocumentLines: payload.lines.map((l, index) => {
         console.log(`🔍 [ARInvoiceService] Processing line ${index}:`, l);
-        
+        const warehouseCode = String(l.whse || l.warehouse || '').trim();
+
         const line = {
           ItemCode: l.itemNo,
           Quantity: Number(l.quantity),
           UnitPrice: Number(l.unitPrice),
-          WarehouseCode: l.whse || l.warehouse || "01",
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
         };
+
+        if (warehouseCode) {
+          line.WarehouseCode = warehouseCode;
+        }
 
         // Add discount if present
         if (l.stdDiscount && Number(l.stdDiscount) > 0) {
@@ -344,11 +348,11 @@ const updateARInvoice = async (docEntry, payload) => {
       DocumentAdditionalExpenses: documentAdditionalExpenses,
 
       DocumentLines: payload.lines.map((l) => {
+        const warehouseCode = String(l.whse || l.warehouse || '').trim();
         const line = {
           ItemCode: l.itemNo,
           Quantity: Number(l.quantity),
           UnitPrice: Number(l.unitPrice),
-          WarehouseCode: l.whse || l.warehouse || "01",
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
           DiscountPercent: l.stdDiscount ? Number(l.stdDiscount) : (l.discountPercent ? Number(l.discountPercent) : 0),
@@ -356,6 +360,9 @@ const updateARInvoice = async (docEntry, payload) => {
           BaseEntry: l.baseEntry ? Number(l.baseEntry) : undefined,
           BaseLine: l.baseLine !== undefined ? Number(l.baseLine) : undefined,
         };
+        if (warehouseCode) {
+          line.WarehouseCode = warehouseCode;
+        }
         applyUdfs(line, l.udf, allowedLineUdfs);
         return line;
       })
@@ -490,6 +497,6 @@ module.exports = {
     } 
   },
   getDeliveryForCopy:      async (d) => arInvoiceDb.getDeliveryForCopy(d),
-  getOpenSalesQuotations:  async () => { try { return { documents: await arInvoiceDb.getOpenSalesQuotations() }; } catch(e) { return { documents: [] }; } },
+  getOpenSalesQuotations:  async (customerCode = null) => { try { return { documents: await arInvoiceDb.getOpenSalesQuotations(customerCode) }; } catch(e) { return { documents: [] }; } },
   getSalesQuotationForCopy:async (d) => arInvoiceDb.getSalesQuotationForCopy(d),
 };

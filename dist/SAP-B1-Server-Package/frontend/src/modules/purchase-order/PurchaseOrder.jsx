@@ -20,11 +20,14 @@ import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { copyToDocument } from '../../services/documentCopyService';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   fetchPurchaseOrderByDocEntry,
   fetchPurchaseOrderReferenceData,
@@ -33,7 +36,6 @@ import {
   updatePurchaseOrder,
   fetchDocumentSeries,
   fetchNextNumber,
-  fetchStateFromAddress,
   fetchItemsForModal,
   fetchFreightCharges,
   fetchOpenPurchaseQuotationsForCopy,
@@ -44,8 +46,8 @@ import {
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { PURCHASE_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
-import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../utils/copyToState';
-import { normaliseDocumentHeader, normaliseDocumentLine } from '../../api/copyFromApi';
+import { consumeCopyToState } from '../../utils/copyToState';
+import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument } from '../../api/copyFromApi';
 import {
   BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
@@ -237,6 +239,8 @@ const PURCHASE_COPY_BASE_TYPE = {
 };
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
+
 function PurchaseOrder() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -289,7 +293,7 @@ function PurchaseOrder() {
     lines: {},
     form: '',
   });
-  const [loadedSnapshot, setLoadedSnapshot] = useState('');
+  useValidationHighlights(valErrors);
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -385,7 +389,6 @@ function PurchaseOrder() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
-    setLoadedSnapshot(JSON.stringify({ header, lines, headerUdfs }));
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
@@ -496,7 +499,6 @@ function PurchaseOrder() {
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(po.header_udfs || {}) });
-        setLoadedSnapshot('');
         setSnapshotPending(true);
         setIsDirty(false);
         if (po.header?.vendor) {
@@ -591,9 +593,6 @@ function PurchaseOrder() {
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const vendorOptions = header.vendor && !refData.vendors.some(v => String(v.CardCode || '') === String(header.vendor || ''))
-    ? [{ CardCode: header.vendor, CardName: header.name || header.vendor }, ...refData.vendors]
-    : refData.vendors;
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
@@ -620,7 +619,6 @@ function PurchaseOrder() {
   }, {});
 
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
-  const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
 
   const getUomOptions = useCallback((line) => {
     const item = refData.items.find(i => String(i.ItemCode || '') === String(line.itemNo || ''));
@@ -632,11 +630,6 @@ function PurchaseOrder() {
     }
     return FALLBACK_UOM;
   }, [refData.items, uomGroupMap]);
-
-  const uomOptions = lines.reduce((acc, line, i) => {
-    acc[i] = getUomOptions(line);
-    return acc;
-  }, {});
   const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : [];
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
@@ -1220,13 +1213,15 @@ function PurchaseOrder() {
       addressForm.buildingFloorRoom,
       [addressForm.block, addressForm.city].filter(Boolean).join(', '),
       [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion
+      addressForm.countryRegion,
+      addressForm.addressName2,
+      addressForm.addressName3,
     ].filter(Boolean).join('\n');
 
     if (addressModal.type === 'shipTo') {
-      setHeader(p => ({ ...p, shipTo: formatted }));
+      setHeader(p => ({ ...p, shipTo: formatted, shipToAddress: formatted }));
     } else {
-      setHeader(p => ({ ...p, payTo: formatted }));
+      setHeader(p => ({ ...p, payTo: formatted, billTo: formatted, billToAddress: formatted }));
     }
     closeAddressModal();
   };
@@ -1267,17 +1262,19 @@ function PurchaseOrder() {
   const handleItemSelect = async (item) => {
     const lineIndex = itemModal.lineIndex;
     if (lineIndex < 0) return;
+    const mergedItem = mergeItemMaster(item, refData.items);
     try {
-      const hsnResponse = await fetchHSNCodeFromItem(item.ItemCode);
-      const hsnCode = hsnResponse.data?.hsnCode || item.HSNCode || '';
+      const hsnResponse = await fetchHSNCodeFromItem(mergedItem.ItemCode);
+      const hsnCode = hsnResponse.data?.hsnCode || mergedItem.HSNCode || '';
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        const next = { ...line };
-        next.itemNo = item.ItemCode;
-        next.itemDescription = item.ItemName || '';
-        next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
-        next.hsnCode = hsnCode;
-        if (item.DefaultWarehouse) next.whse = item.DefaultWarehouse;
+        const next = hydrateDocumentLineFromItem(line, mergedItem, {
+          side: 'purchase',
+          hsnCode,
+          fallbackWarehouse: header.warehouse,
+          calcLineTotal,
+          formatTotal: (value) => fmtDec(value, numDec.total),
+        });
         if (!next.taxCodeManuallyOverridden) {
           const preferredTaxCode = getPreferredLineTaxCode(next.taxCode);
           if (preferredTaxCode) {
@@ -1290,14 +1287,16 @@ function PurchaseOrder() {
     } catch {
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        return {
-          ...line,
-          itemNo: item.ItemCode,
-          itemDescription: item.ItemName || '',
-          uomCode: String(item.PurchaseUnit || item.InventoryUOM || '').trim(),
-          hsnCode: item.HSNCode || '',
-          taxCode: !line.taxCodeManuallyOverridden ? (getPreferredLineTaxCode(line.taxCode) || line.taxCode) : line.taxCode,
-        };
+        const next = hydrateDocumentLineFromItem(line, mergedItem, {
+          side: 'purchase',
+          hsnCode: mergedItem.HSNCode || '',
+          fallbackWarehouse: header.warehouse,
+          calcLineTotal,
+          formatTotal: (value) => fmtDec(value, numDec.total),
+        });
+        next.taxCode = !line.taxCodeManuallyOverridden ? (getPreferredLineTaxCode(next.taxCode) || next.taxCode) : line.taxCode;
+        next.total = fmtDec(calcLineTotal(next), numDec.total);
+        return next;
       }));
     }
     closeItemModal();
@@ -1375,15 +1374,16 @@ function PurchaseOrder() {
   };
 
   const handleCopyFrom = (data, docType) => {
+    const copySource = unwrapCopyFromDocument(data);
     const baseType = PURCHASE_COPY_BASE_TYPE[docType] || 540000006;
-    const normalizedHeader = normaliseDocumentHeader(data);
+    const normalizedHeader = normaliseDocumentHeader(copySource.header);
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
 
-    const rawLines = data.DocumentLines || data.lines || [];
+    const rawLines = copySource.lines;
     const copiedLines = rawLines.map((line, index) => ({
       ...createLine(rowUdfDefinitions),
-      ...normaliseDocumentLine(line, index, data.DocEntry || data.docEntry, baseType, normalizedHeader.branch),
+      ...normaliseDocumentLine(line, index, copySource.docEntry, baseType, normalizedHeader.branch),
       taxCodeManuallyOverridden: false,
     }));
 
@@ -1438,35 +1438,21 @@ function PurchaseOrder() {
     throw new Error(`Unsupported copy from type: ${docType}`);
   };
 
-  const handleCopyTo = (targetType) => {
-    const copyState = buildCopyToState({
+  const handleCopyTo = async (targetType) => {
+    await copyToDocument({
       sourceDocType: 'purchaseOrder',
-      sourceLabel: 'Purchase Order',
+      targetType,
       sourceDocEntry: currentDocEntry,
-      header,
-      lines,
-      baseType: 22,
+      sourceDocNo: header.docNo,
+      sourcePath: location.pathname,
+      sourceSnapshot: { header, lines },
+      restoreState: { purchaseOrderDocEntry: currentDocEntry },
+      navigate,
+      upsertTask,
+      removeTask,
+      setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
+      errorMessage: 'Please save the purchase order first before copying to another document.',
     });
-
-    if (targetType === 'grpo') {
-      openCopyToDocument({
-        sourceDocType: 'purchaseOrder',
-        sourceLabel: 'Purchase Order',
-        sourceDocEntry: currentDocEntry,
-        sourceDocNo: header.docNo,
-        sourcePath: location.pathname,
-        targetDocType: 'grpo',
-        targetLabel: 'Goods Receipt PO',
-        targetPath: '/grpo',
-        copyState,
-        restoreState: { purchaseOrderDocEntry: currentDocEntry },
-        navigate,
-        upsertTask,
-        removeTask,
-        setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
-        errorMessage: 'Please save the purchase order first before copying to another document.',
-      });
-    }
   };
 
   // ── validation ────────────────────────────────────────────────────────────
@@ -1570,7 +1556,6 @@ function PurchaseOrder() {
       const payload = { company_id: PURCHASE_ORDER_COMPANY_ID, header: prep, lines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
       const r = currentDocEntry ? await updatePurchaseOrder(currentDocEntry, payload) : await submitPurchaseOrder(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-      setLoadedSnapshot('');
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -1591,7 +1576,6 @@ function PurchaseOrder() {
   };
 
   const resetForm = () => {
-    setLoadedSnapshot('');
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
@@ -1604,7 +1588,6 @@ function PurchaseOrder() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
-  const visibleColumns = BASE_MATRIX_COLUMNS.filter(c => formSettings.matrixColumns?.[c.key]?.visible !== false);
   const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
 
   // ── render ────────────────────────────────────────────────────────────────

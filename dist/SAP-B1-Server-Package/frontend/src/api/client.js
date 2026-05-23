@@ -6,6 +6,38 @@ const apiClient = axios.create({
   baseURL: API_BASE_URL,
 });
 
+const GET_CACHE_TTL_MS = 2 * 60 * 1000;
+const getCache = new Map();
+const pendingGets = new Map();
+
+const isCacheableGet = (url = '') => {
+  const normalized = String(url || '').toLowerCase();
+  return (
+    normalized.includes('/reference-data') ||
+    normalized.includes('/lookup/') ||
+    normalized.includes('/series') ||
+    normalized.includes('/items-modal') ||
+    normalized.includes('/freight-charges') ||
+    normalized.includes('/print-layouts') ||
+    normalized.includes('/warehouse-state') ||
+    normalized.includes('/state-from-address') ||
+    normalized.includes('/customers/search') ||
+    normalized.includes('/vendors/search') ||
+    normalized.endsWith('/metadata') ||
+    normalized === '/menu'
+  );
+};
+
+const getCacheKey = (url, config = {}) => {
+  const params = config.params ? JSON.stringify(config.params) : '';
+  return `${getActiveToken() || 'public'}:${url}:${params}`;
+};
+
+const clearGetCache = () => {
+  getCache.clear();
+  pendingGets.clear();
+};
+
 apiClient.interceptors.request.use((config) => {
   const token = getActiveToken();
   if (token) {
@@ -14,5 +46,57 @@ apiClient.interceptors.request.use((config) => {
 
   return config;
 });
+
+apiClient.interceptors.response.use(
+  (response) => {
+    const method = String(response.config?.method || 'get').toLowerCase();
+    if (method !== 'get') {
+      clearGetCache();
+    }
+
+    return response;
+  },
+  (error) => {
+    const method = String(error.config?.method || '').toLowerCase();
+    if (method && method !== 'get') {
+      clearGetCache();
+    }
+
+    return Promise.reject(error);
+  },
+);
+
+const originalGet = apiClient.get.bind(apiClient);
+
+apiClient.get = (url, config = {}) => {
+  if (!isCacheableGet(url)) {
+    return originalGet(url, config);
+  }
+
+  const key = getCacheKey(url, config);
+  const cached = getCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.response);
+  }
+
+  if (pendingGets.has(key)) {
+    return pendingGets.get(key);
+  }
+
+  const request = originalGet(url, config)
+    .then((response) => {
+      getCache.set(key, {
+        response,
+        expiresAt: Date.now() + GET_CACHE_TTL_MS,
+      });
+      return response;
+    })
+    .finally(() => {
+      pendingGets.delete(key);
+    });
+
+  pendingGets.set(key, request);
+  return request;
+};
 
 export default apiClient;

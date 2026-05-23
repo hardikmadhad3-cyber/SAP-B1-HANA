@@ -210,7 +210,7 @@ function SalesOrderPage() {
     };
     load();
     return () => { ignore = true; };
-  }, []);
+  }, [currentDocEntry]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -275,7 +275,6 @@ function SalesOrderPage() {
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
   const vendorPayToAddresses = refData.pay_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
-  const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
   const firstLineWhse = String(lines[0]?.whse || '').trim();
   const selectedWhseAddr = refData.warehouse_addresses.find(w => String(w.WhsCode || '') === firstLineWhse);
   const defaultShipTo = fmtAddr(refData.company_address);
@@ -556,7 +555,6 @@ function SalesOrderPage() {
   };
 
   const handleHeaderUdfChange = (k, v) => setHeaderUdfs(p => ({ ...p, [k]: v }));
-  const handleRowUdfChange = (i, k, v) => setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
   const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...p[g], [k]: { ...p[g][k], [prop]: val } } }));
   const toggleHeaderUdfs = () => {
     setFormSettingsOpen(false);
@@ -570,7 +568,6 @@ function SalesOrderPage() {
   // ── Address Modal handlers ────────────────────────────────────────────────
   const openAddressModal = (type) => {
     // Parse existing address if available
-    const existingAddr = type === 'shipTo' ? header.shipTo : header.payTo;
     setAddressForm({
       streetNo: '', buildingFloorRoom: '', block: '', city: '', zipCode: '', county: '',
       state: '', countryRegion: '', addressName2: '', addressName3: '', gln: '', gstin: ''
@@ -588,13 +585,15 @@ function SalesOrderPage() {
       [addressForm.streetNo, addressForm.buildingFloorRoom].filter(Boolean).join(', '),
       [addressForm.block, addressForm.city].filter(Boolean).join(', '),
       [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion
+      addressForm.countryRegion,
+      addressForm.addressName2,
+      addressForm.addressName3,
     ].filter(Boolean).join('\n');
 
     if (addressModal.type === 'shipTo') {
-      setHeader(p => ({ ...p, shipTo: formatted }));
+      setHeader(p => ({ ...p, shipTo: formatted, shipToAddress: formatted }));
     } else {
-      setHeader(p => ({ ...p, payTo: formatted }));
+      setHeader(p => ({ ...p, payTo: formatted, billTo: formatted, billToAddress: formatted }));
     }
     closeAddressModal();
   };

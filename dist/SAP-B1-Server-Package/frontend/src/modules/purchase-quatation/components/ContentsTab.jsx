@@ -1,26 +1,64 @@
 import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
-
+import { BASE_MATRIX_COLUMNS } from '../../../config/purchaseQuotationForm';
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
 
-const MATRIX_COLS = [
-  { key: 'itemNo', label: 'Item No.', minWidth: 160 },
-  { key: 'itemDescription', label: 'Description', minWidth: 220 },
-  { key: 'hsnCode', label: 'HSN', minWidth: 115 },
-  { key: 'quantity', label: 'Qty', minWidth: 80 },
-  { key: 'unitPrice', label: 'Price', minWidth: 95 },
-  { key: 'uomCode', label: 'UoM', minWidth: 85 },
-  { key: 'stdDiscount', label: 'Disc%', minWidth: 85 },
-  { key: 'taxCode', label: 'Tax Code', minWidth: 115 },
-  { key: 'totalBeforeTax', label: 'Total Before Tax', minWidth: 135 },
-  { key: 'total', label: 'Total', minWidth: 105 },
-  { key: 'whse', label: 'Whse', minWidth: 90 },
-  { key: 'loc', label: 'LOC', minWidth: 115 },
-  { key: 'branch', label: 'Branch', minWidth: 115 },
-];
+const COLUMN_WIDTHS = {
+  itemNo: 160,
+  itemDescription: 220,
+  requiredDate: 125,
+  quotedDate: 125,
+  requiredQty: 110,
+  quantity: 110,
+  unitPrice: 110,
+  unitPriceUdf: 110,
+  stdDiscount: 90,
+  taxCode: 115,
+  taxAmount: 120,
+  totalBeforeTax: 135,
+  totalLC: 115,
+  total: 115,
+  whse: 90,
+  distRule: 105,
+  uomCode: 105,
+  countryOfOrigin: 180,
+  loc: 115,
+  branch: 115,
+  blanketAgreementNo: 150,
+  sellerBrokerageAmtPer: 160,
+  sellerBrokeragePercent: 175,
+  buyerPaymentTerms: 175,
+  sellerPaymentTerms: 175,
+  buyerSpecialInstruction: 185,
+  sellerSpecialInstruction: 185,
+  freightProviderName: 165,
+  documentCreated: 140,
+  brokerageNumber: 145,
+};
 
 const INDEX_COL_WIDTH = 42;
 const ACTION_COL_WIDTH = 48;
+
+const pickerButtonStyle = {
+  padding: '0 6px',
+  fontSize: 11,
+  border: '1px solid #a0aab4',
+  background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
+  minWidth: '24px',
+  height: '22px',
+  cursor: 'pointer',
+  borderRadius: '2px',
+};
+
+const parseNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const formatDateDisplay = (value) => {
+  if (!value) return '';
+  return String(value).split('T')[0];
+};
 
 export default function ContentsTab({
   lines,
@@ -32,17 +70,18 @@ export default function ContentsTab({
   getUomOptions,
   effectiveTaxCodes,
   effectiveWarehouses,
-  fmtTaxLabel,
   valErrors,
-  branches,
-  hsnCodes,
   onOpenHSNModal,
   getBranchName,
+  formSettings = {},
   rowUdfFields = [],
   onRowUdfChange,
 }) {
-  const matrixCols = [
-    ...MATRIX_COLS,
+  const matrixColumns = [
+    ...BASE_MATRIX_COLUMNS.map((column) => ({
+      ...column,
+      minWidth: COLUMN_WIDTHS[column.key] || 125,
+    })),
     ...rowUdfFields.map((field) => ({
       key: field.key,
       label: field.label || field.key,
@@ -51,7 +90,280 @@ export default function ContentsTab({
       field,
     })),
   ];
-  const tableMinWidth = INDEX_COL_WIDTH + ACTION_COL_WIDTH + matrixCols.reduce((total, col) => total + col.minWidth, 0);
+
+  const visibleColumns = matrixColumns.filter((column) => {
+    if (column.isUdf) return formSettings.rowUdfs?.[column.key]?.visible !== false;
+    return formSettings.matrixColumns?.[column.key]?.visible !== false;
+  });
+
+  const tableMinWidth =
+    INDEX_COL_WIDTH +
+    ACTION_COL_WIDTH +
+    visibleColumns.reduce((total, col) => total + col.minWidth, 0);
+
+  const renderUdfCell = (field, line, i) => {
+    const disabled = field.readOnly || formSettings.rowUdfs?.[field.key]?.active === false;
+    const value = line.udf?.[field.key] || '';
+
+    if (field.type === 'select') {
+      return (
+        <td key={field.key}>
+          <select
+            className="so-grid__input"
+            value={value}
+            disabled={disabled}
+            onChange={(e) => onRowUdfChange && onRowUdfChange(i, field.key, e.target.value)}
+          >
+            <option value=""></option>
+            {(field.options || []).map((option) => {
+              const normalizedOption = typeof option === 'object' ? option : { value: option, label: option };
+              return (
+                <option key={normalizedOption.value} value={normalizedOption.value}>
+                  {normalizedOption.label}
+                </option>
+              );
+            })}
+          </select>
+        </td>
+      );
+    }
+
+    if (field.type === 'checkbox') {
+      return (
+        <td key={field.key}>
+          <input
+            type="checkbox"
+            checked={['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase())}
+            disabled={disabled}
+            onChange={(e) => onRowUdfChange && onRowUdfChange(i, field.key, e.target.checked ? 'Y' : 'N')}
+          />
+        </td>
+      );
+    }
+
+    return (
+      <td key={field.key}>
+        <input
+          className="so-grid__input"
+          type={field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onRowUdfChange && onRowUdfChange(i, field.key, e.target.value)}
+        />
+      </td>
+    );
+  };
+
+  const renderCell = (column, line, i, uomOpts, lineTotals) => {
+    if (column.isUdf) return renderUdfCell(column.field, line, i);
+
+    const taxAmount = (() => {
+      if (String(line.taxAmount ?? '').trim()) return line.taxAmount;
+      if (!lineTotals.beforeTax || !lineTotals.total) return '';
+      return (parseNumber(lineTotals.total) - parseNumber(lineTotals.beforeTax)).toFixed(2);
+    })();
+
+    const textInput = (key, options = {}) => (
+      <td key={key}>
+        <input
+          className="so-grid__input"
+          name={key}
+          value={line[key] || ''}
+          onChange={(e) => onLineChange(i, e)}
+          onBlur={options.numeric ? () => onNumBlur(key, 'line', i) : undefined}
+          type={options.type || 'text'}
+          readOnly={options.readOnly}
+          disabled={options.disabled}
+          style={options.style}
+        />
+      </td>
+    );
+
+    const readonlyInput = (key, value) => (
+      <td key={key}>
+        <input className="so-grid__input" value={value || ''} readOnly style={{ background: '#f5f8fc' }} />
+      </td>
+    );
+
+    const cellRenderers = {
+      itemNo: () => (
+        <td key="itemNo">
+          <select
+            className="so-grid__input"
+            style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
+            name="itemNo"
+            value={line.itemNo || ''}
+            onChange={(e) => onLineChange(i, e)}
+          >
+            <option value="">Select</option>
+            {(lineItemOptions[i] || []).map((item) => (
+              <option key={item.ItemCode} value={item.ItemCode}>
+                {item.ItemCode}
+              </option>
+            ))}
+          </select>
+          {valErrors.lines[i]?.itemNo && (
+            <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].itemNo}</div>
+          )}
+        </td>
+      ),
+      itemDescription: () => textInput('itemDescription', { style: { textAlign: 'left' } }),
+      requiredDate: () => textInput('requiredDate', { type: 'date' }),
+      quotedDate: () => textInput('quotedDate', { type: 'date' }),
+      requiredQty: () => textInput('requiredQty', { numeric: true }),
+      quantity: () => (
+        <td key="quantity">
+          <input
+            className="so-grid__input"
+            style={{ border: valErrors.lines[i]?.quantity ? '1px solid #c00' : undefined }}
+            name="quantity"
+            value={line.quantity || ''}
+            onChange={(e) => onLineChange(i, e)}
+            onBlur={() => onNumBlur('quantity', 'line', i)}
+          />
+          {valErrors.lines[i]?.quantity && (
+            <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].quantity}</div>
+          )}
+        </td>
+      ),
+      unitPrice: () => (
+        <td key="unitPrice">
+          <input
+            className="so-grid__input"
+            style={{ border: valErrors.lines[i]?.unitPrice ? '1px solid #c00' : undefined }}
+            name="unitPrice"
+            value={line.unitPrice || ''}
+            onChange={(e) => onLineChange(i, e)}
+            onBlur={() => onNumBlur('unitPrice', 'line', i)}
+          />
+          {valErrors.lines[i]?.unitPrice && (
+            <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].unitPrice}</div>
+          )}
+        </td>
+      ),
+      unitPriceUdf: () => textInput('unitPriceUdf', { numeric: true }),
+      stdDiscount: () => textInput('stdDiscount', { numeric: true }),
+      taxCode: () => (
+        <td key="taxCode">
+          <TaxCodeLookup
+            className="so-grid__input"
+            style={{ width: '100%', textAlign: 'left' }}
+            name="taxCode"
+            value={line.taxCode || ''}
+            onChange={(e) => onLineChange(i, e)}
+            taxCodes={effectiveTaxCodes}
+          />
+        </td>
+      ),
+      taxAmount: () => readonlyInput('taxAmount', taxAmount),
+      totalBeforeTax: () => readonlyInput('totalBeforeTax', lineTotals.beforeTax),
+      totalLC: () => readonlyInput('totalLC', lineTotals.beforeTax),
+      total: () => readonlyInput('total', lineTotals.total),
+      whse: () => (
+        <td key="whse">
+          <select
+            className="so-grid__input"
+            style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.whse ? '1px solid #c00' : undefined }}
+            name="whse"
+            value={line.whse || ''}
+            onChange={(e) => onLineChange(i, e)}
+          >
+            <option value="">Select</option>
+            {effectiveWarehouses.map((warehouse) => (
+              <option key={warehouse.WhsCode} value={warehouse.WhsCode}>
+                {warehouse.WhsCode}
+              </option>
+            ))}
+            {line.whse && !effectiveWarehouses.some((warehouse) => warehouse.WhsCode === line.whse) && (
+              <option value={line.whse}>{line.whse}</option>
+            )}
+          </select>
+          {valErrors.lines[i]?.whse && (
+            <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].whse}</div>
+          )}
+        </td>
+      ),
+      uomCode: () => (
+        <td key="uomCode">
+          <select
+            className="so-grid__input"
+            style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.uomCode ? '1px solid #c00' : undefined }}
+            name="uomCode"
+            value={line.uomCode || ''}
+            onChange={(e) => onLineChange(i, e)}
+          >
+            <option value=""></option>
+            {uomOpts.map((uom) => (
+              <option key={uom} value={uom}>
+                {uom}
+              </option>
+            ))}
+            {line.uomCode && !uomOpts.includes(line.uomCode) && (
+              <option value={line.uomCode}>{line.uomCode}</option>
+            )}
+          </select>
+        </td>
+      ),
+      loc: () => readonlyInput('loc', getBranchName ? getBranchName(line.branch) : line.loc),
+      branch: () => readonlyInput('branch', getBranchName ? getBranchName(line.branch) : line.branch),
+      hsnCode: () => (
+        <td key="hsnCode">
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="so-grid__input"
+              style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.hsnCode ? '1px solid #c00' : undefined }}
+              name="hsnCode"
+              value={line.hsnCode || ''}
+              onChange={(e) => onLineChange(i, e)}
+              placeholder="HSN"
+            />
+            <button type="button" onClick={() => onOpenHSNModal && onOpenHSNModal(i)} style={pickerButtonStyle} title="Select HSN Code">
+              ...
+            </button>
+          </div>
+          {valErrors.lines[i]?.hsnCode && (
+            <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].hsnCode}</div>
+          )}
+        </td>
+      ),
+      sellerBrokerageAmtPer: () => (
+        <td key="sellerBrokerageAmtPer">
+          <select
+            className="so-grid__input"
+            name="sellerBrokerageAmtPer"
+            value={line.sellerBrokerageAmtPer || ''}
+            onChange={(e) => onLineChange(i, e)}
+          >
+            <option value=""></option>
+            <option value="Amount">Amount</option>
+            <option value="Percentage">Percentage</option>
+          </select>
+        </td>
+      ),
+      documentCreated: () => readonlyInput('documentCreated', formatDateDisplay(line.documentCreated)),
+    };
+
+    const numericFields = new Set([
+      'sellerQty',
+      'sellerBrokeragePerQty',
+      'assessableValue',
+      'bedRate',
+      'bedAmount',
+      'specialRebate',
+      'commission',
+      'sellerBrokerage',
+      'buyerBrokerage',
+      'sellerBrokeragePercent',
+      'buyerBillDiscount',
+      'sellerBillDiscount',
+      'freightPurchase',
+      'freightSales',
+    ]);
+
+    return cellRenderers[column.key]
+      ? cellRenderers[column.key]()
+      : textInput(column.key, { numeric: numericFields.has(column.key) });
+  };
 
   return (
     <div className="so-tab-panel" style={{ overflow: 'visible', minWidth: 0, maxWidth: 'none' }}>
@@ -63,302 +375,54 @@ export default function ContentsTab({
       </div>
       <div className="so-grid-wrap so-grid-wrap--contents">
         <div className="so-grid-wrap__scroller so-grid-wrap__scroller--contents">
-        <table
-          className="so-grid so-grid--contents"
-          style={{ width: 'max-content', minWidth: tableMinWidth, tableLayout: 'auto' }}
-        >
-          <colgroup>
-            <col style={{ width: INDEX_COL_WIDTH }} />
-            {matrixCols.map((column) => (
-              <col key={column.key} style={{ width: column.minWidth }} />
-            ))}
-            <col style={{ width: ACTION_COL_WIDTH }} />
-          </colgroup>
-          <thead>
-            <tr>
-              <th style={{ width: INDEX_COL_WIDTH }}>#</th>
-              {matrixCols.map(c => (
-                <th key={c.key} style={{ minWidth: c.minWidth }}>
-                  {c.label}
-                </th>
+          <table
+            className="so-grid so-grid--contents"
+            style={{ width: 'max-content', minWidth: tableMinWidth, tableLayout: 'auto' }}
+          >
+            <colgroup>
+              <col style={{ width: INDEX_COL_WIDTH }} />
+              {visibleColumns.map((column) => (
+                <col key={column.key} style={{ width: column.minWidth }} />
               ))}
-              <th style={{ width: ACTION_COL_WIDTH }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((line, i) => {
-              const uomOpts = getUomOptions(line);
-              const lineTotals = getLineTotalsForDisplay(line, effectiveTaxCodes);
-              return (
-                <tr key={i}>
-                  <td className="so-grid__cell--muted" style={{ textAlign: 'center', fontSize: 11 }}>{i + 1}</td>
+              <col style={{ width: ACTION_COL_WIDTH }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th style={{ width: INDEX_COL_WIDTH }}>#</th>
+                {visibleColumns.map((column) => (
+                  <th key={column.key} style={{ minWidth: column.minWidth }}>
+                    {column.label}
+                  </th>
+                ))}
+                <th style={{ width: ACTION_COL_WIDTH }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line, i) => {
+                const uomOpts = getUomOptions(line);
+                const lineTotals = getLineTotalsForDisplay(line, effectiveTaxCodes);
 
-                  {/* Item No */}
-                  <td>
-                    <select
-                      className="so-grid__input"
-                      style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
-                      name="itemNo"
-                      value={line.itemNo}
-                      onChange={e => onLineChange(i, e)}
-                    >
-                      <option value="">Select</option>
-                      {lineItemOptions[i].map(it => (
-                        <option key={it.ItemCode} value={it.ItemCode}>
-                          {it.ItemCode}
-                        </option>
-                      ))}
-                    </select>
-                    {valErrors.lines[i]?.itemNo && (
-                      <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].itemNo}</div>
-                    )}
-                  </td>
-
-                  {/* Description */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      style={{ width: '100%', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                      name="itemDescription"
-                      value={line.itemDescription}
-                      onChange={e => onLineChange(i, e)}
-                      title={line.itemDescription}
-                    />
-                  </td>
-
-                  {/* HSN Code */}
-                  <td>
-                    <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
-                      <input
-                        className="so-grid__input"
-                        style={{ 
-                          flex: 1, 
-                          textAlign: 'left', 
-                          border: valErrors.lines[i]?.hsnCode ? '1px solid #c00' : undefined 
-                        }}
-                        name="hsnCode"
-                        value={line.hsnCode}
-                        onChange={e => onLineChange(i, e)}
-                        placeholder="HSN/SAC"
-                      />
+                return (
+                  <tr key={i}>
+                    <td className="so-grid__cell--muted" style={{ textAlign: 'center', fontSize: 11 }}>
+                      {i + 1}
+                    </td>
+                    {visibleColumns.map((column) => renderCell(column, line, i, uomOpts, lineTotals))}
+                    <td>
                       <button
                         type="button"
-                        onClick={() => onOpenHSNModal && onOpenHSNModal(i)}
-                        style={{
-                          padding: '0 6px',
-                          fontSize: 11,
-                          border: '1px solid #a0aab4',
-                          background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                          minWidth: '24px',
-                          height: '22px',
-                          cursor: 'pointer',
-                          borderRadius: '2px',
-                        }}
-                        title="Select HSN Code"
+                        className="so-btn so-btn--danger"
+                        style={{ padding: '2px 8px', fontSize: 14 }}
+                        onClick={() => onRemoveLine(i)}
                       >
-                        ...
+                        x
                       </button>
-                    </div>
-                    {valErrors.lines[i]?.hsnCode && (
-                      <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].hsnCode}</div>
-                    )}
-                  </td>
-
-                  {/* Quantity */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      style={{ border: valErrors.lines[i]?.quantity ? '1px solid #c00' : undefined }}
-                      name="quantity"
-                      value={line.quantity}
-                      onChange={e => onLineChange(i, e)}
-                      onBlur={() => onNumBlur('quantity', 'line', i)}
-                    />
-                    {valErrors.lines[i]?.quantity && (
-                      <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].quantity}</div>
-                    )}
-                  </td>
-
-                  {/* Unit Price */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      style={{ border: valErrors.lines[i]?.unitPrice ? '1px solid #c00' : undefined }}
-                      name="unitPrice"
-                      value={line.unitPrice}
-                      onChange={e => onLineChange(i, e)}
-                      onBlur={() => onNumBlur('unitPrice', 'line', i)}
-                    />
-                    {valErrors.lines[i]?.unitPrice && (
-                      <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].unitPrice}</div>
-                    )}
-                  </td>
-
-                  {/* UoM */}
-                  <td>
-                    <select
-                      className="so-grid__input"
-                      style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.uomCode ? '1px solid #c00' : undefined }}
-                      name="uomCode"
-                      value={line.uomCode}
-                      onChange={e => onLineChange(i, e)}
-                    >
-                      <option value=""></option>
-                      {uomOpts.map(u => (
-                        <option key={u} value={u}>
-                          {u}
-                        </option>
-                      ))}
-                      {line.uomCode && !uomOpts.includes(line.uomCode) && (
-                        <option value={line.uomCode}>{line.uomCode}</option>
-                      )}
-                    </select>
-                  </td>
-
-                  {/* Discount */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      name="stdDiscount"
-                      value={line.stdDiscount}
-                      onChange={e => onLineChange(i, e)}
-                      onBlur={() => onNumBlur('stdDiscount', 'line', i)}
-                    />
-                  </td>
-
-                  {/* Tax Code */}
-                  <td>
-                    <TaxCodeLookup
-                      className="so-grid__input"
-                      style={{ width: '100%', textAlign: 'left' }}
-                      name="taxCode"
-                      value={line.taxCode}
-                      onChange={e => onLineChange(i, e)}
-                      taxCodes={effectiveTaxCodes}
-                    />
-                  </td>
-
-                  {/* Total Before Tax */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      value={lineTotals.beforeTax}
-                      readOnly
-                      style={{ background: '#f5f8fc' }}
-                    />
-                  </td>
-
-                  {/* Total */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      value={lineTotals.total}
-                      readOnly
-                      style={{ background: '#f5f8fc' }}
-                    />
-                  </td>
-
-                  {/* Warehouse */}
-                  <td>
-                    <select
-                      className="so-grid__input"
-                      style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.whse ? '1px solid #c00' : undefined }}
-                      name="whse"
-                      value={line.whse}
-                      onChange={e => onLineChange(i, e)}
-                    >
-                      <option value="">Select</option>
-                      {effectiveWarehouses.map(w => (
-                        <option key={w.WhsCode} value={w.WhsCode}>{w.WhsCode}</option>
-                      ))}
-                      {line.whse && !effectiveWarehouses.some(w => w.WhsCode === line.whse) && (
-                        <option value={line.whse}>{line.whse}</option>
-                      )}
-                    </select>
-                    {valErrors.lines[i]?.whse && (
-                      <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].whse}</div>
-                    )}
-                  </td>
-
-                  {/* LOC (Location) - Shows Branch Name */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      style={{ 
-                        width: '100%', 
-                        textAlign: 'left',
-                        background: '#f5f8fc'
-                      }}
-                      name="loc"
-                      value={getBranchName ? getBranchName(line.branch) : line.loc || ''}
-                      readOnly
-                      disabled
-                    />
-                  </td>
-
-                  {/* Branch - Shows Branch Name */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      style={{ 
-                        width: '100%', 
-                        textAlign: 'left',
-                        background: '#f5f8fc'
-                      }}
-                      name="branch"
-                      value={getBranchName ? getBranchName(line.branch) : line.branch || ''}
-                      readOnly
-                      disabled
-                    />
-                  </td>
-
-                  {rowUdfFields.map((field) => (
-                    <td key={field.key}>
-                      {field.type === 'select' ? (
-                        <select
-                          className="so-grid__input"
-                          value={line.udf?.[field.key] || ''}
-                          onChange={(e) => onRowUdfChange && onRowUdfChange(i, field.key, e.target.value)}
-                          disabled={field.active === false}
-                        >
-                          <option value=""></option>
-                          {(field.options || []).map((option) => {
-                            const normalizedOption = typeof option === 'object' ? option : { value: option, label: option };
-                            return (
-                              <option key={normalizedOption.value} value={normalizedOption.value}>
-                                {normalizedOption.label}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      ) : (
-                        <input
-                          className="so-grid__input"
-                          type={field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'}
-                          value={line.udf?.[field.key] || ''}
-                          onChange={(e) => onRowUdfChange && onRowUdfChange(i, field.key, e.target.value)}
-                          disabled={field.active === false}
-                        />
-                      )}
                     </td>
-                  ))}
-
-                  {/* Remove */}
-                  <td>
-                    <button
-                      type="button"
-                      className="so-btn so-btn--danger"
-                      style={{ padding: '2px 8px', fontSize: 14 }}
-                      onClick={() => onRemoveLine(i)}
-                    >
-                      ×
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

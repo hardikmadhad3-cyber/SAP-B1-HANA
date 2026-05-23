@@ -732,14 +732,24 @@ const getSalesOrderForCopy = async (docEntry) => salesOrderDb.getSalesOrderForCo
 
 const getDeliveryForCopy = async (docEntry) => deliveryDb.getDeliveryForCopy(docEntry);
 
-const getOpenSalesQuotations = () => safe(db.query(`
+const getOpenSalesQuotations = (customerCode = null) => {
+  const normalizedCustomerCode = String(customerCode || '').trim();
+  const params = {};
+  const customerFilter = normalizedCustomerCode ? 'AND T0.CardCode = @customerCode' : '';
+  if (normalizedCustomerCode) {
+    params.customerCode = normalizedCustomerCode;
+  }
+
+  return safe(db.query(`
   SELECT TOP 200
     T0.DocEntry, T0.DocNum, T0.DocDate, T0.DocDueDate,
     T0.CardCode, T0.CardName, T0.Comments, T0.DocTotal
   FROM OQUT T0
   WHERE T0.DocStatus = 'O' AND T0.CANCELED <> 'Y'
+    ${customerFilter}
   ORDER BY T0.DocDate DESC, T0.DocNum DESC
-`));
+`, params));
+};
 
 const getSalesQuotationForCopy = async (docEntry) => salesQuotationDb.getSalesQuotationForCopy(docEntry);
 

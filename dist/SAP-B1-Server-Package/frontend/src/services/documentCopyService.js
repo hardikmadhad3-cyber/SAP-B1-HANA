@@ -1,210 +1,161 @@
-import { fetchSalesOrderForCopy as fetchSalesOrderForDeliveryCopy } from '../api/deliveryApi';
-import { BASE_TYPE, normaliseDocumentHeader, normaliseDocumentLine } from '../api/copyFromApi';
 import { buildCopyToState, createCopyToWindowId, openCopyToDocument } from '../utils/copyToState';
 
-const today = () => new Date().toISOString().split('T')[0];
-
-const dateOnly = (value, fallback = '') => {
-  if (!value) return fallback;
-  const text = String(value);
-  return text.includes('T') ? text.split('T')[0] : text.slice(0, 10);
-};
-
-const getDocEntry = (document, fallback) =>
-  document?.DocEntry ?? document?.docEntry ?? document?.doc_entry ?? fallback;
-
-const getDocNum = (document, fallback = '') =>
-  document?.DocNum ?? document?.docNum ?? document?.doc_num ?? fallback;
-
-const unwrapDocument = (payload = {}) =>
-  payload.sales_order ||
-  payload.salesOrder ||
-  payload.document ||
-  payload.delivery ||
-  payload;
-
-const getDocumentLines = (document = {}, payload = {}) =>
-  document.DocumentLines ||
-  document.lines ||
-  payload.DocumentLines ||
-  payload.lines ||
-  [];
-
-const mergeObjects = (...objects) =>
-  objects.reduce((acc, object) => (
-    object && typeof object === 'object' ? { ...acc, ...object } : acc
-  ), {});
-
-const getHeaderUdfs = (document = {}, payload = {}, snapshot = {}) =>
-  mergeObjects(
-    snapshot.headerUdfs,
-    payload.header_udfs,
-    payload.headerUdfs,
-    document.header_udfs,
-    document.headerUdfs
-  );
-
-const getLineUdfs = (line = {}) =>
-  mergeObjects(line.line_udfs, line.lineUdfs, line.udf);
-
 const copyTargetConfig = {
-  salesOrder: {
+  salesQuotation: {
+    'sales-order': {
+      targetDocType: 'salesOrder',
+      targetLabel: 'Sales Order',
+      targetPath: '/sales-order',
+    },
     delivery: {
       targetDocType: 'delivery',
       targetLabel: 'Delivery',
       targetPath: '/delivery/new',
       targetAliases: ['/delivery'],
-      requiresFetch: true,
     },
     'ar-invoice': {
       targetDocType: 'arInvoice',
       targetLabel: 'A/R Invoice',
       targetPath: '/ar-invoice',
     },
-    'ar-dpm-request': {
-      targetDocType: 'arInvoice',
-      targetLabel: 'A/R Invoice',
-      targetPath: '/ar-invoice',
-      extraState: { dpmRequest: true },
+  },
+  salesOrder: {
+    delivery: {
+      targetDocType: 'delivery',
+      targetLabel: 'Delivery',
+      targetPath: '/delivery/new',
+      targetAliases: ['/delivery'],
     },
-    'ar-dpm-invoice': {
+    'ar-invoice': {
       targetDocType: 'arInvoice',
       targetLabel: 'A/R Invoice',
       targetPath: '/ar-invoice',
-      extraState: { dpmInvoice: true },
+    },
+  },
+  delivery: {
+    'ar-invoice': {
+      targetDocType: 'arInvoice',
+      targetLabel: 'A/R Invoice',
+      targetPath: '/ar-invoice',
+    },
+  },
+  arInvoice: {
+    'ar-credit-memo': {
+      targetDocType: 'arCreditMemo',
+      targetLabel: 'A/R Credit Memo',
+      targetPath: '/ar-credit-memo',
+    },
+    arCreditMemo: {
+      targetDocType: 'arCreditMemo',
+      targetLabel: 'A/R Credit Memo',
+      targetPath: '/ar-credit-memo',
+    },
+  },
+  serviceArInvoice: {
+    arCreditMemo: {
+      targetDocType: 'arCreditMemo',
+      targetLabel: 'A/R Credit Memo',
+      targetPath: '/ar-credit-memo',
+    },
+    'ar-credit-memo': {
+      targetDocType: 'arCreditMemo',
+      targetLabel: 'A/R Credit Memo',
+      targetPath: '/ar-credit-memo',
+    },
+  },
+  serviceApInvoice: {
+    apCreditMemo: {
+      targetDocType: 'apCreditMemo',
+      targetLabel: 'A/P Credit Memo',
+      targetPath: '/ap-credit-memo',
+    },
+    'ap-credit-memo': {
+      targetDocType: 'apCreditMemo',
+      targetLabel: 'A/P Credit Memo',
+      targetPath: '/ap-credit-memo',
+    },
+  },
+  purchaseQuotation: {
+    'purchase-order': {
+      targetDocType: 'purchaseOrder',
+      targetLabel: 'Purchase Order',
+      targetPath: '/purchase-order',
+    },
+    purchaseOrder: {
+      targetDocType: 'purchaseOrder',
+      targetLabel: 'Purchase Order',
+      targetPath: '/purchase-order',
+    },
+  },
+  purchaseOrder: {
+    grpo: {
+      targetDocType: 'grpo',
+      targetLabel: 'Goods Receipt PO',
+      targetPath: '/grpo',
+    },
+  },
+  grpo: {
+    'ap-invoice': {
+      targetDocType: 'apInvoice',
+      targetLabel: 'A/P Invoice',
+      targetPath: '/ap-invoice',
+    },
+    apInvoice: {
+      targetDocType: 'apInvoice',
+      targetLabel: 'A/P Invoice',
+      targetPath: '/ap-invoice',
+    },
+  },
+  apInvoice: {
+    'ap-credit-memo': {
+      targetDocType: 'apCreditMemo',
+      targetLabel: 'A/P Credit Memo',
+      targetPath: '/ap-credit-memo',
+    },
+    apCreditMemo: {
+      targetDocType: 'apCreditMemo',
+      targetLabel: 'A/P Credit Memo',
+      targetPath: '/ap-credit-memo',
     },
   },
 };
 
 const sourceLabels = {
+  salesQuotation: 'Sales Quotation',
   salesOrder: 'Sales Order',
+  delivery: 'Delivery',
+  arInvoice: 'A/R Invoice',
+  serviceArInvoice: 'Service A/R Invoice',
+  serviceApInvoice: 'Service A/P Invoice',
+  purchaseQuotation: 'Purchase Quotation',
+  purchaseOrder: 'Purchase Order',
+  grpo: 'Goods Receipt PO',
+  apInvoice: 'A/P Invoice',
 };
 
 const sourceBaseTypes = {
+  salesQuotation: 23,
   salesOrder: 17,
+  delivery: 15,
+  arInvoice: 13,
+  serviceArInvoice: 13,
+  serviceApInvoice: 18,
+  purchaseQuotation: 540000006,
+  purchaseOrder: 22,
+  grpo: 20,
+  apInvoice: 18,
 };
 
-const fetchSourceForTarget = async ({ sourceDocType, targetDocType, sourceDocEntry }) => {
-  if (sourceDocType === 'salesOrder' && targetDocType === 'delivery') {
-    const response = await fetchSalesOrderForDeliveryCopy(sourceDocEntry);
-    return response.data || {};
-  }
-
-  return null;
-};
-
-export const mapSalesOrderToDeliveryDraft = ({
-  sourcePayload = {},
-  sourceDocEntry,
-  sourceDocNo,
-  sourceSnapshot = {},
-} = {}) => {
-  const document = unwrapDocument(sourcePayload);
-  const rawHeader = document.header
-    ? { ...(sourceSnapshot.header || {}), ...document.header }
-    : { ...(sourceSnapshot.header || {}), ...document };
-  const normalizedHeader = normaliseDocumentHeader(rawHeader);
-  const sourceLines = getDocumentLines(document, sourcePayload);
-  const resolvedDocEntry = getDocEntry(document, sourcePayload.DocEntry ?? sourceDocEntry);
-  const resolvedDocNum = getDocNum(document, sourcePayload.DocNum ?? sourceDocNo);
-  const firstLine = Array.isArray(sourceLines) && sourceLines.length ? sourceLines[0] : {};
-  const firstWarehouse =
-    firstLine.whse ||
-    firstLine.WarehouseCode ||
-    firstLine.WhsCode ||
-    rawHeader.warehouse ||
-    '';
-  const branch =
-    normalizedHeader.branch ||
-    rawHeader.branch ||
-    rawHeader.BPL_IDAssignedToInvoice ||
-    rawHeader.BPLId ||
-    '';
-  const deliveryHeader = {
-    postingDate: today(),
-    documentDate: today(),
-    deliveryDate: dateOnly(rawHeader.deliveryDate || rawHeader.DocDueDate, today()),
-    vendor: normalizedHeader.vendor || rawHeader.vendor || rawHeader.customerCode || rawHeader.CardCode || '',
-    name: normalizedHeader.name || rawHeader.name || rawHeader.customerName || rawHeader.CardName || '',
-    contactPerson: normalizedHeader.contactPerson || rawHeader.contactPerson || rawHeader.CntctCode || '',
-    branch: String(branch || ''),
-    warehouse: firstWarehouse,
-    paymentTerms: String(normalizedHeader.paymentTerms || rawHeader.paymentTermsCode || rawHeader.paymentTerms || rawHeader.GroupNum || ''),
-    placeOfSupply: normalizedHeader.placeOfSupply || rawHeader.placeOfSupply || rawHeader.PlaceOfSupply || '',
-    otherInstruction: normalizedHeader.otherInstruction || rawHeader.otherInstruction || rawHeader.remarks || rawHeader.Comments || '',
-    discount: rawHeader.discount ?? rawHeader.DiscPrcnt ?? '',
-    freight: rawHeader.freight ?? rawHeader.Freight ?? '',
-    tax: rawHeader.tax ?? rawHeader.TaxAmount ?? '',
-    currency: rawHeader.currency || rawHeader.DocCur || 'INR',
-    shipTo: rawHeader.shipTo || rawHeader.shipToAddress || rawHeader.Address || '',
-    shipToCode: rawHeader.shipToCode || rawHeader.ShipToCode || '',
-    shipToAddress: rawHeader.shipToAddress || rawHeader.shipTo || rawHeader.Address || '',
-    payTo: rawHeader.payTo || rawHeader.billToAddress || rawHeader.Address2 || '',
-    payToCode: rawHeader.payToCode || rawHeader.billToCode || rawHeader.PayToCode || '',
-    billToCode: rawHeader.billToCode || rawHeader.payToCode || rawHeader.PayToCode || '',
-    billToAddress: rawHeader.billToAddress || rawHeader.payTo || rawHeader.Address2 || '',
-    sourceDocEntry: resolvedDocEntry,
-    sourceDocNum: resolvedDocNum,
-  };
-
-  const deliveryLines = Array.isArray(sourceLines)
-    ? sourceLines.map((line, index) => {
-        const normalizedLine = normaliseDocumentLine(
-          line,
-          index,
-          resolvedDocEntry,
-          BASE_TYPE.salesOrder,
-          deliveryHeader.branch
-        );
-        const baseLine = line.BaseLine ?? line.baseLine ?? line.LineNum ?? line.lineNum ?? normalizedLine.baseLine ?? index;
-
-        return {
-          ...line,
-          ...normalizedLine,
-          quantity: String(line.OpenQty ?? line.openQty ?? line.Quantity ?? line.quantity ?? normalizedLine.quantity ?? 0),
-          uomCode: line.UomCode || line.unitMsr || line.uomCode || normalizedLine.uomCode || '',
-          uomName: line.UomName || line.unitMsr || line.uomName || line.UomCode || line.uomCode || '',
-          unitPrice: String(line.UnitPrice ?? line.Price ?? line.unitPrice ?? normalizedLine.unitPrice ?? 0),
-          stdDiscount: String(line.DiscountPercent ?? line.DiscPrcnt ?? line.stdDiscount ?? normalizedLine.stdDiscount ?? 0),
-          taxCode: normalizedLine.taxCode || line.TaxCode || line.VatGroup || line.taxCode || '',
-          stcode: normalizedLine.stcode || line.STCODE || line.STACode || line.stcode || line.TaxCode || line.VatGroup || '',
-          whse: normalizedLine.whse || line.WarehouseCode || line.WhsCode || line.whse || deliveryHeader.warehouse || '',
-          total: line.LineTotal != null ? String(line.LineTotal) : (line.total != null ? String(line.total) : normalizedLine.total),
-          taxAmount: line.TaxAmount != null ? String(line.TaxAmount) : (line.taxAmount != null ? String(line.taxAmount) : normalizedLine.taxAmount),
-          baseEntry: line.BaseEntry ?? line.baseEntry ?? resolvedDocEntry,
-          baseType: line.BaseType ?? line.baseType ?? BASE_TYPE.salesOrder,
-          baseLine,
-          lineNum: line.LineNum ?? line.lineNum ?? index,
-          batchManaged: line.batchManaged ?? line.BatchManaged ?? false,
-          batches: line.batches || line.Batches || line.BatchNumbers || [],
-          serials: line.serials || line.SerialNumbers || [],
-          bins: line.bins || line.BinAllocations || [],
-          udf: getLineUdfs(line),
-        };
-      })
-    : [];
-
-  const draft = {
-    targetDocType: 'delivery',
-    source: {
-      docType: 'salesOrder',
-      label: 'Sales Order',
-      docEntry: resolvedDocEntry,
-      docNum: resolvedDocNum,
-    },
-    header: deliveryHeader,
-    headerUdfs: getHeaderUdfs(document, sourcePayload, sourceSnapshot),
-    lines: deliveryLines,
-  };
-
-  console.info('[CopyTo] mapped Sales Order -> Delivery draft', {
-    sourceDocEntry: resolvedDocEntry,
-    targetDocType: 'delivery',
-    mappedHeader: draft.header,
-    mappedRows: draft.lines,
-  });
-
-  return draft;
+export const getCopyToTargets = (sourceDocType) => {
+  const sourceConfig = copyTargetConfig[sourceDocType] || {};
+  return Object.entries(sourceConfig)
+    .filter(([key]) => !key.includes('-') || !sourceConfig[key.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase())])
+    .map(([key, config]) => ({
+      key,
+      label: config.targetLabel,
+      targetDocType: config.targetDocType,
+      targetPath: config.targetPath,
+    }));
 };
 
 export const copyToDocument = async ({
@@ -244,53 +195,15 @@ export const copyToDocument = async ({
     targetRoute: targetConfig.targetPath,
   });
 
-  let sourcePayload = null;
-  let copyToDraft = null;
-
-  try {
-    if (targetConfig.requiresFetch) {
-      sourcePayload = await fetchSourceForTarget({
-        sourceDocType,
-        targetDocType: targetConfig.targetDocType,
-        sourceDocEntry,
-      });
-      console.info('[CopyTo] fetched source document', {
-        sourceDocType,
-        sourceDocEntry,
-        targetDocType: targetConfig.targetDocType,
-        sourcePayload,
-      });
-    }
-
-    if (sourceDocType === 'salesOrder' && targetConfig.targetDocType === 'delivery') {
-      copyToDraft = mapSalesOrderToDeliveryDraft({
-        sourcePayload,
-        sourceDocEntry,
-        sourceDocNo,
-        sourceSnapshot,
-      });
-    }
-  } catch (error) {
-    console.error('[CopyTo] failed to prepare target draft', error);
-    setError?.(error?.response?.data?.detail || error?.message || 'Failed to prepare copied document.');
-    return false;
-  }
-
-  const document = unwrapDocument(sourcePayload || {});
-  const sourceLines = getDocumentLines(document, sourcePayload || {});
   const copyState = buildCopyToState({
     sourceDocType,
     sourceLabel,
     sourceDocEntry,
-    header: sourcePayload ? (document.header || document) : sourceSnapshot.header,
-    lines: sourcePayload ? sourceLines : sourceSnapshot.lines,
-    headerUdfs: sourcePayload ? getHeaderUdfs(document, sourcePayload, sourceSnapshot) : sourceSnapshot.headerUdfs,
+    header: sourceSnapshot.header,
+    lines: sourceSnapshot.lines,
+    headerUdfs: sourceSnapshot.headerUdfs,
     baseType,
-    extraState: {
-      ...(targetConfig.extraState || {}),
-      ...(copyToDraft ? { copyToDraft } : {}),
-    },
-    extraCopyFrom: copyToDraft ? { loadMode: 'draft' } : {},
+    extraState: targetConfig.extraState,
   });
 
   console.info('[CopyTo] final open request', {
