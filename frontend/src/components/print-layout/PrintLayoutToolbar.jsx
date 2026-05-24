@@ -26,11 +26,17 @@ const getErrorMessage = (error, fallbackMessage) =>
   error.message ||
   fallbackMessage;
 
+const isPositiveDocumentKey = (value) => {
+  const normalized = String(value ?? '').trim();
+  return /^\d+$/.test(normalized) && Number(normalized) > 0;
+};
+
 function PrintLayoutToolbar({
   documentType,
   documentLabel = 'Document',
   docEntry,
   docNumber,
+  cardCode,
   disabled = false,
   defaultDocCode = '',
   defaultSchema = DEFAULT_SCHEMA,
@@ -46,7 +52,6 @@ function PrintLayoutToolbar({
   );
   const [schema, setSchema] = useState(() => companySchema || defaultSchema || DEFAULT_SCHEMA);
   const [loading, setLoading] = useState(false);
-  const [cachedPdfByKey, setCachedPdfByKey] = useState({});
   const {
     docCode,
     setDocCode,
@@ -73,10 +78,6 @@ function PrintLayoutToolbar({
     setSchema(resolvedDefaultSchema);
   }, [resolvedDefaultSchema, documentType, layoutReloadKey]);
 
-  useEffect(() => {
-    setCachedPdfByKey({});
-  }, [documentType, docEntry, docCode, schema]);
-
   const notifySuccess = (message) => {
     onSuccess?.(message);
   };
@@ -86,7 +87,7 @@ function PrintLayoutToolbar({
   };
 
   const validatePrintableSelection = () => {
-    if (!String(docEntry ?? '').trim()) {
+    if (!isPositiveDocumentKey(docEntry)) {
       notifyError(`Save or load a ${documentLabel.toLowerCase()} before printing.`);
       return false;
     }
@@ -110,9 +111,8 @@ function PrintLayoutToolbar({
     const normalizedDocEntry = String(docEntry ?? '').trim();
     const normalizedDocCode = String(layoutDocCode ?? '').trim();
     const normalizedSchema = String(schema ?? '').trim();
-    const cacheKey = `${documentType}::${normalizedDocEntry}::${normalizedDocCode}::${normalizedSchema}`;
 
-    if (!normalizedDocEntry) {
+    if (!isPositiveDocumentKey(normalizedDocEntry)) {
       throw new Error(`Save or load a ${documentLabel.toLowerCase()} before printing.`);
     }
 
@@ -130,14 +130,11 @@ function PrintLayoutToolbar({
       );
     }
 
-    if (cachedPdfByKey[cacheKey]) {
-      return cachedPdfByKey[cacheKey];
-    }
-
     const response = await printDocumentLayout({
       documentType,
       docEntry: normalizedDocEntry,
       docNum: docNumber,
+      cardCode,
       docCode: normalizedDocCode,
       layoutName: selectedLayout?.layout_name || '',
       schema: normalizedSchema,
@@ -152,11 +149,6 @@ function PrintLayoutToolbar({
       docCode: normalizedDocCode,
       schema: normalizedSchema,
     };
-
-    setCachedPdfByKey((current) => ({
-      ...current,
-      [cacheKey]: nextPdf,
-    }));
 
     return nextPdf;
   };
@@ -215,6 +207,7 @@ function PrintLayoutToolbar({
         documentType,
         docEntry,
         docNum: docNumber,
+        cardCode,
         docCode,
         layoutName: selectedLayout?.layout_name || '',
         schema,
@@ -236,7 +229,7 @@ function PrintLayoutToolbar({
     disabled ||
     loading ||
     layoutsLoading ||
-    !docEntry ||
+    !isPositiveDocumentKey(docEntry) ||
     !canExportSelectedLayout ||
     (selectedLayout && !isLayoutExportSupported(selectedLayout));
   const fieldClass = `${classPrefix}-toolbar__field`;
@@ -282,8 +275,10 @@ function PrintLayoutToolbar({
           className={`${inputClass} ${inputClass}--schema`}
           value={schema}
           onChange={(event) => setSchema(event.target.value)}
+          readOnly
           disabled={loading || disabled}
           placeholder={resolvedDefaultSchema || 'Schema'}
+          title="Uses the selected company database from your current session."
         />
       </div>
 

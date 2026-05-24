@@ -17,13 +17,15 @@ const getErrorPayload = (error, fallbackMessage) => {
 
 const printSalesOrder = async (req, res) => {
   try {
-    const { docEntry, schema, docCode } = req.body || {};
+    const { docEntry, docNum, schema, docCode, cardCode } = req.body || {};
 
     const data = await documentPrintLayoutService.printDocument({
       documentType: 'salesOrder',
       docEntry,
+      docNum,
       schema,
       docCode,
+      cardCode,
       auth: req.auth,
     });
 

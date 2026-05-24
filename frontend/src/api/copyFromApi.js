@@ -54,6 +54,7 @@ export const createCopyFromApi = (baseUrl) => ({
 // ── Pre-built instances for each page ────────────────────────────────────────
 
 export const deliveryCopyFromApi    = createCopyFromApi('/delivery');
+export const dcDeliveryCopyFromApi  = createCopyFromApi('/dc-delivery');
 export const arInvoiceCopyFromApi   = createCopyFromApi('/ar-invoice');
 export const arCreditMemoCopyFromApi = createCopyFromApi('/ar-credit-memo');
 export const salesOrderCopyFromApi  = createCopyFromApi('/sales-order');
@@ -67,6 +68,7 @@ export const BASE_TYPE = {
   salesOrder:     17,
   dcSalesOrder:   17,
   delivery:       15,
+  dcDelivery:     15,
   purchaseQuotation: 540000006,
   purchaseOrder:  22,
   grpo:           20,

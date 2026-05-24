@@ -7,6 +7,7 @@ const DEFAULT_SCHEMA = process.env.REACT_APP_SAP_REPORT_SCHEMA || '';
 function PrintSalesOrderActions({
   docEntry,
   docNumber,
+  cardCode,
   disabled = false,
   defaultDocCode = DEFAULT_DOC_CODE,
   defaultSchema = DEFAULT_SCHEMA,
@@ -19,6 +20,7 @@ function PrintSalesOrderActions({
       documentLabel="Sales Order"
       docEntry={docEntry}
       docNumber={docNumber}
+      cardCode={cardCode}
       disabled={disabled}
       defaultDocCode={defaultDocCode}
       defaultSchema={defaultSchema}

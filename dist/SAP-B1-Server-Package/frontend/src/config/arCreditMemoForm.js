@@ -28,11 +28,15 @@ const mergeNestedSettings = (defaults, saved = {}) =>
     return acc;
   }, {});
 
-export const readSavedFormSettings = (headerUdfs = [], rowUdfs = []) => {
+export const readSavedFormSettings = (
+  headerUdfs = [],
+  rowUdfs = [],
+  storageKey = FORM_SETTINGS_STORAGE_KEY,
+) => {
   const defaults = createDefaultFormSettingsForCreditMemo(headerUdfs, rowUdfs);
 
   try {
-    const raw = localStorage.getItem(FORM_SETTINGS_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return defaults;
     return mergeNestedSettings(defaults, JSON.parse(raw));
   } catch (_error) {

@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
 import {
   fetchSalesOrderCustomerOptions,
   fetchSalesOrderFilterOptions,
   fetchSalesOrders,
 } from '../api/salesOrderApi';
 import ComboBox from '../modules/item-master/components/ComboBox';
+import { createCompanyScopedRouteState } from '../utils/companyStorageScope';
 import '../modules/item-master/styles/itemMaster.css';
 import '../styles/sales-order-list.css';
 
@@ -50,6 +52,7 @@ const buildFilterParams = (filters, extra = {}) => ({
 
 function SalesOrderListPage() {
   const navigate = useNavigate();
+  const { company } = useAuth();
   const [orders, setOrders] = useState([]);
   const [filters, setFilters] = useState(INITIAL_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState(INITIAL_FILTERS);
@@ -435,10 +438,10 @@ function SalesOrderListPage() {
                         className="btn btn-outline-primary btn-sm"
                         onClick={() =>
                           navigate('/sales-order', {
-                            state: {
+                            state: createCompanyScopedRouteState({
                               salesOrderDocEntry: order.doc_entry,
                               docEntry: order.doc_entry,
-                            },
+                            }, company),
                           })
                         }
                       >

@@ -1,6 +1,7 @@
 const env = require('../config/env');
 const dbService = require('./dbService');
 const reportService = require('./reportService');
+const { getActiveCompanyConfig } = require('./companyConfigService');
 
 const DOCUMENT_PRINT_CONFIG = {
   salesQuotation: {
@@ -143,6 +144,23 @@ const getDocumentPrintConfig = (documentType) => {
   };
 };
 
+const resolveActiveDatabaseSchema = async () => {
+  try {
+    const databaseName = await dbService.resolveDatabaseName();
+    if (databaseName) return String(databaseName).trim();
+  } catch (_error) {
+    // Fall back to configured report/service-layer values below.
+  }
+
+  const companyConfig = await getActiveCompanyConfig();
+  return String(
+    companyConfig.reportService.defaultSchema ||
+      companyConfig.reportService.companyDb ||
+      companyConfig.serviceLayer.companyDb ||
+      '',
+  ).trim();
+};
+
 const toRequiredString = (value, fieldName) => {
   const normalized = String(value ?? '').trim();
 
@@ -262,7 +280,10 @@ const getLayoutsQuery = (config) => {
 const getLayouts = async (documentType) => {
   const config = getDocumentPrintConfig(documentType);
   const query = getLayoutsQuery(config);
-  const result = await dbService.query(query.sql, query.params);
+  const [defaultSchema, result] = await Promise.all([
+    resolveActiveDatabaseSchema(),
+    dbService.query(query.sql, query.params),
+  ]);
   const layouts = filterDocumentLayouts(config, result.recordset || []);
 
   return {
@@ -271,23 +292,44 @@ const getLayouts = async (documentType) => {
     objectType: config.objectType,
     typeCode: config.typeCode,
     defaultDocCode: config.defaultDocCode || '',
-    defaultSchema: env.reportServiceDefaultSchema,
+    defaultSchema,
+    companyDatabase: defaultSchema,
     layouts,
   };
 };
 
-const getDocumentSummary = async (config, docEntry) => {
-  const normalizedDocEntry = toRequiredString(docEntry, 'DocEntry');
+const getDocumentSummary = async (config, docEntry, { docNum = '', cardCode = '' } = {}) => {
+  const normalizedIdentifier = toRequiredString(docEntry, 'DocEntry');
+  const normalizedDocNum = String(docNum || '').trim();
+  const normalizedCardCode = String(cardCode || '').trim();
   const result = await dbService.query(`
-    SELECT TOP 1 DocEntry, DocNum
+    SELECT TOP 1 DocEntry, DocNum, CardCode, CardName
     FROM ${config.tableName}
-    WHERE DocEntry = @docEntry
-  `, { docEntry: normalizedDocEntry });
+    WHERE DocEntry = @identifier
+       OR CAST(DocNum AS NVARCHAR(50)) = @identifier
+       OR (@docNum <> '' AND CAST(DocNum AS NVARCHAR(50)) = @docNum)
+    ORDER BY
+      CASE
+        WHEN @docNum <> ''
+          AND @cardCode <> ''
+          AND CAST(DocNum AS NVARCHAR(50)) = @docNum
+          AND CardCode = @cardCode THEN 0
+        WHEN @docNum <> ''
+          AND CAST(DocNum AS NVARCHAR(50)) = @docNum THEN 1
+        WHEN DocEntry = @identifier THEN 2
+        ELSE 3
+      END,
+      DocEntry DESC
+  `, {
+    identifier: normalizedIdentifier,
+    docNum: normalizedDocNum,
+    cardCode: normalizedCardCode,
+  });
 
   const document = result.recordset?.[0];
 
   if (!document) {
-    throw createHttpError(404, `${config.label} ${normalizedDocEntry} was not found.`);
+    throw createHttpError(404, `${config.label} ${normalizedIdentifier} was not found.`);
   }
 
   return document;
@@ -335,6 +377,7 @@ const printDocument = async ({
   docNum,
   schema,
   docCode,
+  cardCode,
   auth,
 } = {}) => {
   requirePrintPermission(auth);
@@ -342,20 +385,26 @@ const printDocument = async ({
   const config = getDocumentPrintConfig(documentType);
   const normalizedDocEntry = toRequiredString(docEntry, 'DocEntry');
   const normalizedDocCode = toRequiredString(docCode, 'Layout DocCode');
-  const normalizedSchema = toRequiredString(schema || env.reportServiceDefaultSchema, 'Schema');
-  const document = await getDocumentSummary(config, normalizedDocEntry);
+  const defaultSchema = await resolveActiveDatabaseSchema();
+  const normalizedSchema = toRequiredString(schema || defaultSchema, 'Schema');
+  const document = await getDocumentSummary(config, normalizedDocEntry, { docNum, cardCode });
 
   const layout = await getLayoutForDocument(config, normalizedDocCode);
 
+  const resolvedDocEntry = String(document.DocEntry || normalizedDocEntry).trim();
   const resolvedDocNum = String(docNum || document.DocNum || '').trim();
+  const resolvedCardCode = String(cardCode || document.CardCode || '').trim();
   const genericResponse = await reportService.exportDocumentPdf({
-    docEntry: normalizedDocEntry,
+    docEntry: resolvedDocEntry,
     schema: normalizedSchema,
     docCode: normalizedDocCode,
+    cardCode: resolvedCardCode,
+    docNum: resolvedDocNum,
+    objectType: config.objectType,
     documentLabel: config.label,
     fileName: buildFileName({
       config,
-      docEntry: normalizedDocEntry,
+      docEntry: resolvedDocEntry,
       docNum: resolvedDocNum,
       docCode: normalizedDocCode,
     }),
@@ -370,8 +419,10 @@ const printDocument = async ({
     documentLabel: config.label,
     objectType: config.objectType,
     typeCode: config.typeCode,
-    docEntry: normalizedDocEntry,
+    docEntry: resolvedDocEntry,
     docNum: resolvedDocNum,
+    cardCode: resolvedCardCode,
+    cardName: String(document.CardName || '').trim(),
     docCode: normalizedDocCode,
     layoutName: String(layout.DocName || '').trim(),
     schema: normalizedSchema,

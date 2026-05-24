@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { normalizePath } from '../auth/routeUtils';
-import { useSapWindowTaskbar, useSapWindowTaskbarActions } from './SapWindowTaskbarContext';
+import { restoreTargetWindowState } from '../utils/copyToState';
 import '../styles/sidebar.css';
 
 const DASHBOARD_PATH = '/dashboard';
@@ -52,16 +52,18 @@ const SALES_MENU_NAMES = new Set(['sales', 'sales a r']);
 const SALES_CHILD_PRIORITY = new Map([
   ['sales quotation', 1],
   ['sales order', 2],
-  ['delivery', 3],
-  ['a r invoice', 4],
-  ['a r credit memo', 5],
+  ['dc sales order', 3],
+  ['delivery', 4],
+  ['a r invoice', 5],
+  ['a r credit memo', 6],
 ]);
 const SALES_CHILD_PATH_PRIORITY = new Map([
   ['/sales-quotation', 1],
   ['/sales-order', 2],
-  ['/delivery', 3],
-  ['/ar-invoice', 4],
-  ['/ar-credit-memo', 5],
+  ['/dc-sales-order', 3],
+  ['/delivery', 4],
+  ['/ar-invoice', 5],
+  ['/ar-credit-memo', 6],
 ]);
 const isAdminMenuPath = (menuPath = '') => normalizePath(menuPath).startsWith('/admin');
 const getDisplayMenuName = (menu) => {
@@ -208,7 +210,7 @@ const hasActiveChild = (menu, pathname) => {
   return menu.children?.some((child) => hasActiveChild(child, pathname));
 };
 
-const SidebarMenuNode = ({ menu, collapsed, openState, restoreMinimizedMenuPath, setOpenState, pathname, depth = 0 }) => {
+const SidebarMenuNode = ({ menu, collapsed, openState, setOpenState, pathname, onNavigate, depth = 0 }) => {
   const hasChildren = Boolean(menu.children?.length);
   const menuPath = menu.menuPath ? normalizePath(menu.menuPath) : '';
   const isOpen = openState[menu.menuId] ?? hasActiveChild(menu, pathname);
@@ -244,9 +246,9 @@ const SidebarMenuNode = ({ menu, collapsed, openState, restoreMinimizedMenuPath,
                 menu={child}
                 collapsed={collapsed}
                 openState={openState}
-                restoreMinimizedMenuPath={restoreMinimizedMenuPath}
                 setOpenState={setOpenState}
                 pathname={pathname}
+                onNavigate={onNavigate}
                 depth={depth + 1}
               />
             ))}
@@ -279,11 +281,7 @@ const SidebarMenuNode = ({ menu, collapsed, openState, restoreMinimizedMenuPath,
     <NavLink
       to={menuPath}
       end={menuPath === DASHBOARD_PATH}
-      onClick={(event) => {
-        if (restoreMinimizedMenuPath?.(menuPath)) {
-          event.preventDefault();
-        }
-      }}
+      onClick={(event) => onNavigate(event, menuPath)}
       className={({ isActive }) =>
         `sidebar__link${isActive ? ' sidebar__link--active' : ''}${isNested ? ' sidebar__link--nested' : ''}`
       }
@@ -297,27 +295,33 @@ const SidebarMenuNode = ({ menu, collapsed, openState, restoreMinimizedMenuPath,
 
 export default function Sidebar() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { menus, company } = useAuth();
-  const taskbar = useSapWindowTaskbar();
-  const { restoreTask } = useSapWindowTaskbarActions();
   const collapsed = false;
   const [openState, setOpenState] = useState({});
+  const pathname = normalizePath(location.pathname);
 
   const sidebarMenus = useMemo(
     () => buildSidebarMenus(menus),
     [menus],
   );
 
-  const restoreMinimizedMenuPath = (menuPath) => {
-    const normalizedMenuPath = normalizePath(menuPath);
-    const task = [...(taskbar?.tasks || [])]
-      .reverse()
-      .find((entry) => normalizePath(entry?.path) === normalizedMenuPath);
+  const handleNavigate = (event, menuPath) => {
+    if (!menuPath) return;
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.shiftKey
+    ) {
+      return;
+    }
 
-    if (!task) return false;
-
-    restoreTask(task);
-    return true;
+    event.preventDefault();
+    restoreTargetWindowState(menuPath);
+    navigate(menuPath, { state: null });
   };
 
   return (
@@ -342,9 +346,9 @@ export default function Sidebar() {
                   menu={menu}
                   collapsed={collapsed}
                   openState={openState}
-                  restoreMinimizedMenuPath={restoreMinimizedMenuPath}
                   setOpenState={setOpenState}
-                  pathname={location.pathname}
+                  pathname={pathname}
+                  onNavigate={handleNavigate}
                   depth={0}
                 />
               ))

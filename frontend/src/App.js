@@ -27,6 +27,8 @@ const Warehouse = lazyWithRetry(() => import("./pages/Warehouse"));
 const PriceList = lazyWithRetry(() => import("./pages/PriceList"));
 const Delivery = lazyWithRetry(() => import("./pages/Delivery"));
 const DeliveryList = lazyWithRetry(() => import("./pages/DeliveryList"));
+const DCDelivery = lazyWithRetry(() => import("./pages/DCDelivery"));
+const DCDeliveryList = lazyWithRetry(() => import("./pages/DCDeliveryList"));
 const TaxCode = lazyWithRetry(() => import("./pages/TaxCode"));
 const UoMGroup = lazyWithRetry(() => import("./pages/UoMGroup"));
 const PaymentTerms = lazyWithRetry(() => import("./pages/PaymentTerms"));
@@ -128,6 +130,9 @@ function App() {
                   <Route path="/delivery/new" element={<Delivery />} />
                   <Route path="/Delivery" element={<Navigate to="/delivery" replace />} />
                   <Route path="/delivery/find" element={<DeliveryList />} />
+                  <Route path="/dc-delivery" element={<DCDelivery />} />
+                  <Route path="/dc-delivery/new" element={<DCDelivery />} />
+                  <Route path="/dc-delivery/find" element={<DCDeliveryList />} />
                   <Route path="/shipping-type" element={<ShippingType />} />
                   <Route path="/branch" element={<Branch />} />
                   <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />

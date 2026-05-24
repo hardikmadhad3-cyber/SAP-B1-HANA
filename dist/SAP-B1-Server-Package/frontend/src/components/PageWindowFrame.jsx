@@ -108,6 +108,7 @@ function PageWindowFrame({ children }) {
 
   const windowFrame = useFloatingWindow({
     isOpen: !isExcludedPath,
+    allowPersistedMinimized: false,
     defaultTop: 10,
     resetOnClose: false,
     taskId: routedWindow?.id || `page-window:${normalizedPath}`,

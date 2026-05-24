@@ -1,6 +1,25 @@
 const sql = require('mssql');
 const env = require('../config/env');
 
+const COMPANY_CREDENTIAL_COLUMNS = [
+  { name: 'Port', definition: 'INT NULL' },
+  { name: 'AuthDbName', definition: 'NVARCHAR(128) NULL' },
+  { name: 'SapBaseUrl', definition: 'NVARCHAR(500) NULL' },
+  { name: 'SapUsername', definition: 'NVARCHAR(128) NULL' },
+  { name: 'SapPassword', definition: 'NVARCHAR(255) NULL' },
+  { name: 'SapCompanyDb', definition: 'NVARCHAR(128) NULL' },
+  { name: 'SapRejectUnauthorized', definition: 'BIT NULL' },
+  { name: 'ReportServiceBaseUrl', definition: 'NVARCHAR(500) NULL' },
+  { name: 'ReportServiceUsername', definition: 'NVARCHAR(128) NULL' },
+  { name: 'ReportServicePassword', definition: 'NVARCHAR(255) NULL' },
+  { name: 'ReportServiceCompanyDb', definition: 'NVARCHAR(128) NULL' },
+  { name: 'ReportServiceDefaultSchema', definition: 'NVARCHAR(128) NULL' },
+  { name: 'ReportServiceRejectUnauthorized', definition: 'BIT NULL' },
+  { name: 'DbServer', definition: 'NVARCHAR(255) NULL' },
+  { name: 'DbEncrypt', definition: 'BIT NULL' },
+  { name: 'DbTrustCert', definition: 'BIT NULL' },
+];
+
 const authDbConfig = {
   server: env.dbServer,
   database: env.authDbName,
@@ -22,6 +41,7 @@ let authPool = null;
 let authPoolPromise = null;
 const cache = new Map();
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
+let companyCredentialColumnsReady = false;
 
 const getCached = (key) => {
   const entry = cache.get(key);
@@ -129,14 +149,33 @@ const queryOne = async (queryText, params = {}) => {
   return rows[0] || null;
 };
 
-const findUserByUsername = async (username) => queryOne(`
-  SELECT UserId, Username, PasswordHash, FullName, Email, IsActive, CreatedAt
-  FROM dbo.Users
-  WHERE Username = @username
-`, { username });
+const ensureCompanyCredentialColumns = async () => {
+  if (companyCredentialColumnsReady) return;
 
-const getActiveCompanies = async () => cachedQuery('activeCompanies', () => queryRows(`
-  SELECT
+  for (const column of COMPANY_CREDENTIAL_COLUMNS) {
+    await query(`
+      IF COL_LENGTH(N'dbo.Companies', N'${column.name}') IS NULL
+        ALTER TABLE dbo.Companies ADD ${column.name} ${column.definition};
+    `);
+  }
+
+  companyCredentialColumnsReady = true;
+};
+
+const clearCache = (prefix = '') => {
+  if (!prefix) {
+    cache.clear();
+    return;
+  }
+
+  for (const key of cache.keys()) {
+    if (String(key).startsWith(prefix)) {
+      cache.delete(key);
+    }
+  }
+};
+
+const COMPANY_SELECT_COLUMNS = `
     CompanyId,
     CompanyName,
     DbName,
@@ -146,24 +185,55 @@ const getActiveCompanies = async () => cachedQuery('activeCompanies', () => quer
     LicenseServer,
     SAPVersion,
     IsActive,
-    CreatedAt
+    CreatedAt,
+    Port,
+    AuthDbName,
+    SapBaseUrl,
+    SapUsername,
+    SapPassword,
+    SapCompanyDb,
+    SapRejectUnauthorized,
+    ReportServiceBaseUrl,
+    ReportServiceUsername,
+    ReportServicePassword,
+    ReportServiceCompanyDb,
+    ReportServiceDefaultSchema,
+    ReportServiceRejectUnauthorized,
+    DbServer,
+    DbEncrypt,
+    DbTrustCert
+`;
+
+const qualifyCompanyColumns = (alias) =>
+  COMPANY_SELECT_COLUMNS
+    .split('\n')
+    .map((column) => column.trim())
+    .filter(Boolean)
+    .map((column) => `    ${alias}.${column}`)
+    .join('\n');
+
+const findUserByUsername = async (username) => queryOne(`
+  SELECT UserId, Username, PasswordHash, FullName, Email, IsActive, CreatedAt
+  FROM dbo.Users
+  WHERE Username = @username
+`, { username });
+
+const getActiveCompanies = async () => {
+  await ensureCompanyCredentialColumns();
+  return cachedQuery('activeCompanies', () => queryRows(`
+  SELECT
+${COMPANY_SELECT_COLUMNS}
   FROM dbo.Companies
   WHERE IsActive = 1
   ORDER BY CompanyName ASC
 `));
+};
 
-const getUserCompanies = async (userId) => cachedQuery(`userCompanies:${userId}`, () => queryRows(`
+const getUserCompanies = async (userId) => {
+  await ensureCompanyCredentialColumns();
+  return cachedQuery(`userCompanies:${userId}`, () => queryRows(`
   SELECT
-    c.CompanyId,
-    c.CompanyName,
-    c.DbName,
-    c.DbUser,
-    c.DbPassword,
-    c.ServerName,
-    c.LicenseServer,
-    c.SAPVersion,
-    c.IsActive,
-    c.CreatedAt,
+${qualifyCompanyColumns('c')},
     uc.IsDefault
   FROM dbo.UserCompanies uc
   INNER JOIN dbo.Companies c
@@ -172,19 +242,13 @@ const getUserCompanies = async (userId) => cachedQuery(`userCompanies:${userId}`
     AND c.IsActive = 1
   ORDER BY uc.IsDefault DESC, c.CompanyName ASC
 `, { userId }));
+};
 
-const getAssignedCompanyForUser = async (userId, companyId) => cachedQuery(`assignedCompany:${userId}:${companyId}`, () => queryOne(`
+const getAssignedCompanyForUser = async (userId, companyId) => {
+  await ensureCompanyCredentialColumns();
+  return cachedQuery(`assignedCompany:${userId}:${companyId}`, () => queryOne(`
   SELECT
-    c.CompanyId,
-    c.CompanyName,
-    c.DbName,
-    c.DbUser,
-    c.DbPassword,
-    c.ServerName,
-    c.LicenseServer,
-    c.SAPVersion,
-    c.IsActive,
-    c.CreatedAt,
+${qualifyCompanyColumns('c')},
     uc.IsDefault
   FROM dbo.UserCompanies uc
   INNER JOIN dbo.Companies c
@@ -193,6 +257,7 @@ const getAssignedCompanyForUser = async (userId, companyId) => cachedQuery(`assi
     AND uc.CompanyId = @companyId
     AND c.IsActive = 1
 `, { userId, companyId }));
+};
 
 const getUserRoleForCompany = async (userId, companyId) => cachedQuery(`userRole:${userId}:${companyId}`, () => queryOne(`
   SELECT TOP 1 ur.RoleId, r.RoleName
@@ -226,6 +291,8 @@ module.exports = {
   queryRows,
   queryOne,
   transaction,
+  ensureCompanyCredentialColumns,
+  clearCache,
   findUserByUsername,
   getActiveCompanies,
   getUserCompanies,

@@ -274,11 +274,11 @@ const mergeNestedSettings = (defaults, saved = {}) =>
     return acc;
   }, {});
 
-const readSavedFormSettings = () => {
+const readSavedFormSettings = (storageKey = FORM_SETTINGS_STORAGE_KEY) => {
   const defaults = createDefaultFormSettings();
 
   try {
-    const raw = localStorage.getItem(FORM_SETTINGS_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return defaults;
     return mergeNestedSettings(defaults, JSON.parse(raw));
   } catch (error) {

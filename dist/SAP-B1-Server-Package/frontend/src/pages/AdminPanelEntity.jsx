@@ -607,6 +607,40 @@ const AdminPanelEntity = () => {
     );
   }, [entityKey, filteredRecords, lookupLabelMaps]);
 
+  const formSections = useMemo(() => {
+    if (!schema) return [];
+
+    const visibleFormColumns = (schema.columns || []).filter((column) => !column.hidden);
+    const configuredSections = schema.entity?.formSections || bootstrap?.entity?.formSections || [];
+    if (!configuredSections.length) return [];
+
+    const usedColumnNames = new Set();
+    const sections = configuredSections
+      .map((section) => {
+        const sectionColumnNames = new Set(section.columns || []);
+        const columns = visibleFormColumns.filter((column) => sectionColumnNames.has(column.name));
+        columns.forEach((column) => usedColumnNames.add(column.name));
+
+        return {
+          key: section.key,
+          title: section.title,
+          columns,
+        };
+      })
+      .filter((section) => section.columns.length);
+
+    const uncategorizedColumns = visibleFormColumns.filter((column) => !usedColumnNames.has(column.name));
+    if (uncategorizedColumns.length) {
+      sections.push({
+        key: 'other-fields',
+        title: 'Other Fields',
+        columns: uncategorizedColumns,
+      });
+    }
+
+    return sections;
+  }, [bootstrap?.entity?.formSections, schema]);
+
   useEffect(() => {
     if (entityKey !== 'role-rights') return;
 
@@ -756,6 +790,35 @@ const AdminPanelEntity = () => {
       setIsSaving(false);
     }
   };
+
+  const renderAdminField = (column) =>
+    column.hidden
+      ? null
+      : renderField(
+        column,
+        formData[column.name],
+        selectedRecord,
+        pageMode === 'create',
+        lookups,
+        handleFieldChange,
+        { entityKey, records, formData },
+      );
+
+  const formActions = (
+    <div className="admin-form-actions">
+      <button type="submit" className="admin-panel-button" disabled={isSaving}>
+        {isSaving ? 'Saving...' : pageMode === 'create' ? 'Create Record' : 'Save Changes'}
+      </button>
+      <button
+        type="button"
+        className="admin-panel-button admin-panel-button--ghost"
+        onClick={handleResetForm}
+        disabled={isSaving}
+      >
+        Reset Form
+      </button>
+    </div>
+  );
 
   if (isLoading) {
     return <div className="admin-panel-empty">Loading {entityKey}...</div>;
@@ -986,34 +1049,31 @@ const AdminPanelEntity = () => {
             ) : null}
           </div>
 
-          <form className="admin-form-grid" onSubmit={handleSubmit}>
-            {(schema?.columns || []).map((column) =>
-              column.hidden
-                ? null
-                : renderField(
-                  column,
-                  formData[column.name],
-                  selectedRecord,
-                  pageMode === 'create',
-                  lookups,
-                  handleFieldChange,
-                  { entityKey, records, formData },
-                )
+          <form onSubmit={handleSubmit}>
+            {formSections.length ? (
+              <div className="admin-form-section-list">
+                {formSections.map((section) => (
+                  <section
+                    key={section.key}
+                    className="admin-form-section"
+                  >
+                    <div className="admin-form-section__header">
+                      <h3>{section.title}</h3>
+                      <span>{section.columns.length} fields</span>
+                    </div>
+                    <div className="admin-form-grid">
+                      {section.columns.map(renderAdminField)}
+                    </div>
+                  </section>
+                ))}
+                {formActions}
+              </div>
+            ) : (
+              <div className="admin-form-grid">
+                {(schema?.columns || []).map(renderAdminField)}
+                {formActions}
+              </div>
             )}
-
-            <div className="admin-form-actions">
-              <button type="submit" className="admin-panel-button" disabled={isSaving}>
-                {isSaving ? 'Saving...' : pageMode === 'create' ? 'Create Record' : 'Save Changes'}
-              </button>
-              <button
-                type="button"
-                className="admin-panel-button admin-panel-button--ghost"
-                onClick={handleResetForm}
-                disabled={isSaving}
-              >
-                Reset Form
-              </button>
-            </div>
           </form>
         </div>
       </section>

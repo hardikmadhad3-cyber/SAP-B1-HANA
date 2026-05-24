@@ -273,6 +273,19 @@ const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Fr_trans', getValue: (line) => line.freightProvider },
   { sapField: 'U_Fr_trans_name', getValue: (line) => line.freightProviderName },
   { sapField: 'U_BDNum', getValue: (line) => line.brokerageNumber },
+  { sapField: 'U_DocKey', getValue: (line, context) => context.docEntry },
+  { sapField: 'U_ItemCode', getValue: (line) => line.itemNo },
+  { sapField: 'U_Item_Desc', getValue: (line) => line.itemDescription },
+  { sapField: 'U_UoM', getValue: (line) => line.uomName || line.uomCode },
+  { sapField: 'U_Order_Qty', getValue: (line) => line.quantity },
+  { sapField: 'U_Rate', getValue: (line) => line.unitPrice },
+  { sapField: 'U_Amount', getValue: (line) => line.total || (toRequiredNumber(line.quantity, 0) * toRequiredNumber(line.unitPrice, 0)) },
+  { sapField: 'U_Disc_Rate', getValue: (line) => line.stdDiscount },
+  { sapField: 'U_Disc_Amount', getValue: (line) => {
+    const gross = toRequiredNumber(line.quantity, 0) * toRequiredNumber(line.unitPrice, 0);
+    const discountPercent = toRequiredNumber(line.stdDiscount, 0);
+    return gross * discountPercent / 100;
+  } },
 ];
 
 const normalizeSapUdfFieldName = (value) => String(value || '').trim().toUpperCase();
@@ -393,7 +406,7 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
   }
 
   for (const mapping of SALES_ORDER_LINE_UDF_MAPPINGS) {
-    setValidatedRdr1Field(documentLine, fieldMetadata, mapping.sapField, mapping.getValue(line));
+    setValidatedRdr1Field(documentLine, fieldMetadata, mapping.sapField, mapping.getValue(line, context));
   }
 
   Object.entries(line.udf || {}).forEach(([key, value]) => {
@@ -418,11 +431,15 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
   return documentLine;
 };
 
-const buildDocumentLinesPayload = async (lines = [], includeLineNum = false) => {
+const buildDocumentLinesPayload = async (lines = [], includeLineNum = false, extraContext = {}) => {
   const rdr1FieldMetadata = await salesOrderDb.getSalesOrderLineFieldMetadata();
 
   return Promise.all(
-    (lines || []).map((line) => buildDocumentLinePayload(line, { rdr1FieldMetadata, includeLineNum }))
+    (lines || []).map((line) => buildDocumentLinePayload(line, {
+      ...extraContext,
+      rdr1FieldMetadata,
+      includeLineNum,
+    }))
   );
 };
 
@@ -985,7 +1002,9 @@ const updateSalesOrder = async (docEntry, payload) => {
     const Remarks = payload.header.otherInstruction || payload.header.remarks || '';
     const Freight = Number(payload.header.freight) || 0;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const documentLines = await buildDocumentLinesPayload(payload.lines, true);
+    const documentLines = await buildDocumentLinesPayload(payload.lines, true, {
+      docEntry,
+    });
     await logSalesOrderSaveTaxDiagnostics({
       mode: 'update',
       docEntry,

@@ -200,12 +200,14 @@ const createLookupValue = async (req, res) => {
 
 const printDCSalesOrder = async (req, res) => {
   try {
-    const { docEntry, schema, docCode } = req.body || {};
+    const { docEntry, docNum, schema, docCode, cardCode } = req.body || {};
     const data = await documentPrintLayoutService.printDocument({
       documentType: 'salesOrder',
       docEntry,
+      docNum,
       schema,
       docCode,
+      cardCode,
       auth: req.auth,
     });
 

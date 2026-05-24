@@ -353,8 +353,8 @@ const createUdfState = (definitions) =>
     return acc;
   }, {});
 
-const normalizeUdfState = (definitions, values = {}) =>
-    definitions.reduce((acc, field) => {
+const normalizeUdfState = (definitions, values = {}) => {
+    const normalized = definitions.reduce((acc, field) => {
         const currentValue = values[field.key];
         const shouldApplyDefault =
             currentValue === undefined ||
@@ -364,6 +364,15 @@ const normalizeUdfState = (definitions, values = {}) =>
         acc[field.key] = shouldApplyDefault ? getDefaultUdfValue(field) : currentValue;
     return acc;
   }, {});
+
+    Object.entries(values || {}).forEach(([key, value]) => {
+        if (String(key || '').startsWith('U_') && !Object.prototype.hasOwnProperty.call(normalized, key)) {
+            normalized[key] = value == null ? '' : value;
+        }
+    });
+
+    return normalized;
+};
 
 const buildVisibilitySettings = (definitions) =>
   definitions.reduce((acc, field) => {
@@ -386,28 +395,16 @@ const mergeNestedSettings = (defaults, saved = {}) =>
     return acc;
   }, {});
 
-const readSavedFormSettings = () => {
+const readSavedFormSettings = (storageKey = FORM_SETTINGS_STORAGE_KEY) => {
   const defaults = createDefaultFormSettings();
 
   try {
-    const raw = localStorage.getItem(FORM_SETTINGS_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return defaults;
     const merged = mergeNestedSettings(defaults, JSON.parse(raw));
     if (merged.matrixColumns?.sellerQty) {
       merged.matrixColumns.sellerQty = {
         ...merged.matrixColumns.sellerQty,
-        visible: true,
-      };
-    }
-    if (merged.matrixColumns?.buyerPaymentTerms) {
-      merged.matrixColumns.buyerPaymentTerms = {
-        ...merged.matrixColumns.buyerPaymentTerms,
-        visible: true,
-      };
-    }
-    if (merged.matrixColumns?.sellerPaymentTerms) {
-      merged.matrixColumns.sellerPaymentTerms = {
-        ...merged.matrixColumns.sellerPaymentTerms,
         visible: true,
       };
     }

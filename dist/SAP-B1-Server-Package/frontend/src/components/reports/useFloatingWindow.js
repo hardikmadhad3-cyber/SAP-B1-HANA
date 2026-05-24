@@ -1,16 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSapWindowTaskbar } from "../SapWindowTaskbarContext";
+import {
+  buildCompanyScopedSessionKey,
+  getActiveCompanyStorageScope,
+} from "../../utils/companyStorageScope";
 
 const WINDOW_STATE_STORAGE_PREFIX = "sap-window-state:";
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
-const readPersistedWindowState = (taskId) => {
+const getWindowStateStorageKey = (taskId, companyScope = getActiveCompanyStorageScope()) =>
+  buildCompanyScopedSessionKey(`${WINDOW_STATE_STORAGE_PREFIX}${taskId}`, companyScope);
+
+const readPersistedWindowState = (taskId, companyScope) => {
   if (!taskId || typeof window === "undefined") {
     return null;
   }
 
   try {
-    const rawValue = window.sessionStorage.getItem(`${WINDOW_STATE_STORAGE_PREFIX}${taskId}`);
+    const rawValue = window.sessionStorage.getItem(getWindowStateStorageKey(taskId, companyScope));
     if (!rawValue) return null;
 
     const parsedValue = JSON.parse(rawValue);
@@ -20,20 +27,20 @@ const readPersistedWindowState = (taskId) => {
   }
 };
 
-const writePersistedWindowState = (taskId, value) => {
+const writePersistedWindowState = (taskId, value, companyScope) => {
   if (!taskId || typeof window === "undefined") {
     return;
   }
 
-  window.sessionStorage.setItem(`${WINDOW_STATE_STORAGE_PREFIX}${taskId}`, JSON.stringify(value));
+  window.sessionStorage.setItem(getWindowStateStorageKey(taskId, companyScope), JSON.stringify(value));
 };
 
-const clearPersistedWindowState = (taskId) => {
+const clearPersistedWindowState = (taskId, companyScope) => {
   if (!taskId || typeof window === "undefined") {
     return;
   }
 
-  window.sessionStorage.removeItem(`${WINDOW_STATE_STORAGE_PREFIX}${taskId}`);
+  window.sessionStorage.removeItem(getWindowStateStorageKey(taskId, companyScope));
 };
 
 function useFloatingWindow({
@@ -45,18 +52,34 @@ function useFloatingWindow({
   taskTitle,
   taskPath,
   taskState,
+  allowPersistedMinimized = true,
 } = {}) {
   const taskbar = useSapWindowTaskbar();
+  const companyScope = taskbar?.companyScope || getActiveCompanyStorageScope();
+  const windowStateStorageKey = taskId ? getWindowStateStorageKey(taskId, companyScope) : "";
   const removeTask = taskbar?.removeTask;
   const upsertTask = taskbar?.upsertTask;
-  const persistedStateRef = useRef(readPersistedWindowState(taskId));
+  const persistedStateRef = useRef(readPersistedWindowState(taskId, companyScope));
+  const [loadedWindowStateKey, setLoadedWindowStateKey] = useState(windowStateStorageKey);
   const windowRef = useRef(null);
   const dragStateRef = useRef(null);
   const restoreAfterMountRef = useRef(false);
   const [position, setPosition] = useState(persistedStateRef.current?.position ?? null);
-  const [isMinimized, setIsMinimized] = useState(Boolean(persistedStateRef.current?.isMinimized));
+  const [isMinimized, setIsMinimized] = useState(
+    allowPersistedMinimized && Boolean(persistedStateRef.current?.isMinimized),
+  );
   const [isMaximized, setIsMaximized] = useState(Boolean(persistedStateRef.current?.isMaximized));
   const lastFloatingPositionRef = useRef(persistedStateRef.current?.position ?? null);
+
+  useEffect(() => {
+    const persistedState = readPersistedWindowState(taskId, companyScope);
+    persistedStateRef.current = persistedState;
+    lastFloatingPositionRef.current = persistedState?.position ?? null;
+    setPosition(persistedState?.position ?? null);
+    setIsMinimized(allowPersistedMinimized && Boolean(persistedState?.isMinimized));
+    setIsMaximized(Boolean(persistedState?.isMaximized));
+    setLoadedWindowStateKey(windowStateStorageKey);
+  }, [allowPersistedMinimized, companyScope, taskId, windowStateStorageKey]);
 
   const centerWindow = useCallback(() => {
     if (typeof window === "undefined") {
@@ -86,13 +109,22 @@ function useFloatingWindow({
 
   useEffect(() => {
     if (!taskId) return;
+    if (loadedWindowStateKey !== windowStateStorageKey) return;
 
     writePersistedWindowState(taskId, {
       isMaximized,
       isMinimized,
       position,
-    });
-  }, [isMaximized, isMinimized, position, taskId]);
+    }, companyScope);
+  }, [
+    companyScope,
+    isMaximized,
+    isMinimized,
+    loadedWindowStateKey,
+    position,
+    taskId,
+    windowStateStorageKey,
+  ]);
 
   useEffect(() => {
     if (typeof document === "undefined") {
@@ -135,7 +167,7 @@ function useFloatingWindow({
         setPosition(null);
         setIsMaximized(false);
         setIsMinimized(false);
-        clearPersistedWindowState(taskId);
+        clearPersistedWindowState(taskId, companyScope);
         removeTask?.(taskId);
       }
       return undefined;
@@ -147,7 +179,7 @@ function useFloatingWindow({
 
     const frameId = window.requestAnimationFrame(centerWindow);
     return () => window.cancelAnimationFrame(frameId);
-  }, [centerWindow, isMaximized, isOpen, position, removeTask, resetOnClose, taskId]);
+  }, [centerWindow, companyScope, isMaximized, isOpen, position, removeTask, resetOnClose, taskId]);
 
   useEffect(() => {
     if (!isOpen || typeof window === "undefined") {

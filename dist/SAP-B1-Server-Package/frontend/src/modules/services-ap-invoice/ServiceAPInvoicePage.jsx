@@ -8,6 +8,7 @@ import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import { copyToDocument } from '../../services/documentCopyService';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { BASE_TYPE, normaliseDocumentHeader, unwrapCopyFromDocument } from '../../api/copyFromApi';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
 import StateSelectionModal from '../sales-order/components/StateSelectionModal';
@@ -520,8 +521,10 @@ function ServiceAPInvoicePage() {
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
-  const [formSettings, setFormSettings] = useState(() =>
-    readSavedFormSettings(HEADER_UDF_DEFINITIONS, ROW_UDF_DEFINITIONS, CONTENT_COLUMNS)
+  const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
+    FORM_SETTINGS_STORAGE_KEY,
+    readSavedFormSettings,
+    [headerUdfDefinitions, rowUdfDefinitions, CONTENT_COLUMNS],
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
@@ -824,10 +827,6 @@ function ServiceAPInvoicePage() {
   }, [header.appliedAmount, header.discount, header.freight, header.totalDownPayment, lines]);
 
   useEffect(() => {
-    localStorage.setItem(FORM_SETTINGS_STORAGE_KEY, JSON.stringify(formSettings));
-  }, [formSettings]);
-
-  useEffect(() => {
     const handler = (event) => {
       if (!event.target.closest('.del-dropdown')) {
         document.querySelectorAll('.del-dropdown').forEach((dropdown) => dropdown.classList.remove('active'));
@@ -852,7 +851,7 @@ function ServiceAPInvoicePage() {
         const nextRefData = normalizeReferenceData(refRes.data, seriesRes.data?.series || seriesRes.data);
         const nextHeaderUdfs = nextRefData.udf_metadata.header;
         const nextRowUdfs = applyServiceRowUdfDefaults(nextRefData.udf_metadata?.rows || []);
-        const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, CONTENT_COLUMNS);
+        const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, CONTENT_COLUMNS, formSettingsStorageKey);
         setHeaderUdfDefinitions(nextHeaderUdfs);
         setRowUdfDefinitions(nextRowUdfs);
         setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
