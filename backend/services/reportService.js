@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto');
 const https = require('https');
 const env = require('../config/env');
 const dbService = require('./dbService');
@@ -440,23 +441,46 @@ const resolveReportCompanyDb = async (companyDb = '') => {
   return String(config.companyDb || '').trim();
 };
 
+const hashSecret = (value) =>
+  crypto.createHash('sha256').update(String(value || '')).digest('hex');
+
 const getReportSessionKey = (config) => [
   config.baseUrl,
   config.username,
+  hashSecret(config.password),
   config.companyDb,
 ].map((value) => String(value || '').trim().toLowerCase()).join('|');
 
 const ensureReportLoginConfig = (config) => {
-  if (
-    !config.baseUrl ||
-    !config.username ||
-    !config.password ||
-    !config.companyDb
-  ) {
-    const error = new Error('Missing SAP Report Service login configuration. Check backend/.env or Company Master credentials.');
+  const requiredFields = [
+    ['baseUrl', 'Report Service Base Url'],
+    ['username', 'Report Service Username'],
+    ['password', 'Report Service Password'],
+    ['companyDb', 'Report Service Company Db'],
+  ];
+  const missingFields = requiredFields
+    .filter(([key]) => !String(config[key] || '').trim())
+    .map(([, label]) => label);
+
+  if (missingFields.length) {
+    const sourceSummary = requiredFields
+      .map(([key, label]) => `${label}: ${config.fieldSources?.[key] || 'unknown'}`)
+      .join(', ');
+    const error = new Error(
+      `Missing SAP Report Service login configuration (${missingFields.join(', ')}). Enter these values in Admin Panel > Companies > SAP Report Service for the selected company. Current sources: ${sourceSummary}.`,
+    );
     error.statusCode = 500;
     throw error;
   }
+};
+
+const buildCredentialSourceSummary = (config) => {
+  const fieldSources = config.fieldSources || {};
+  const usernameSource = fieldSources.username || 'configured';
+  const passwordSource = fieldSources.password || 'configured';
+  const companyDbSource = fieldSources.companyDb || 'configured';
+
+  return `username from ${usernameSource}, password from ${passwordSource}, company DB from ${companyDbSource}`;
 };
 
 const loginToReportService = async (companyDb = '') => {
@@ -474,9 +498,10 @@ const loginToReportService = async (companyDb = '') => {
 
   if (!sessionCookie) {
     const sapMessage = extractReportServiceMessage(response.data);
+    const credentialSource = buildCredentialSourceSummary(reportConfig);
     const detail = sapMessage
-      ? `SAP Report Service login failed for company ${normalizedCompanyDb}: ${sapMessage}`
-      : 'SAP Report Service login did not return a session cookie.';
+      ? `SAP Report Service login failed for company ${normalizedCompanyDb} (${credentialSource}). Check Admin Panel > Companies > SAP Report Service and retry. SAP said: ${sapMessage}`
+      : `SAP Report Service login did not return a session cookie for company ${normalizedCompanyDb} (${credentialSource}).`;
     const error = new Error(detail);
     error.statusCode = 502;
     throw error;
@@ -520,6 +545,18 @@ const toRequiredString = (value, fieldName) => {
   return normalized;
 };
 
+const toRequiredPositiveIntegerString = (value, fieldName) => {
+  const normalized = toRequiredString(value, fieldName);
+
+  if (!/^\d+$/.test(normalized) || Number(normalized) <= 0) {
+    const error = new Error(`${fieldName} must be a valid positive internal document key.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return normalized;
+};
+
 const buildFileName = ({ docEntry, docCode }) => `sales-order-${docEntry}-${docCode}.pdf`;
 
 const DOCUMENT_TYPE_LABELS = new Map([
@@ -540,7 +577,7 @@ const DOCUMENT_TYPE_LABELS = new Map([
   ['WTQ', 'Inventory Transfer Request'],
 ]);
 
-const getLayoutMetadata = async (docCode) => {
+const getLayoutMetadata = async (docCode, databaseName = '') => {
   const normalizedDocCode = String(docCode || '').trim();
   if (!normalizedDocCode) {
     return null;
@@ -550,7 +587,7 @@ const getLayoutMetadata = async (docCode) => {
     SELECT TOP 1 DocCode, DocName, TypeCode, Category, Status
     FROM RDOC
     WHERE DocCode = @docCode
-  `, { docCode: normalizedDocCode });
+  `, { docCode: normalizedDocCode }, databaseName ? { databaseName } : {});
 
   return result.recordset?.[0] || null;
 };
@@ -600,6 +637,198 @@ const normalizeReportParameterValue = (value, type) => {
   return String(value);
 };
 
+const normalizeParameterNameKey = (value) =>
+  String(value || '')
+    .split(/@select/i)[0]
+    .replace(/@/g, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase();
+
+const isDocEntryParameter = (parameterName) => {
+  const key = normalizeParameterNameKey(parameterName);
+  return [
+    'dockey',
+    'docentry',
+    'documentkey',
+    'documententry',
+    'documentid',
+  ].includes(key) || [
+    'dockey',
+    'docentry',
+    'documentkey',
+    'documententry',
+    'documentid',
+  ].some((candidate) => key.endsWith(candidate));
+};
+
+const isDocNumParameter = (parameterName) => {
+  const key = normalizeParameterNameKey(parameterName);
+  return [
+    'docnum',
+    'documentnumber',
+    'documentno',
+    'docno',
+  ].includes(key);
+};
+
+const isObjectTypeParameter = (parameterName) => {
+  const key = normalizeParameterNameKey(parameterName);
+  return [
+    'objectid',
+    'objecttype',
+    'objtype',
+    'boobjecttype',
+    'doctype',
+    'documenttype',
+  ].includes(key) || [
+    'objectid',
+    'objecttype',
+    'objtype',
+    'boobjecttype',
+  ].some((candidate) => key.endsWith(candidate));
+};
+
+const isSchemaParameter = (parameterName) => {
+  const key = normalizeParameterNameKey(parameterName);
+  return [
+    'schema',
+    'schemaname',
+    'database',
+    'databasename',
+    'dbname',
+    'companydb',
+    'companydatabase',
+  ].includes(key) || [
+    'schema',
+    'schemaname',
+    'database',
+    'databasename',
+    'companydb',
+    'companydatabase',
+  ].some((candidate) => key.endsWith(candidate));
+};
+
+const isCardCodeParameter = (parameterName) => {
+  const key = normalizeParameterNameKey(parameterName);
+  if (!key || key.includes('name')) return false;
+
+  return [
+    'card',
+    'cardcode',
+    'bp',
+    'bpcode',
+    'businesspartner',
+    'businesspartnercode',
+    'customer',
+    'customercode',
+    'custcode',
+    'buyer',
+    'buyercode',
+    'vendor',
+    'vendorcode',
+    'supplier',
+    'suppliercode',
+  ].includes(key);
+};
+
+const resolveDocumentParameterValue = (parameterName, context) => {
+  if (isDocEntryParameter(parameterName)) {
+    return context.docKeyValue || context.docEntry;
+  }
+
+  if (isSchemaParameter(parameterName)) {
+    return context.schema;
+  }
+
+  if (isObjectTypeParameter(parameterName)) {
+    return context.objectType;
+  }
+
+  if (isCardCodeParameter(parameterName)) {
+    return context.cardCode;
+  }
+
+  if (isDocNumParameter(parameterName)) {
+    return context.docNum;
+  }
+
+  return undefined;
+};
+
+const resolveDocumentParameterType = (parameterName, fallbackType = 'string') => {
+  if (isDocEntryParameter(parameterName) || isObjectTypeParameter(parameterName)) {
+    return 'number';
+  }
+
+  return fallbackType;
+};
+
+const addParameterIfMissing = (parameters, parameter) => {
+  const key = String(parameter.name || '').trim().toUpperCase();
+  if (!key || parameters.some((entry) => String(entry.name || '').trim().toUpperCase() === key)) {
+    return;
+  }
+
+  parameters.push(parameter);
+};
+
+const hasMatchingLayoutParameter = (layoutParameters, predicate) =>
+  layoutParameters.some((parameter) => predicate(parameter.paramName));
+
+const buildDocumentPrintParameters = async ({
+  docCode,
+  docEntry,
+  docKeyValue = '',
+  docNum = '',
+  schema,
+  cardCode = '',
+  objectType = '',
+} = {}) => {
+  const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
+  const resolvedDocKeyValue = toRequiredPositiveIntegerString(docKeyValue || normalizedDocEntry, 'DocKey');
+
+  if (resolvedDocKeyValue !== normalizedDocEntry) {
+    const error = new Error('Report DocKey parameter must match the currently open document DocEntry.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const context = {
+    docEntry: normalizedDocEntry,
+    docKeyValue: resolvedDocKeyValue,
+  };
+  let layoutParameters = [];
+
+  try {
+    layoutParameters = await loadReportParameters(docCode, { reportCompanyDb: schema });
+  } catch (_error) {
+    layoutParameters = [];
+  }
+
+  const parameters = [];
+  const docKeyLayoutParameter = layoutParameters.find((layoutParameter) =>
+    isDocEntryParameter(layoutParameter.paramName)
+  );
+
+  if (docKeyLayoutParameter) {
+    addParameterIfMissing(parameters, {
+      name: docKeyLayoutParameter.paramName,
+      type: resolveDocumentParameterType(docKeyLayoutParameter.paramName, docKeyLayoutParameter.paramType),
+      value: context.docKeyValue,
+    });
+
+    return parameters;
+  }
+
+  addParameterIfMissing(parameters, {
+    name: 'DocKey@',
+    type: 'number',
+    value: resolvedDocKeyValue,
+  });
+
+  return parameters;
+};
+
 const buildExportDiagnostics = ({ docCode, layoutMetadata, payload, rawResponse }) => ({
   docCode,
   layout: {
@@ -611,6 +840,13 @@ const buildExportDiagnostics = ({ docCode, layoutMetadata, payload, rawResponse 
   rawResponse: String(rawResponse || '').slice(0, 500),
 });
 
+const summarizeReportParameters = (parameters = []) =>
+  parameters.map((parameter) => ({
+    name: String(parameter?.name || '').trim(),
+    type: resolveXsdType(parameter?.type),
+    value: Array.isArray(parameter?.value) ? parameter.value : parameter?.value,
+  }));
+
 const exportReportPdf = async ({
   docCode,
   parameters = [],
@@ -621,7 +857,7 @@ const exportReportPdf = async ({
   const reportConfig = await resolveReportServiceConfig(reportCompanyDb);
   const normalizedReportCompanyDb = String(reportConfig.companyDb || '').trim();
   const reportSessionKey = getReportSessionKey(reportConfig);
-  const layoutMetadata = await getLayoutMetadata(normalizedDocCode);
+  const layoutMetadata = await getLayoutMetadata(normalizedDocCode, normalizedReportCompanyDb);
   const parameterNames = new Set(
     parameters.map((parameter) => String(parameter?.name || '').trim().toUpperCase()).filter(Boolean),
   );
@@ -641,7 +877,7 @@ const exportReportPdf = async ({
   if (isDocumentPrintLayout(layoutMetadata) && !parameterNames.has('DOCKEY@')) {
     const documentTypeLabel = getDocumentTypeLabel(layoutMetadata.TypeCode);
     const error = new Error(
-      `SAP layout ${normalizedDocCode} (${layoutMetadata.DocName || 'Unknown'}) is a ${documentTypeLabel} print layout (${layoutMetadata.TypeCode}). It expects document-key parameters like Dockey@ and Schema@, not date-range criteria.`,
+      `SAP layout ${normalizedDocCode} (${layoutMetadata.DocName || 'Unknown'}) is a ${documentTypeLabel} print layout (${layoutMetadata.TypeCode}). It expects document-key parameters like DocKey@ and Schema@, not date-range criteria.`,
     );
     error.statusCode = 422;
     throw error;
@@ -652,6 +888,17 @@ const exportReportPdf = async ({
     type: resolveXsdType(parameter?.type),
     value: [[normalizeReportParameterValue(parameter?.value, parameter?.type)]],
   }));
+
+  console.info('[ReportService] Exporting Crystal document layout', {
+    docCode: normalizedDocCode,
+    reportCompanyDb: normalizedReportCompanyDb,
+    layout: {
+      docName: String(layoutMetadata.DocName || '').trim(),
+      typeCode: String(layoutMetadata.TypeCode || '').trim(),
+      category: String(layoutMetadata.Category || '').trim(),
+    },
+    parameterPayload: summarizeReportParameters(parameters),
+  });
 
   const reportSessionCookie = await ensureReportSession(normalizedReportCompanyDb);
   const reportClient = getReportClient(reportConfig);
@@ -732,32 +979,49 @@ const exportReportPdf = async ({
 
 const exportDocumentPdf = async ({
   docEntry,
+  docNum = '',
   schema,
+  cardCode = '',
+  objectType = '',
   docCode,
   documentLabel = 'Document',
   fileName = '',
 } = {}, retryOnAuth = true) => {
-  const normalizedDocEntry = toRequiredString(docEntry, 'DocEntry');
+  const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
   const reportConfig = await resolveReportServiceConfig();
   const normalizedSchema = toRequiredString(schema || reportConfig.defaultSchema, 'Schema');
   const normalizedDocCode = toRequiredString(docCode || env.reportServiceDefaultDocCode, 'DocCode');
+  const normalizedDocNum = String(docNum || '').trim();
+  const normalizedCardCode = String(cardCode || '').trim();
+  const normalizedObjectType = String(objectType || '').trim();
+  const outputFileName = fileName || `${String(documentLabel || 'document').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${normalizedDocEntry}-${normalizedDocCode}.pdf`;
+  const parameters = await buildDocumentPrintParameters({
+    docCode: normalizedDocCode,
+    docEntry: normalizedDocEntry,
+    docKeyValue: normalizedDocEntry,
+    docNum: normalizedDocNum,
+    schema: normalizedSchema,
+    cardCode: normalizedCardCode,
+    objectType: normalizedObjectType,
+  });
+  const docKeyParameter = parameters.find((parameter) => isDocEntryParameter(parameter.name));
+
+  console.info('[ReportService] Document print parameters confirmed', {
+    documentLabel,
+    docEntry: normalizedDocEntry,
+    docNum: normalizedDocNum,
+    docCode: normalizedDocCode,
+    schema: normalizedSchema,
+    docKeySource: 'DocEntry',
+    docKeyParameter: docKeyParameter?.name || 'DocKey@',
+    docKeyParameterValue: String(docKeyParameter?.value ?? '').trim(),
+  });
 
   const genericResponse = await exportReportPdf({
     docCode: normalizedDocCode,
     reportCompanyDb: normalizedSchema,
-    parameters: [
-      {
-        name: 'Dockey@',
-        type: 'number',
-        value: normalizedDocEntry,
-      },
-      {
-        name: 'Schema@',
-        type: 'string',
-        value: normalizedSchema,
-      },
-    ],
-    fileName: fileName || `${String(documentLabel || 'document').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${normalizedDocEntry}-${normalizedDocCode}.pdf`,
+    parameters,
+    fileName: outputFileName,
   }, retryOnAuth);
 
   return {
@@ -766,6 +1030,11 @@ const exportDocumentPdf = async ({
     mimeType: 'application/pdf',
     fileName: genericResponse.fileName,
     docEntry: normalizedDocEntry,
+    docNum: normalizedDocNum,
+    cardCode: normalizedCardCode,
+    objectType: normalizedObjectType,
+    docKeySource: 'DocEntry',
+    docKeyValue: normalizedDocEntry,
     docCode: normalizedDocCode,
     schema: normalizedSchema,
   };
@@ -810,9 +1079,15 @@ const parseJsonPayload = (payload) => {
   return {};
 };
 
-const loadReportParameters = async (docCode, retryOnAuth = true) => {
+const loadReportParameters = async (docCode, optionsOrRetry = {}, retryOverride = undefined) => {
   const normalizedDocCode = toRequiredString(docCode, 'DocCode');
-  const reportConfig = await resolveReportServiceConfig();
+  const options = typeof optionsOrRetry === 'object' && optionsOrRetry !== null
+    ? optionsOrRetry
+    : {};
+  const retryOnAuth = typeof optionsOrRetry === 'boolean'
+    ? optionsOrRetry
+    : (typeof retryOverride === 'boolean' ? retryOverride : true);
+  const reportConfig = await resolveReportServiceConfig(options.reportCompanyDb);
   const reportCompanyDb = String(reportConfig.companyDb || '').trim();
   const reportSessionKey = getReportSessionKey(reportConfig);
   const reportSessionCookie = await ensureReportSession(reportCompanyDb);
@@ -833,7 +1108,7 @@ const loadReportParameters = async (docCode, retryOnAuth = true) => {
     if (retryOnAuth && error.response?.status === 401) {
       reportSessionsByCompany.delete(reportSessionKey);
       await loginToReportService(reportCompanyDb);
-      return loadReportParameters(normalizedDocCode, false);
+      return loadReportParameters(normalizedDocCode, options, false);
     }
 
     throw error;
@@ -920,7 +1195,12 @@ const loadAuthorizedCrList = async (query = '', retryOnAuth = true) => {
     });
 };
 
+const clearReportSessions = () => {
+  reportSessionsByCompany.clear();
+};
+
 module.exports = {
+  clearReportSessions,
   loadAuthorizedCrList,
   loadReportParameters,
   isProbablyBase64,

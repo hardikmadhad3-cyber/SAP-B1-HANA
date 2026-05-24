@@ -27,6 +27,7 @@ import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
 import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../utils/copyToState';
@@ -202,7 +203,11 @@ function ARCreditMemo() {
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
-  const [formSettings, setFormSettings] = useState(() => readSavedFormSettings());
+  const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
+    FORM_SETTINGS_STORAGE_KEY,
+    readSavedFormSettings,
+    [headerUdfDefinitions, rowUdfDefinitions],
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
@@ -247,8 +252,6 @@ function ARCreditMemo() {
       ));
     }
   }, [header.placeOfSupply, refData.states]);
-
-  useEffect(() => { localStorage.setItem(FORM_SETTINGS_STORAGE_KEY, JSON.stringify(formSettings)); }, [formSettings]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -335,7 +338,7 @@ function ARCreditMemo() {
           const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
           const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
-          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs);
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, formSettingsStorageKey);
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
           setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));

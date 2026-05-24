@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import '../../modules/item-master/styles/itemMaster.css';
 import './styles/salesOrder.css';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -277,7 +277,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
     sellerDelivery: '', buyerDelivery: '',
     sellerBrokerageAmtPer: '', sellerBrokeragePercent: '',
     sellerBrokerage: '', buyerBrokerage: '',
-    specialRebate: '', commission: '', sellerBrokeragePerQty: '', unitPriceUdf: '',
+    specialRebate: '', commission: '2.5', sellerBrokeragePerQty: '', unitPriceUdf: '',
     qtySpecialInstruction: '', deliverySpecialInstruction: '',
     buyerPaymentTerms: '', sellerPaymentTerms: '', buyerSpecialInstruction: '', sellerSpecialInstruction: '',
     buyerBillDiscount: '', sellerBillDiscount: '', sellerItem: '', sellerQty: '',
@@ -852,27 +852,60 @@ function DCSalesOrder() {
     }, [currentDocEntry]);
 
     // ── derived / computed ────────────────────────────────────────────────────
-    const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-    const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
-        ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
-        : vendorContacts;
-    const vendorPayToAddresses = refData.pay_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
-    const vendorShipToAddresses = refData.ship_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
-    const vendorBillToAddresses = refData.bill_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
-    const vendorEffectiveShipToAddresses = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
-    const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
-    const billToPartyUdfFields = getBillToPartyUdfFields(headerUdfDefinitions);
+    const vendorContacts = useMemo(
+        () => refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || '')),
+        [refData.contacts, header.vendor],
+    );
+    const contactOptions = useMemo(
+        () => header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
+            ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
+            : vendorContacts,
+        [header.contactPerson, header.vendor, vendorContacts],
+    );
+    const vendorPayToAddresses = useMemo(
+        () => refData.pay_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || '')),
+        [refData.pay_to_addresses, header.vendor],
+    );
+    const vendorShipToAddresses = useMemo(
+        () => refData.ship_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || '')),
+        [refData.ship_to_addresses, header.vendor],
+    );
+    const vendorBillToAddresses = useMemo(
+        () => refData.bill_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || '')),
+        [refData.bill_to_addresses, header.vendor],
+    );
+    const vendorEffectiveShipToAddresses = useMemo(
+        () => vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses,
+        [vendorShipToAddresses, vendorPayToAddresses],
+    );
+    const vendorEffectiveBillToAddresses = useMemo(
+        () => vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses,
+        [vendorBillToAddresses, vendorPayToAddresses],
+    );
+    const billToPartyUdfFields = useMemo(
+        () => getBillToPartyUdfFields(headerUdfDefinitions),
+        [headerUdfDefinitions],
+    );
     const billToPartyCodeKey = billToPartyUdfFields.code?.key || '';
     const billToPartyCodeValue = String(billToPartyCodeKey ? headerUdfs[billToPartyCodeKey] : '').trim();
     const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
-    const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
+    const uomGroupMap = useMemo(
+        () => (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {}),
+        [refData.uom_groups],
+    );
 
     const effectiveTaxCodes = refData.tax_codes || [];
-    const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES;
+    const effectiveWarehouses = useMemo(
+        () => (refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES),
+        [refData.warehouses],
+    );
     const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
 
     // Filter warehouses by selected branch
-    const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
+    const branchFilteredWarehouses = useMemo(
+        () => filterWarehousesByBranch(effectiveWarehouses, header.branch),
+        [effectiveWarehouses, header.branch],
+    );
 
     const payTermOpts = refData.payment_terms.length
         ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
@@ -1036,21 +1069,21 @@ function DCSalesOrder() {
         return name ? `${code} - ${name}` : code;
     };
 
-    const getBranchName = (branchId) => {
+    const getBranchName = useCallback((branchId) => {
         if (!branchId) return '';
         const branch = refData.branches.find(b => String(b.BPLId) === String(branchId));
         return branch ? branch.BPLName : branchId;
-    };
+    }, [refData.branches]);
 
-    const getWarehouseLocation = (warehouseCode) => {
+    const getWarehouseLocation = useCallback((warehouseCode) => {
         if (!warehouseCode) return '';
         const warehouse = effectiveWarehouses.find(w => String(w.WhsCode || '') === String(warehouseCode || ''));
         return warehouse?.City || warehouse?.County || warehouse?.State || '';
-    };
+    }, [effectiveWarehouses]);
 
-    const resolveLineLocation = (warehouseCode, branchId) => (
+    const resolveLineLocation = useCallback((warehouseCode, branchId) => (
         getWarehouseLocation(warehouseCode) || getBranchName(branchId) || ''
-    );
+    ), [getBranchName, getWarehouseLocation]);
 
     // ── calculations ──────────────────────────────────────────────────────────
     const calcLineTotal = (line) => {
@@ -1180,12 +1213,18 @@ function DCSalesOrder() {
                 : prev
         ));
 
-        setLines(prev => prev.map(line => (
-            line.whse && !allowedWarehouseCodes.has(String(line.whse))
-                ? { ...line, whse: '', loc: resolveLineLocation('', line.branch || header.branch) }
-                : line
-        )));
-    }, [branchFilteredWarehouses, header.branch, refData.warehouses.length]);
+        setLines(prev => {
+            let changed = false;
+            const next = prev.map(line => {
+                if (line.whse && !allowedWarehouseCodes.has(String(line.whse))) {
+                    changed = true;
+                    return { ...line, whse: '', loc: resolveLineLocation('', line.branch || header.branch) };
+                }
+                return line;
+            });
+            return changed ? next : prev;
+        });
+    }, [branchFilteredWarehouses, header.branch, refData.warehouses.length, resolveLineLocation]);
 
     // Sync warehouse to all lines when header warehouse changes
     useEffect(() => {
@@ -1713,7 +1752,7 @@ function DCSalesOrder() {
         setLines(p => p.filter((_, idx) => idx !== i));
     };
 
-    const handleHeaderUdfChange = (k, v) => {
+    const handleHeaderUdfChange = useCallback((k, v) => {
         markDirty();
         setHeaderUdfs(p => {
             if (k === billToPartyCodeKey && !String(v || '').trim()) {
@@ -1724,11 +1763,23 @@ function DCSalesOrder() {
                 }));
             }
 
-            return { ...p, [k]: v };
+            return String(p?.[k] ?? '') === String(v ?? '') ? p : { ...p, [k]: v };
         });
-    };
+    }, [billToPartyCodeKey, billToPartyUdfFields, markDirty]);
     const handleRowUdfChange = (i, k, v) => setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
-    const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...(p[g] || {}), [k]: { ...((p[g] || {})[k] || {}), [prop]: val } } }));
+    const updateFormSetting = useCallback((g, k, prop, val) => setFormSettings(p => {
+        const currentValue = p?.[g]?.[k]?.[prop];
+        if (currentValue === val) return p;
+        return { ...p, [g]: { ...(p[g] || {}), [k]: { ...((p[g] || {})[k] || {}), [prop]: val } } };
+    }), [setFormSettings]);
+    const loadHeaderBillToPartyDetails = useCallback(
+        (partyCode) => fetchSalesOrderCustomerDetails(partyCode).then((response) => response.data),
+        [],
+    );
+    const loadHeaderToVendorDetails = useCallback(
+        (vendorCode) => fetchSalesOrderVendorDetails(vendorCode).then((response) => response.data),
+        [],
+    );
     const toggleHeaderUdfs = () => {
         setFormSettingsOpen(false);
         setSidebarOpen(p => !p);
@@ -2562,6 +2613,7 @@ function DCSalesOrder() {
                 <PrintSalesOrderActions
                     docEntry={currentDocEntry}
                     docNumber={header.docNo}
+                    cardCode={header.vendor}
                     disabled={pageState.posting}
                     onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
                     onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
@@ -2668,7 +2720,7 @@ function DCSalesOrder() {
                     </button>
                     <div className="so-dropdown-menu">
                         <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyTo('delivery'); document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active')); }}>
-                            Delivery
+                            DC Delivery
                         </button>
                         <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyTo('ar-invoice'); document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active')); }}>
                             A/R Invoice
@@ -3247,7 +3299,7 @@ function DCSalesOrder() {
                                     </button>
                                     <div className="so-dropdown-menu">
                                         <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyTo('delivery'); document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active')); }}>
-                                            Delivery
+                                            DC Delivery
                                         </button>
                                         <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyTo('ar-invoice'); document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active')); }}>
                                             A/R Invoice
@@ -3272,8 +3324,8 @@ function DCSalesOrder() {
                         onClose={() => setSidebarOpen(false)}
                         billToPartyAddressOptions={vendorEffectiveBillToAddresses}
                         billToPartyName={header.name}
-                        loadBillToPartyDetails={(partyCode) => fetchSalesOrderCustomerDetails(partyCode).then((response) => response.data)}
-                        loadToVendorDetails={(vendorCode) => fetchSalesOrderVendorDetails(vendorCode).then((response) => response.data)}
+                        loadBillToPartyDetails={loadHeaderBillToPartyDetails}
+                        loadToVendorDetails={loadHeaderToVendorDetails}
                     />
                     <FormSettingsPanel
                         variant="sidebar"

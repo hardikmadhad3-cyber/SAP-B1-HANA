@@ -6,6 +6,7 @@ const {
   syncAllReportMenuSidebarMenus,
   syncReportMenuSidebarMenuById,
 } = require('./reportMenuSidebarSyncService');
+const { clearReportSessions } = require('./reportService');
 
 const MAX_LIST_ROWS = 500;
 
@@ -18,7 +19,41 @@ const ENTITY_CONFIGS = [
     path: '/admin/companies',
     group: 'Core Setup',
     lookupLabelColumns: ['CompanyName', 'DbName'],
-    listColumns: ['CompanyId', 'CompanyName', 'DbName', 'ServerName', 'SAPVersion', 'IsActive', 'CreatedAt'],
+    listColumns: ['CompanyId', 'CompanyName', 'DbName', 'DbServer', 'SapBaseUrl', 'SAPVersion', 'IsActive', 'CreatedAt'],
+    formSections: [
+      {
+        key: 'master-data',
+        title: 'Master Data Setup',
+        columns: ['Port', 'AuthDbName'],
+      },
+      {
+        key: 'service-layer',
+        title: 'Service Layer Configuration',
+        columns: ['SapBaseUrl', 'SapUsername', 'SapPassword', 'SapCompanyDb', 'SapRejectUnauthorized'],
+      },
+      {
+        key: 'sap-report-service',
+        title: 'SAP Report Service',
+        columns: [
+          'ReportServiceBaseUrl',
+          'ReportServiceUsername',
+          'ReportServicePassword',
+          'ReportServiceCompanyDb',
+          'ReportServiceDefaultSchema',
+          'ReportServiceRejectUnauthorized',
+        ],
+      },
+      {
+        key: 'odbc-connection',
+        title: 'ODBC Connection',
+        columns: ['DbServer', 'DbName', 'DbUser', 'DbPassword', 'DbEncrypt', 'DbTrustCert'],
+      },
+      {
+        key: 'company-profile',
+        title: 'Company Profile',
+        columns: ['CompanyId', 'CompanyName', 'ServerName', 'LicenseServer', 'SAPVersion', 'IsActive', 'CreatedAt', 'UpdatedAt'],
+      },
+    ],
   },
   {
     key: 'users',
@@ -225,6 +260,12 @@ const buildLookupLabel = (config, row) => {
 };
 
 const buildEntitySchema = (config, schemaRows) => {
+  const sectionByColumn = new Map(
+    (config.formSections || []).flatMap((section) =>
+      (section.columns || []).map((columnName) => [columnName, section.key]),
+    ),
+  );
+
   const columns = schemaRows.map((row) => {
     const referencedConfig = row.referencedTable
       ? ENTITY_CONFIG_BY_TABLE.get(String(row.referencedTable).toLowerCase())
@@ -257,6 +298,7 @@ const buildEntitySchema = (config, schemaRows) => {
       editable: !isIdentity && !isHidden,
       inputType: isMultiSelect ? 'multiselect' : '',
       helpText: '',
+      section: sectionByColumn.get(name) || '',
     };
   });
 
@@ -283,6 +325,7 @@ const buildEntitySchema = (config, schemaRows) => {
       path: config.path,
       group: config.group,
       listColumns: config.listColumns,
+      formSections: config.formSections || [],
     },
     tableName: config.tableName,
     primaryKey: primaryKeyColumn.name,
@@ -292,6 +335,9 @@ const buildEntitySchema = (config, schemaRows) => {
 
 const getEntitySchema = async (entityKey) => {
   const config = getEntityConfig(entityKey);
+  if (config.tableName === 'Companies') {
+    await authDbService.ensureCompanyCredentialColumns();
+  }
   const schemaRows = await getSchemaRows(config.tableName);
   return buildEntitySchema(config, schemaRows);
 };
@@ -358,6 +404,10 @@ const syncAdminRoleRights = async (db) => {
 };
 
 const getEntityCount = async (tableName) => {
+  if (tableName === 'Companies') {
+    await authDbService.ensureCompanyCredentialColumns();
+  }
+
   const result = await authDbService.queryOne(`
     SELECT COUNT(1) AS totalRows
     FROM dbo.${escapeIdentifier(tableName)}
@@ -492,7 +542,37 @@ const applyAutomaticDefaults = (payload, schema, mode, authContext) => {
   const nextPayload = { ...payload };
 
   for (const column of schema.columns) {
-    if (!column.editable || nextPayload[column.name] !== undefined) {
+    if (!column.editable) {
+      continue;
+    }
+
+    const hasPayloadValue = nextPayload[column.name] !== undefined;
+    const isEmptyPayloadValue =
+      nextPayload[column.name] === undefined ||
+      nextPayload[column.name] === null ||
+      nextPayload[column.name] === '';
+
+    if (
+      mode === 'create' &&
+      column.name === 'IsActive' &&
+      ['Users', 'Companies'].includes(schema.tableName) &&
+      isEmptyPayloadValue
+    ) {
+      nextPayload[column.name] = true;
+      continue;
+    }
+
+    if (
+      mode === 'create' &&
+      schema.tableName === 'UserCompanies' &&
+      column.name === 'IsDefault' &&
+      isEmptyPayloadValue
+    ) {
+      nextPayload[column.name] = false;
+      continue;
+    }
+
+    if (hasPayloadValue) {
       continue;
     }
 
@@ -567,6 +647,11 @@ const applyForcedValues = (entityKey, payload) => ({
   ...payload,
   ...(getEntityConfig(entityKey).forcedValues || {}),
 });
+
+const clearRuntimeCachesAfterAdminMutation = () => {
+  authDbService.clearCache();
+  clearReportSessions();
+};
 
 const insertRoleRightRows = async (db, schema, payload, currentRecordId = null, requireInsertedRows = true) => {
   const menuIds = Array.isArray(payload.MenuId) ? payload.MenuId : [payload.MenuId];
@@ -756,6 +841,7 @@ const createRecord = async (entityKey, input, authContext) => {
 
       await syncReportMenuSidebarMenuById(db, insertedRecordId);
     });
+    clearRuntimeCachesAfterAdminMutation();
     return getEntityBootstrap(entityKey);
   }
 
@@ -763,11 +849,13 @@ const createRecord = async (entityKey, input, authContext) => {
     await authDbService.transaction(async (db) => {
       await insertRoleRightRows(db, schema, payload);
     });
+    clearRuntimeCachesAfterAdminMutation();
     return getEntityBootstrap(entityKey);
   }
 
   const query = buildInsertQuery(schema, payload);
   await authDbService.query(query.sqlText, query.params);
+  clearRuntimeCachesAfterAdminMutation();
   return getEntityBootstrap(entityKey);
 };
 
@@ -790,6 +878,7 @@ const updateRecord = async (entityKey, recordId, input, authContext) => {
       await syncReportMenuSidebarMenuById(db, numericRecordId);
     });
 
+    clearRuntimeCachesAfterAdminMutation();
     return getEntityBootstrap(entityKey);
   }
 
@@ -797,6 +886,7 @@ const updateRecord = async (entityKey, recordId, input, authContext) => {
     await authDbService.transaction(async (db) => {
       await updateRoleRightRows(db, schema, numericRecordId, payload);
     });
+    clearRuntimeCachesAfterAdminMutation();
     return getEntityBootstrap(entityKey);
   }
 
@@ -806,6 +896,8 @@ const updateRecord = async (entityKey, recordId, input, authContext) => {
   if (!result.rowsAffected?.[0]) {
     throw createHttpError(404, 'Record not found.');
   }
+
+  clearRuntimeCachesAfterAdminMutation();
 
   return getEntityBootstrap(entityKey);
 };
@@ -831,6 +923,7 @@ const deleteRecord = async (entityKey, recordId) => {
       }
     });
 
+    clearRuntimeCachesAfterAdminMutation();
     return getEntityBootstrap(entityKey);
   }
 
@@ -842,6 +935,8 @@ const deleteRecord = async (entityKey, recordId) => {
   if (!result.rowsAffected?.[0]) {
     throw createHttpError(404, 'Record not found.');
   }
+
+  clearRuntimeCachesAfterAdminMutation();
 
   return getEntityBootstrap(entityKey);
 };

@@ -64,11 +64,12 @@ const readSavedFormSettings = (
   headerUdfs = HEADER_UDF_DEFINITIONS,
   rowUdfs = ROW_UDF_DEFINITIONS,
   matrixColumns = [],
+  storageKey = FORM_SETTINGS_STORAGE_KEY,
 ) => {
   const defaults = createDefaultFormSettings(headerUdfs, rowUdfs, matrixColumns);
 
   try {
-    const raw = localStorage.getItem(FORM_SETTINGS_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return defaults;
     return mergeNestedSettings(defaults, JSON.parse(raw));
   } catch (_error) {

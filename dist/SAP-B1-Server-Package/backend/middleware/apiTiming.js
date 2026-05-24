@@ -9,8 +9,11 @@ function apiTimingMiddleware(req, res, next) {
   res.end = function(...args) {
     const duration = Date.now() - startTime;
 
-    res.setHeader('X-Response-Time', `${duration}ms`);
-    originalEnd.apply(res, args);
+    if (!res.headersSent) {
+      res.setHeader('X-Response-Time', `${duration}ms`);
+    }
+
+    return originalEnd.apply(res, args);
   };
 
   next();

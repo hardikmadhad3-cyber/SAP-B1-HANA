@@ -33,6 +33,7 @@ const printDocument = async (req, res) => {
       docNum: req.body?.docNum,
       schema: req.body?.schema,
       docCode: req.body?.docCode || req.body?.layoutCode,
+      cardCode: req.body?.cardCode,
       auth: req.auth,
     });
 

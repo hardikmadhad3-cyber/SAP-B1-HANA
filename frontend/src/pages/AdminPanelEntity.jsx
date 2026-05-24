@@ -511,7 +511,6 @@ const AdminPanelEntity = () => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(location.state?.notice || '');
   const [openRoleGroups, setOpenRoleGroups] = useState(() => new Set());
-  const [activeFormSectionKey, setActiveFormSectionKey] = useState('');
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
   const schema = bootstrap?.schema || null;
@@ -641,23 +640,6 @@ const AdminPanelEntity = () => {
 
     return sections;
   }, [bootstrap?.entity?.formSections, schema]);
-
-  useEffect(() => {
-    if (!formSections.length) {
-      setActiveFormSectionKey('');
-      return;
-    }
-
-    const hasActiveSection = formSections.some((section) => section.key === activeFormSectionKey);
-    if (!hasActiveSection) {
-      setActiveFormSectionKey(formSections[0].key);
-    }
-  }, [activeFormSectionKey, formSections]);
-
-  const activeFormSection = useMemo(() => {
-    if (!formSections.length) return null;
-    return formSections.find((section) => section.key === activeFormSectionKey) || formSections[0];
-  }, [activeFormSectionKey, formSections]);
 
   useEffect(() => {
     if (entityKey !== 'role-rights') return;
@@ -808,6 +790,35 @@ const AdminPanelEntity = () => {
       setIsSaving(false);
     }
   };
+
+  const renderAdminField = (column) =>
+    column.hidden
+      ? null
+      : renderField(
+        column,
+        formData[column.name],
+        selectedRecord,
+        pageMode === 'create',
+        lookups,
+        handleFieldChange,
+        { entityKey, records, formData },
+      );
+
+  const formActions = (
+    <div className="admin-form-actions">
+      <button type="submit" className="admin-panel-button" disabled={isSaving}>
+        {isSaving ? 'Saving...' : pageMode === 'create' ? 'Create Record' : 'Save Changes'}
+      </button>
+      <button
+        type="button"
+        className="admin-panel-button admin-panel-button--ghost"
+        onClick={handleResetForm}
+        disabled={isSaving}
+      >
+        Reset Form
+      </button>
+    </div>
+  );
 
   if (isLoading) {
     return <div className="admin-panel-empty">Loading {entityKey}...</div>;
@@ -1040,52 +1051,29 @@ const AdminPanelEntity = () => {
 
           <form onSubmit={handleSubmit}>
             {formSections.length ? (
-              <div className="admin-form-tabs" role="tablist" aria-label={`${bootstrap?.entity?.title || 'Record'} sections`}>
+              <div className="admin-form-section-list">
                 {formSections.map((section) => (
-                  <button
+                  <section
                     key={section.key}
-                    type="button"
-                    className={`admin-form-tab${section.key === activeFormSection?.key ? ' is-active' : ''}`}
-                    onClick={() => setActiveFormSectionKey(section.key)}
-                    role="tab"
-                    aria-selected={section.key === activeFormSection?.key}
+                    className="admin-form-section"
                   >
-                    <span>{section.title}</span>
-                    <small>{section.columns.length}</small>
-                  </button>
+                    <div className="admin-form-section__header">
+                      <h3>{section.title}</h3>
+                      <span>{section.columns.length} fields</span>
+                    </div>
+                    <div className="admin-form-grid">
+                      {section.columns.map(renderAdminField)}
+                    </div>
+                  </section>
                 ))}
+                {formActions}
               </div>
-            ) : null}
-
-            <div className="admin-form-grid">
-              {(activeFormSection?.columns || schema?.columns || []).map((column) =>
-                column.hidden
-                  ? null
-                  : renderField(
-                    column,
-                    formData[column.name],
-                    selectedRecord,
-                    pageMode === 'create',
-                    lookups,
-                    handleFieldChange,
-                    { entityKey, records, formData },
-                  )
-              )}
-
-              <div className="admin-form-actions">
-                <button type="submit" className="admin-panel-button" disabled={isSaving}>
-                  {isSaving ? 'Saving...' : pageMode === 'create' ? 'Create Record' : 'Save Changes'}
-                </button>
-                <button
-                  type="button"
-                  className="admin-panel-button admin-panel-button--ghost"
-                  onClick={handleResetForm}
-                  disabled={isSaving}
-                >
-                  Reset Form
-                </button>
+            ) : (
+              <div className="admin-form-grid">
+                {(schema?.columns || []).map(renderAdminField)}
+                {formActions}
               </div>
-            </div>
+            )}
           </form>
         </div>
       </section>

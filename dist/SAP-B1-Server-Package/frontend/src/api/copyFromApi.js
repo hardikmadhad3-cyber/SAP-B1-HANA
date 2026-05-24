@@ -57,6 +57,7 @@ export const deliveryCopyFromApi    = createCopyFromApi('/delivery');
 export const arInvoiceCopyFromApi   = createCopyFromApi('/ar-invoice');
 export const arCreditMemoCopyFromApi = createCopyFromApi('/ar-credit-memo');
 export const salesOrderCopyFromApi  = createCopyFromApi('/sales-order');
+export const dcSalesOrderCopyFromApi = createCopyFromApi('/dc-sales-order');
 export const salesQuotationCopyFromApi = createCopyFromApi('/sales-quotation');
 
 // ── Shared base-type map ──────────────────────────────────────────────────────
@@ -64,6 +65,7 @@ export const BASE_TYPE = {
   quotation:      23,
   salesQuotation: 23,
   salesOrder:     17,
+  dcSalesOrder:   17,
   delivery:       15,
   purchaseQuotation: 540000006,
   purchaseOrder:  22,

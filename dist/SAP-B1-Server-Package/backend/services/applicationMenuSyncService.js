@@ -9,9 +9,10 @@ const APP_MENU_DEFINITIONS = [
   { key: 'sales', menuName: 'Sales', aliases: ['Sales - A/R', 'Sales A/R'], icon: 'sales', sortOrder: 1 },
   { key: 'sales-quotation', parentKey: 'sales', menuName: 'Sales Quotation', menuPath: '/sales-quotation', icon: 'document', sortOrder: 1, enforceSortOrder: true },
   { key: 'sales-order', parentKey: 'sales', menuName: 'Sales Order', menuPath: '/sales-order', icon: 'document', sortOrder: 2, enforceSortOrder: true },
-  { key: 'delivery', parentKey: 'sales', menuName: 'Delivery', menuPath: '/delivery', icon: 'delivery', sortOrder: 3, enforceSortOrder: true },
-  { key: 'ar-invoice', parentKey: 'sales', menuName: 'A/R Invoice', menuPath: '/ar-invoice', icon: 'invoice', sortOrder: 4, enforceSortOrder: true },
-  { key: 'ar-credit-memo', parentKey: 'sales', menuName: 'A/R Credit Memo', menuPath: '/ar-credit-memo', icon: 'invoice', sortOrder: 5, enforceSortOrder: true },
+  { key: 'dc-sales-order', parentKey: 'sales', menuName: 'DC Sales Order', menuPath: '/dc-sales-order', icon: 'document', sortOrder: 3, enforceSortOrder: true },
+  { key: 'delivery', parentKey: 'sales', menuName: 'Delivery', menuPath: '/delivery', icon: 'delivery', sortOrder: 4, enforceSortOrder: true },
+  { key: 'ar-invoice', parentKey: 'sales', menuName: 'A/R Invoice', menuPath: '/ar-invoice', icon: 'invoice', sortOrder: 5, enforceSortOrder: true },
+  { key: 'ar-credit-memo', parentKey: 'sales', menuName: 'A/R Credit Memo', menuPath: '/ar-credit-memo', icon: 'invoice', sortOrder: 6, enforceSortOrder: true },
 
   { key: 'services', menuName: 'Services', icon: 'invoice', sortOrder: 2 },
   { key: 'service-ar-invoice', parentKey: 'services', menuName: 'A/R Invoice', menuPath: '/services/ar-invoice', icon: 'invoice', sortOrder: 1, enforceSortOrder: true },
@@ -92,6 +93,14 @@ const hasMenusTable = async (db) => {
   `);
 
   return Boolean(row?.hasMenus);
+};
+
+const hasRoleRightsTable = async (db) => {
+  const row = await db.queryOne(`
+    SELECT CASE WHEN OBJECT_ID(N'dbo.RoleRights', N'U') IS NULL THEN 0 ELSE 1 END AS hasRoleRights
+  `);
+
+  return Boolean(row?.hasRoleRights);
 };
 
 const getExistingMenus = async (db) => db.queryRows(`
@@ -190,6 +199,44 @@ const updateMenuMetadata = async (db, menu, definition, parentId, shouldUseCanon
   };
 };
 
+const cloneRoleRightsForDuplicateMenu = async (db, sourceMenuId, targetMenuId) => {
+  const normalizedSourceMenuId = Number(sourceMenuId);
+  const normalizedTargetMenuId = Number(targetMenuId);
+
+  if (
+    !Number.isInteger(normalizedSourceMenuId) ||
+    !Number.isInteger(normalizedTargetMenuId) ||
+    normalizedSourceMenuId === normalizedTargetMenuId ||
+    !(await hasRoleRightsTable(db))
+  ) {
+    return 0;
+  }
+
+  const result = await db.query(`
+    INSERT INTO dbo.RoleRights (RoleId, MenuId, CanView, CanAdd, CanEdit, CanDelete)
+    SELECT
+      RR.RoleId,
+      @targetMenuId,
+      RR.CanView,
+      RR.CanAdd,
+      RR.CanEdit,
+      RR.CanDelete
+    FROM dbo.RoleRights RR
+    WHERE RR.MenuId = @sourceMenuId
+      AND NOT EXISTS (
+        SELECT 1
+        FROM dbo.RoleRights ExistingRight
+        WHERE ExistingRight.RoleId = RR.RoleId
+          AND ExistingRight.MenuId = @targetMenuId
+      )
+  `, {
+    sourceMenuId: normalizedSourceMenuId,
+    targetMenuId: normalizedTargetMenuId,
+  });
+
+  return result.rowsAffected?.[0] || 0;
+};
+
 const syncApplicationSidebarMenus = async (db) => {
   if (!(await hasMenusTable(db))) {
     return 0;
@@ -222,6 +269,12 @@ const syncApplicationSidebarMenus = async (db) => {
     menuByKey.set(definition.key, syncedMenu);
     syncCount += 1;
   }
+
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
+    menuByKey.get('sales-order')?.MenuId,
+    menuByKey.get('dc-sales-order')?.MenuId,
+  );
 
   return syncCount;
 };

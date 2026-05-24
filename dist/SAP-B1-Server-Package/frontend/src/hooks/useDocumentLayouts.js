@@ -48,6 +48,7 @@ const chooseLayoutCode = (layouts, currentDocCode, preferredDocCode) => {
 const useDocumentLayouts = ({
   documentType,
   defaultDocCode = '',
+  reloadKey = '',
   onError,
 } = {}) => {
   const [docCode, setDocCode] = useState(defaultDocCode);
@@ -62,7 +63,7 @@ const useDocumentLayouts = ({
 
   useEffect(() => {
     setDocCode(defaultDocCode || '');
-  }, [defaultDocCode, documentType]);
+  }, [defaultDocCode, documentType, reloadKey]);
 
   useEffect(() => {
     let ignore = false;
@@ -117,7 +118,7 @@ const useDocumentLayouts = ({
     return () => {
       ignore = true;
     };
-  }, [defaultDocCode, documentType]);
+  }, [defaultDocCode, documentType, reloadKey]);
 
   const selectedLayout = layouts.find((layout) => layout.layout_id === docCode) || null;
   const canExportSelectedLayout = !selectedLayout || selectedLayout.is_export_supported;

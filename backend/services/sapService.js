@@ -128,7 +128,8 @@ const resolveCompanyDb = async (requestConfig = {}) => {
       `assignedCompany:${authUserId}:${authCompanyId}`,
       () => authDbService.getAssignedCompanyForUser(authUserId, authCompanyId),
     );
-    const companyDb = String(assignedCompany?.DbName || '').trim();
+    const activeConfig = await getActiveCompanyConfig({ company: assignedCompany });
+    const companyDb = String(activeConfig.serviceLayer.companyDb || '').trim();
 
     if (companyDb) {
       if (context) {
@@ -346,12 +347,17 @@ const ensureSession = async (companyDb) => {
 const rawRequest = (method, fullUrl, headers, body, rejectUnauthorized) =>
   new Promise((resolve, reject) => {
     const parsed = new URL(fullUrl);
+    const requestBody = body === undefined || body === null ? '' : JSON.stringify(body);
     const options = {
       hostname: parsed.hostname,
       port: parsed.port || 443,
       path: parsed.pathname + parsed.search,
       method: method.toUpperCase(),
-      headers: { 'Content-Type': 'application/json', ...headers },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(requestBody ? { 'Content-Length': Buffer.byteLength(requestBody) } : {}),
+        ...headers,
+      },
       agent: getHttpsAgent(rejectUnauthorized),
       rejectUnauthorized,
     };
@@ -379,7 +385,7 @@ const rawRequest = (method, fullUrl, headers, body, rejectUnauthorized) =>
     });
 
     req.on('error', reject);
-    if (body) req.write(JSON.stringify(body));
+    if (requestBody) req.write(requestBody);
     req.end();
   });
 

@@ -11,6 +11,7 @@ export const printDocumentLayout = ({
   docEntry,
   docNum,
   schema,
+  cardCode,
   docCode,
   layoutCode,
   layoutName,
@@ -19,6 +20,7 @@ export const printDocumentLayout = ({
     docEntry,
     docNum,
     schema,
+    cardCode,
     docCode: docCode || layoutCode,
     layoutName,
   });
@@ -28,6 +30,7 @@ export const downloadDocumentLayoutPdf = ({
   docEntry,
   docNum,
   schema,
+  cardCode,
   docCode,
   layoutCode,
   layoutName,
@@ -36,6 +39,7 @@ export const downloadDocumentLayoutPdf = ({
     docEntry,
     docNum,
     schema,
+    cardCode,
     docCode: docCode || layoutCode,
     layoutName,
   });

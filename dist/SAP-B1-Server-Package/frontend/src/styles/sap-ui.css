@@ -887,6 +887,44 @@
   outline-offset: 2px;
 }
 
+.po-udf-lookup-control {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+
+.po-udf-lookup-control__field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.po-udf-lookup-control__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  min-width: 32px;
+  height: 31px;
+  padding: 0;
+  border: 1px solid var(--sap-border-strong);
+  border-radius: var(--sap-radius-sm);
+  background: linear-gradient(180deg, #fff8c9 0%, #f4d45d 100%);
+  color: #6b5200;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.po-udf-lookup-control__button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 :is(.po-alert, .so-alert, .del-alert, .im-alert, .uom-alert) {
   border-radius: var(--sap-radius-sm);
 }

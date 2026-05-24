@@ -6,6 +6,7 @@ const {
   syncAllReportMenuSidebarMenus,
   syncReportMenuSidebarMenuById,
 } = require('./reportMenuSidebarSyncService');
+const { clearReportSessions } = require('./reportService');
 
 const MAX_LIST_ROWS = 500;
 
@@ -647,8 +648,9 @@ const applyForcedValues = (entityKey, payload) => ({
   ...(getEntityConfig(entityKey).forcedValues || {}),
 });
 
-const clearAuthCacheAfterAdminMutation = () => {
+const clearRuntimeCachesAfterAdminMutation = () => {
   authDbService.clearCache();
+  clearReportSessions();
 };
 
 const insertRoleRightRows = async (db, schema, payload, currentRecordId = null, requireInsertedRows = true) => {
@@ -839,7 +841,7 @@ const createRecord = async (entityKey, input, authContext) => {
 
       await syncReportMenuSidebarMenuById(db, insertedRecordId);
     });
-    clearAuthCacheAfterAdminMutation();
+    clearRuntimeCachesAfterAdminMutation();
     return getEntityBootstrap(entityKey);
   }
 
@@ -847,13 +849,13 @@ const createRecord = async (entityKey, input, authContext) => {
     await authDbService.transaction(async (db) => {
       await insertRoleRightRows(db, schema, payload);
     });
-    clearAuthCacheAfterAdminMutation();
+    clearRuntimeCachesAfterAdminMutation();
     return getEntityBootstrap(entityKey);
   }
 
   const query = buildInsertQuery(schema, payload);
   await authDbService.query(query.sqlText, query.params);
-  clearAuthCacheAfterAdminMutation();
+  clearRuntimeCachesAfterAdminMutation();
   return getEntityBootstrap(entityKey);
 };
 
@@ -876,7 +878,7 @@ const updateRecord = async (entityKey, recordId, input, authContext) => {
       await syncReportMenuSidebarMenuById(db, numericRecordId);
     });
 
-    clearAuthCacheAfterAdminMutation();
+    clearRuntimeCachesAfterAdminMutation();
     return getEntityBootstrap(entityKey);
   }
 
@@ -884,7 +886,7 @@ const updateRecord = async (entityKey, recordId, input, authContext) => {
     await authDbService.transaction(async (db) => {
       await updateRoleRightRows(db, schema, numericRecordId, payload);
     });
-    clearAuthCacheAfterAdminMutation();
+    clearRuntimeCachesAfterAdminMutation();
     return getEntityBootstrap(entityKey);
   }
 
@@ -895,7 +897,7 @@ const updateRecord = async (entityKey, recordId, input, authContext) => {
     throw createHttpError(404, 'Record not found.');
   }
 
-  clearAuthCacheAfterAdminMutation();
+  clearRuntimeCachesAfterAdminMutation();
 
   return getEntityBootstrap(entityKey);
 };
@@ -921,7 +923,7 @@ const deleteRecord = async (entityKey, recordId) => {
       }
     });
 
-    clearAuthCacheAfterAdminMutation();
+    clearRuntimeCachesAfterAdminMutation();
     return getEntityBootstrap(entityKey);
   }
 
@@ -934,7 +936,7 @@ const deleteRecord = async (entityKey, recordId) => {
     throw createHttpError(404, 'Record not found.');
   }
 
-  clearAuthCacheAfterAdminMutation();
+  clearRuntimeCachesAfterAdminMutation();
 
   return getEntityBootstrap(entityKey);
 };

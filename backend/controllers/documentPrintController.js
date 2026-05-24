@@ -33,6 +33,7 @@ const printDocument = async (req, res) => {
       docNum: req.body?.docNum,
       schema: req.body?.schema,
       docCode: req.body?.docCode || req.body?.layoutCode,
+      cardCode: req.body?.cardCode,
       auth: req.auth,
     });
 
@@ -52,6 +53,7 @@ const downloadAllLayouts = async (req, res) => {
       docEntry: req.body?.docEntry,
       docNum: req.body?.docNum,
       schema: req.body?.schema,
+      cardCode: req.body?.cardCode,
       auth: req.auth,
     });
 

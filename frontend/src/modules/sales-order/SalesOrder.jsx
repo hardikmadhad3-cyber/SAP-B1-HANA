@@ -2261,6 +2261,7 @@ function SalesOrder() {
                 <PrintSalesOrderActions
                     docEntry={currentDocEntry}
                     docNumber={header.docNo}
+                    cardCode={header.vendor}
                     disabled={pageState.posting}
                     onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
                     onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}

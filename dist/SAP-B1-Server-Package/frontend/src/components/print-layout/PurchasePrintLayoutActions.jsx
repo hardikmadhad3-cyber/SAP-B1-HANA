@@ -1,7 +1,7 @@
 import React from 'react';
 import PrintLayoutToolbar from './PrintLayoutToolbar';
 
-const DEFAULT_SCHEMA = process.env.REACT_APP_SAP_REPORT_SCHEMA || 'NCPL_110126';
+const DEFAULT_SCHEMA = process.env.REACT_APP_SAP_REPORT_SCHEMA || '';
 
 const PURCHASE_PRINT_DOCUMENTS = {
   purchaseQuotation: {

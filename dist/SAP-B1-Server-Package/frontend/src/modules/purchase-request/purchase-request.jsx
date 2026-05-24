@@ -19,6 +19,7 @@ import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
@@ -194,7 +195,11 @@ function PurchaseRequest() {
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => createUdfState(HEADER_UDF_DEFINITIONS));
-  const [formSettings, setFormSettings] = useState(() => readSavedFormSettings());
+  const [formSettings, setFormSettings] = useCompanyScopedFormSettings(
+    FORM_SETTINGS_STORAGE_KEY,
+    readSavedFormSettings,
+    [HEADER_UDF_DEFINITIONS, ROW_UDF_DEFINITIONS],
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
@@ -262,10 +267,6 @@ function PurchaseRequest() {
       ));
     }
   }, [header.placeOfSupply, refData.states]);
-
-  useEffect(() => {
-    localStorage.setItem(FORM_SETTINGS_STORAGE_KEY, JSON.stringify(formSettings));
-  }, [formSettings]);
 
   // decimal config
   const dec = { ...DEC, ...(refData.decimal_settings || {}) };

@@ -25,6 +25,7 @@ import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import { consumeCopyToState } from '../../utils/copyToState';
@@ -265,7 +266,11 @@ function APInvoice() {
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => createUdfState(HEADER_UDF_DEFINITIONS));
-  const [formSettings, setFormSettings] = useState(() => readSavedFormSettings());
+  const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
+    FORM_SETTINGS_STORAGE_KEY,
+    readSavedFormSettings,
+    [headerUdfDefinitions, rowUdfDefinitions],
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
@@ -336,10 +341,6 @@ function APInvoice() {
       ));
     }
   }, [header.placeOfSupply, refData.states]);
-
-  useEffect(() => {
-    localStorage.setItem(FORM_SETTINGS_STORAGE_KEY, JSON.stringify(formSettings));
-  }, [formSettings]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -428,7 +429,7 @@ function APInvoice() {
             ...line,
             udf: createUdfState(nextRowUdfs, line.udf || {}),
           })));
-          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs);
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, formSettingsStorageKey);
           setFormSettings((prev) => ({
             ...nextDefaults,
             ...prev,

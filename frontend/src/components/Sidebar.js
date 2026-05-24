@@ -54,16 +54,18 @@ const SALES_CHILD_PRIORITY = new Map([
   ['sales order', 2],
   ['dc sales order', 3],
   ['delivery', 4],
-  ['a r invoice', 5],
-  ['a r credit memo', 6],
+  ['dc delivery', 5],
+  ['a r invoice', 6],
+  ['a r credit memo', 7],
 ]);
 const SALES_CHILD_PATH_PRIORITY = new Map([
   ['/sales-quotation', 1],
   ['/sales-order', 2],
   ['/dc-sales-order', 3],
   ['/delivery', 4],
-  ['/ar-invoice', 5],
-  ['/ar-credit-memo', 6],
+  ['/dc-delivery', 5],
+  ['/ar-invoice', 6],
+  ['/ar-credit-memo', 7],
 ]);
 const isAdminMenuPath = (menuPath = '') => normalizePath(menuPath).startsWith('/admin');
 const getDisplayMenuName = (menu) => {

@@ -51,6 +51,8 @@ const GoodsReceiptPO = lazyWithRetry(() => import("./pages/GRPO"));
 const GRPOList = lazyWithRetry(() => import("./pages/GRPOList"));
 const SalesOrder = lazyWithRetry(() => import("./pages/SalesOrder"));
 const SalesOrderList = lazyWithRetry(() => import("./pages/SalesOrderList"));
+const DCSalesOrder = lazyWithRetry(() => import("./pages/DCSalesOrder"));
+const DCSalesOrderList = lazyWithRetry(() => import("./pages/DCSalesOrderList"));
 const BOM = lazyWithRetry(() => import("./pages/BOM"));
 const ProductionOrder = lazyWithRetry(() => import("./pages/ProductionOrder"));
 const IssueForProduction = lazyWithRetry(() => import("./pages/IssueForProduction"));
@@ -140,6 +142,8 @@ function App() {
                   <Route path="/sales-order" element={<SalesOrder />} />
                   <Route path="/sales-order/old" element={<SalesOrder />} />
                   <Route path="/sales-order/find" element={<SalesOrderList />} />
+                  <Route path="/dc-sales-order" element={<DCSalesOrder />} />
+                  <Route path="/dc-sales-order/find" element={<DCSalesOrderList />} />
                   <Route path="/sales-quotation" element={<SalesQuotation />} />
                   <Route path="/sales-quotation/find" element={<SalesQuotationList />} />
                   <Route path="/reportlayoutmanager" element={<ReportsStudioPage />} />
