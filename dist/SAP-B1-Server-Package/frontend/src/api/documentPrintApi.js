@@ -10,6 +10,7 @@ export const printDocumentLayout = ({
   documentType,
   docEntry,
   docNum,
+  series,
   schema,
   cardCode,
   docCode,
@@ -19,6 +20,7 @@ export const printDocumentLayout = ({
   apiClient.post(buildDocumentPrintUrl(documentType, 'print'), {
     docEntry,
     docNum,
+    series,
     schema,
     cardCode,
     docCode: docCode || layoutCode,
@@ -29,6 +31,7 @@ export const downloadDocumentLayoutPdf = ({
   documentType,
   docEntry,
   docNum,
+  series,
   schema,
   cardCode,
   docCode,
@@ -38,6 +41,7 @@ export const downloadDocumentLayoutPdf = ({
   apiClient.post(buildDocumentPrintUrl(documentType, 'download-pdf'), {
     docEntry,
     docNum,
+    series,
     schema,
     cardCode,
     docCode: docCode || layoutCode,
@@ -48,10 +52,14 @@ export const downloadAllDocumentLayouts = ({
   documentType,
   docEntry,
   docNum,
+  series,
   schema,
+  cardCode,
 }) =>
   apiClient.post(buildDocumentPrintUrl(documentType, 'download-all-layouts'), {
     docEntry,
     docNum,
+    series,
     schema,
+    cardCode,
   });

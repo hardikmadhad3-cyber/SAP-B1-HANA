@@ -834,6 +834,127 @@
   color: var(--sap-danger);
 }
 
+.sap-pdf-preview__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 22000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.sap-pdf-preview__dialog {
+  width: min(1200px, calc(100vw - 48px));
+  height: min(860px, calc(100vh - 48px));
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--sap-border-strong);
+  border-radius: var(--sap-radius-md);
+  background: var(--sap-surface);
+  box-shadow: var(--sap-shadow-modal);
+  color: var(--sap-text);
+  font-family: var(--sap-font-family);
+}
+
+.sap-pdf-preview__header {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--sap-border);
+  background: var(--sap-toolbar-bg);
+}
+
+.sap-pdf-preview__title {
+  color: var(--sap-heading);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sap-pdf-preview__file-name {
+  max-width: min(720px, calc(100vw - 260px));
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--sap-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sap-pdf-preview__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sap-pdf-preview__button,
+.sap-pdf-preview__close {
+  height: 28px;
+  border: 1px solid var(--sap-border-strong);
+  border-radius: var(--sap-radius-xs);
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
+  color: var(--sap-text);
+  cursor: pointer;
+  font-family: var(--sap-font-family);
+  font-size: 12px;
+}
+
+.sap-pdf-preview__button {
+  padding: 0 12px;
+}
+
+.sap-pdf-preview__close {
+  width: 28px;
+  padding: 0;
+  font-weight: 700;
+}
+
+.sap-pdf-preview__button:hover,
+.sap-pdf-preview__close:hover {
+  background: linear-gradient(180deg, #f0f4f8 0%, #dde3ea 100%);
+}
+
+.sap-pdf-preview__frame {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--sap-surface);
+}
+
+@media (max-width: 700px) {
+  .sap-pdf-preview__backdrop {
+    padding: 8px;
+  }
+
+  .sap-pdf-preview__dialog {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+    min-height: 0;
+  }
+
+  .sap-pdf-preview__header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .sap-pdf-preview__file-name {
+    max-width: calc(100vw - 40px);
+  }
+
+  .sap-pdf-preview__actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
 :is(.po-section-title, .so-section-title, .del-section-title, .im-section-title, .rfp-receipt-card__title, .rfp-backflush-panel__title) {
   border-bottom-color: var(--sap-border-soft);
   color: var(--sap-heading);

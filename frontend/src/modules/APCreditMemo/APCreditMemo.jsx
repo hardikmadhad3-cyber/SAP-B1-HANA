@@ -20,6 +20,7 @@ import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePr
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { consumeCopyToState } from '../../utils/copyToState';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
@@ -1303,6 +1304,33 @@ function APCreditMemo() {
     throw new Error(`Unsupported copy from type: ${docType}`);
   };
 
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: INIT_HEADER,
+      lines,
+      createLine,
+      rowUdfDefinitions,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setSnapshotPending,
+      setIsDirty,
+      setFreightModal,
+      navigate,
+      location,
+      successMessage: 'A/P credit memo duplicated. Review and add it as a new entry.',
+    });
+
+    if (duplicated) {
+      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+    }
+  };
+
   const validate = () => {
     const isUpdate = !!currentDocEntry;
     const e = { header: {}, lines: {}, form: '' };
@@ -1501,6 +1529,11 @@ function APCreditMemo() {
         <button type="button" className="po-btn sap-document-toolbar__copy" disabled>
           Copy To ▼
         </button>
+        {currentDocEntry && (
+          <button type="button" className="po-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+            Duplicate
+          </button>
+        )}
         <PurchasePrintLayoutActions
           documentKey="apCreditMemo"
           docEntry={currentDocEntry}

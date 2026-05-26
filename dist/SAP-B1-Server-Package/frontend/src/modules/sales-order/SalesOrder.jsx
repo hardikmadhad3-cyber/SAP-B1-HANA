@@ -33,6 +33,7 @@ import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../ut
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
 import { isRouteStateForActiveCompany } from '../../utils/companyStorageScope';
 import { copyToDocument } from '../../services/documentCopyService';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
@@ -1914,6 +1915,33 @@ function SalesOrder() {
         });
     };
 
+    const handleDuplicate = () => {
+        const duplicated = duplicateDocumentInPlace({
+            currentDocEntry,
+            header,
+            initialHeader: createInitialHeader(),
+            lines,
+            createLine,
+            rowUdfDefinitions,
+            setCurrentDocEntry,
+            setHeader,
+            setLines,
+            setActiveTab,
+            setValErrors,
+            setPageState,
+            setSnapshotPending,
+            setIsDirty,
+            setFreightModal,
+            navigate,
+            location,
+            successMessage: 'Sales order duplicated. Review and add it as a new entry.',
+        });
+
+        if (duplicated) {
+            refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+        }
+    };
+
     // ── Browse Attachment handler ─────────────────────────────────────────────
     const handleBrowseAttachment = () => {
         const input = document.createElement('input');
@@ -2261,6 +2289,7 @@ function SalesOrder() {
                 <PrintSalesOrderActions
                     docEntry={currentDocEntry}
                     docNumber={header.docNo}
+                    series={header.series}
                     cardCode={header.vendor}
                     disabled={pageState.posting}
                     onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
@@ -2375,6 +2404,11 @@ function SalesOrder() {
                         </button>
                     </div>
                 </div>
+                {currentDocEntry && (
+                    <button type="button" className="so-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+                        Duplicate
+                    </button>
+                )}
 
                 <button type="button" className="so-btn sap-document-toolbar__find" onClick={() => navigate('/sales-order/find')}>Find</button>
                 <button type="button" className="so-btn sap-document-toolbar__new" onClick={resetForm}>New</button>

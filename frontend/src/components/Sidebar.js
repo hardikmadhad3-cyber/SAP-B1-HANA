@@ -15,6 +15,7 @@ const STATIC_DASHBOARD_MENU = {
   sortOrder: -1,
   children: [],
 };
+const SIDEBAR_COLLAPSED_KEY = 'sap-b1-sidebar-collapsed';
 
 const TOP_LEVEL_MENU_PRIORITY = new Map([
   ['dashboard', 0],
@@ -53,19 +54,23 @@ const SALES_CHILD_PRIORITY = new Map([
   ['sales quotation', 1],
   ['sales order', 2],
   ['dc sales order', 3],
-  ['delivery', 4],
-  ['dc delivery', 5],
-  ['a r invoice', 6],
-  ['a r credit memo', 7],
+  ['nc sales order', 4],
+  ['delivery', 5],
+  ['dc delivery', 6],
+  ['nc delivery', 7],
+  ['a r invoice', 8],
+  ['a r credit memo', 9],
 ]);
 const SALES_CHILD_PATH_PRIORITY = new Map([
   ['/sales-quotation', 1],
   ['/sales-order', 2],
   ['/dc-sales-order', 3],
-  ['/delivery', 4],
-  ['/dc-delivery', 5],
-  ['/ar-invoice', 6],
-  ['/ar-credit-memo', 7],
+  ['/nc-sales-order', 4],
+  ['/delivery', 5],
+  ['/dc-delivery', 6],
+  ['/nc-delivery', 7],
+  ['/ar-invoice', 8],
+  ['/ar-credit-memo', 9],
 ]);
 const isAdminMenuPath = (menuPath = '') => normalizePath(menuPath).startsWith('/admin');
 const getDisplayMenuName = (menu) => {
@@ -230,9 +235,9 @@ const SidebarMenuNode = ({ menu, collapsed, openState, setOpenState, pathname, o
           title={collapsed ? displayMenuName : undefined}
         >
           <span className="sidebar__section-icon" aria-hidden="true">{shortLabel}</span>
-          <span className="sidebar__section-title">
-            {collapsed ? shortLabel : displayMenuName}
-          </span>
+          {!collapsed ? (
+            <span className="sidebar__section-title">{displayMenuName}</span>
+          ) : null}
           {!collapsed ? (
             <span className={`sidebar__section-caret${isOpen ? ' is-open' : ''}`} aria-hidden="true">
               {'>'}
@@ -299,7 +304,13 @@ export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { menus, company } = useAuth();
-  const collapsed = false;
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [openState, setOpenState] = useState({});
   const pathname = normalizePath(location.pathname);
 
@@ -326,17 +337,40 @@ export default function Sidebar() {
     navigate(menuPath, { state: null });
   };
 
+  const handleToggleCollapsed = () => {
+    setCollapsed((current) => {
+      const nextCollapsed = !current;
+      try {
+        window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(nextCollapsed));
+      } catch {
+        // Ignore storage errors; the visual toggle should still work.
+      }
+      return nextCollapsed;
+    });
+  };
+
   return (
     <aside className={`sidebar-shell${collapsed ? ' is-collapsed' : ''}`}>
       <div className="sidebar">
         <div className="sidebar__top">
           <div className="sidebar__brand">
             <div className="sidebar__brand-mark">SB</div>
-            <div>
-              <div className="sidebar__brand-title">SAP Client</div>
-              <div className="sidebar__brand-subtitle">{company?.dbName || 'Business One'}</div>
-            </div>
+            {!collapsed ? (
+              <div>
+                <div className="sidebar__brand-title">SAP Client</div>
+                <div className="sidebar__brand-subtitle">{company?.dbName || 'Business One'}</div>
+              </div>
+            ) : null}
           </div>
+          <button
+            type="button"
+            className="sidebar__collapse-btn"
+            onClick={handleToggleCollapsed}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <span aria-hidden="true">{collapsed ? '>' : '<'}</span>
+          </button>
         </div>
 
         <div className="sidebar__content">

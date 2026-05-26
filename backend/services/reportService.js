@@ -1,6 +1,7 @@
 const axios = require('axios');
 const crypto = require('crypto');
 const https = require('https');
+const net = require('net');
 const env = require('../config/env');
 const dbService = require('./dbService');
 const { getActiveCompanyConfig } = require('./companyConfigService');
@@ -441,6 +442,170 @@ const resolveReportCompanyDb = async (companyDb = '') => {
   return String(config.companyDb || '').trim();
 };
 
+const normalizeReportServiceBaseUrl = (value) =>
+  String(value || '').trim().replace(/\/+$/, '');
+
+const getReportServiceConfigCandidates = (primaryConfig) => {
+  const candidates = [];
+  const seenBaseUrls = new Set();
+
+  const addCandidate = (config) => {
+    const baseUrl = normalizeReportServiceBaseUrl(config.baseUrl);
+    const key = baseUrl.toLowerCase();
+
+    if (!baseUrl || seenBaseUrls.has(key)) {
+      return;
+    }
+
+    seenBaseUrls.add(key);
+    candidates.push({
+      ...config,
+      baseUrl,
+    });
+  };
+
+  addCandidate(primaryConfig);
+
+  return candidates;
+};
+
+const REPORT_SERVICE_CONNECTION_CODES = new Set([
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTDOWN',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'INVALID_REPORT_SERVICE_URL',
+]);
+
+const isReportServiceConnectivityError = (error) => {
+  if (error?.isReportServiceConnectivityError) {
+    return true;
+  }
+
+  const source = error?.cause || error;
+  const code = String(source?.code || error?.code || '').toUpperCase();
+
+  if (REPORT_SERVICE_CONNECTION_CODES.has(code)) {
+    return true;
+  }
+
+  if (source?.response || error?.response) {
+    return false;
+  }
+
+  return /network error|timeout|timed out|connect/i.test(String(source?.message || error?.message || ''));
+};
+
+const getReportServiceEndpoint = (baseUrl) => {
+  const parsed = new URL(baseUrl);
+  const defaultPort = parsed.protocol === 'https:' ? 443 : 80;
+
+  return {
+    host: parsed.hostname,
+    port: Number(parsed.port || defaultPort),
+  };
+};
+
+const assertReportServiceReachable = (config) => new Promise((resolve, reject) => {
+  let endpoint;
+
+  try {
+    endpoint = getReportServiceEndpoint(config.baseUrl);
+  } catch (error) {
+    error.code = error.code || 'INVALID_REPORT_SERVICE_URL';
+    reject(error);
+    return;
+  }
+
+  const socket = new net.Socket();
+  let settled = false;
+
+  const finish = (error = null) => {
+    if (settled) {
+      return;
+    }
+
+    settled = true;
+    socket.destroy();
+
+    if (error) {
+      reject(error);
+      return;
+    }
+
+    resolve();
+  };
+
+  socket.setTimeout(3000);
+  socket.once('connect', () => finish());
+  socket.once('timeout', () => {
+    const error = new Error(`connect ETIMEDOUT ${endpoint.host}:${endpoint.port}`);
+    error.code = 'ETIMEDOUT';
+    finish(error);
+  });
+  socket.once('error', finish);
+  socket.connect(endpoint.port, endpoint.host);
+});
+
+const decorateReportServiceConnectionError = (error, action, config) => {
+  if (!isReportServiceConnectivityError(error)) {
+    return error;
+  }
+
+  if (error?.isReportServiceConnectivityError) {
+    return error;
+  }
+
+  const baseUrl = normalizeReportServiceBaseUrl(config.baseUrl);
+  const source = config.fieldSources?.baseUrl || 'configured';
+  const code = String(error.code || error.cause?.code || '').toUpperCase();
+  const detail = code ? ` (${code})` : '';
+  const wrapped = new Error(
+    `Could not connect to SAP Report Service at ${baseUrl} while trying to ${action}${detail}. ` +
+    `Check the selected company's SAP Report Service Base URL (${source}) and confirm port 60020 is reachable from this backend server.`,
+  );
+
+  wrapped.statusCode = code === 'ETIMEDOUT' || code === 'ECONNABORTED' ? 504 : 502;
+  wrapped.code = code || 'REPORT_SERVICE_CONNECTION_FAILED';
+  wrapped.cause = error;
+  wrapped.isReportServiceConnectivityError = true;
+
+  return wrapped;
+};
+
+const runWithReportServiceConfigFallback = async (primaryConfig, operation) => {
+  const candidates = getReportServiceConfigCandidates(primaryConfig);
+  let lastError = null;
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+
+    try {
+      return await operation(candidate);
+    } catch (error) {
+      lastError = error;
+
+      if (index < candidates.length - 1 && isReportServiceConnectivityError(error)) {
+        console.warn('[ReportService] Report Service URL unreachable; retrying fallback URL', {
+          failedBaseUrl: normalizeReportServiceBaseUrl(candidate.baseUrl),
+          fallbackBaseUrl: normalizeReportServiceBaseUrl(candidates[index + 1].baseUrl),
+          code: error.code || error.cause?.code || '',
+        });
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw lastError;
+};
+
 const hashSecret = (value) =>
   crypto.createHash('sha256').update(String(value || '')).digest('hex');
 
@@ -483,16 +648,22 @@ const buildCredentialSourceSummary = (config) => {
   return `username from ${usernameSource}, password from ${passwordSource}, company DB from ${companyDbSource}`;
 };
 
-const loginToReportService = async (companyDb = '') => {
-  const reportConfig = await resolveReportServiceConfig(companyDb);
+const loginToReportServiceWithConfig = async (reportConfig) => {
   const normalizedCompanyDb = String(reportConfig.companyDb || '').trim();
   ensureReportLoginConfig(reportConfig);
 
-  const response = await getReportClient(reportConfig).post('/login', {
-    CompanyDB: normalizedCompanyDb,
-    UserName: reportConfig.username,
-    Password: reportConfig.password,
-  });
+  let response;
+
+  try {
+    await assertReportServiceReachable(reportConfig);
+    response = await getReportClient(reportConfig).post('/login', {
+      CompanyDB: normalizedCompanyDb,
+      UserName: reportConfig.username,
+      Password: reportConfig.password,
+    });
+  } catch (error) {
+    throw decorateReportServiceConnectionError(error, 'log in', reportConfig);
+  }
 
   const sessionCookie = extractCookieHeader(response.headers['set-cookie']);
 
@@ -521,16 +692,27 @@ const loginToReportService = async (companyDb = '') => {
   return sessionCookie;
 };
 
-const ensureReportSession = async (companyDb = '') => {
+const loginToReportService = async (companyDb = '') => {
   const reportConfig = await resolveReportServiceConfig(companyDb);
+
+  return runWithReportServiceConfigFallback(reportConfig, loginToReportServiceWithConfig);
+};
+
+const ensureReportSessionWithConfig = async (reportConfig) => {
   const sessionKey = getReportSessionKey(reportConfig);
   const session = reportSessionsByCompany.get(sessionKey);
 
   if (!session?.cookie || Date.now() >= session.expiresAt) {
-    return loginToReportService(reportConfig.companyDb);
+    return loginToReportServiceWithConfig(reportConfig);
   }
 
   return session.cookie;
+};
+
+const ensureReportSession = async (companyDb = '') => {
+  const reportConfig = await resolveReportServiceConfig(companyDb);
+
+  return runWithReportServiceConfigFallback(reportConfig, ensureReportSessionWithConfig);
 };
 
 const toRequiredString = (value, fieldName) => {
@@ -773,7 +955,7 @@ const addParameterIfMissing = (parameters, parameter) => {
 };
 
 const hasMatchingLayoutParameter = (layoutParameters, predicate) =>
-  layoutParameters.some((parameter) => predicate(parameter.paramName));
+  layoutParameters.some((parameter) => predicate(parameter.paramName || parameter.name));
 
 const buildDocumentPrintParameters = async ({
   docCode,
@@ -796,6 +978,10 @@ const buildDocumentPrintParameters = async ({
   const context = {
     docEntry: normalizedDocEntry,
     docKeyValue: resolvedDocKeyValue,
+    docNum: String(docNum || '').trim(),
+    schema: String(schema || '').trim(),
+    cardCode: String(cardCode || '').trim(),
+    objectType: String(objectType || '').trim(),
   };
   let layoutParameters = [];
 
@@ -806,25 +992,26 @@ const buildDocumentPrintParameters = async ({
   }
 
   const parameters = [];
-  const docKeyLayoutParameter = layoutParameters.find((layoutParameter) =>
-    isDocEntryParameter(layoutParameter.paramName)
-  );
+  layoutParameters.forEach((layoutParameter) => {
+    const value = resolveDocumentParameterValue(layoutParameter.paramName, context);
+    if (value === undefined || value === '') {
+      return;
+    }
 
-  if (docKeyLayoutParameter) {
     addParameterIfMissing(parameters, {
-      name: docKeyLayoutParameter.paramName,
-      type: resolveDocumentParameterType(docKeyLayoutParameter.paramName, docKeyLayoutParameter.paramType),
-      value: context.docKeyValue,
+      name: layoutParameter.paramName,
+      type: resolveDocumentParameterType(layoutParameter.paramName, layoutParameter.paramType),
+      value,
     });
-
-    return parameters;
-  }
-
-  addParameterIfMissing(parameters, {
-    name: 'DocKey@',
-    type: 'number',
-    value: resolvedDocKeyValue,
   });
+
+  if (!hasMatchingLayoutParameter(parameters, isDocEntryParameter)) {
+    addParameterIfMissing(parameters, {
+      name: 'DocKey@',
+      type: 'number',
+      value: resolvedDocKeyValue,
+    });
+  }
 
   return parameters;
 };
@@ -856,11 +1043,8 @@ const exportReportPdf = async ({
   const normalizedDocCode = toRequiredString(docCode || env.reportServiceDefaultDocCode, 'DocCode');
   const reportConfig = await resolveReportServiceConfig(reportCompanyDb);
   const normalizedReportCompanyDb = String(reportConfig.companyDb || '').trim();
-  const reportSessionKey = getReportSessionKey(reportConfig);
   const layoutMetadata = await getLayoutMetadata(normalizedDocCode, normalizedReportCompanyDb);
-  const parameterNames = new Set(
-    parameters.map((parameter) => String(parameter?.name || '').trim().toUpperCase()).filter(Boolean),
-  );
+  const hasDocumentKeyParameter = parameters.some((parameter) => isDocEntryParameter(parameter?.name));
 
   if (!layoutMetadata) {
     const error = new Error(`SAP layout ${normalizedDocCode} was not found in RDOC.`);
@@ -874,7 +1058,7 @@ const exportReportPdf = async ({
     throw error;
   }
 
-  if (isDocumentPrintLayout(layoutMetadata) && !parameterNames.has('DOCKEY@')) {
+  if (isDocumentPrintLayout(layoutMetadata) && !hasDocumentKeyParameter) {
     const documentTypeLabel = getDocumentTypeLabel(layoutMetadata.TypeCode);
     const error = new Error(
       `SAP layout ${normalizedDocCode} (${layoutMetadata.DocName || 'Unknown'}) is a ${documentTypeLabel} print layout (${layoutMetadata.TypeCode}). It expects document-key parameters like DocKey@ and Schema@, not date-range criteria.`,
@@ -900,29 +1084,35 @@ const exportReportPdf = async ({
     parameterPayload: summarizeReportParameters(parameters),
   });
 
-  const reportSessionCookie = await ensureReportSession(normalizedReportCompanyDb);
-  const reportClient = getReportClient(reportConfig);
+  const postExport = async (activeReportConfig, allowAuthRetry) => {
+    const reportSessionKey = getReportSessionKey(activeReportConfig);
+    const reportSessionCookie = await ensureReportSessionWithConfig(activeReportConfig);
+    const reportClient = getReportClient(activeReportConfig);
 
-  let response;
+    try {
+      return await reportClient.post('/rs/v1/ExportPDFData', payload, {
+        params: {
+          DocCode: normalizedDocCode,
+        },
+        headers: {
+          Cookie: reportSessionCookie,
+        },
+      });
+    } catch (error) {
+      if (allowAuthRetry && error.response?.status === 401) {
+        reportSessionsByCompany.delete(reportSessionKey);
+        await loginToReportServiceWithConfig(activeReportConfig);
+        return postExport(activeReportConfig, false);
+      }
 
-  try {
-    response = await reportClient.post('/rs/v1/ExportPDFData', payload, {
-      params: {
-        DocCode: normalizedDocCode,
-      },
-      headers: {
-        Cookie: reportSessionCookie,
-      },
-    });
-  } catch (error) {
-    if (retryOnAuth && error.response?.status === 401) {
-      reportSessionsByCompany.delete(reportSessionKey);
-      await loginToReportService(normalizedReportCompanyDb);
-      return exportReportPdf({ docCode, parameters, fileName, reportCompanyDb: normalizedReportCompanyDb }, false);
+      throw decorateReportServiceConnectionError(error, 'export the PDF', activeReportConfig);
     }
+  };
 
-    throw error;
-  }
+  const response = await runWithReportServiceConfigFallback(
+    reportConfig,
+    (activeReportConfig) => postExport(activeReportConfig, retryOnAuth),
+  );
 
   const base64Pdf = extractBase64Pdf(response.data);
 
@@ -1088,31 +1278,35 @@ const loadReportParameters = async (docCode, optionsOrRetry = {}, retryOverride 
     ? optionsOrRetry
     : (typeof retryOverride === 'boolean' ? retryOverride : true);
   const reportConfig = await resolveReportServiceConfig(options.reportCompanyDb);
-  const reportCompanyDb = String(reportConfig.companyDb || '').trim();
-  const reportSessionKey = getReportSessionKey(reportConfig);
-  const reportSessionCookie = await ensureReportSession(reportCompanyDb);
-  const reportClient = getReportClient(reportConfig);
+  const loadParameters = async (activeReportConfig, allowAuthRetry) => {
+    const reportSessionKey = getReportSessionKey(activeReportConfig);
+    const reportSessionCookie = await ensureReportSessionWithConfig(activeReportConfig);
+    const reportClient = getReportClient(activeReportConfig);
 
-  let response;
+    try {
+      return await reportClient.get('/rs/v1/LoadCR', {
+        params: {
+          DocCode: normalizedDocCode,
+        },
+        headers: {
+          Cookie: reportSessionCookie,
+        },
+      });
+    } catch (error) {
+      if (allowAuthRetry && error.response?.status === 401) {
+        reportSessionsByCompany.delete(reportSessionKey);
+        await loginToReportServiceWithConfig(activeReportConfig);
+        return loadParameters(activeReportConfig, false);
+      }
 
-  try {
-    response = await reportClient.get('/rs/v1/LoadCR', {
-      params: {
-        DocCode: normalizedDocCode,
-      },
-      headers: {
-        Cookie: reportSessionCookie,
-      },
-    });
-  } catch (error) {
-    if (retryOnAuth && error.response?.status === 401) {
-      reportSessionsByCompany.delete(reportSessionKey);
-      await loginToReportService(reportCompanyDb);
-      return loadReportParameters(normalizedDocCode, options, false);
+      throw decorateReportServiceConnectionError(error, 'load report parameters', activeReportConfig);
     }
+  };
 
-    throw error;
-  }
+  const response = await runWithReportServiceConfigFallback(
+    reportConfig,
+    (activeReportConfig) => loadParameters(activeReportConfig, retryOnAuth),
+  );
 
   const payload = parseJsonPayload(response.data);
 
@@ -1138,28 +1332,32 @@ const loadReportParameters = async (docCode, optionsOrRetry = {}, retryOverride 
 
 const loadAuthorizedCrList = async (query = '', retryOnAuth = true) => {
   const reportConfig = await resolveReportServiceConfig();
-  const reportCompanyDb = String(reportConfig.companyDb || '').trim();
-  const reportSessionKey = getReportSessionKey(reportConfig);
-  const reportSessionCookie = await ensureReportSession(reportCompanyDb);
-  const reportClient = getReportClient(reportConfig);
+  const loadList = async (activeReportConfig, allowAuthRetry) => {
+    const reportSessionKey = getReportSessionKey(activeReportConfig);
+    const reportSessionCookie = await ensureReportSessionWithConfig(activeReportConfig);
+    const reportClient = getReportClient(activeReportConfig);
 
-  let response;
+    try {
+      return await reportClient.get('/rs/v1/LoadAuthorizedCRList', {
+        headers: {
+          Cookie: reportSessionCookie,
+        },
+      });
+    } catch (error) {
+      if (allowAuthRetry && error.response?.status === 401) {
+        reportSessionsByCompany.delete(reportSessionKey);
+        await loginToReportServiceWithConfig(activeReportConfig);
+        return loadList(activeReportConfig, false);
+      }
 
-  try {
-    response = await reportClient.get('/rs/v1/LoadAuthorizedCRList', {
-      headers: {
-        Cookie: reportSessionCookie,
-      },
-    });
-  } catch (error) {
-    if (retryOnAuth && error.response?.status === 401) {
-      reportSessionsByCompany.delete(reportSessionKey);
-      await loginToReportService(reportCompanyDb);
-      return loadAuthorizedCrList(query, false);
+      throw decorateReportServiceConnectionError(error, 'load authorized Crystal layouts', activeReportConfig);
     }
+  };
 
-    throw error;
-  }
+  const response = await runWithReportServiceConfigFallback(
+    reportConfig,
+    (activeReportConfig) => loadList(activeReportConfig, retryOnAuth),
+  );
 
   const payload = parseJsonPayload(response.data);
   const rows = Array.isArray(payload?.resultSet) ? payload.resultSet : [];

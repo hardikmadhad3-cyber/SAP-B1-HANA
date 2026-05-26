@@ -355,10 +355,70 @@ const getLayouts = async (documentType) => {
   };
 };
 
-const getDocumentSummary = async (config, docEntry, { schema = '' } = {}) => {
+const normalizeOptionalText = (value) => String(value ?? '').trim();
+
+const valuesMatch = (left, right) =>
+  normalizeOptionalText(left).toLowerCase() === normalizeOptionalText(right).toLowerCase();
+
+const documentMatchesPrintIdentity = (document, { docNum = '', series = '', cardCode = '' } = {}) => {
+  if (!document) return false;
+
+  const expectedDocNum = normalizeOptionalText(docNum);
+  const expectedSeries = normalizeOptionalText(series);
+  const expectedCardCode = normalizeOptionalText(cardCode);
+
+  if (expectedDocNum && !valuesMatch(document.DocNum, expectedDocNum)) return false;
+  if (expectedSeries && !valuesMatch(document.Series, expectedSeries)) return false;
+  if (expectedCardCode && !valuesMatch(document.CardCode, expectedCardCode)) return false;
+
+  return true;
+};
+
+const getDocumentByPrintIdentity = async (
+  config,
+  { docNum = '', series = '', cardCode = '' } = {},
+  { schema = '' } = {},
+) => {
+  const normalizedDocNum = normalizeOptionalText(docNum);
+  const normalizedSeries = normalizeOptionalText(series);
+  const normalizedCardCode = normalizeOptionalText(cardCode);
+
+  if (!normalizedDocNum || (!normalizedSeries && !normalizedCardCode)) {
+    return null;
+  }
+
+  const filters = ['DocNum = @docNum'];
+  const params = { docNum: normalizedDocNum };
+
+  if (normalizedSeries) {
+    filters.push('Series = @series');
+    params.series = normalizedSeries;
+  }
+
+  if (normalizedCardCode) {
+    filters.push('UPPER(LTRIM(RTRIM(CardCode))) = @cardCode');
+    params.cardCode = normalizedCardCode.toUpperCase();
+  }
+
+  const result = await dbService.query(`
+    SELECT TOP 1 DocEntry, DocNum, Series, CardCode, CardName
+    FROM ${config.tableName}
+    WHERE ${filters.join('\n      AND ')}
+    ORDER BY DocEntry DESC
+  `, params, schema ? { databaseName: schema } : {});
+
+  return result.recordset?.[0] || null;
+};
+
+const getDocumentSummary = async (config, docEntry, {
+  schema = '',
+  docNum = '',
+  series = '',
+  cardCode = '',
+} = {}) => {
   const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
   const result = await dbService.query(`
-    SELECT TOP 1 DocEntry, DocNum, CardCode, CardName
+    SELECT TOP 1 DocEntry, DocNum, Series, CardCode, CardName
     FROM ${config.tableName}
     WHERE DocEntry = @docEntry
   `, {
@@ -367,11 +427,45 @@ const getDocumentSummary = async (config, docEntry, { schema = '' } = {}) => {
 
   const document = result.recordset?.[0];
 
+  if (document && documentMatchesPrintIdentity(document, { docNum, series, cardCode })) {
+    return document;
+  }
+
+  const documentByPrintIdentity = await getDocumentByPrintIdentity(
+    config,
+    { docNum, series, cardCode },
+    { schema },
+  );
+
+  if (documentByPrintIdentity) {
+    if (document && String(document.DocEntry) !== String(documentByPrintIdentity.DocEntry)) {
+      console.warn('[DocumentPrint] Corrected mismatched document key before Crystal export', {
+        documentType: config.key,
+        requestedDocEntry: normalizedDocEntry,
+        requestedDocNum: normalizeOptionalText(docNum),
+        requestedSeries: normalizeOptionalText(series),
+        requestedCardCode: normalizeOptionalText(cardCode),
+        correctedDocEntry: documentByPrintIdentity.DocEntry,
+      });
+    }
+
+    return documentByPrintIdentity;
+  }
+
   if (!document) {
     throw createHttpError(404, `${config.label} DocEntry ${normalizedDocEntry} was not found.`);
   }
 
-  return document;
+  const expectedParts = [
+    normalizeOptionalText(docNum) ? `DocNum ${normalizeOptionalText(docNum)}` : '',
+    normalizeOptionalText(series) ? `Series ${normalizeOptionalText(series)}` : '',
+    normalizeOptionalText(cardCode) ? `CardCode ${normalizeOptionalText(cardCode)}` : '',
+  ].filter(Boolean).join(', ');
+
+  throw createHttpError(
+    409,
+    `${config.label} DocEntry ${normalizedDocEntry} does not match the open document${expectedParts ? ` (${expectedParts})` : ''}. Reopen the document from Find and try printing again.`,
+  );
 };
 
 const getLayoutForDocument = async (config, docCode, schema = '') => {
@@ -420,15 +514,7 @@ const hydrateSalesOrderPrintFields = async (config, docEntry, schema) => {
       U_DocKey = DocEntry,
       U_ItemCode = ItemCode,
       U_Item_Desc = Dscription,
-      U_UoM = COALESCE(NULLIF(unitMsr, ''), NULLIF(UomCode, '')),
-      U_Order_Qty = Quantity,
-      U_Rate = Price,
-      U_Amount = LineTotal,
-      U_Disc_Rate = CASE
-        WHEN ISNULL(DiscPrcnt, 0) = 0 THEN Price
-        ELSE Price * (1 - DiscPrcnt / 100.0)
-      END,
-      U_Disc_Amount = LineTotal
+      U_UoM = COALESCE(NULLIF(unitMsr, ''), NULLIF(UomCode, ''))
     WHERE DocEntry = @docEntry
   `, {
     docEntry: normalizedDocEntry,
@@ -447,6 +533,7 @@ const printDocument = async ({
   documentType,
   docEntry,
   docNum,
+  series,
   schema,
   docCode,
   cardCode,
@@ -458,7 +545,12 @@ const printDocument = async ({
   const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
   const normalizedDocCode = toRequiredString(docCode, 'Layout DocCode');
   const normalizedSchema = await resolvePrintSchema(schema);
-  const document = await getDocumentSummary(config, normalizedDocEntry, { schema: normalizedSchema });
+  const document = await getDocumentSummary(config, normalizedDocEntry, {
+    schema: normalizedSchema,
+    docNum,
+    series,
+    cardCode,
+  });
 
   const layout = await getLayoutForDocument(config, normalizedDocCode, normalizedSchema);
 
@@ -474,6 +566,7 @@ const printDocument = async ({
     tableName: config.tableName,
     docEntry: resolvedDocEntry,
     docCode: normalizedDocCode,
+    series: String(document.Series || series || '').trim(),
     schema: normalizedSchema,
     query: `SELECT TOP 1 DocEntry, DocNum, CardCode, CardName FROM ${config.tableName} WHERE DocEntry = @docEntry`,
     queryParameters: { docEntry: resolvedDocEntry },
@@ -506,6 +599,7 @@ const printDocument = async ({
     typeCode: config.typeCode,
     docEntry: resolvedDocEntry,
     docNum: resolvedDocNum,
+    series: String(document.Series || series || '').trim(),
     cardCode: resolvedCardCode,
     cardName: String(document.CardName || '').trim(),
     docKeyValue: genericResponse.docKeyValue,
@@ -519,6 +613,7 @@ const downloadAllLayouts = async ({
   documentType,
   docEntry,
   docNum,
+  series,
   schema,
   cardCode,
   auth,
@@ -539,6 +634,7 @@ const downloadAllLayouts = async ({
       documentType,
       docEntry,
       docNum,
+      series,
       schema,
       cardCode,
       docCode: layout.layout_id,

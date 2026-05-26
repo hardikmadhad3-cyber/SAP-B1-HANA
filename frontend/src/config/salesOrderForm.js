@@ -43,6 +43,11 @@ const DUPLICATE_ROW_UDF_KEYS = new Set([
   'U_FR_TRANS',
   'U_FR_TRANS_NAME',
   'U_BDNUM',
+  'U_ORDER_QTY',
+  'U_RATE',
+  'U_AMOUNT',
+  'U_DISC_RATE',
+  'U_DISC_AMOUNT',
 ]);
 
 const DUPLICATE_ROW_UDF_LABELS = new Set([
@@ -86,6 +91,11 @@ const DUPLICATE_ROW_UDF_LABELS = new Set([
   'Freight Provider Name',
   'Document Created',
   'Brokerage Number',
+  'Order Qty',
+  'Rate',
+  'Amount',
+  'Discounted Rate',
+  'Discounted Amount',
 ].map(normalizeUdfLabel));
 
 const DUPLICATE_ROW_UDF_KEY_FRAGMENTS = [

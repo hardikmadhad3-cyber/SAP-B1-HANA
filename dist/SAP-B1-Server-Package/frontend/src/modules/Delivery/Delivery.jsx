@@ -35,6 +35,7 @@ import {
   consumeCopyToState as consumePersistedCopyToState,
   replaceRouteStatePreservingWindow,
 } from '../../utils/copyToState';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   BATCH_QTY_TOLERANCE,
@@ -316,7 +317,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
 const INIT_HEADER = {
   vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: '',
   docNo: '', status: 'Open', series: '', nextNumber: '',
-  postingDate: today(), deliveryDate: '', documentDate: today(), contractDate: '',
+  postingDate: today(), deliveryDate: today(), documentDate: today(), contractDate: '',
   branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
   shippingType: '', confirmed: false, journalRemark: '', paymentTerms: '',
   paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
@@ -3141,6 +3142,33 @@ function Delivery() {
     });
   };
 
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: INIT_HEADER,
+      lines,
+      createLine,
+      rowUdfDefinitions,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setSnapshotPending,
+      setIsDirty,
+      setFreightModal,
+      navigate,
+      location,
+      successMessage: 'Delivery duplicated. Review and add it as a new entry.',
+    });
+
+    if (duplicated) {
+      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+    }
+  };
+
   // ── submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async (ev) => {
     ev.preventDefault();
@@ -3361,6 +3389,11 @@ function Delivery() {
             ))}
           </div>
         </div>
+        {currentDocEntry && (
+          <button type="button" className="del-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+            Duplicate
+          </button>
+        )}
         <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/delivery/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
       </div>

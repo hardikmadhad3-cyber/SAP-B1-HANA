@@ -1543,6 +1543,7 @@ const getSalesOrder = async (docEntry) => {
     T1.Dscription,
     T1.Quantity,
     T1.Price,
+    T1.PriceBefDi,
     T1.DiscPrcnt AS LineDiscPrcnt,
     T1.TaxCode AS TaxCode,
     T1.WhsCode,
@@ -1558,7 +1559,7 @@ const getSalesOrder = async (docEntry) => {
     ${lineField('U_SPLRBT', 'SpecialRebate')},
     ${lineField('U_COMPRC', 'Commission')},
     ${lineField('U_S_BrokPerQty', 'SellerBrokeragePerQty')},
-    ${lineField('U_Unit_Price', 'UnitPriceUdf', 'T1.Price')},
+    ${lineField('U_Unit_Price', 'UnitPriceUdf', 'COALESCE(T1.PriceBefDi, T1.Price)')},
     ${lineField('U_Brok_Seller', 'SellerBrokerage')},
     ${lineField('U_Brok_Buyer', 'BuyerBrokerage')},
     ${lineField('U_Buyer_Delivery', 'BuyerDelivery')},
@@ -1890,6 +1891,14 @@ ORDER BY T1.LineNum
       header_udfs: headerUdfs,
       lines: lineRows.map(line => {
         const lineUdf = lineUdfs[line.LineNum] || {};
+        const savedUnitPrice = lineUdf.U_Unit_Price != null && lineUdf.U_Unit_Price !== ''
+          ? lineUdf.U_Unit_Price
+          : (line.UnitPriceUdf != null && line.UnitPriceUdf !== ''
+            ? line.UnitPriceUdf
+            : (line.PriceBefDi != null && line.PriceBefDi !== '' ? line.PriceBefDi : line.Price));
+        const displayUnitPrice = savedUnitPrice != null && savedUnitPrice !== ''
+          ? String(savedUnitPrice)
+          : '0';
         // Get HSN Code from the joined query
         const hsnCode = line.HSNCode || '';
         
@@ -1901,8 +1910,8 @@ ORDER BY T1.LineNum
           itemDescription: line.Dscription || '',
           hsnCode: hsnCode,
           quantity: String(line.Quantity || 0),
-          unitPrice: String(line.Price || 0),
-          unitPriceUdf: lineUdf.U_Unit_Price != null && lineUdf.U_Unit_Price !== '' ? String(lineUdf.U_Unit_Price) : (line.UnitPriceUdf != null && line.UnitPriceUdf !== '' ? String(line.UnitPriceUdf) : String(line.Price || 0)),
+          unitPrice: displayUnitPrice,
+          unitPriceUdf: displayUnitPrice,
           sellerQuality: lineUdf.U_Seller_Quality || line.SellerQuality || '',
           buyerQuality: lineUdf.U_Buyer_Quality || line.BuyerQuality || '',
           sellerPrice: lineUdf.U_Seller_Price || line.SellerPrice || '',
@@ -1934,6 +1943,7 @@ ORDER BY T1.LineNum
           brokerageNumber: lineUdf.U_BDNum || line.BrokerageNumber || '',
           uomCode: line.UomCode || '',
           uomName: line.UomName || line.UomCode || '',
+          discountAmount: String((Number(displayUnitPrice || 0) * Number(line.LineDiscPrcnt || 0)) / 100),
           stdDiscount: String(line.LineDiscPrcnt || ''),
           taxCode: line.TaxCode || '',
           total: String(line.LineTotal || 0),

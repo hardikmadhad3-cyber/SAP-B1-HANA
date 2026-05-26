@@ -34,6 +34,7 @@ import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../ut
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
 import { isRouteStateForActiveCompany } from '../../utils/companyStorageScope';
 import { copyToDocument } from '../../services/documentCopyService';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
@@ -209,9 +210,20 @@ const isBpBillToAddress = (address) => {
     return type.includes('BILL') || type === 'B' || type === 'BO_BILLTO';
 };
 
-const selectBillToPartyAddress = (addresses = [], party = {}) => {
+const hasBpAddressType = (address) =>
+    String(address?.AddressType || address?.AddrType || address?.AdresType || '').trim() !== '';
+
+const filterBpBillToAddresses = (addresses = []) => {
     const usableAddresses = (Array.isArray(addresses) ? addresses : [])
         .filter((address) => getBpAddressId(address));
+    const billToAddresses = usableAddresses.filter(isBpBillToAddress);
+
+    if (billToAddresses.length) return billToAddresses;
+    return usableAddresses.some(hasBpAddressType) ? [] : usableAddresses;
+};
+
+const selectBillToPartyAddress = (addresses = [], party = {}) => {
+    const usableAddresses = filterBpBillToAddresses(addresses);
 
     if (!usableAddresses.length) return null;
 
@@ -272,7 +284,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
     itemServiceType: 'Item',
     itemNo: '', itemDescription: '',
     sellerQuality: '', buyerQuality: '',
-    hsnCode: '', quantity: '', unitPrice: '',
+    hsnCode: '', quantity: '', unitPrice: '', discountAmount: '',
     sellerPrice: '', buyerPrice: '',
     sellerDelivery: '', buyerDelivery: '',
     sellerBrokerageAmtPer: '', sellerBrokeragePercent: '',
@@ -293,7 +305,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
 const INIT_HEADER = {
     vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
     docNo: '', status: 'Open', series: '', nextNumber: '',
-    postingDate: today(), deliveryDate: '', documentDate: today(), contractDate: '',
+    postingDate: today(), deliveryDate: today(), documentDate: today(), contractDate: '',
     branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
     shippingType: '', confirmed: false, journalRemark: '', paymentTerms: '',
     paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
@@ -305,6 +317,7 @@ const INIT_HEADER = {
 const createInitialHeader = () => ({
     ...INIT_HEADER,
     postingDate: today(),
+    deliveryDate: today(),
     documentDate: today(),
 });
 
@@ -433,7 +446,7 @@ function DCSalesOrder() {
     const dec = { ...DEC, ...(refData.decimal_settings || {}) };
     const numDec = {
         quantity: Number(dec.QtyDec), unitPrice: Number(dec.PriceDec),
-        stdDiscount: Number(dec.PercentDec), total: Number(dec.SumDec),
+        stdDiscount: Number(dec.PercentDec), discountAmount: Number(dec.PriceDec), total: Number(dec.SumDec),
         discount: Number(dec.PercentDec), freight: Number(dec.SumDec),
         tax: Number(dec.SumDec), totalPaymentDue: Number(dec.SumDec),
     };
@@ -985,9 +998,7 @@ function DCSalesOrder() {
                     if (cancelled) return;
                     const details = detailsResponse.data || {};
                     addresses = [
-                        ...(Array.isArray(details.ship_to_addresses) ? details.ship_to_addresses : []),
                         ...(Array.isArray(details.bill_to_addresses) ? details.bill_to_addresses : []),
-                        ...(Array.isArray(details.pay_to_addresses) ? details.pay_to_addresses : []),
                     ];
                     party = party || details.businessPartner || details.customer || null;
                 }
@@ -1086,9 +1097,24 @@ function DCSalesOrder() {
     ), [getBranchName, getWarehouseLocation]);
 
     // ── calculations ──────────────────────────────────────────────────────────
+    const getLineDiscountAmount = (line) => {
+        const explicitDiscount = String(line.discountAmount ?? '').trim();
+        if (explicitDiscount) return parseNum(explicitDiscount);
+
+        const price = parseNum(line.unitPrice);
+        const disc = parseNum(line.stdDiscount);
+        return price * disc / 100;
+    };
+
+    const getLineDiscountPercent = (line) => {
+        const price = parseNum(line.unitPrice);
+        if (price <= 0) return 0;
+        return getLineDiscountAmount(line) * 100 / price;
+    };
+
     const calcLineTotal = (line) => {
-        const qty = parseNum(line.quantity), price = parseNum(line.unitPrice), disc = parseNum(line.stdDiscount);
-        return roundTo(qty * price * (1 - disc / 100), numDec.total);
+        const qty = parseNum(line.quantity), price = parseNum(line.unitPrice), discount = getLineDiscountAmount(line);
+        return roundTo(qty * Math.max(price - discount, 0), numDec.total);
     };
 
     const calcLineCommission = (line) => {
@@ -1101,6 +1127,9 @@ function DCSalesOrder() {
 
     const applyLineCalculatedFields = (line) => {
         const next = { ...line };
+        if (String(next.discountAmount ?? '').trim()) {
+            next.stdDiscount = fmtDec(roundTo(getLineDiscountPercent(next), numDec.stdDiscount), numDec.stdDiscount);
+        }
         next.total = fmtDec(calcLineTotal(next), numDec.total);
         next.sellerBrokerage = calcLineCommission(next);
         return next;
@@ -1652,7 +1681,23 @@ function DCSalesOrder() {
                 if (idx !== i) return line;
                 const next = { ...line, [name]: numDec[name] !== undefined ? sanitize(value, numDec[name]) : value };
                 if (name === 'quantity' && !String(next.sellerQty || '').trim()) next.sellerQty = next.quantity;
-                if (name === 'unitPrice') next.unitPriceUdf = next.unitPrice;
+                if (name === 'unitPrice') {
+                    next.unitPriceUdf = next.unitPrice;
+                    if (String(next.discountAmount ?? '').trim()) {
+                        next.stdDiscount = fmtDec(roundTo(getLineDiscountPercent(next), numDec.stdDiscount), numDec.stdDiscount);
+                    }
+                }
+                if (name === 'discountAmount') {
+                    next.stdDiscount = String(next.discountAmount ?? '').trim()
+                        ? fmtDec(roundTo(getLineDiscountPercent(next), numDec.stdDiscount), numDec.stdDiscount)
+                        : '';
+                }
+                if (name === 'stdDiscount') {
+                    const price = parseNum(next.unitPrice);
+                    next.discountAmount = String(next.stdDiscount ?? '').trim() && price > 0
+                        ? fmtDec(roundTo(price * parseNum(next.stdDiscount) / 100, numDec.discountAmount), numDec.discountAmount)
+                        : '';
+                }
                 if (name === 'uomCode') next.uomName = value;
                 if (name === 'taxCode') next.stcode = String(next.taxCode || '');
                 if (name === 'whse') next.loc = resolveLineLocation(next.whse, next.branch || header.branch);
@@ -2258,6 +2303,33 @@ function DCSalesOrder() {
         });
     };
 
+    const handleDuplicate = () => {
+        const duplicated = duplicateDocumentInPlace({
+            currentDocEntry,
+            header,
+            initialHeader: createInitialHeader(),
+            lines,
+            createLine,
+            rowUdfDefinitions,
+            setCurrentDocEntry,
+            setHeader,
+            setLines,
+            setActiveTab,
+            setValErrors,
+            setPageState,
+            setSnapshotPending,
+            setIsDirty,
+            setFreightModal,
+            navigate,
+            location,
+            successMessage: 'DC sales order duplicated. Review and add it as a new entry.',
+        });
+
+        if (duplicated) {
+            refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+        }
+    };
+
     // ── Browse Attachment handler ─────────────────────────────────────────────
     const handleBrowseAttachment = () => {
         const input = document.createElement('input');
@@ -2488,7 +2560,8 @@ function DCSalesOrder() {
                 freightProviderName: line.freightProviderName,
                 brokerageNumber: line.brokerageNumber,
                 uomCode: line.uomCode,
-                stdDiscount: line.stdDiscount,
+                discountAmount: lineWithCalculatedFields.discountAmount,
+                stdDiscount: lineWithCalculatedFields.stdDiscount,
                 stcode: line.stcode,
                 taxCode: line.taxCode,
                 total: lineWithCalculatedFields.total,
@@ -2613,6 +2686,7 @@ function DCSalesOrder() {
                 <PrintSalesOrderActions
                     docEntry={currentDocEntry}
                     docNumber={header.docNo}
+                    series={header.series}
                     cardCode={header.vendor}
                     disabled={pageState.posting}
                     onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
@@ -2727,6 +2801,11 @@ function DCSalesOrder() {
                         </button>
                     </div>
                 </div>
+                {currentDocEntry && (
+                    <button type="button" className="so-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+                        Duplicate
+                    </button>
+                )}
 
                 <button type="button" className="so-btn sap-document-toolbar__find" onClick={openFindPage}>Find</button>
                 <button type="button" className="so-btn sap-document-toolbar__new" onClick={resetForm}>New</button>

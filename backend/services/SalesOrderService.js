@@ -244,6 +244,22 @@ const DATE_DATA_TYPES = new Set([
   'time',
 ]);
 
+const getLineDiscountAmount = (line) => {
+  if (hasValue(line.discountAmount)) {
+    return toRequiredNumber(line.discountAmount, 0);
+  }
+
+  const unitPrice = toRequiredNumber(line.unitPrice, 0);
+  const discountPercent = toRequiredNumber(line.stdDiscount, 0);
+  return unitPrice * discountPercent / 100;
+};
+
+const getLineDiscountPercent = (line) => {
+  const unitPrice = toRequiredNumber(line.unitPrice, 0);
+  if (unitPrice <= 0) return 0;
+  return getLineDiscountAmount(line) * 100 / unitPrice;
+};
+
 const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
   { sapField: 'U_COMPRC', getValue: (line) => line.commission },
@@ -277,15 +293,6 @@ const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_ItemCode', getValue: (line) => line.itemNo },
   { sapField: 'U_Item_Desc', getValue: (line) => line.itemDescription },
   { sapField: 'U_UoM', getValue: (line) => line.uomName || line.uomCode },
-  { sapField: 'U_Order_Qty', getValue: (line) => line.quantity },
-  { sapField: 'U_Rate', getValue: (line) => line.unitPrice },
-  { sapField: 'U_Amount', getValue: (line) => line.total || (toRequiredNumber(line.quantity, 0) * toRequiredNumber(line.unitPrice, 0)) },
-  { sapField: 'U_Disc_Rate', getValue: (line) => line.stdDiscount },
-  { sapField: 'U_Disc_Amount', getValue: (line) => {
-    const gross = toRequiredNumber(line.quantity, 0) * toRequiredNumber(line.unitPrice, 0);
-    const discountPercent = toRequiredNumber(line.stdDiscount, 0);
-    return gross * discountPercent / 100;
-  } },
 ];
 
 const normalizeSapUdfFieldName = (value) => String(value || '').trim().toUpperCase();
@@ -379,8 +386,10 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
     documentLine.UoMEntry = resolvedUomEntry;
   }
 
-  if (hasValue(line.stdDiscount)) {
-    const discountPercent = toOptionalNumber(line.stdDiscount);
+  if (hasValue(line.discountAmount) || hasValue(line.stdDiscount)) {
+    const discountPercent = hasValue(line.discountAmount)
+      ? getLineDiscountPercent(line)
+      : toOptionalNumber(line.stdDiscount);
     if (discountPercent !== undefined) {
       documentLine.DiscountPercent = discountPercent;
     }

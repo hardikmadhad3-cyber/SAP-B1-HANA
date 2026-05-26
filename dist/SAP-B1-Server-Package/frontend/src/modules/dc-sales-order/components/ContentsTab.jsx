@@ -75,19 +75,22 @@ const getLineComputedValues = (line, taxCodes) => {
   const quantity = parseNumber(line.quantity);
   const unitPrice = parseNumber(line.unitPrice);
   const discountPercent = parseNumber(line.stdDiscount);
+  const enteredDiscountAmount = String(line.discountAmount ?? '').trim();
+  const discountAmount = enteredDiscountAmount
+    ? parseNumber(enteredDiscountAmount)
+    : unitPrice * discountPercent / 100;
   const commissionPercent = parseNumber(line.commission);
   const amount = quantity * unitPrice;
-  const discountAmount = amount * discountPercent / 100;
-  const netRate = unitPrice * (1 - discountPercent / 100);
+  const netRate = Math.max(unitPrice - discountAmount, 0);
   const totals = getLineTotalsForDisplay(line, taxCodes);
-  const totalLC = amount ? formatNumber(amount) : totals.beforeTax;
+  const totalLC = quantity || unitPrice ? formatNumber(quantity * netRate) : totals.beforeTax;
   const commissionAmount = commissionPercent > 0 && amount > 0
     ? formatNumber(amount * commissionPercent / 100)
     : '';
 
   return {
     amount: amount ? formatNumber(amount) : '',
-    discountAmount: discountAmount ? formatNumber(discountAmount) : '',
+    discountAmount: enteredDiscountAmount ? line.discountAmount : (discountAmount ? formatNumber(discountAmount) : ''),
     netRate: quantity || unitPrice ? formatNumber(netRate) : '',
     taxableAmount: totals.beforeTax,
     totalLC,
@@ -324,9 +327,10 @@ export default function ContentsTab({
         <td key="discountAmount">
           <input
             className="so-grid__input"
-            value={lineTotals.discountAmount}
-            readOnly
-            style={{ background: '#f5f8fc' }}
+            name="discountAmount"
+            value={line.discountAmount ?? ''}
+            onChange={(e) => onLineChange(i, e)}
+            onBlur={() => onNumBlur('discountAmount', 'line', i)}
           />
         </td>
       ),
@@ -532,8 +536,8 @@ export default function ContentsTab({
             className="so-grid__input"
             name="stdDiscount"
             value={line.stdDiscount}
-            onChange={(e) => onLineChange(i, e)}
-            onBlur={() => onNumBlur('stdDiscount', 'line', i)}
+            readOnly
+            style={{ background: '#f5f8fc' }}
           />
         </td>
       ),

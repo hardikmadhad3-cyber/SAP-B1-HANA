@@ -71,6 +71,7 @@ const getItems = () => safe(db.query(`
          ''          AS DistributionRule,
          DfltWH      AS DefaultWarehouse,
          SWW         AS HSNCode,
+         InvntItem   AS InventoryItem,
          ManBtchNum  AS BatchManaged,
          ManSerNum   AS SerialManaged
   FROM   OITM
@@ -1811,11 +1812,14 @@ const getUomConversionFactor = async (itemCode, uomCode) => {
 // ─── Validation Functions ───────────────────────────────────────────────────────
 
 const BATCH_QTY_TOLERANCE = 0.001;
+const SAP_YES_VALUES = new Set(['Y', 'YES', 'TRUE', 'TYES', '1']);
 
 const parseBatchQtyNumber = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
 };
+
+const isSapYes = (value) => SAP_YES_VALUES.has(String(value || '').trim().toUpperCase());
 
 const getLineUomFactor = (line = {}) => {
   const explicitFactor = parseBatchQtyNumber(line.uomFactor);
@@ -1833,7 +1837,7 @@ const getLineUomFactor = (line = {}) => {
 const getRequiredBatchQty = (line = {}) =>
   parseBatchQtyNumber(line.quantity) * getLineUomFactor(line);
 
-// Validate batch selection for batch-managed items
+// Validate batch selection only for inventory items that are batch-managed in SAP B1.
 const validateBatchSelection = async (lines) => {
   const errors = [];
   
@@ -1841,13 +1845,13 @@ const validateBatchSelection = async (lines) => {
     if (!line.itemNo) continue;
     
     const result = await safe(db.query(`
-      SELECT T0.ManBtchNum, T0.ItemName
+      SELECT T0.InvntItem, T0.ManBtchNum, T0.ItemName
       FROM OITM T0
       WHERE T0.ItemCode = @ItemCode
     `, { ItemCode: line.itemNo }));
     
     const item = result[0];
-    if (item && item.ManBtchNum === 'Y') {
+    if (item && isSapYes(item.InvntItem) && isSapYes(item.ManBtchNum)) {
       if (!Array.isArray(line.batches) || line.batches.length === 0) {
         errors.push(`Batch selection is mandatory for batch-managed item ${line.itemNo}`);
       } else {
@@ -1926,7 +1930,8 @@ const validateTaxCodes = (lines) => {
   return { errors, isValid: errors.length === 0 };
 };
 
-// Validate stock availability
+// Validate stock availability only for inventory-managed items. SAP B1 allows
+// non-inventory sales items on delivery documents without stock or warehouse stock checks.
 const validateStockAvailability = (lines) => {
   const errors = [];
   const promises = [];
@@ -1936,24 +1941,36 @@ const validateStockAvailability = (lines) => {
     
     const promise = safe(db.query(`
       SELECT 
+        T1.InvntItem AS InventoryItem,
+        T0.WhsCode AS WarehouseCode,
         T0.OnHand,
         T0.IsCommited,
         T0.OnHand - T0.IsCommited as Available,
         T1.InvntryUom AS InventoryUOM
-      FROM OITW T0
-      INNER JOIN OITM T1 ON T0.ItemCode = T1.ItemCode
-      WHERE T0.ItemCode = @ItemCode
-      AND T0.WhsCode = @WhsCode
+      FROM OITM T1
+      LEFT JOIN OITW T0
+        ON T0.ItemCode = T1.ItemCode
+       AND T0.WhsCode = @WhsCode
+      WHERE T1.ItemCode = @ItemCode
     `, {
       ItemCode: line.itemNo,
       WhsCode: line.whse
     })).then(result => {
       if (result.length === 0) {
-        errors.push(`Item ${line.itemNo} not found in warehouse ${line.whse}`);
+        errors.push(`Item ${line.itemNo} not found in SAP B1`);
         return;
       }
       
       const stock = result[0];
+      if (!isSapYes(stock.InventoryItem)) {
+        return;
+      }
+
+      if (!stock.WarehouseCode) {
+        errors.push(`Item ${line.itemNo} not found in warehouse ${line.whse}`);
+        return;
+      }
+
       const actualRequiredQty = getRequiredBatchQty(line);
       const availableStock = parseBatchQtyNumber(stock.Available);
       const inventoryUOM = String(stock.InventoryUOM || line.inventoryUOM || line.uomCode || 'Base UoM').trim();

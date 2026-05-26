@@ -88,10 +88,11 @@ const fetchOpenSalesOrdersForCopy = (customerCode = null) =>
 const fetchSalesOrderForCopy = (docEntry) =>
   apiClient.get(`/sales-order/${encodeURIComponent(docEntry)}/copy`);
 
-const printSalesOrder = ({ docEntry, docNum, schema, docCode, cardCode }) =>
+const printSalesOrder = ({ docEntry, docNum, series, schema, docCode, cardCode }) =>
   apiClient.post('/print-sales-order', {
     docEntry,
     docNum,
+    series,
     schema,
     docCode,
     cardCode,

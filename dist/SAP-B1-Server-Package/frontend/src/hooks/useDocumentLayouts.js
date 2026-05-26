@@ -18,6 +18,26 @@ export const isLayoutExportSupported = (layout) => {
   return layoutType.includes('crystal');
 };
 
+export const isLayoutActive = (layout) => {
+  const rawStatus =
+    layout?.status_code ??
+    layout?.Status ??
+    layout?.status ??
+    layout?.StatusCode;
+
+  if (rawStatus == null || rawStatus === '') return true;
+
+  return String(rawStatus).trim().toUpperCase() === 'A';
+};
+
+export const isCrystalLayout = (layout) => {
+  const categoryCode = String(layout?.category_code || '').trim().toUpperCase();
+  if (categoryCode) return categoryCode === 'C';
+
+  const layoutType = String(layout?.layout_type || '').trim().toLowerCase();
+  return layoutType.includes('crystal');
+};
+
 const normalizeLayout = (layout) => ({
   ...layout,
   is_export_supported: isLayoutExportSupported(layout),
@@ -80,7 +100,7 @@ const useDocumentLayouts = ({
       try {
         const response = await fetchDocumentLayouts(documentType);
         const nextLayouts = Array.isArray(response.data?.layouts)
-          ? response.data.layouts.map(normalizeLayout)
+          ? response.data.layouts.filter((layout) => isLayoutActive(layout) && isCrystalLayout(layout)).map(normalizeLayout)
           : [];
         const preferredDocCode = defaultDocCode || response.data?.defaultDocCode || '';
 
