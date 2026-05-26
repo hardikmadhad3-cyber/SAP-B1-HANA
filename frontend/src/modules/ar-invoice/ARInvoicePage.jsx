@@ -22,6 +22,7 @@ import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
@@ -119,6 +120,16 @@ const normalizeBaseLine = (line, fallbackIndex) =>
   line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? fallbackIndex;
 const normalizeWarehouse = (line = {}, header = {}) =>
   line.whse || line.WarehouseCode || line.WhsCode || line.warehouse || header.warehouse || header.WarehouseCode || '';
+const hasUdfValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
+const mergeUdfValues = (...sources) =>
+  sources.reduce((acc, source) => {
+    Object.entries(source || {}).forEach(([key, value]) => {
+      if (hasUdfValue(value) || acc[key] === undefined) {
+        acc[key] = value ?? '';
+      }
+    });
+    return acc;
+  }, {});
 
 // ─── static fallbacks ────────────────────────────────────────────────────────
 const FALLBACK_PAYMENT_TERMS = [
@@ -565,25 +576,30 @@ function ARInvoicePage() {
       placeOfSupply:    srcHeader.placeOfSupply || '',
       otherInstruction: srcHeader.otherInstruction || srcHeader.Comments || '',
     }));
+    const copiedHeaderUdfs = mergeUdfValues(copyFrom.headerUdfs, copyFrom.header_udfs, srcHeader.header_udfs, srcHeader.headerUdfs);
+    setHeaderUdfs({
+      ...copiedHeaderUdfs,
+      ...normalizeUdfState(headerUdfDefinitions, copiedHeaderUdfs),
+    });
 
     if (Array.isArray(srcLines) && srcLines.length > 0) {
-      setLines(srcLines.map((l, idx) => ({
-        ...createLine(rowUdfDefinitions),
-        itemNo:          l.itemNo          || l.ItemCode        || '',
-        itemDescription: l.itemDescription || l.ItemDescription || l.Dscription || '',
-        quantity:        String(l.quantity || l.Quantity || l.OpenQty || 0),
-        unitPrice:       String(l.unitPrice || l.UnitPrice || l.Price || 0),
-        uomCode:         l.uomCode         || l.UomCode         || l.unitMsr || '',
-        hsnCode:         l.hsnCode         || l.HSNCode         || '',
-        taxCode:         l.taxCode         || l.TaxCode         || '',
-        whse:            normalizeWarehouse(l, srcHeader),
-        discount:        String(l.discount || l.DiscountPercent || l.DiscPrcnt || 0),
-        stdDiscount:     String(l.stdDiscount || l.discount || l.DiscountPercent || l.DiscPrcnt || 0),
-        baseEntry:       l.baseEntry ?? l.BaseEntry ?? copiedBaseEntry,
-        baseType:        l.baseType ?? l.BaseType ?? copiedBaseType,
-        baseLine:        normalizeBaseLine(l, idx),
-        branch:          l.branch || copiedBranch,
-      })));
+      setLines(srcLines.map((l, idx) => {
+        const normalizedLine = normaliseDocumentLine(l, idx, copiedBaseEntry, copiedBaseType, copiedBranch);
+        const copiedLineUdfs = mergeUdfValues(l.line_udfs, l.lineUdfs, l.udf, normalizedLine.udf);
+        return {
+          ...createLine(rowUdfDefinitions),
+          ...normalizedLine,
+          whse: normalizeWarehouse(normalizedLine, srcHeader) || normalizeWarehouse(l, srcHeader),
+          baseEntry: l.baseEntry ?? l.BaseEntry ?? copiedBaseEntry,
+          baseType: l.baseType ?? l.BaseType ?? copiedBaseType,
+          baseLine: normalizeBaseLine(l, idx),
+          branch: normalizedLine.branch || l.branch || copiedBranch,
+          udf: {
+            ...copiedLineUdfs,
+            ...normalizeUdfState(rowUdfDefinitions, copiedLineUdfs),
+          },
+        };
+      }));
     }
 
     const cardCode = srcHeader.vendor || srcHeader.CardCode;
@@ -592,7 +608,7 @@ function ARInvoicePage() {
     const sourceLabel = copyFrom.sourceLabel || copyFrom.type || 'source document';
     setPageState(p => ({ ...p, success: `Copied from ${sourceLabel}. Please review and save.` }));
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state || persistedCopyState);
-  }, [location.pathname, location.state?.copyFrom, navigate, rowUdfDefinitions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.state?.copyFrom, navigate, headerUdfDefinitions, rowUdfDefinitions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived / computed ────────────────────────────────────────────────────
   const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
@@ -1763,11 +1779,25 @@ function ARInvoicePage() {
     const normHeader = normaliseDocumentHeader(copySource.header);
 
     setHeader(prev => ({ ...prev, ...normHeader }));
+    const copiedHeaderUdfs = mergeUdfValues(copySource.header_udfs, copySource.headerUdfs, copySource.header?.header_udfs, copySource.header?.headerUdfs);
+    setHeaderUdfs({
+      ...copiedHeaderUdfs,
+      ...normalizeUdfState(headerUdfDefinitions, copiedHeaderUdfs),
+    });
 
     const rawLines = copySource.lines;
-    const newLines = rawLines.map((line, idx) =>
-      ({ ...createLine(rowUdfDefinitions), ...normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch) })
-    );
+    const newLines = rawLines.map((line, idx) => {
+      const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch);
+      const copiedLineUdfs = mergeUdfValues(line.line_udfs, line.lineUdfs, line.udf, normalizedLine.udf);
+      return {
+        ...createLine(rowUdfDefinitions),
+        ...normalizedLine,
+        udf: {
+          ...copiedLineUdfs,
+          ...normalizeUdfState(rowUdfDefinitions, copiedLineUdfs),
+        },
+      };
+    });
     setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
 
     const cardCode = normHeader.vendor;
@@ -1855,6 +1885,33 @@ function ARInvoicePage() {
       setError: (message) => setPageState(p => ({ ...p, success: '', error: message })),
       errorMessage: 'Please save the AR invoice first before copying to another document',
     });
+  };
+
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: INIT_HEADER,
+      lines,
+      createLine,
+      rowUdfDefinitions,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setSnapshotPending,
+      setIsDirty,
+      setFreightModal,
+      navigate,
+      location,
+      successMessage: 'A/R invoice duplicated. Review and add it as a new entry.',
+    });
+
+    if (duplicated) {
+      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+    }
   };
 
   // ── submit ────────────────────────────────────────────────────────────────
@@ -2011,6 +2068,11 @@ function ARInvoicePage() {
         >
           Copy To
         </button>
+        {currentDocEntry && (
+          <button type="button" className="del-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+            Duplicate
+          </button>
+        )}
         <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/ar-invoice/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
       </div>

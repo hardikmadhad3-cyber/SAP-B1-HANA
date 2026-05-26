@@ -4,7 +4,7 @@ import {
   printDocumentLayout,
 } from '../../api/documentPrintApi';
 import useDocumentLayouts, { isLayoutExportSupported } from '../../hooks/useDocumentLayouts';
-import { base64ToPdfBlob, downloadPdfBlob, openPdfBlobInNewTab } from '../../utils/pdfUtils';
+import { base64ToPdfBlob, downloadPdfBlob } from '../../utils/pdfUtils';
 import { useAuth } from '../../auth/AuthContext';
 
 const DEFAULT_SCHEMA = process.env.REACT_APP_SAP_REPORT_SCHEMA || '';
@@ -26,11 +26,55 @@ const getErrorMessage = (error, fallbackMessage) =>
   error.message ||
   fallbackMessage;
 
+const isPositiveDocumentKey = (value) => {
+  const normalized = String(value ?? '').trim();
+  return /^\d+$/.test(normalized) && Number(normalized) > 0;
+};
+
+function PdfPreviewModal({ documentLabel, previewPdf, onClose, onDownload }) {
+  if (!previewPdf?.url) {
+    return null;
+  }
+
+  return (
+    <div className="sap-pdf-preview__backdrop" role="presentation" onClick={onClose}>
+      <section
+        className="sap-pdf-preview__dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${documentLabel} print preview`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="sap-pdf-preview__header">
+          <div>
+            <div className="sap-pdf-preview__title">{documentLabel} Print Preview</div>
+            <div className="sap-pdf-preview__file-name">{previewPdf.fileName}</div>
+          </div>
+          <div className="sap-pdf-preview__actions">
+            <button type="button" className="sap-pdf-preview__button" onClick={onDownload}>
+              Download PDF
+            </button>
+            <button type="button" className="sap-pdf-preview__close" onClick={onClose} aria-label="Close print preview">
+              x
+            </button>
+          </div>
+        </header>
+        <iframe
+          className="sap-pdf-preview__frame"
+          src={previewPdf.url}
+          title={`${documentLabel} PDF preview`}
+        />
+      </section>
+    </div>
+  );
+}
+
 function PrintLayoutToolbar({
   documentType,
   documentLabel = 'Document',
   docEntry,
   docNumber,
+  series,
   cardCode,
   disabled = false,
   defaultDocCode = '',
@@ -47,7 +91,7 @@ function PrintLayoutToolbar({
   );
   const [schema, setSchema] = useState(() => companySchema || defaultSchema || DEFAULT_SCHEMA);
   const [loading, setLoading] = useState(false);
-  const [cachedPdfByKey, setCachedPdfByKey] = useState({});
+  const [previewPdf, setPreviewPdf] = useState(null);
   const {
     docCode,
     setDocCode,
@@ -74,9 +118,27 @@ function PrintLayoutToolbar({
     setSchema(resolvedDefaultSchema);
   }, [resolvedDefaultSchema, documentType, layoutReloadKey]);
 
+  useEffect(() => () => {
+    if (previewPdf?.url) {
+      URL.revokeObjectURL(previewPdf.url);
+    }
+  }, [previewPdf?.url]);
+
   useEffect(() => {
-    setCachedPdfByKey({});
-  }, [documentType, docEntry, docCode, schema]);
+    if (!previewPdf) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setPreviewPdf(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewPdf]);
 
   const notifySuccess = (message) => {
     onSuccess?.(message);
@@ -87,7 +149,7 @@ function PrintLayoutToolbar({
   };
 
   const validatePrintableSelection = () => {
-    if (!String(docEntry ?? '').trim()) {
+    if (!isPositiveDocumentKey(docEntry)) {
       notifyError(`Save or load a ${documentLabel.toLowerCase()} before printing.`);
       return false;
     }
@@ -111,18 +173,8 @@ function PrintLayoutToolbar({
     const normalizedDocEntry = String(docEntry ?? '').trim();
     const normalizedDocCode = String(layoutDocCode ?? '').trim();
     const normalizedSchema = String(schema ?? '').trim();
-    const normalizedDocNumber = String(docNumber ?? '').trim();
-    const normalizedCardCode = String(cardCode ?? '').trim();
-    const cacheKey = [
-      documentType,
-      normalizedDocEntry,
-      normalizedDocNumber,
-      normalizedCardCode,
-      normalizedDocCode,
-      normalizedSchema,
-    ].join('::');
 
-    if (!normalizedDocEntry) {
+    if (!isPositiveDocumentKey(normalizedDocEntry)) {
       throw new Error(`Save or load a ${documentLabel.toLowerCase()} before printing.`);
     }
 
@@ -140,14 +192,11 @@ function PrintLayoutToolbar({
       );
     }
 
-    if (cachedPdfByKey[cacheKey]) {
-      return cachedPdfByKey[cacheKey];
-    }
-
     const response = await printDocumentLayout({
       documentType,
       docEntry: normalizedDocEntry,
       docNum: docNumber,
+      series,
       cardCode,
       docCode: normalizedDocCode,
       layoutName: selectedLayout?.layout_name || '',
@@ -164,11 +213,6 @@ function PrintLayoutToolbar({
       schema: normalizedSchema,
     };
 
-    setCachedPdfByKey((current) => ({
-      ...current,
-      [cacheKey]: nextPdf,
-    }));
-
     return nextPdf;
   };
 
@@ -180,35 +224,34 @@ function PrintLayoutToolbar({
       return;
     }
 
-    const previewWindow = window.open('', '_blank');
-
-    if (!previewWindow) {
-      notifyError('Please allow pop-ups to preview the PDF.');
-      return;
-    }
-
-    try {
-      previewWindow.opener = null;
-      previewWindow.document.title = `Generating ${documentLabel} PDF...`;
-      previewWindow.document.body.innerHTML =
-        '<p style="font-family: Segoe UI, Arial, sans-serif; padding: 16px;">Generating PDF preview...</p>';
-    } catch (_error) {
-      // Keep going: the PDF URL can still be assigned once it is generated.
-    }
-
     setLoading(true);
 
     try {
       const pdfDocument = await getPdfDocument();
+      const url = URL.createObjectURL(pdfDocument.blob);
 
-      openPdfBlobInNewTab(pdfDocument.blob, previewWindow);
-      notifySuccess(`${documentLabel} PDF opened for layout ${pdfDocument.docCode}.`);
+      setPreviewPdf({
+        ...pdfDocument,
+        url,
+      });
+      notifySuccess(`${documentLabel} PDF preview loaded for layout ${pdfDocument.docCode}.`);
     } catch (error) {
-      previewWindow.close();
       notifyError(getErrorMessage(error, `Failed to preview the ${documentLabel.toLowerCase()} PDF.`));
     } finally {
       setLoading(false);
     }
+  };
+
+  const closePreview = () => {
+    setPreviewPdf(null);
+  };
+
+  const downloadPreview = () => {
+    if (!previewPdf?.blob) {
+      return;
+    }
+
+    downloadPdfBlob(previewPdf.blob, previewPdf.fileName);
   };
 
   const handleDownload = async (event) => {
@@ -226,6 +269,7 @@ function PrintLayoutToolbar({
         documentType,
         docEntry,
         docNum: docNumber,
+        series,
         cardCode,
         docCode,
         layoutName: selectedLayout?.layout_name || '',
@@ -248,7 +292,7 @@ function PrintLayoutToolbar({
     disabled ||
     loading ||
     layoutsLoading ||
-    !docEntry ||
+    !isPositiveDocumentKey(docEntry) ||
     !canExportSelectedLayout ||
     (selectedLayout && !isLayoutExportSupported(selectedLayout));
   const fieldClass = `${classPrefix}-toolbar__field`;
@@ -294,8 +338,10 @@ function PrintLayoutToolbar({
           className={`${inputClass} ${inputClass}--schema`}
           value={schema}
           onChange={(event) => setSchema(event.target.value)}
+          readOnly
           disabled={loading || disabled}
           placeholder={resolvedDefaultSchema || 'Schema'}
+          title="Uses the selected company database from your current session."
         />
       </div>
 
@@ -304,7 +350,7 @@ function PrintLayoutToolbar({
         className={buttonClass}
         onClick={handlePreview}
         disabled={actionDisabled}
-        title={docEntry ? `Open the selected ${documentLabel.toLowerCase()} layout PDF in a new browser tab.` : `Load a saved ${documentLabel.toLowerCase()} to print.`}
+        title={docEntry ? `Preview the selected ${documentLabel.toLowerCase()} layout PDF.` : `Load a saved ${documentLabel.toLowerCase()} to print.`}
       >
         {loading ? 'Generating PDF...' : `Print ${documentLabel}`}
       </button>
@@ -318,6 +364,13 @@ function PrintLayoutToolbar({
       >
         Download PDF
       </button>
+
+      <PdfPreviewModal
+        documentLabel={documentLabel}
+        previewPdf={previewPdf}
+        onClose={closePreview}
+        onDownload={downloadPreview}
+      />
 
     </div>
   );

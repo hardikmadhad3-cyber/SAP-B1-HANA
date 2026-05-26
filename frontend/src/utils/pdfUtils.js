@@ -1,5 +1,13 @@
 const PDF_DATA_PREFIX = 'data:application/pdf;base64,';
 
+const escapeHtml = (value) =>
+  String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 export const normalizeBase64Pdf = (value) => {
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error('The PDF response is empty.');
@@ -31,7 +39,43 @@ export const base64ToPdfBlob = (base64Pdf) => {
   return new Blob(byteArrays, { type: 'application/pdf' });
 };
 
-export const openPdfBlobInNewTab = (blob, previewWindow = null) => {
+const writePdfPreviewDocument = (targetWindow, objectUrl, title) => {
+  const safeTitle = escapeHtml(title || 'PDF Preview');
+  const safeUrl = escapeHtml(objectUrl);
+
+  targetWindow.document.open();
+  targetWindow.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${safeTitle}</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      background: #f5f6f7;
+      overflow: hidden;
+    }
+
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <iframe src="${safeUrl}" title="${safeTitle}"></iframe>
+</body>
+</html>`);
+  targetWindow.document.close();
+};
+
+export const openPdfBlobInNewTab = (blob, previewWindow = null, options = {}) => {
   const objectUrl = URL.createObjectURL(blob);
   const targetWindow = previewWindow || window.open('', '_blank', 'noopener,noreferrer');
 
@@ -46,15 +90,25 @@ export const openPdfBlobInNewTab = (blob, previewWindow = null) => {
     // Some browsers block touching opener after a cross-origin navigation.
   }
 
-  if (typeof targetWindow.location?.replace === 'function') {
-    targetWindow.location.replace(objectUrl);
-  } else {
-    targetWindow.location.href = objectUrl;
+  try {
+    writePdfPreviewDocument(targetWindow, objectUrl, options.title || options.fileName);
+  } catch (_error) {
+    if (typeof targetWindow.location?.replace === 'function') {
+      targetWindow.location.replace(objectUrl);
+    } else {
+      targetWindow.location.href = objectUrl;
+    }
+  }
+
+  try {
+    targetWindow.addEventListener('beforeunload', () => URL.revokeObjectURL(objectUrl), { once: true });
+  } catch (_error) {
+    // Keep the timeout cleanup below as the cross-browser fallback.
   }
 
   window.setTimeout(() => {
     URL.revokeObjectURL(objectUrl);
-  }, 60000);
+  }, 10 * 60 * 1000);
 
   return objectUrl;
 };

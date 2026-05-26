@@ -21,6 +21,7 @@ import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   fetchPurchaseRequestByDocEntry,
@@ -920,6 +921,31 @@ function PurchaseRequest() {
     }
   };
 
+  const handleDuplicate = () => {
+    initialPurchaseRequestDocEntryRef.current = null;
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: INIT_HEADER,
+      lines,
+      createLine,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setFreightModal,
+      navigate,
+      location,
+      successMessage: 'Purchase request duplicated. Review and add it as a new entry.',
+    });
+
+    if (duplicated) {
+      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+    }
+  };
+
   const handleShipToChange = (addressCode) => {
     if (!addressCode) {
       setHeader(p => ({ ...p, shipToCode: addressCode, shipTo: '', placeOfSupply: '' }));
@@ -1266,6 +1292,11 @@ function PurchaseRequest() {
         </button>
         <button type="button" className="po-btn sap-document-toolbar__find" onClick={() => navigate('/purchase-request/find')}>Find</button>
         <button type="button" className="po-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
+        {currentDocEntry && (
+          <button type="button" className="po-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+            Duplicate
+          </button>
+        )}
       </div>
 
       {/* alerts */}

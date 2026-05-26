@@ -179,6 +179,18 @@ const isBillToAddress = (address) => {
   return type.includes('BILL') || type === 'B';
 };
 
+const hasAddressType = (address) =>
+  String(address?.AddressType || address?.AddrType || address?.AdresType || '').trim() !== '';
+
+const filterBillToAddresses = (addresses = []) => {
+  const usableAddresses = (Array.isArray(addresses) ? addresses : [])
+    .filter((address) => getAddressId(address));
+  const billToAddresses = usableAddresses.filter(isBillToAddress);
+
+  if (billToAddresses.length) return billToAddresses;
+  return usableAddresses.some(hasAddressType) ? [] : usableAddresses;
+};
+
 const selectSellerAddress = (addresses = [], seller = {}) => {
   const usableAddresses = (Array.isArray(addresses) ? addresses : [])
     .filter((address) => getAddressId(address));
@@ -197,12 +209,19 @@ const selectSellerAddress = (addresses = [], seller = {}) => {
 };
 
 const selectBillToPartyAddress = (addresses = [], party = {}) => {
-  const usableAddresses = (Array.isArray(addresses) ? addresses : [])
-    .filter((address) => getAddressId(address));
+  const usableAddresses = filterBillToAddresses(addresses);
 
   if (!usableAddresses.length) return null;
 
-  const defaultBillTo = String(party.BilltoDefault || party.BillToDef || party.BillToDefault || '').trim();
+  const defaultBillTo = String(
+    party.BilltoDefault ||
+    party.BillToDef ||
+    party.BillToDefault ||
+    party.PayToDefault ||
+    party.PayToDef ||
+    party.PayTo ||
+    ''
+  ).trim();
   if (defaultBillTo) {
     const match = usableAddresses.find((address) => String(getAddressId(address)).trim() === defaultBillTo);
     if (match) return match;
@@ -246,13 +265,19 @@ const getAddressOptionKey = (address, fallbackIndex = 0) => [
   formatAddressRowText(address),
 ].map((part) => String(part || '').trim().toLowerCase()).join('::');
 
+const getAddressDedupeKey = (address) => [
+  getAddressId(address),
+  getAddressTypeText(address),
+  formatAddressRowText(address),
+].map((part) => String(part || '').trim().toLowerCase()).join('::');
+
 const dedupeAddresses = (addresses = []) => {
   const seen = new Set();
 
-  return (Array.isArray(addresses) ? addresses : []).filter((address, index) => {
+  return (Array.isArray(addresses) ? addresses : []).filter((address) => {
     if (!getAddressId(address)) return false;
 
-    const key = getAddressOptionKey(address, index);
+    const key = getAddressDedupeKey(address);
     if (seen.has(key)) return false;
 
     seen.add(key);
@@ -267,15 +292,6 @@ const getAddressListSignature = (addresses = []) =>
 
 const areAddressListsEqual = (left = [], right = []) =>
   getAddressListSignature(left) === getAddressListSignature(right);
-
-const buildAddressOptionLabel = (address) => {
-  const addressId = getAddressId(address);
-  const addressText = formatAddressRowText(address);
-  const addressType = getAddressTypeText(address);
-  const prefix = addressType ? `${addressType}: ` : '';
-
-  return `${prefix}${addressId}${addressText ? ` - ${addressText}` : ''}`;
-};
 
 const getContactName = (contact) =>
   String(
@@ -409,6 +425,20 @@ function renderLookupControl(control, onLookup, disabled, title = 'Lookup') {
   );
 }
 
+function renderLookupInputControl(value, onChange, onLookup, disabled, title = 'Lookup', showLookup = true) {
+  const input = (
+    <input
+      type="text"
+      className="form-control form-control-sm"
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+
+  return showLookup ? renderLookupControl(input, onLookup, disabled, title) : input;
+}
+
 function SellerAddressModal({
   isOpen,
   onClose,
@@ -423,7 +453,7 @@ function SellerAddressModal({
   const [selectedRow, setSelectedRow] = useState(null);
 
   const filteredAddresses = useMemo(() => {
-    const usableAddresses = addresses.filter((address) => getAddressId(address));
+    const usableAddresses = dedupeAddresses(addresses);
     if (!searchTerm.trim()) return usableAddresses;
 
     const term = searchTerm.toLowerCase();
@@ -627,6 +657,9 @@ function HeaderUdfSidebar({
   const [billToPartyPartners, setBillToPartyPartners] = useState([]);
   const [billToPartyLookupLoading, setBillToPartyLookupLoading] = useState(false);
   const [billToPartyAddresses, setBillToPartyAddresses] = useState([]);
+  const [billToPartyAddressLookupOpen, setBillToPartyAddressLookupOpen] = useState(false);
+  const [billToPartyAddressLoading, setBillToPartyAddressLoading] = useState(false);
+  const [billToPartyAddressError, setBillToPartyAddressError] = useState('');
   const lastLoadedBillToPartyCodeRef = useRef('');
   const valuesRef = useRef(values || {});
   const onFieldChangeRef = useRef(onFieldChange);
@@ -634,7 +667,7 @@ function HeaderUdfSidebar({
   const loadToVendorDetailsRef = useRef(loadToVendorDetails);
   const billToPartyAddressOptionsSignature = getAddressListSignature(billToPartyAddressOptions);
   const externalBillToPartyAddresses = useMemo(
-    () => dedupeAddresses(billToPartyAddressOptions),
+    () => filterBillToAddresses(dedupeAddresses(billToPartyAddressOptions)),
     [billToPartyAddressOptionsSignature],
   );
 
@@ -666,14 +699,14 @@ function HeaderUdfSidebar({
   }, []);
 
   const setToVendorAddressList = useCallback((addresses = []) => {
-    const nextAddresses = dedupeAddresses(addresses);
+    const nextAddresses = filterBillToAddresses(dedupeAddresses(addresses));
     setToVendorAddresses((current) =>
       areAddressListsEqual(current, nextAddresses) ? current : nextAddresses
     );
   }, []);
 
   const setBillToPartyAddressList = useCallback((addresses = []) => {
-    const nextAddresses = dedupeAddresses(addresses);
+    const nextAddresses = filterBillToAddresses(dedupeAddresses(addresses));
     setBillToPartyAddresses((current) =>
       areAddressListsEqual(current, nextAddresses) ? current : nextAddresses
     );
@@ -717,7 +750,6 @@ function HeaderUdfSidebar({
       addresses = [
         ...(Array.isArray(details?.addresses) ? details.addresses : []),
         ...(Array.isArray(details?.BPAddresses) ? details.BPAddresses : []),
-        ...(Array.isArray(details?.ship_to_addresses) ? details.ship_to_addresses : []),
         ...(Array.isArray(details?.bill_to_addresses) ? details.bill_to_addresses : []),
         ...(Array.isArray(details?.pay_to_addresses) ? details.pay_to_addresses : []),
       ];
@@ -733,7 +765,7 @@ function HeaderUdfSidebar({
       }
     }
 
-    const usableAddresses = dedupeAddresses(addresses);
+    const usableAddresses = filterBillToAddresses(dedupeAddresses(addresses));
 
     return { vendor, addresses: usableAddresses };
   }, []);
@@ -758,7 +790,7 @@ function HeaderUdfSidebar({
 
         const selectedAddress = addresses.find(
           (address) => String(getAddressId(address)) === toVendorAddressIdValue
-        ) || selectSellerAddress(addresses, vendor || {});
+        ) || selectBillToPartyAddress(addresses, vendor || {});
 
         setToVendorAddressList(addresses);
         lastLoadedToVendorCodeRef.current = toVendorCode;
@@ -855,9 +887,7 @@ function HeaderUdfSidebar({
           addresses = [
             ...(Array.isArray(details?.addresses) ? details.addresses : []),
             ...(Array.isArray(details?.BPAddresses) ? details.BPAddresses : []),
-            ...(Array.isArray(details?.ship_to_addresses) ? details.ship_to_addresses : []),
             ...(Array.isArray(details?.bill_to_addresses) ? details.bill_to_addresses : []),
-            ...(Array.isArray(details?.pay_to_addresses) ? details.pay_to_addresses : []),
           ];
           party = details?.businessPartner || details?.customer || null;
         }
@@ -869,7 +899,7 @@ function HeaderUdfSidebar({
 
         if (cancelled) return;
 
-        const usableAddresses = dedupeAddresses(addresses);
+        const usableAddresses = filterBillToAddresses(dedupeAddresses(addresses));
         const selectedAddress = selectBillToPartyAddress(usableAddresses, party || {});
         setBillToPartyAddressList(usableAddresses);
 
@@ -1007,6 +1037,53 @@ function HeaderUdfSidebar({
     applyBillToPartyAddress(selectedAddress || { Address: addressOptionKey });
   };
 
+  const openBillToPartyAddressLookup = async () => {
+    setBillToPartyAddressLookupOpen(true);
+    setBillToPartyAddressLoading(true);
+    setBillToPartyAddressError('');
+
+    if (!billToPartyCode) {
+      setBillToPartyAddressList([]);
+      setBillToPartyAddressLoading(false);
+      setBillToPartyAddressError('Select Bill to Party Code first.');
+      return;
+    }
+
+    try {
+      let party = null;
+      let addresses = [];
+
+      if (typeof loadBillToPartyDetailsRef.current === 'function') {
+        const details = await loadBillToPartyDetailsRef.current(billToPartyCode);
+        party = details?.businessPartner || details?.customer || details?.bp || null;
+        addresses = [
+          ...(Array.isArray(details?.addresses) ? details.addresses : []),
+          ...(Array.isArray(details?.BPAddresses) ? details.BPAddresses : []),
+          ...(Array.isArray(details?.bill_to_addresses) ? details.bill_to_addresses : []),
+        ];
+      }
+
+      if (!addresses.length) {
+        party = party || await getBP(billToPartyCode);
+        addresses = Array.isArray(party?.BPAddresses) ? party.BPAddresses : [];
+      }
+
+      const usableAddresses = filterBillToAddresses(dedupeAddresses(addresses));
+      setBillToPartyAddressList(usableAddresses);
+      lastLoadedBillToPartyCodeRef.current = billToPartyCode;
+
+      if (!usableAddresses.length) {
+        setBillToPartyAddressError('No bill-to address is available for this party.');
+      }
+    } catch (error) {
+      console.error('Failed to load Bill To Party addresses:', error);
+      setBillToPartyAddressList([]);
+      setBillToPartyAddressError('Failed to load bill-to addresses.');
+    } finally {
+      setBillToPartyAddressLoading(false);
+    }
+  };
+
   const openSellerAddressLookup = async () => {
     const sellerCode = String(values?.[SELLER_CODE_KEY] || '').trim();
     setSellerAddressLookupOpen(true);
@@ -1084,6 +1161,10 @@ function HeaderUdfSidebar({
     applyToVendorAddress(address);
   };
 
+  const handleBillToPartyAddressSelect = (address) => {
+    applyBillToPartyAddress(address);
+  };
+
   const handleSellerSelect = async (bp) => {
     changeField(SELLER_CODE_KEY, bp.CardCode || '');
     changeField(SELLER_NAME_KEY, bp.CardName || '');
@@ -1132,7 +1213,7 @@ function HeaderUdfSidebar({
 
     try {
       const { vendor, addresses } = await loadToVendorByCode(cardCode);
-      const selectedAddress = selectSellerAddress(addresses, vendor || bp);
+      const selectedAddress = selectBillToPartyAddress(addresses, vendor || bp);
       setToVendorAddressList(addresses);
       lastLoadedToVendorCodeRef.current = cardCode;
       applyToVendorAddress(selectedAddress);
@@ -1142,10 +1223,10 @@ function HeaderUdfSidebar({
     } catch (error) {
       console.error('Failed to load To Vendor details:', error);
       const addresses = Array.isArray(bp?.BPAddresses) ? bp.BPAddresses : [];
-      const usableAddresses = addresses.filter((address) => getAddressId(address));
+      const usableAddresses = filterBillToAddresses(addresses);
       setToVendorAddressList(usableAddresses);
       lastLoadedToVendorCodeRef.current = cardCode;
-      applyToVendorAddress(selectSellerAddress(usableAddresses, bp));
+      applyToVendorAddress(selectBillToPartyAddress(usableAddresses, bp));
     }
   };
 
@@ -1172,7 +1253,7 @@ function HeaderUdfSidebar({
     try {
       const party = await getBP(cardCode);
       const addresses = Array.isArray(party?.BPAddresses) ? party.BPAddresses : [];
-      const usableAddresses = dedupeAddresses(addresses);
+      const usableAddresses = filterBillToAddresses(dedupeAddresses(addresses));
       const selectedAddress = selectBillToPartyAddress(usableAddresses, party || bp);
       setBillToPartyAddressList(usableAddresses);
       lastLoadedBillToPartyCodeRef.current = cardCode;
@@ -1183,7 +1264,7 @@ function HeaderUdfSidebar({
     } catch (error) {
       console.error('Failed to load Bill To Party details:', error);
       const addresses = Array.isArray(bp?.BPAddresses) ? bp.BPAddresses : [];
-      const usableAddresses = dedupeAddresses(addresses);
+      const usableAddresses = filterBillToAddresses(dedupeAddresses(addresses));
       setBillToPartyAddressList(usableAddresses);
       lastLoadedBillToPartyCodeRef.current = cardCode;
       applyBillToPartyAddress(selectBillToPartyAddress(usableAddresses, bp));
@@ -1217,50 +1298,8 @@ function HeaderUdfSidebar({
           <div className="po-udf-sidebar-body">
             {orderedFields.map((field) => {
               const fieldDisabled = disabled || field.readOnly || formSettings.headerUdfs?.[field.key]?.active === false;
-              const toVendorAddressOptions = dedupeAddresses(toVendorAddresses);
               const currentToVendorAddressId = String(values[field.key] || '');
-              const currentToVendorAddressText = String(
-                toVendorAddressField?.key ? values[toVendorAddressField.key] : ''
-              ).trim();
-              const selectedToVendorAddress = isToVendorAddressIdField(field)
-                ? (
-                  toVendorAddressOptions.find((address) =>
-                    String(getAddressId(address)) === currentToVendorAddressId &&
-                    (!currentToVendorAddressText || formatSellerAddress(address) === currentToVendorAddressText)
-                  )
-                  || toVendorAddressOptions.find((address) =>
-                    String(getAddressId(address)) === currentToVendorAddressId
-                  )
-                )
-                : null;
-              const selectedToVendorAddressValue = selectedToVendorAddress
-                ? getAddressOptionKey(
-                  selectedToVendorAddress,
-                  toVendorAddressOptions.indexOf(selectedToVendorAddress)
-                )
-                : '';
-              const billToPartyAddressOptions = dedupeAddresses(billToPartyAddresses);
               const currentBillToPartyAddressId = String(values[field.key] || '');
-              const currentBillToPartyAddressText = String(
-                billToPartyAddressField?.key ? values[billToPartyAddressField.key] : ''
-              ).trim();
-              const selectedBillToPartyAddressKey = isBillToPartyAddressIdField(field)
-                ? (
-                  billToPartyAddressOptions.find((address, index) =>
-                    String(getAddressId(address)) === currentBillToPartyAddressId &&
-                    (!currentBillToPartyAddressText || formatSellerAddress(address) === currentBillToPartyAddressText)
-                  )
-                  || billToPartyAddressOptions.find((address) =>
-                    String(getAddressId(address)) === currentBillToPartyAddressId
-                  )
-                )
-                : null;
-              const selectedBillToPartyAddressValue = selectedBillToPartyAddressKey
-                ? getAddressOptionKey(
-                  selectedBillToPartyAddressKey,
-                  billToPartyAddressOptions.indexOf(selectedBillToPartyAddressKey)
-                )
-                : currentBillToPartyAddressId;
               const fieldLookup = isSellerCodeField(field)
                 ? openSellerLookup
                 : isToVendorCodeField(field)
@@ -1271,59 +1310,24 @@ function HeaderUdfSidebar({
                       ? openSellerAddressLookup
                       : isToVendorAddressIdField(field)
                         ? openToVendorAddressLookup
-                        : undefined;
-              const fieldControl = isToVendorAddressIdField(field) && toVendorAddressOptions.length > 0
-                ? renderLookupControl(
-                  (
-                    <select
-                      className="form-control form-control-sm"
-                      value={selectedToVendorAddressValue || currentToVendorAddressId}
-                      disabled={fieldDisabled}
-                      onChange={(event) => handleToVendorAddressIdChange(event.target.value)}
-                      title={toVendorAddressOptions.length > 1 ? `${toVendorAddressOptions.length} addresses available` : 'Select address'}
-                      style={{ cursor: fieldDisabled ? 'not-allowed' : 'pointer' }}
-                    >
-                      <option value="">Select address ({toVendorAddressOptions.length})</option>
-                      {toVendorAddressOptions.map((address, index) => {
-                        const optionKey = getAddressOptionKey(address, index);
-                        return (
-                          <option key={optionKey} value={optionKey}>
-                            {buildAddressOptionLabel(address)}
-                          </option>
-                        );
-                      })}
-                      {values[field.key] && !selectedToVendorAddress ? (
-                        <option value={values[field.key]}>{values[field.key]}</option>
-                      ) : null}
-                    </select>
-                  ),
+                        : isBillToPartyAddressIdField(field)
+                          ? openBillToPartyAddressLookup
+                          : undefined;
+              const fieldControl = isToVendorAddressIdField(field)
+                ? renderLookupInputControl(
+                  currentToVendorAddressId,
+                  handleToVendorAddressIdChange,
                   openToVendorAddressLookup,
                   fieldDisabled,
                   'List of To Vendor Addresses'
                 )
-                : isBillToPartyAddressIdField(field) && billToPartyAddressOptions.length > 0
-                  ? (
-                    <select
-                      className="form-control form-control-sm"
-                      value={selectedBillToPartyAddressValue}
-                      disabled={fieldDisabled}
-                      onChange={(event) => handleBillToPartyAddressIdChange(event.target.value)}
-                      title={billToPartyAddressOptions.length > 1 ? `${billToPartyAddressOptions.length} addresses available` : 'Select address'}
-                      style={{ cursor: fieldDisabled ? 'not-allowed' : 'pointer' }}
-                    >
-                      <option value="">Select address ({billToPartyAddressOptions.length})</option>
-                      {billToPartyAddressOptions.map((address, index) => {
-                        const optionKey = getAddressOptionKey(address, index);
-                        return (
-                          <option key={optionKey} value={optionKey}>
-                            {buildAddressOptionLabel(address)}
-                          </option>
-                        );
-                      })}
-                      {values[field.key] && !billToPartyAddressOptions.some((address) => String(getAddressId(address)) === String(values[field.key])) ? (
-                        <option value={values[field.key]}>{values[field.key]}</option>
-                      ) : null}
-                    </select>
+                : isBillToPartyAddressIdField(field)
+                  ? renderLookupInputControl(
+                    currentBillToPartyAddressId,
+                    handleBillToPartyAddressIdChange,
+                    openBillToPartyAddressLookup,
+                    fieldDisabled,
+                    'List of Bill To Party Addresses'
                   )
                 : renderField(
                   field,
@@ -1332,6 +1336,10 @@ function HeaderUdfSidebar({
                   (nextValue) => {
                     if (isToVendorAddressIdField(field)) {
                       handleToVendorAddressIdChange(nextValue);
+                      return;
+                    }
+                    if (isBillToPartyAddressIdField(field)) {
+                      handleBillToPartyAddressIdChange(nextValue);
                       return;
                     }
                     changeField(field.key, nextValue);
@@ -1403,6 +1411,16 @@ function HeaderUdfSidebar({
         error={toVendorAddressError}
         title="To Vendor Address"
         emptyMessage="No vendor addresses found"
+      />
+      <SellerAddressModal
+        isOpen={billToPartyAddressLookupOpen}
+        onClose={() => setBillToPartyAddressLookupOpen(false)}
+        addresses={billToPartyAddresses}
+        onSelect={handleBillToPartyAddressSelect}
+        loading={billToPartyAddressLoading}
+        error={billToPartyAddressError}
+        title="Bill To Party Address"
+        emptyMessage="No bill-to addresses found"
       />
     </>
   );

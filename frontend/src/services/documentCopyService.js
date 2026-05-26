@@ -45,6 +45,19 @@ const copyTargetConfig = {
       targetPath: '/ar-invoice',
     },
   },
+  ncSalesOrder: {
+    delivery: {
+      targetDocType: 'ncDelivery',
+      targetLabel: 'NC Delivery',
+      targetPath: '/nc-delivery/new',
+      targetAliases: ['/nc-delivery'],
+    },
+    'ar-invoice': {
+      targetDocType: 'arInvoice',
+      targetLabel: 'A/R Invoice',
+      targetPath: '/ar-invoice',
+    },
+  },
   delivery: {
     'ar-invoice': {
       targetDocType: 'arInvoice',
@@ -53,6 +66,13 @@ const copyTargetConfig = {
     },
   },
   dcDelivery: {
+    'ar-invoice': {
+      targetDocType: 'arInvoice',
+      targetLabel: 'A/R Invoice',
+      targetPath: '/ar-invoice',
+    },
+  },
+  ncDelivery: {
     'ar-invoice': {
       targetDocType: 'arInvoice',
       targetLabel: 'A/R Invoice',
@@ -144,8 +164,10 @@ const sourceLabels = {
   salesQuotation: 'Sales Quotation',
   salesOrder: 'Sales Order',
   dcSalesOrder: 'DC Sales Order',
+  ncSalesOrder: 'NC Sales Order',
   delivery: 'Delivery',
   dcDelivery: 'DC Delivery',
+  ncDelivery: 'NC Delivery',
   arInvoice: 'A/R Invoice',
   serviceArInvoice: 'Service A/R Invoice',
   serviceApInvoice: 'Service A/P Invoice',
@@ -159,8 +181,10 @@ const sourceBaseTypes = {
   salesQuotation: 23,
   salesOrder: 17,
   dcSalesOrder: 17,
+  ncSalesOrder: 17,
   delivery: 15,
   dcDelivery: 15,
+  ncDelivery: 15,
   arInvoice: 13,
   serviceArInvoice: 13,
   serviceApInvoice: 18,

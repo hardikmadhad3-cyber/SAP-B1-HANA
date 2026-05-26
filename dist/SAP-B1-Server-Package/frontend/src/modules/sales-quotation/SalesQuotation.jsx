@@ -34,6 +34,7 @@ import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
 import { copyToDocument } from '../../services/documentCopyService';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
@@ -1811,6 +1812,33 @@ function SalesQuotation() {
     });
   };
 
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: INIT_HEADER,
+      lines,
+      createLine,
+      rowUdfDefinitions,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setSnapshotPending,
+      setIsDirty,
+      setFreightModal,
+      navigate,
+      location,
+      successMessage: 'Sales quotation duplicated. Review and add it as a new entry.',
+    });
+
+    if (duplicated) {
+      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+    }
+  };
+
   // eslint-disable-next-line no-unused-vars
   const handleCopyFromLegacy = (documentData, docType) => {
     console.log('📋 Copying from:', docType, documentData);
@@ -2134,6 +2162,11 @@ function SalesQuotation() {
           disabled={!currentDocEntry}
           onCopyTo={handleCopyTo}
         />
+        {currentDocEntry && (
+          <button type="button" className="so-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+            Duplicate
+          </button>
+        )}
         <button type="button" className="so-btn sap-document-toolbar__find" onClick={() => navigate('/sales-quotation/find')}>Find</button>
         <button type="button" className="so-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
       </div>

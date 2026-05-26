@@ -27,6 +27,10 @@ const Warehouse = lazyWithRetry(() => import("./pages/Warehouse"));
 const PriceList = lazyWithRetry(() => import("./pages/PriceList"));
 const Delivery = lazyWithRetry(() => import("./pages/Delivery"));
 const DeliveryList = lazyWithRetry(() => import("./pages/DeliveryList"));
+const DCDelivery = lazyWithRetry(() => import("./pages/DCDelivery"));
+const DCDeliveryList = lazyWithRetry(() => import("./pages/DCDeliveryList"));
+const NCDelivery = lazyWithRetry(() => import("./pages/NCDelivery"));
+const NCDeliveryList = lazyWithRetry(() => import("./pages/NCDeliveryList"));
 const TaxCode = lazyWithRetry(() => import("./pages/TaxCode"));
 const UoMGroup = lazyWithRetry(() => import("./pages/UoMGroup"));
 const PaymentTerms = lazyWithRetry(() => import("./pages/PaymentTerms"));
@@ -53,6 +57,8 @@ const SalesOrder = lazyWithRetry(() => import("./pages/SalesOrder"));
 const SalesOrderList = lazyWithRetry(() => import("./pages/SalesOrderList"));
 const DCSalesOrder = lazyWithRetry(() => import("./pages/DCSalesOrder"));
 const DCSalesOrderList = lazyWithRetry(() => import("./pages/DCSalesOrderList"));
+const NCSalesOrder = lazyWithRetry(() => import("./pages/NCSalesOrder"));
+const NCSalesOrderList = lazyWithRetry(() => import("./pages/NCSalesOrderList"));
 const BOM = lazyWithRetry(() => import("./pages/BOM"));
 const ProductionOrder = lazyWithRetry(() => import("./pages/ProductionOrder"));
 const IssueForProduction = lazyWithRetry(() => import("./pages/IssueForProduction"));
@@ -128,6 +134,12 @@ function App() {
                   <Route path="/delivery/new" element={<Delivery />} />
                   <Route path="/Delivery" element={<Navigate to="/delivery" replace />} />
                   <Route path="/delivery/find" element={<DeliveryList />} />
+                  <Route path="/dc-delivery" element={<DCDelivery />} />
+                  <Route path="/dc-delivery/new" element={<DCDelivery />} />
+                  <Route path="/dc-delivery/find" element={<DCDeliveryList />} />
+                  <Route path="/nc-delivery" element={<NCDelivery />} />
+                  <Route path="/nc-delivery/new" element={<NCDelivery />} />
+                  <Route path="/nc-delivery/find" element={<NCDeliveryList />} />
                   <Route path="/shipping-type" element={<ShippingType />} />
                   <Route path="/branch" element={<Branch />} />
                   <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />
@@ -144,6 +156,8 @@ function App() {
                   <Route path="/sales-order/find" element={<SalesOrderList />} />
                   <Route path="/dc-sales-order" element={<DCSalesOrder />} />
                   <Route path="/dc-sales-order/find" element={<DCSalesOrderList />} />
+                  <Route path="/nc-sales-order" element={<NCSalesOrder />} />
+                  <Route path="/nc-sales-order/find" element={<NCSalesOrderList />} />
                   <Route path="/sales-quotation" element={<SalesQuotation />} />
                   <Route path="/sales-quotation/find" element={<SalesQuotationList />} />
                   <Route path="/reportlayoutmanager" element={<ReportsStudioPage />} />

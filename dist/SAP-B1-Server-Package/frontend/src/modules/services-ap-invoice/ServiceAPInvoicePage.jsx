@@ -7,6 +7,7 @@ import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import { copyToDocument } from '../../services/documentCopyService';
+import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { BASE_TYPE, normaliseDocumentHeader, unwrapCopyFromDocument } from '../../api/copyFromApi';
@@ -1464,6 +1465,39 @@ function ServiceAPInvoicePage() {
     });
   };
 
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: INIT_HEADER,
+      lines,
+      createLine,
+      rowUdfDefinitions,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      navigate,
+      location,
+      successMessage: 'Service A/P invoice duplicated. Review and add it as a new entry.',
+    });
+
+    if (duplicated) {
+      const selectedSeries =
+        (refData.series || []).find((series) => String(series.Series || '') === String(header.series || '')) ||
+        (refData.series || [])[0];
+      if (selectedSeries) {
+        setHeader((prev) => ({
+          ...prev,
+          series: String(selectedSeries.Series || ''),
+          nextNumber: String(selectedSeries.NextNumber || ''),
+        }));
+      }
+    }
+  };
+
   const renderLineCell = (line, index, column) => {
     const error = valErrors.lines[index]?.[column.key];
     if (column.isUdf) {
@@ -1717,6 +1751,11 @@ function ServiceAPInvoicePage() {
           </div>
         </div>
         <button type="button" className="del-btn sap-document-toolbar__copy" onClick={handleCopyTo} disabled={!currentDocEntry}>Copy To</button>
+        {currentDocEntry && (
+          <button type="button" className="del-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+            Duplicate
+          </button>
+        )}
       </div>
 
       {pageState.loading && <div className="alert alert-success py-2">Loading...</div>}

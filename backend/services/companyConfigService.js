@@ -17,19 +17,21 @@ const sourceForText = (companyValue, fallbackValue, companySource = 'admin-panel
   return 'missing';
 };
 
-const reportCompanyDbSource = (company = {}) => {
+const reportCompanyDbSource = (company = {}, useEnvFallback = true) => {
+  if (String(company.ReportServiceCompanyDb ?? '').trim()) return 'admin-panel report service company DB';
   if (String(company.DbName ?? '').trim()) return 'selected company DbName';
   if (String(company.SapCompanyDb ?? '').trim()) return 'admin-panel SAP company fallback';
-  if (String(company.ReportServiceCompanyDb ?? '').trim()) return 'admin-panel report fallback';
+  if (!useEnvFallback) return 'missing';
   if (String(env.reportServiceCompanyDb ?? '').trim()) return 'environment';
   return 'missing';
 };
 
-const reportDefaultSchemaSource = (company = {}) => {
-  if (String(company.DbName ?? '').trim()) return 'selected company DbName';
-  if (String(company.SapCompanyDb ?? '').trim()) return 'admin-panel SAP company fallback';
+const reportDefaultSchemaSource = (company = {}, useEnvFallback = true) => {
   if (String(company.ReportServiceDefaultSchema ?? '').trim()) return 'admin-panel report schema fallback';
   if (String(company.ReportServiceCompanyDb ?? '').trim()) return 'admin-panel report company fallback';
+  if (String(company.DbName ?? '').trim()) return 'selected company DbName';
+  if (String(company.SapCompanyDb ?? '').trim()) return 'admin-panel SAP company fallback';
+  if (!useEnvFallback) return 'missing';
   if (String(env.reportServiceDefaultSchema ?? '').trim()) return 'environment';
   return 'missing';
 };
@@ -89,15 +91,26 @@ const getAssignedCompanyFromContext = async () => {
 };
 
 const buildCompanyConfig = (company = {}) => {
-  const sqlDatabase = firstText(company.DbName, env.dbName);
-  const sapCompanyDb = firstText(company.SapCompanyDb, sqlDatabase, env.sapCompanyDb);
-  const reportCompanyDb = firstText(sqlDatabase, sapCompanyDb, company.ReportServiceCompanyDb, env.reportServiceCompanyDb);
-  const reportDefaultSchema = firstText(
-    sqlDatabase,
-    reportCompanyDb,
-    company.ReportServiceDefaultSchema,
-    env.reportServiceDefaultSchema,
-  );
+  const hasSelectedCompany = company && Object.keys(company).length > 0;
+  const companySqlDatabase = firstText(company.DbName);
+  const companySapCompanyDb = firstText(company.SapCompanyDb);
+  const sqlDatabase = firstText(companySqlDatabase, env.dbName);
+  const sapCompanyDb = firstText(companySapCompanyDb, sqlDatabase, env.sapCompanyDb);
+  const reportCompanyDb = hasSelectedCompany
+    ? firstText(company.ReportServiceCompanyDb, companySqlDatabase, companySapCompanyDb)
+    : firstText(company.ReportServiceCompanyDb, companySqlDatabase, companySapCompanyDb, env.reportServiceCompanyDb);
+  const reportDefaultSchema = hasSelectedCompany
+    ? firstText(company.ReportServiceDefaultSchema, reportCompanyDb, companySqlDatabase, companySapCompanyDb)
+    : firstText(company.ReportServiceDefaultSchema, reportCompanyDb, env.reportServiceDefaultSchema);
+  const reportBaseUrl = hasSelectedCompany
+    ? firstText(company.ReportServiceBaseUrl)
+    : firstText(company.ReportServiceBaseUrl, env.reportServiceBaseUrl);
+  const reportUsername = hasSelectedCompany
+    ? firstText(company.ReportServiceUsername)
+    : firstText(company.ReportServiceUsername, env.reportServiceUsername);
+  const reportPassword = hasSelectedCompany
+    ? firstText(company.ReportServicePassword)
+    : firstText(company.ReportServicePassword, env.reportServicePassword);
 
   return {
     companyId: company.CompanyId ?? null,
@@ -121,9 +134,9 @@ const buildCompanyConfig = (company = {}) => {
       rejectUnauthorized: boolFromConfig(company.SapRejectUnauthorized, env.sapRejectUnauthorized),
     },
     reportService: {
-      baseUrl: firstText(company.ReportServiceBaseUrl, env.reportServiceBaseUrl),
-      username: firstText(company.ReportServiceUsername, env.reportServiceUsername),
-      password: firstText(company.ReportServicePassword, env.reportServicePassword),
+      baseUrl: reportBaseUrl,
+      username: reportUsername,
+      password: reportPassword,
       companyDb: reportCompanyDb,
       defaultSchema: reportDefaultSchema,
       rejectUnauthorized: boolFromConfig(
@@ -131,11 +144,11 @@ const buildCompanyConfig = (company = {}) => {
         env.reportServiceRejectUnauthorized,
       ),
       fieldSources: {
-        baseUrl: sourceForText(company.ReportServiceBaseUrl, env.reportServiceBaseUrl),
-        username: sourceForText(company.ReportServiceUsername, env.reportServiceUsername),
-        password: sourceForText(company.ReportServicePassword, env.reportServicePassword),
-        companyDb: reportCompanyDbSource(company),
-        defaultSchema: reportDefaultSchemaSource(company),
+        baseUrl: sourceForText(company.ReportServiceBaseUrl, hasSelectedCompany ? '' : env.reportServiceBaseUrl),
+        username: sourceForText(company.ReportServiceUsername, hasSelectedCompany ? '' : env.reportServiceUsername),
+        password: sourceForText(company.ReportServicePassword, hasSelectedCompany ? '' : env.reportServicePassword),
+        companyDb: reportCompanyDbSource(company, !hasSelectedCompany),
+        defaultSchema: reportDefaultSchemaSource(company, !hasSelectedCompany),
       },
     },
   };

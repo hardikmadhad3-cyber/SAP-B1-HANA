@@ -31,6 +31,7 @@ import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
 import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../utils/copyToState';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import {
@@ -2048,6 +2049,33 @@ function ARCreditMemo() {
     });
   };
 
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: INIT_HEADER,
+      lines,
+      createLine,
+      rowUdfDefinitions,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setSnapshotPending,
+      setIsDirty,
+      setFreightModal,
+      navigate,
+      location,
+      successMessage: 'A/R credit memo duplicated. Review and add it as a new entry.',
+    });
+
+    if (duplicated) {
+      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+    }
+  };
+
   // ── submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async (ev) => {
     ev.preventDefault();
@@ -2199,6 +2227,11 @@ function ARCreditMemo() {
         >
           Copy To
         </button>
+        {currentDocEntry && (
+          <button type="button" className="del-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+            Duplicate
+          </button>
+        )}
         <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/ar-credit-memo/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
       </div>

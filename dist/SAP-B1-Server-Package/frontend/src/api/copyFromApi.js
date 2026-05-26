@@ -54,10 +54,13 @@ export const createCopyFromApi = (baseUrl) => ({
 // ── Pre-built instances for each page ────────────────────────────────────────
 
 export const deliveryCopyFromApi    = createCopyFromApi('/delivery');
+export const dcDeliveryCopyFromApi  = createCopyFromApi('/dc-delivery');
+export const ncDeliveryCopyFromApi  = createCopyFromApi('/nc-delivery');
 export const arInvoiceCopyFromApi   = createCopyFromApi('/ar-invoice');
 export const arCreditMemoCopyFromApi = createCopyFromApi('/ar-credit-memo');
 export const salesOrderCopyFromApi  = createCopyFromApi('/sales-order');
 export const dcSalesOrderCopyFromApi = createCopyFromApi('/dc-sales-order');
+export const ncSalesOrderCopyFromApi = createCopyFromApi('/nc-sales-order');
 export const salesQuotationCopyFromApi = createCopyFromApi('/sales-quotation');
 
 // ── Shared base-type map ──────────────────────────────────────────────────────
@@ -66,7 +69,10 @@ export const BASE_TYPE = {
   salesQuotation: 23,
   salesOrder:     17,
   dcSalesOrder:   17,
+  ncSalesOrder:   17,
   delivery:       15,
+  dcDelivery:     15,
+  ncDelivery:     15,
   purchaseQuotation: 540000006,
   purchaseOrder:  22,
   grpo:           20,
@@ -160,13 +166,34 @@ const pickUdfs = (source = {}) => Object.entries(source || {}).reduce((acc, [key
   return acc;
 }, {});
 
+const normalizeUdfMap = (source = {}) => Object.entries(source || {}).reduce((acc, [key, value]) => {
+  if (key) acc[key] = value == null ? '' : value;
+  return acc;
+}, {});
+
+const getLineUdfs = (line = {}) => ({
+  ...pickUdfs(line),
+  ...normalizeUdfMap(line.line_udfs),
+  ...normalizeUdfMap(line.lineUdfs),
+  ...normalizeUdfMap(line.udf),
+});
+
 export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranch = '') => ({
+  itemServiceType:   firstString(line.ItemType, line.itemServiceType, line.LineType, 'Item'),
   itemNo:          firstString(line.ItemCode, line.AccountCode, line.AcctCode, line.itemNo, line.glAccount),
   itemDescription: firstString(line.ItemDescription, line.Dscription, line.itemDescription),
   sellerQuality:   firstString(line.sellerQuality, line.SellerQuality),
   buyerQuality:    firstString(line.buyerQuality, line.BuyerQuality),
   quantity:        firstString(line.Quantity, line.OpenQty, line.quantity, 0),
   unitPrice:       firstString(line.UnitPrice, line.Price, line.unitPrice, 0),
+  discountAmount:  firstString(
+    line.discountAmount,
+    line.DiscountAmount,
+    line.U_Rate,
+    line.udf?.U_Rate,
+    line.line_udfs?.U_Rate,
+    line.lineUdfs?.U_Rate,
+  ),
   sellerPrice:     firstString(line.sellerPrice, line.SellerPrice),
   buyerPrice:      firstString(line.buyerPrice, line.BuyerPrice),
   sellerDelivery:  firstString(line.sellerDelivery, line.SellerDelivery),
@@ -197,6 +224,7 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
   uomCode:         firstString(line.UomCode, line.unitMsr, line.uomCode),
   uomName:         firstString(line.UomName, line.unitMsr, line.uomName, line.UomCode, line.uomCode),
   hsnCode:         firstString(line.HSNCode, line.hsnCode),
+  sacCode:         firstString(line.SACCode, line.SacCode, line.sacCode),
   taxCode:         firstString(line.TaxCode, line.VatGroup, line.taxCode),
   stcode:          firstString(line.STCODE, line.STACode, line.stcode, line.TaxCode, line.VatGroup, line.taxCode),
   whse:            firstString(line.WarehouseCode, line.WhsCode, line.whse),
@@ -212,8 +240,11 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
   baseEntry:       docEntry             || null,
   baseType,
   baseLine:        line.LineNum         ?? line.lineNum         ?? idx,
+  loc:             firstString(line.Location, line.LocCode, line.loc),
   branch:          normalizeBranchValue(line.branch || line.Branch || headerBranch),
-  udf:             { ...pickUdfs(line), ...(line.udf || {}) },
+  commissionAmountPerTon: firstString(line.commissionAmountPerTon, line.CommissionAmountPerTon),
+  commissionBy:    firstString(line.commissionBy, line.CommissionBy),
+  udf:             getLineUdfs(line),
 });
 
 // ── Shared header normaliser ──────────────────────────────────────────────────

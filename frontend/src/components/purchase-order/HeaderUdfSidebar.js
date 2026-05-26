@@ -179,12 +179,16 @@ const isBillToAddress = (address) => {
   return type.includes('BILL') || type === 'B';
 };
 
+const hasAddressType = (address) =>
+  String(address?.AddressType || address?.AddrType || address?.AdresType || '').trim() !== '';
+
 const filterBillToAddresses = (addresses = []) => {
   const usableAddresses = (Array.isArray(addresses) ? addresses : [])
     .filter((address) => getAddressId(address));
   const billToAddresses = usableAddresses.filter(isBillToAddress);
 
-  return billToAddresses.length ? billToAddresses : usableAddresses;
+  if (billToAddresses.length) return billToAddresses;
+  return usableAddresses.some(hasAddressType) ? [] : usableAddresses;
 };
 
 const selectSellerAddress = (addresses = [], seller = {}) => {
@@ -261,13 +265,19 @@ const getAddressOptionKey = (address, fallbackIndex = 0) => [
   formatAddressRowText(address),
 ].map((part) => String(part || '').trim().toLowerCase()).join('::');
 
+const getAddressDedupeKey = (address) => [
+  getAddressId(address),
+  getAddressTypeText(address),
+  formatAddressRowText(address),
+].map((part) => String(part || '').trim().toLowerCase()).join('::');
+
 const dedupeAddresses = (addresses = []) => {
   const seen = new Set();
 
-  return (Array.isArray(addresses) ? addresses : []).filter((address, index) => {
+  return (Array.isArray(addresses) ? addresses : []).filter((address) => {
     if (!getAddressId(address)) return false;
 
-    const key = getAddressOptionKey(address, index);
+    const key = getAddressDedupeKey(address);
     if (seen.has(key)) return false;
 
     seen.add(key);
@@ -282,15 +292,6 @@ const getAddressListSignature = (addresses = []) =>
 
 const areAddressListsEqual = (left = [], right = []) =>
   getAddressListSignature(left) === getAddressListSignature(right);
-
-const buildAddressOptionLabel = (address) => {
-  const addressId = getAddressId(address);
-  const addressText = formatAddressRowText(address);
-  const addressType = getAddressTypeText(address);
-  const prefix = addressType ? `${addressType}: ` : '';
-
-  return `${prefix}${addressId}${addressText ? ` - ${addressText}` : ''}`;
-};
 
 const getContactName = (contact) =>
   String(
@@ -424,6 +425,20 @@ function renderLookupControl(control, onLookup, disabled, title = 'Lookup') {
   );
 }
 
+function renderLookupInputControl(value, onChange, onLookup, disabled, title = 'Lookup', showLookup = true) {
+  const input = (
+    <input
+      type="text"
+      className="form-control form-control-sm"
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+
+  return showLookup ? renderLookupControl(input, onLookup, disabled, title) : input;
+}
+
 function SellerAddressModal({
   isOpen,
   onClose,
@@ -438,7 +453,7 @@ function SellerAddressModal({
   const [selectedRow, setSelectedRow] = useState(null);
 
   const filteredAddresses = useMemo(() => {
-    const usableAddresses = addresses.filter((address) => getAddressId(address));
+    const usableAddresses = dedupeAddresses(addresses);
     if (!searchTerm.trim()) return usableAddresses;
 
     const term = searchTerm.toLowerCase();
@@ -873,7 +888,6 @@ function HeaderUdfSidebar({
             ...(Array.isArray(details?.addresses) ? details.addresses : []),
             ...(Array.isArray(details?.BPAddresses) ? details.BPAddresses : []),
             ...(Array.isArray(details?.bill_to_addresses) ? details.bill_to_addresses : []),
-            ...(Array.isArray(details?.pay_to_addresses) ? details.pay_to_addresses : []),
           ];
           party = details?.businessPartner || details?.customer || null;
         }
@@ -1046,7 +1060,6 @@ function HeaderUdfSidebar({
           ...(Array.isArray(details?.addresses) ? details.addresses : []),
           ...(Array.isArray(details?.BPAddresses) ? details.BPAddresses : []),
           ...(Array.isArray(details?.bill_to_addresses) ? details.bill_to_addresses : []),
-          ...(Array.isArray(details?.pay_to_addresses) ? details.pay_to_addresses : []),
         ];
       }
 
@@ -1285,50 +1298,8 @@ function HeaderUdfSidebar({
           <div className="po-udf-sidebar-body">
             {orderedFields.map((field) => {
               const fieldDisabled = disabled || field.readOnly || formSettings.headerUdfs?.[field.key]?.active === false;
-              const toVendorAddressOptions = dedupeAddresses(toVendorAddresses);
               const currentToVendorAddressId = String(values[field.key] || '');
-              const currentToVendorAddressText = String(
-                toVendorAddressField?.key ? values[toVendorAddressField.key] : ''
-              ).trim();
-              const selectedToVendorAddress = isToVendorAddressIdField(field)
-                ? (
-                  toVendorAddressOptions.find((address) =>
-                    String(getAddressId(address)) === currentToVendorAddressId &&
-                    (!currentToVendorAddressText || formatSellerAddress(address) === currentToVendorAddressText)
-                  )
-                  || toVendorAddressOptions.find((address) =>
-                    String(getAddressId(address)) === currentToVendorAddressId
-                  )
-                )
-                : null;
-              const selectedToVendorAddressValue = selectedToVendorAddress
-                ? getAddressOptionKey(
-                  selectedToVendorAddress,
-                  toVendorAddressOptions.indexOf(selectedToVendorAddress)
-                )
-                : '';
-              const billToPartyAddressOptions = dedupeAddresses(billToPartyAddresses);
               const currentBillToPartyAddressId = String(values[field.key] || '');
-              const currentBillToPartyAddressText = String(
-                billToPartyAddressField?.key ? values[billToPartyAddressField.key] : ''
-              ).trim();
-              const selectedBillToPartyAddressKey = isBillToPartyAddressIdField(field)
-                ? (
-                  billToPartyAddressOptions.find((address, index) =>
-                    String(getAddressId(address)) === currentBillToPartyAddressId &&
-                    (!currentBillToPartyAddressText || formatSellerAddress(address) === currentBillToPartyAddressText)
-                  )
-                  || billToPartyAddressOptions.find((address) =>
-                    String(getAddressId(address)) === currentBillToPartyAddressId
-                  )
-                )
-                : null;
-              const selectedBillToPartyAddressValue = selectedBillToPartyAddressKey
-                ? getAddressOptionKey(
-                  selectedBillToPartyAddressKey,
-                  billToPartyAddressOptions.indexOf(selectedBillToPartyAddressKey)
-                )
-                : currentBillToPartyAddressId;
               const fieldLookup = isSellerCodeField(field)
                 ? openSellerLookup
                 : isToVendorCodeField(field)
@@ -1342,60 +1313,18 @@ function HeaderUdfSidebar({
                         : isBillToPartyAddressIdField(field)
                           ? openBillToPartyAddressLookup
                           : undefined;
-              const fieldControl = isToVendorAddressIdField(field) && toVendorAddressOptions.length > 0
-                ? renderLookupControl(
-                  (
-                    <select
-                      className="form-control form-control-sm"
-                      value={selectedToVendorAddressValue || currentToVendorAddressId}
-                      disabled={fieldDisabled}
-                      onChange={(event) => handleToVendorAddressIdChange(event.target.value)}
-                      title={toVendorAddressOptions.length > 1 ? `${toVendorAddressOptions.length} addresses available` : 'Select address'}
-                      style={{ cursor: fieldDisabled ? 'not-allowed' : 'pointer' }}
-                    >
-                      <option value="">Select address ({toVendorAddressOptions.length})</option>
-                      {toVendorAddressOptions.map((address, index) => {
-                        const optionKey = getAddressOptionKey(address, index);
-                        return (
-                          <option key={optionKey} value={optionKey}>
-                            {buildAddressOptionLabel(address)}
-                          </option>
-                        );
-                      })}
-                      {values[field.key] && !selectedToVendorAddress ? (
-                        <option value={values[field.key]}>{values[field.key]}</option>
-                      ) : null}
-                    </select>
-                  ),
+              const fieldControl = isToVendorAddressIdField(field)
+                ? renderLookupInputControl(
+                  currentToVendorAddressId,
+                  handleToVendorAddressIdChange,
                   openToVendorAddressLookup,
                   fieldDisabled,
                   'List of To Vendor Addresses'
                 )
-                : isBillToPartyAddressIdField(field) && billToPartyAddressOptions.length > 0
-                  ? renderLookupControl(
-                    (
-                      <select
-                        className="form-control form-control-sm"
-                        value={selectedBillToPartyAddressValue}
-                        disabled={fieldDisabled}
-                        onChange={(event) => handleBillToPartyAddressIdChange(event.target.value)}
-                        title={billToPartyAddressOptions.length > 1 ? `${billToPartyAddressOptions.length} addresses available` : 'Select address'}
-                        style={{ cursor: fieldDisabled ? 'not-allowed' : 'pointer' }}
-                      >
-                        <option value="">Select address ({billToPartyAddressOptions.length})</option>
-                        {billToPartyAddressOptions.map((address, index) => {
-                          const optionKey = getAddressOptionKey(address, index);
-                          return (
-                            <option key={optionKey} value={optionKey}>
-                              {buildAddressOptionLabel(address)}
-                            </option>
-                          );
-                        })}
-                        {values[field.key] && !billToPartyAddressOptions.some((address) => String(getAddressId(address)) === String(values[field.key])) ? (
-                          <option value={values[field.key]}>{values[field.key]}</option>
-                        ) : null}
-                      </select>
-                    ),
+                : isBillToPartyAddressIdField(field)
+                  ? renderLookupInputControl(
+                    currentBillToPartyAddressId,
+                    handleBillToPartyAddressIdChange,
                     openBillToPartyAddressLookup,
                     fieldDisabled,
                     'List of Bill To Party Addresses'

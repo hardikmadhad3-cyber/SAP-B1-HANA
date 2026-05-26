@@ -20,6 +20,7 @@ import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePr
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
@@ -1323,6 +1324,33 @@ function APInvoice() {
     });
   };
 
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: INIT_HEADER,
+      lines,
+      createLine,
+      rowUdfDefinitions,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setSnapshotPending,
+      setIsDirty,
+      setFreightModal,
+      navigate,
+      location,
+      successMessage: 'A/P invoice duplicated. Review and add it as a new entry.',
+    });
+
+    if (duplicated) {
+      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+    }
+  };
+
   const validate = () => {
     const isUpdate = !!currentDocEntry;
     const e = { header: {}, lines: {}, form: '' };
@@ -1548,6 +1576,11 @@ function APInvoice() {
             </button>
           </div>
         </div>
+        {currentDocEntry && (
+          <button type="button" className="po-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+            Duplicate
+          </button>
+        )}
         <PurchasePrintLayoutActions
           documentKey="apInvoice"
           docEntry={currentDocEntry}

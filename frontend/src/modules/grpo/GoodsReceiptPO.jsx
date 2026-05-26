@@ -22,6 +22,7 @@ import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePr
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
@@ -1329,6 +1330,33 @@ function GoodsReceiptPO() {
     });
   };
 
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: INIT_HEADER,
+      lines,
+      createLine,
+      rowUdfDefinitions,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setSnapshotPending,
+      setIsDirty,
+      setFreightModal,
+      navigate,
+      location,
+      successMessage: 'Goods receipt PO duplicated. Review and add it as a new entry.',
+    });
+
+    if (duplicated) {
+      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+    }
+  };
+
   // ── Browse Attachment handler ─────────────────────────────────────────────
   const handleBrowseAttachment = () => {
     const input = document.createElement('input');
@@ -1637,6 +1665,11 @@ function GoodsReceiptPO() {
             </button>
           </div>
         </div>
+        {currentDocEntry && (
+          <button type="button" className="po-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+            Duplicate
+          </button>
+        )}
         <PurchasePrintLayoutActions
           documentKey="goodsReceiptPo"
           docEntry={currentDocEntry}

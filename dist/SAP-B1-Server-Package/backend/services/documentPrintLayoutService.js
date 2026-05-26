@@ -145,20 +145,54 @@ const getDocumentPrintConfig = (documentType) => {
 };
 
 const resolveActiveDatabaseSchema = async () => {
-  try {
-    const databaseName = await dbService.resolveDatabaseName();
-    if (databaseName) return String(databaseName).trim();
-  } catch (_error) {
-    // Fall back to configured report/service-layer values below.
-  }
-
   const companyConfig = await getActiveCompanyConfig();
-  return String(
-    companyConfig.reportService.defaultSchema ||
+
+  const configuredSchema = String(
+    companyConfig.sql.database ||
+      companyConfig.reportService.defaultSchema ||
       companyConfig.reportService.companyDb ||
       companyConfig.serviceLayer.companyDb ||
       '',
   ).trim();
+
+  if (configuredSchema) return configuredSchema;
+
+  try {
+    const databaseName = await dbService.resolveDatabaseName();
+    if (databaseName) return String(databaseName).trim();
+  } catch (_error) {
+    // Fall through to the validation error raised by the caller.
+  }
+
+  return '';
+};
+
+const getAllowedPrintSchemas = async () => {
+  const companyConfig = await getActiveCompanyConfig();
+  return [
+    companyConfig.sql.database,
+    companyConfig.reportService.defaultSchema,
+    companyConfig.reportService.companyDb,
+    companyConfig.serviceLayer.companyDb,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+};
+
+const resolvePrintSchema = async (schema) => {
+  const defaultSchema = await resolveActiveDatabaseSchema();
+  const normalizedSchema = toRequiredString(schema || defaultSchema, 'Schema');
+  const allowedSchemas = await getAllowedPrintSchemas();
+  const allowedSchemaSet = new Set(allowedSchemas.map((value) => value.toLowerCase()));
+
+  if (allowedSchemaSet.size && !allowedSchemaSet.has(normalizedSchema.toLowerCase())) {
+    throw createHttpError(
+      403,
+      `Schema ${normalizedSchema} is not assigned to the selected company session.`,
+    );
+  }
+
+  return normalizedSchema;
 };
 
 const toRequiredString = (value, fieldName) => {
@@ -166,6 +200,16 @@ const toRequiredString = (value, fieldName) => {
 
   if (!normalized) {
     throw createHttpError(400, `${fieldName} is required.`);
+  }
+
+  return normalized;
+};
+
+const toRequiredPositiveIntegerString = (value, fieldName) => {
+  const normalized = toRequiredString(value, fieldName);
+
+  if (!/^\d+$/.test(normalized) || Number(normalized) <= 0) {
+    throw createHttpError(400, `${fieldName} must be a valid positive internal document key.`);
   }
 
   return normalized;
@@ -185,6 +229,19 @@ const isServiceArInvoiceLayout = (layout = {}) => {
   return text.includes('service') || text.includes('in_vat_invoice') || text.includes('in_vat invoice');
 };
 
+const isActiveLayout = (layout = {}) => {
+  const status = String(layout.status_code || layout.Status || '').trim().toUpperCase();
+  return !status || status === 'A';
+};
+
+const isCrystalLayout = (layout = {}) => {
+  const category = String(layout.category_code || layout.Category || '').trim().toUpperCase();
+  if (category) return category === 'C';
+
+  const type = String(layout.layout_type || '').trim().toLowerCase();
+  return type.includes('crystal');
+};
+
 const getLayoutPriority = (layout = {}) => {
   const text = getLayoutText(layout).toLowerCase();
   if (text.includes('service')) return 0;
@@ -193,9 +250,11 @@ const getLayoutPriority = (layout = {}) => {
 };
 
 const filterDocumentLayouts = (config, layouts = []) => {
-  if (config.layoutFilter !== 'service-ar-invoice') return layouts;
+  const activeLayouts = layouts.filter((layout) => isActiveLayout(layout) && isCrystalLayout(layout));
 
-  return layouts
+  if (config.layoutFilter !== 'service-ar-invoice') return activeLayouts;
+
+  return activeLayouts
     .filter(isServiceArInvoiceLayout)
     .sort((left, right) => {
       const priorityDelta = getLayoutPriority(left) - getLayoutPriority(right);
@@ -280,10 +339,8 @@ const getLayoutsQuery = (config) => {
 const getLayouts = async (documentType) => {
   const config = getDocumentPrintConfig(documentType);
   const query = getLayoutsQuery(config);
-  const [defaultSchema, result] = await Promise.all([
-    resolveActiveDatabaseSchema(),
-    dbService.query(query.sql, query.params),
-  ]);
+  const defaultSchema = await resolvePrintSchema();
+  const result = await dbService.query(query.sql, query.params, { databaseName: defaultSchema });
   const layouts = filterDocumentLayouts(config, result.recordset || []);
 
   return {
@@ -298,44 +355,120 @@ const getLayouts = async (documentType) => {
   };
 };
 
-const getDocumentSummary = async (config, docEntry, { docNum = '', cardCode = '' } = {}) => {
-  const normalizedIdentifier = toRequiredString(docEntry, 'DocEntry');
-  const normalizedDocNum = String(docNum || '').trim();
-  const normalizedCardCode = String(cardCode || '').trim();
+const normalizeOptionalText = (value) => String(value ?? '').trim();
+
+const valuesMatch = (left, right) =>
+  normalizeOptionalText(left).toLowerCase() === normalizeOptionalText(right).toLowerCase();
+
+const documentMatchesPrintIdentity = (document, { docNum = '', series = '', cardCode = '' } = {}) => {
+  if (!document) return false;
+
+  const expectedDocNum = normalizeOptionalText(docNum);
+  const expectedSeries = normalizeOptionalText(series);
+  const expectedCardCode = normalizeOptionalText(cardCode);
+
+  if (expectedDocNum && !valuesMatch(document.DocNum, expectedDocNum)) return false;
+  if (expectedSeries && !valuesMatch(document.Series, expectedSeries)) return false;
+  if (expectedCardCode && !valuesMatch(document.CardCode, expectedCardCode)) return false;
+
+  return true;
+};
+
+const getDocumentByPrintIdentity = async (
+  config,
+  { docNum = '', series = '', cardCode = '' } = {},
+  { schema = '' } = {},
+) => {
+  const normalizedDocNum = normalizeOptionalText(docNum);
+  const normalizedSeries = normalizeOptionalText(series);
+  const normalizedCardCode = normalizeOptionalText(cardCode);
+
+  if (!normalizedDocNum || (!normalizedSeries && !normalizedCardCode)) {
+    return null;
+  }
+
+  const filters = ['DocNum = @docNum'];
+  const params = { docNum: normalizedDocNum };
+
+  if (normalizedSeries) {
+    filters.push('Series = @series');
+    params.series = normalizedSeries;
+  }
+
+  if (normalizedCardCode) {
+    filters.push('UPPER(LTRIM(RTRIM(CardCode))) = @cardCode');
+    params.cardCode = normalizedCardCode.toUpperCase();
+  }
+
   const result = await dbService.query(`
-    SELECT TOP 1 DocEntry, DocNum, CardCode, CardName
+    SELECT TOP 1 DocEntry, DocNum, Series, CardCode, CardName
     FROM ${config.tableName}
-    WHERE DocEntry = @identifier
-       OR CAST(DocNum AS NVARCHAR(50)) = @identifier
-       OR (@docNum <> '' AND CAST(DocNum AS NVARCHAR(50)) = @docNum)
-    ORDER BY
-      CASE
-        WHEN @docNum <> ''
-          AND @cardCode <> ''
-          AND CAST(DocNum AS NVARCHAR(50)) = @docNum
-          AND CardCode = @cardCode THEN 0
-        WHEN @docNum <> ''
-          AND CAST(DocNum AS NVARCHAR(50)) = @docNum THEN 1
-        WHEN DocEntry = @identifier THEN 2
-        ELSE 3
-      END,
-      DocEntry DESC
+    WHERE ${filters.join('\n      AND ')}
+    ORDER BY DocEntry DESC
+  `, params, schema ? { databaseName: schema } : {});
+
+  return result.recordset?.[0] || null;
+};
+
+const getDocumentSummary = async (config, docEntry, {
+  schema = '',
+  docNum = '',
+  series = '',
+  cardCode = '',
+} = {}) => {
+  const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
+  const result = await dbService.query(`
+    SELECT TOP 1 DocEntry, DocNum, Series, CardCode, CardName
+    FROM ${config.tableName}
+    WHERE DocEntry = @docEntry
   `, {
-    identifier: normalizedIdentifier,
-    docNum: normalizedDocNum,
-    cardCode: normalizedCardCode,
-  });
+    docEntry: normalizedDocEntry,
+  }, schema ? { databaseName: schema } : {});
 
   const document = result.recordset?.[0];
 
-  if (!document) {
-    throw createHttpError(404, `${config.label} ${normalizedIdentifier} was not found.`);
+  if (document && documentMatchesPrintIdentity(document, { docNum, series, cardCode })) {
+    return document;
   }
 
-  return document;
+  const documentByPrintIdentity = await getDocumentByPrintIdentity(
+    config,
+    { docNum, series, cardCode },
+    { schema },
+  );
+
+  if (documentByPrintIdentity) {
+    if (document && String(document.DocEntry) !== String(documentByPrintIdentity.DocEntry)) {
+      console.warn('[DocumentPrint] Corrected mismatched document key before Crystal export', {
+        documentType: config.key,
+        requestedDocEntry: normalizedDocEntry,
+        requestedDocNum: normalizeOptionalText(docNum),
+        requestedSeries: normalizeOptionalText(series),
+        requestedCardCode: normalizeOptionalText(cardCode),
+        correctedDocEntry: documentByPrintIdentity.DocEntry,
+      });
+    }
+
+    return documentByPrintIdentity;
+  }
+
+  if (!document) {
+    throw createHttpError(404, `${config.label} DocEntry ${normalizedDocEntry} was not found.`);
+  }
+
+  const expectedParts = [
+    normalizeOptionalText(docNum) ? `DocNum ${normalizeOptionalText(docNum)}` : '',
+    normalizeOptionalText(series) ? `Series ${normalizeOptionalText(series)}` : '',
+    normalizeOptionalText(cardCode) ? `CardCode ${normalizeOptionalText(cardCode)}` : '',
+  ].filter(Boolean).join(', ');
+
+  throw createHttpError(
+    409,
+    `${config.label} DocEntry ${normalizedDocEntry} does not match the open document${expectedParts ? ` (${expectedParts})` : ''}. Reopen the document from Find and try printing again.`,
+  );
 };
 
-const getLayoutForDocument = async (config, docCode) => {
+const getLayoutForDocument = async (config, docCode, schema = '') => {
   const normalizedDocCode = toRequiredString(docCode, 'Layout DocCode');
   const typeFilter = config.layoutFilter === 'service-ar-invoice'
     ? ''
@@ -349,7 +482,7 @@ const getLayoutForDocument = async (config, docCode) => {
   `, {
     docCode: normalizedDocCode,
     typeCode: config.typeCode,
-  });
+  }, schema ? { databaseName: schema } : {});
 
   const layout = result.recordset?.[0];
 
@@ -368,6 +501,31 @@ const getLayoutForDocument = async (config, docCode) => {
   return layout;
 };
 
+const hydrateSalesOrderPrintFields = async (config, docEntry, schema) => {
+  if (config.key !== 'salesOrder') {
+    return;
+  }
+
+  const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
+
+  const result = await dbService.query(`
+    UPDATE RDR1
+    SET
+      U_DocKey = DocEntry,
+      U_ItemCode = ItemCode,
+      U_Item_Desc = Dscription,
+      U_UoM = COALESCE(NULLIF(unitMsr, ''), NULLIF(UomCode, ''))
+    WHERE DocEntry = @docEntry
+  `, {
+    docEntry: normalizedDocEntry,
+  }, { databaseName: schema });
+
+  console.info('[DocumentPrint] Synced sales order Crystal print UDFs', {
+    docEntry: normalizedDocEntry,
+    rowsAffected: result.rowsAffected,
+  });
+};
+
 const buildFileName = ({ config, docEntry, docNum, docCode }) =>
   `${config.filePrefix}-${docNum || docEntry}-${docCode}.pdf`;
 
@@ -375,6 +533,7 @@ const printDocument = async ({
   documentType,
   docEntry,
   docNum,
+  series,
   schema,
   docCode,
   cardCode,
@@ -383,17 +542,36 @@ const printDocument = async ({
   requirePrintPermission(auth);
 
   const config = getDocumentPrintConfig(documentType);
-  const normalizedDocEntry = toRequiredString(docEntry, 'DocEntry');
+  const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
   const normalizedDocCode = toRequiredString(docCode, 'Layout DocCode');
-  const defaultSchema = await resolveActiveDatabaseSchema();
-  const normalizedSchema = toRequiredString(schema || defaultSchema, 'Schema');
-  const document = await getDocumentSummary(config, normalizedDocEntry, { docNum, cardCode });
+  const normalizedSchema = await resolvePrintSchema(schema);
+  const document = await getDocumentSummary(config, normalizedDocEntry, {
+    schema: normalizedSchema,
+    docNum,
+    series,
+    cardCode,
+  });
 
-  const layout = await getLayoutForDocument(config, normalizedDocCode);
+  const layout = await getLayoutForDocument(config, normalizedDocCode, normalizedSchema);
 
-  const resolvedDocEntry = String(document.DocEntry || normalizedDocEntry).trim();
-  const resolvedDocNum = String(docNum || document.DocNum || '').trim();
-  const resolvedCardCode = String(cardCode || document.CardCode || '').trim();
+  const resolvedDocEntry = toRequiredPositiveIntegerString(document.DocEntry || normalizedDocEntry, 'Resolved DocEntry');
+  const resolvedDocNum = String(document.DocNum || docNum || '').trim();
+  const resolvedCardCode = String(document.CardCode || cardCode || '').trim();
+
+  await hydrateSalesOrderPrintFields(config, resolvedDocEntry, normalizedSchema);
+
+  console.info('[DocumentPrint] Starting document-key print', {
+    documentType: config.key,
+    documentLabel: config.label,
+    tableName: config.tableName,
+    docEntry: resolvedDocEntry,
+    docCode: normalizedDocCode,
+    series: String(document.Series || series || '').trim(),
+    schema: normalizedSchema,
+    query: `SELECT TOP 1 DocEntry, DocNum, CardCode, CardName FROM ${config.tableName} WHERE DocEntry = @docEntry`,
+    queryParameters: { docEntry: resolvedDocEntry },
+  });
+
   const genericResponse = await reportService.exportDocumentPdf({
     docEntry: resolvedDocEntry,
     schema: normalizedSchema,
@@ -421,8 +599,10 @@ const printDocument = async ({
     typeCode: config.typeCode,
     docEntry: resolvedDocEntry,
     docNum: resolvedDocNum,
+    series: String(document.Series || series || '').trim(),
     cardCode: resolvedCardCode,
     cardName: String(document.CardName || '').trim(),
+    docKeyValue: genericResponse.docKeyValue,
     docCode: normalizedDocCode,
     layoutName: String(layout.DocName || '').trim(),
     schema: normalizedSchema,
@@ -433,7 +613,9 @@ const downloadAllLayouts = async ({
   documentType,
   docEntry,
   docNum,
+  series,
   schema,
+  cardCode,
   auth,
 } = {}) => {
   const layoutPayload = await getLayouts(documentType);
@@ -452,7 +634,9 @@ const downloadAllLayouts = async ({
       documentType,
       docEntry,
       docNum,
+      series,
       schema,
+      cardCode,
       docCode: layout.layout_id,
       auth,
     }));

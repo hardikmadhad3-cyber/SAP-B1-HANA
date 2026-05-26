@@ -21,6 +21,7 @@ import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePr
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
+import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
@@ -1456,6 +1457,33 @@ function PurchaseOrder() {
     });
   };
 
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: INIT_HEADER,
+      lines,
+      createLine,
+      rowUdfDefinitions,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setSnapshotPending,
+      setIsDirty,
+      setFreightModal,
+      navigate,
+      location,
+      successMessage: 'Purchase order duplicated. Review and add it as a new entry.',
+    });
+
+    if (duplicated) {
+      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+    }
+  };
+
   // ── validation ────────────────────────────────────────────────────────────
   const validate = () => {
     const isUpdate = !!currentDocEntry;
@@ -1689,6 +1717,11 @@ function PurchaseOrder() {
             </button>
           </div>
         </div>
+        {currentDocEntry && (
+          <button type="button" className="po-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+            Duplicate
+          </button>
+        )}
         <button type="button" className="po-btn sap-document-toolbar__find" onClick={() => navigate('/purchase-order/find')}>Find</button>
         <button type="button" className="po-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
       </div>
