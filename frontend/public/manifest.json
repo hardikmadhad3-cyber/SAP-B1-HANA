@@ -1,6 +1,6 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "SAP B1",
+  "name": "SAP Business One Web Client",
   "icons": [
     {
       "src": "favicon.ico",

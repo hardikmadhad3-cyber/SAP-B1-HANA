@@ -5,6 +5,7 @@ const { authenticatePendingOrAccessToken } = require('../middleware/authMiddlewa
 const router = express.Router();
 
 router.post('/login', authController.login);
+router.post('/admin-login', authController.adminLogin);
 router.get('/companies-public', authController.getActiveCompanies);
 router.get('/companies/:userId', authenticatePendingOrAccessToken, authController.getCompanies);
 router.post('/select-company', authenticatePendingOrAccessToken, authController.selectCompany);

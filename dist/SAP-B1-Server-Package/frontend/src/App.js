@@ -1,18 +1,19 @@
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import Layout from "./components/Layout";
 import LazyLoadErrorBoundary from "./components/LazyLoadErrorBoundary";
 import RouteLoadingFallback from "./components/RouteLoadingFallback";
-import { AuthProvider } from "./auth/AuthContext";
+import { AuthProvider, useAuth } from "./auth/AuthContext";
 import {
-  PublicOnlyRoute,
+  RequireAdminAuth,
   RequireAuth,
   RequirePendingSelection,
   RouteFallback,
 } from "./auth/RouteGuards";
 
 import Dashboard from "./pages/Dashboard";
+import AdminLoginPage from "./pages/AdminLoginPage";
 import LoginPage from "./pages/LoginPage";
 import lazyWithRetry from "./utils/lazyWithRetry";
 import "./App.css";
@@ -31,6 +32,8 @@ const DCDelivery = lazyWithRetry(() => import("./pages/DCDelivery"));
 const DCDeliveryList = lazyWithRetry(() => import("./pages/DCDeliveryList"));
 const NCDelivery = lazyWithRetry(() => import("./pages/NCDelivery"));
 const NCDeliveryList = lazyWithRetry(() => import("./pages/NCDeliveryList"));
+const SODADelivery = lazyWithRetry(() => import("./pages/SODADelivery"));
+const SODADeliveryList = lazyWithRetry(() => import("./pages/SODADeliveryList"));
 const TaxCode = lazyWithRetry(() => import("./pages/TaxCode"));
 const UoMGroup = lazyWithRetry(() => import("./pages/UoMGroup"));
 const PaymentTerms = lazyWithRetry(() => import("./pages/PaymentTerms"));
@@ -59,6 +62,8 @@ const DCSalesOrder = lazyWithRetry(() => import("./pages/DCSalesOrder"));
 const DCSalesOrderList = lazyWithRetry(() => import("./pages/DCSalesOrderList"));
 const NCSalesOrder = lazyWithRetry(() => import("./pages/NCSalesOrder"));
 const NCSalesOrderList = lazyWithRetry(() => import("./pages/NCSalesOrderList"));
+const SODASalesOrder = lazyWithRetry(() => import("./pages/SODASalesOrder"));
+const SODASalesOrderList = lazyWithRetry(() => import("./pages/SODASalesOrderList"));
 const BOM = lazyWithRetry(() => import("./pages/BOM"));
 const ProductionOrder = lazyWithRetry(() => import("./pages/ProductionOrder"));
 const IssueForProduction = lazyWithRetry(() => import("./pages/IssueForProduction"));
@@ -86,20 +91,46 @@ const ReportsStudioPage = lazyWithRetry(() => import("./pages/ReportsStudioPage"
 const AdminPanelHome = lazyWithRetry(() => import("./pages/AdminPanelHome"));
 const AdminPanelEntity = lazyWithRetry(() => import("./pages/AdminPanelEntity"));
 
+const DEFAULT_DOCUMENT_TITLE = "SAP Business One";
+
+const getCompanyDocumentTitle = (company) => {
+  const companyName = String(company?.companyName || "").trim();
+  const dbName = String(company?.dbName || "").trim();
+
+  return companyName || dbName || DEFAULT_DOCUMENT_TITLE;
+};
+
+function CompanyTitleManager() {
+  const { company, isAuthenticated, isAdminAuthenticated } = useAuth();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      document.title = getCompanyDocumentTitle(company);
+      return;
+    }
+
+    document.title = isAdminAuthenticated ? "SAP B1 Admin" : DEFAULT_DOCUMENT_TITLE;
+  }, [company?.companyName, company?.dbName, isAuthenticated, isAdminAuthenticated]);
+
+  return null;
+}
+
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <CompanyTitleManager />
         <LazyLoadErrorBoundary>
           <Suspense fallback={<RouteLoadingFallback />}>
             <Routes>
               <Route
                 path="/login"
-                element={
-                  <PublicOnlyRoute>
-                    <LoginPage />
-                  </PublicOnlyRoute>
-                }
+                element={<LoginPage />}
+              />
+
+              <Route
+                path="/admin-login"
+                element={<AdminLoginPage />}
               />
 
               <Route
@@ -140,6 +171,9 @@ function App() {
                   <Route path="/nc-delivery" element={<NCDelivery />} />
                   <Route path="/nc-delivery/new" element={<NCDelivery />} />
                   <Route path="/nc-delivery/find" element={<NCDeliveryList />} />
+                  <Route path="/soda-delivery" element={<SODADelivery />} />
+                  <Route path="/soda-delivery/new" element={<SODADelivery />} />
+                  <Route path="/soda-delivery/find" element={<SODADeliveryList />} />
                   <Route path="/shipping-type" element={<ShippingType />} />
                   <Route path="/branch" element={<Branch />} />
                   <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />
@@ -158,6 +192,8 @@ function App() {
                   <Route path="/dc-sales-order/find" element={<DCSalesOrderList />} />
                   <Route path="/nc-sales-order" element={<NCSalesOrder />} />
                   <Route path="/nc-sales-order/find" element={<NCSalesOrderList />} />
+                  <Route path="/soda-sales-order" element={<SODASalesOrder />} />
+                  <Route path="/soda-sales-order/find" element={<SODASalesOrderList />} />
                   <Route path="/sales-quotation" element={<SalesQuotation />} />
                   <Route path="/sales-quotation/find" element={<SalesQuotationList />} />
                   <Route path="/reportlayoutmanager" element={<ReportsStudioPage />} />
@@ -168,10 +204,6 @@ function App() {
                   <Route path="/reports/purchase-analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchase/analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchasing/purchase-request-report" element={<PurchaseRequestReportPage />} />
-                  <Route path="/admin" element={<AdminPanelHome />} />
-                  <Route path="/admin/:entityKey" element={<AdminPanelEntity />} />
-                  <Route path="/admin/:entityKey/new" element={<AdminPanelEntity />} />
-                  <Route path="/admin/:entityKey/:recordId" element={<AdminPanelEntity />} />
                   <Route path="/bom" element={<BOM />} />
                   <Route path="/production-order" element={<ProductionOrder />} />
                   <Route path="/issue-for-production" element={<IssueForProduction />} />
@@ -190,6 +222,15 @@ function App() {
                   <Route path="/ap-credit-memo/find" element={<APCreditMemoList />} />
                   <Route path="/incoming-payments" element={<IncomingPayments />} />
                   <Route path="/outgoing-payments" element={<OutgoingPayments />} />
+                </Route>
+              </Route>
+
+              <Route element={<RequireAdminAuth />}>
+                <Route element={<Layout />}>
+                  <Route path="/admin" element={<AdminPanelHome />} />
+                  <Route path="/admin/:entityKey" element={<AdminPanelEntity />} />
+                  <Route path="/admin/:entityKey/new" element={<AdminPanelEntity />} />
+                  <Route path="/admin/:entityKey/:recordId" element={<AdminPanelEntity />} />
                 </Route>
               </Route>
 

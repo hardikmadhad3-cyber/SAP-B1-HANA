@@ -120,7 +120,7 @@ const buildMenuTree = (menus, rightsByMenuId) => {
 };
 
 const isAdminRoleName = (roleName) =>
-  String(roleName || '').trim().toLowerCase() === 'admin';
+  ['admin', 'superadmin'].includes(String(roleName || '').trim().toLowerCase());
 
 const REPORT_MENU_PATH_PATTERN = /^\/reportlayoutmanager\/menu\/(\d+)\/?$/i;
 
@@ -268,6 +268,49 @@ const login = async (username, password) => {
   };
 };
 
+const adminLogin = async (username, password) => {
+  const normalizedUsername = String(username || '').trim();
+  const normalizedPassword = String(password || '');
+
+  if (!normalizedUsername || !normalizedPassword) {
+    throw createHttpError(400, 'Username and password are required.');
+  }
+
+  const user = await authDbService.findUserByUsername(normalizedUsername);
+
+  if (!user || !user.IsActive) {
+    throw createHttpError(401, 'Invalid username or password.');
+  }
+
+  const isValidPassword = await comparePassword(normalizedPassword, user.PasswordHash);
+  if (!isValidPassword) {
+    throw createHttpError(401, 'Invalid username or password.');
+  }
+
+  const role = await authDbService.getAdminRoleForUser(user.UserId);
+  if (!role || !isAdminRoleName(role.RoleName)) {
+    throw createHttpError(403, 'Only Admin users can access the admin panel.');
+  }
+
+  const adminToken = createToken(
+    {
+      tokenType: 'admin',
+      userId: user.UserId,
+      username: user.Username,
+      roleId: role.RoleId,
+      roleName: role.RoleName,
+    },
+    env.jwtExpiresIn,
+  );
+
+  return {
+    token: adminToken,
+    user: sanitizeUser(user),
+    roleId: role.RoleId,
+    roleName: role.RoleName,
+  };
+};
+
 const getActiveCompanies = async () => {
   const companies = await authDbService.getActiveCompanies();
   return companies.map(sanitizeCompany);
@@ -323,6 +366,7 @@ const getMenuForRole = async (roleId, companyId = null) => {
 module.exports = {
   createHttpError,
   login,
+  adminLogin,
   getActiveCompanies,
   getCompaniesForUser,
   selectCompany,

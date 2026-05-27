@@ -59,7 +59,8 @@ import {
     FORM_SETTINGS_STORAGE_KEY,
     HEADER_UDF_DEFINITIONS,
     ROW_UDF_DEFINITIONS,
-    BASE_MATRIX_COLUMNS,
+    FORM_SETTINGS_LAYOUT_VERSION,
+    buildNCSalesOrderMatrixColumns,
     createUdfState,
     filterSalesOrderRowUdfDefinitions,
     normalizeUdfState,
@@ -202,6 +203,67 @@ const getBillToPartyUdfFields = (fields = []) => ({
     address: fields.find(isBillToPartyAddressUdf),
 });
 
+const isToVendorCodeUdf = (field) => {
+    const identity = getUdfFieldIdentity(field);
+    const label = normalizeUdfFieldText(field?.label);
+    const key = getUdfFieldKeyText(field);
+
+    return label === 'tocodevendor' ||
+        label === 'tovendorcode' ||
+        key === 'tocodevendor' ||
+        key === 'tovendorcode' ||
+        identity.includes('tocodevendor') ||
+        identity.includes('tovendorcode');
+};
+
+const isToVendorNameUdf = (field) => {
+    const identity = getUdfFieldIdentity(field);
+    const label = normalizeUdfFieldText(field?.label);
+    const key = getUdfFieldKeyText(field);
+
+    return label === 'toname' ||
+        label === 'tovendorname' ||
+        key === 'toname' ||
+        key === 'tovendorname' ||
+        identity.includes('toname') ||
+        identity.includes('tovendorname');
+};
+
+const isToVendorAddressIdUdf = (field) => {
+    const identity = getUdfFieldIdentity(field);
+    const label = normalizeUdfFieldText(field?.label);
+    const key = getUdfFieldKeyText(field);
+
+    return label === 'toaddressid' ||
+        label === 'tovendoraddressid' ||
+        key === 'toaddressid' ||
+        key === 'tovendoraddressid' ||
+        identity.includes('toaddressid') ||
+        identity.includes('tovendoraddressid');
+};
+
+const isToVendorAddressUdf = (field) => {
+    if (isToVendorAddressIdUdf(field)) return false;
+
+    const identity = getUdfFieldIdentity(field);
+    const label = normalizeUdfFieldText(field?.label);
+    const key = getUdfFieldKeyText(field);
+
+    return label === 'toaddress' ||
+        label === 'tovendoraddress' ||
+        key === 'toaddress' ||
+        key === 'tovendoraddress' ||
+        identity.includes('toaddress') ||
+        identity.includes('tovendoraddress');
+};
+
+const getToVendorUdfFields = (fields = []) => ({
+    code: fields.find(isToVendorCodeUdf),
+    name: fields.find(isToVendorNameUdf),
+    addressId: fields.find(isToVendorAddressIdUdf),
+    address: fields.find(isToVendorAddressUdf),
+});
+
 const getBpAddressId = (address) =>
     address?.AddressName || address?.Address || address?.AddressID || address?.AddressId || '';
 
@@ -227,7 +289,15 @@ const selectBillToPartyAddress = (addresses = [], party = {}) => {
 
     if (!usableAddresses.length) return null;
 
-    const defaultBillTo = String(party.BilltoDefault || party.BillToDef || party.BillToDefault || '').trim();
+    const defaultBillTo = String(
+        party.BilltoDefault ||
+        party.BillToDef ||
+        party.BillToDefault ||
+        party.PayToDefault ||
+        party.PayToDef ||
+        party.PayTo ||
+        ''
+    ).trim();
     if (defaultBillTo) {
         const match = usableAddresses.find((address) => String(getBpAddressId(address)).trim() === defaultBillTo);
         if (match) return match;
@@ -237,6 +307,17 @@ const selectBillToPartyAddress = (addresses = [], party = {}) => {
 };
 
 const buildBillToPartyUdfPatch = (fields, { code = '', name, address = null } = {}) => {
+    const patch = {};
+
+    if (fields.code?.key) patch[fields.code.key] = code;
+    if (fields.name?.key && name !== undefined) patch[fields.name.key] = name;
+    if (fields.addressId?.key) patch[fields.addressId.key] = getBpAddressId(address);
+    if (fields.address?.key) patch[fields.address.key] = fmtAddr(address);
+
+    return patch;
+};
+
+const buildToVendorUdfPatch = (fields, { code = '', name, address = null } = {}) => {
     const patch = {};
 
     if (fields.code?.key) patch[fields.code.key] = code;
@@ -331,6 +412,43 @@ const closeDocumentDropdowns = () => {
     document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
 };
 
+const buildFieldVisibilitySettings = (fields = []) =>
+    fields.reduce((acc, field) => {
+        if (field?.key) {
+            acc[field.key] = {
+                visible: field.visible !== false,
+                active: true,
+            };
+        }
+        return acc;
+    }, {});
+
+const mergeLiveFormSettings = (previous = {}, {
+    matrixColumns = [],
+    headerUdfs = [],
+    rowUdfs = [],
+} = {}) => {
+    const preserveMatrixSettings =
+        Number(previous._layoutVersion || 0) >= FORM_SETTINGS_LAYOUT_VERSION;
+
+    return {
+        ...previous,
+        _layoutVersion: FORM_SETTINGS_LAYOUT_VERSION,
+        matrixColumns: {
+            ...buildFieldVisibilitySettings(matrixColumns),
+            ...(preserveMatrixSettings ? (previous.matrixColumns || {}) : {}),
+        },
+        headerUdfs: {
+            ...buildFieldVisibilitySettings(headerUdfs),
+            ...(previous.headerUdfs || {}),
+        },
+        rowUdfs: {
+            ...buildFieldVisibilitySettings(rowUdfs),
+            ...(previous.rowUdfs || {}),
+        },
+    };
+};
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 function NCSalesOrder() {
     const location = useLocation();
@@ -342,11 +460,13 @@ function NCSalesOrder() {
     const handledCopyFromRef = useRef('');
     const lastAutoBillToPartyBuyerRef = useRef('');
     const lastLoadedBillToPartyCodeRef = useRef('');
+    const defaultToVendorAppliedRef = useRef('');
     const [isCopyFromClick, setIsCopyFromClick] = useState(false);
     const [currentDocEntry, setCurrentDocEntry] = useState(null);
     const [header, setHeader] = useState(() => createInitialHeader());
     const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
     const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+    const [matrixFields, setMatrixFields] = useState(() => buildNCSalesOrderMatrixColumns());
     const [lines, setLines] = useState([createLine()]);
     const [attachments] = useState(INIT_ATTACH);
     const [activeTab, setActiveTab] = useState('Contents');
@@ -362,6 +482,7 @@ function NCSalesOrder() {
         warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
         payment_terms: [], shipping_types: [], branches: [], uom_groups: [], sales_employees: [], owners: [],
         countries: [], distribution_rules: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
+        defaults: { toVendorCode: '' },
         decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
     });
     const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
@@ -417,6 +538,10 @@ function NCSalesOrder() {
         }
     }, [header.placeOfSupply, refData.states]);
 
+    useEffect(() => {
+        defaultToVendorAppliedRef.current = '';
+    }, [activeCompanyId]);
+
     const resolvePreferredSeries = (seriesList, postingDateValue, selectedSeries = '') => {
         if (!Array.isArray(seriesList) || !seriesList.length) return null;
 
@@ -445,7 +570,7 @@ function NCSalesOrder() {
     // decimal config
     const dec = { ...DEC, ...(refData.decimal_settings || {}) };
     const numDec = {
-        quantity: Number(dec.QtyDec), unitPrice: Number(dec.PriceDec),
+        quantity: Number(dec.QtyDec), unitPrice: Number(dec.PriceDec), unitPriceUdf: Number(dec.PriceDec),
         stdDiscount: Number(dec.PercentDec), discountAmount: Number(dec.PriceDec), total: Number(dec.SumDec),
         discount: Number(dec.PercentDec), freight: Number(dec.SumDec),
         tax: Number(dec.SumDec), totalPaymentDue: Number(dec.SumDec),
@@ -500,6 +625,7 @@ function NCSalesOrder() {
         let ignore = false;
         const load = async () => {
             setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
+            setMatrixFields(buildNCSalesOrderMatrixColumns());
             setRefData(prev => ({
                 ...prev,
                 vendors: [],
@@ -524,6 +650,7 @@ function NCSalesOrder() {
                 distribution_rules: [],
                 quality_options: { buyer: [], seller: [] },
                 price_options: { buyer: [], seller: [] },
+                defaults: { toVendorCode: '' },
                 warnings: [],
             }));
             try {
@@ -571,28 +698,25 @@ function NCSalesOrder() {
 
                 if (!ignore) {
                     const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
-                    const nextRowUdfs = filterSalesOrderRowUdfDefinitions(refDataRes.data.udf_metadata?.rows || []);
+                    const rawRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+                    const nextRowUdfs = filterSalesOrderRowUdfDefinitions(rawRowUdfs);
+                    const nextMatrixColumns = buildNCSalesOrderMatrixColumns(rawRowUdfs);
                     const nextUdfMetadata = {
                         ...(refDataRes.data.udf_metadata || {}),
                         rows: nextRowUdfs,
                     };
                     setHeaderUdfDefinitions(nextHeaderUdfs);
                     setRowUdfDefinitions(nextRowUdfs);
+                    setMatrixFields(nextMatrixColumns);
                     setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
                     setLines((prev) => prev.map((line) => ({
                         ...line,
                         udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
                     })));
-                    setFormSettings((prev) => ({
-                        ...prev,
-                        headerUdfs: {
-                            ...nextHeaderUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
-                            ...(prev.headerUdfs || {}),
-                        },
-                        rowUdfs: {
-                            ...nextRowUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
-                            ...(prev.rowUdfs || {}),
-                        },
+                    setFormSettings((prev) => mergeLiveFormSettings(prev, {
+                        matrixColumns: nextMatrixColumns,
+                        headerUdfs: nextHeaderUdfs,
+                        rowUdfs: nextRowUdfs,
                     }));
                     setRefData(prev => ({
                         ...prev,
@@ -619,6 +743,7 @@ function NCSalesOrder() {
                         distribution_rules: refDataRes.data.distribution_rules || [],
                         quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
                         price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
+                        defaults: refDataRes.data.defaults || { toVendorCode: '' },
                         decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
                         warnings: refDataRes.data.warnings || [],
                         udf_metadata: nextUdfMetadata,
@@ -899,6 +1024,13 @@ function NCSalesOrder() {
         () => getBillToPartyUdfFields(headerUdfDefinitions),
         [headerUdfDefinitions],
     );
+    const toVendorUdfFields = useMemo(
+        () => getToVendorUdfFields(headerUdfDefinitions),
+        [headerUdfDefinitions],
+    );
+    const toVendorCodeKey = toVendorUdfFields.code?.key || '';
+    const toVendorCodeValue = String(toVendorCodeKey ? headerUdfs[toVendorCodeKey] : '').trim();
+    const defaultToVendorCode = String(refData.defaults?.toVendorCode || '').trim();
     const billToPartyCodeKey = billToPartyUdfFields.code?.key || '';
     const billToPartyCodeValue = String(billToPartyCodeKey ? headerUdfs[billToPartyCodeKey] : '').trim();
     const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
@@ -926,6 +1058,76 @@ function NCSalesOrder() {
     const shipTypeOpts = refData.shipping_types.length
         ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
         : FALLBACK_SHIPPING;
+
+    useEffect(() => {
+        if (currentDocEntry || copyFromMode || !toVendorCodeKey) return;
+
+        if (!defaultToVendorCode) {
+            defaultToVendorAppliedRef.current = '';
+            return;
+        }
+
+        if (toVendorCodeValue || defaultToVendorAppliedRef.current === defaultToVendorCode) return;
+
+        let cancelled = false;
+        defaultToVendorAppliedRef.current = defaultToVendorCode;
+
+        const applyDefaultToVendor = async () => {
+            let vendor = null;
+            let addresses = [];
+
+            try {
+                vendor = await getBP(defaultToVendorCode).catch(() => null);
+                addresses = Array.isArray(vendor?.BPAddresses) ? vendor.BPAddresses : [];
+
+                if (!addresses.length || !vendor?.CardName) {
+                    const detailsResponse = await fetchSalesOrderVendorDetails(defaultToVendorCode);
+                    if (cancelled) return;
+
+                    const details = detailsResponse.data || {};
+                    vendor = vendor || details.businessPartner || details.vendor || details.bp || null;
+                    addresses = addresses.length ? addresses : [
+                        ...(Array.isArray(details.addresses) ? details.addresses : []),
+                        ...(Array.isArray(details.BPAddresses) ? details.BPAddresses : []),
+                        ...(Array.isArray(details.bill_to_addresses) ? details.bill_to_addresses : []),
+                        ...(Array.isArray(details.pay_to_addresses) ? details.pay_to_addresses : []),
+                    ];
+                }
+            } catch (error) {
+                console.error('Failed to load default To Vendor details:', error);
+            }
+
+            if (cancelled) return;
+
+            const selectedAddress = selectBillToPartyAddress(addresses, vendor || {});
+            const patch = buildToVendorUdfPatch(toVendorUdfFields, {
+                code: defaultToVendorCode,
+                name: vendor?.CardName || '',
+                address: selectedAddress,
+            });
+
+            setHeaderUdfs((prev) => {
+                if (String(prev[toVendorCodeKey] || '').trim()) {
+                    return prev;
+                }
+
+                return applyChangedUdfPatch(prev, patch);
+            });
+        };
+
+        applyDefaultToVendor();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        currentDocEntry,
+        copyFromMode,
+        toVendorCodeKey,
+        toVendorCodeValue,
+        defaultToVendorCode,
+        toVendorUdfFields,
+    ]);
 
     useEffect(() => {
         if (!billToPartyCodeKey) return;
@@ -2602,6 +2804,7 @@ function NCSalesOrder() {
             setIsDirty(false);
             setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
             setFreightModal({ open: false, freightCharges: [], loading: false });
+            defaultToVendorAppliedRef.current = '';
             setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
             setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [] }));
             setValErrors({ header: {}, lines: {}, form: '' });
@@ -2627,6 +2830,7 @@ function NCSalesOrder() {
         setIsDirty(false);
         setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
         setFreightModal({ open: false, freightCharges: [], loading: false });
+        defaultToVendorAppliedRef.current = '';
         setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
         setValErrors({ header: {}, lines: {}, form: '' });
         setPageState(p => ({ ...p, error: '', success: '' }));
@@ -3121,6 +3325,7 @@ function NCSalesOrder() {
                                 getBranchName={getBranchName}
                                 copyFromMode={copyFromMode}
                                 formSettings={formSettings}
+                                matrixFields={matrixFields}
                                 rowUdfFields={visibleRowUdfs}
                                 onRowUdfChange={handleRowUdfChange}
                             />
@@ -3411,7 +3616,7 @@ function NCSalesOrder() {
                         className="so-layout__sidebar"
                         isOpen={formSettingsOpen}
                         onClose={() => setFormSettingsOpen(false)}
-                        matrixFields={BASE_MATRIX_COLUMNS}
+                        matrixFields={matrixFields}
                         headerUdfFields={headerUdfDefinitions}
                         rowUdfFields={rowUdfDefinitions}
                         formSettings={formSettings}

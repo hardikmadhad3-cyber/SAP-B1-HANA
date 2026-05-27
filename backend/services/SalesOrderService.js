@@ -1,6 +1,7 @@
 const sapService = require('./sapService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { getActiveCompanyConfig } = require('./companyConfigService');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
@@ -605,9 +606,22 @@ const logSalesOrderSaveTaxDiagnostics = async ({
 const getReferenceData = async (companyId) => {
   try {
     // Use ODBC/Direct SQL for GET operations
-    const data = await salesOrderDb.getReferenceData();
+    const [data, companyConfig] = await Promise.all([
+      salesOrderDb.getReferenceData(),
+      getActiveCompanyConfig(),
+    ]);
+    const toVendorCode = String(
+      companyConfig?.documentDefaults?.salesOrderToVendorCode || '',
+    ).trim();
+
     console.log("Reference data:",data.tax_codes);
-    return data;
+    return {
+      ...data,
+      defaults: {
+        ...(data.defaults || {}),
+        toVendorCode,
+      },
+    };
   } catch (error) {
     console.error('[Sales Order Service] Failed to load reference data via ODBC:', error);
     // Return empty structure with warnings
@@ -630,6 +644,9 @@ const getReferenceData = async (companyId) => {
       contacts: [],
       pay_to_addresses: [],
       company_address: {},
+      defaults: {
+        toVendorCode: '',
+      },
       decimal_settings: {
         QtyDec: 2,
         PriceDec: 2,

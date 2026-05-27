@@ -19,6 +19,24 @@ const getColumnSet = async (tableName) => {
   return new Set(rows.map((row) => String(row.COLUMN_NAME || '').trim()));
 };
 
+const getPhysicalUdfColumns = async (tableName) => {
+  const rows = await safe(db.query(`
+    SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+      AND COLUMN_NAME LIKE 'U[_]%'
+    ORDER BY ORDINAL_POSITION
+  `, { tableName }));
+
+  return rows
+    .map((row) => ({
+      columnName: String(row.COLUMN_NAME || '').trim(),
+      dataType: String(row.DATA_TYPE || '').trim().toLowerCase(),
+      maxLength: row.CHARACTER_MAXIMUM_LENGTH,
+    }))
+    .filter((row) => row.columnName);
+};
+
 const TYPE_MAP = {
   A: 'text',
   M: 'textarea',
@@ -42,6 +60,28 @@ const normalizeUdfKey = (aliasId) => {
   if (!value) return '';
   return value.startsWith('U_') ? value : `U_${value}`;
 };
+
+const SQL_NUMBER_TYPES = new Set([
+  'bigint',
+  'decimal',
+  'float',
+  'int',
+  'money',
+  'numeric',
+  'real',
+  'smallint',
+  'smallmoney',
+  'tinyint',
+]);
+
+const SQL_DATE_TYPES = new Set([
+  'date',
+  'datetime',
+  'datetime2',
+  'datetimeoffset',
+  'smalldatetime',
+  'time',
+]);
 
 const YES_NO_VALUES = new Set(['y', 'n', 'yes', 'no', 'tYES'.toLowerCase(), 'tNO'.toLowerCase(), '1', '0']);
 
@@ -67,11 +107,23 @@ const mapType = (row, options) => {
   return SUBTYPE_MAP[subtypeId] || TYPE_MAP[typeId] || 'text';
 };
 
+const mapSqlType = (dataType, maxLength) => {
+  const normalizedType = String(dataType || '').trim().toLowerCase();
+  if (normalizedType === 'bit') return 'checkbox';
+  if (SQL_NUMBER_TYPES.has(normalizedType)) return 'number';
+  if (SQL_DATE_TYPES.has(normalizedType)) return 'date';
+  if (Number(maxLength) < 0 || Number(maxLength) > 254) return 'textarea';
+  return 'text';
+};
+
 const getUdfDefinitions = async (tableId) => {
   const normalizedTableId = String(tableId || '').trim();
   if (!normalizedTableId) return [];
 
-  const cufdColumns = await getColumnSet('CUFD');
+  const [cufdColumns, physicalColumns] = await Promise.all([
+    getColumnSet('CUFD'),
+    getPhysicalUdfColumns(normalizedTableId),
+  ]);
   const selectSubType = cufdColumns.has('SubType') ? 'T0.SubType' : "'' AS SubType";
   const selectMandatoryAlt = cufdColumns.has('Mandatory') ? 'T0.Mandatory AS MandatoryAlt' : "'' AS MandatoryAlt";
   const selectEditable = cufdColumns.has('Editable') ? 'T0.Editable' : "'' AS Editable";
@@ -100,12 +152,14 @@ const getUdfDefinitions = async (tableId) => {
   `, { tableId: normalizedTableId }));
 
   const byKey = new Map();
+  const normalizedKeys = new Set();
 
   rows.forEach((row) => {
     const key = normalizeUdfKey(row.AliasID);
     if (!key) return;
 
     if (!byKey.has(key)) {
+      normalizedKeys.add(key.toUpperCase());
       byKey.set(key, {
         key,
         label: row.Descr || key,
@@ -126,8 +180,32 @@ const getUdfDefinitions = async (tableId) => {
     }
   });
 
+  physicalColumns.forEach((column) => {
+    const key = normalizeUdfKey(column.columnName);
+    const normalizedKey = key.toUpperCase();
+    if (!key || normalizedKeys.has(normalizedKey)) return;
+
+    normalizedKeys.add(normalizedKey);
+    byKey.set(key, {
+      key,
+      label: key,
+      type: mapSqlType(column.dataType, column.maxLength),
+      defaultValue: '',
+      required: false,
+      readOnly: false,
+      maxLength: column.maxLength && Number(column.maxLength) > 0 ? column.maxLength : undefined,
+      options: [],
+      tableId: normalizedTableId,
+      fieldId: undefined,
+      aliasId: key.replace(/^U_/, ''),
+      sapField: key,
+    });
+  });
+
   return Array.from(byKey.values()).map((field) => {
     const sourceRow = rows.find((row) => normalizeUdfKey(row.AliasID) === field.key) || {};
+    if (!sourceRow.AliasID) return field;
+
     const type = mapType(sourceRow, field.options);
 
     return {
@@ -152,6 +230,7 @@ const getMarketingDocumentUdfs = async ({ headerTable, lineTable }) => {
 };
 
 const toColumnName = (key) => String(key || '').replace(/]/g, ']]');
+const toTableName = (key) => `[${toColumnName(key)}]`;
 
 const formatValue = (value) => {
   if (value instanceof Date) return value.toISOString().split('T')[0];
@@ -165,8 +244,8 @@ const getHeaderUdfValues = async ({ tableId, keyColumn = 'DocEntry', keyValue })
   const selectList = definitions.map((field) => `[${toColumnName(field.key)}]`).join(', ');
   const rows = await safe(db.query(`
     SELECT ${selectList}
-    FROM ${tableId}
-    WHERE ${keyColumn} = @keyValue
+    FROM ${toTableName(tableId)}
+    WHERE ${toTableName(keyColumn)} = @keyValue
   `, { keyValue }));
 
   const row = rows[0] || {};
@@ -183,8 +262,8 @@ const getLineUdfValues = async ({ tableId, keyColumn = 'DocEntry', keyValue }) =
   const selectList = definitions.map((field) => `[${toColumnName(field.key)}]`).join(', ');
   const rows = await safe(db.query(`
     SELECT LineNum, ${selectList}
-    FROM ${tableId}
-    WHERE ${keyColumn} = @keyValue
+    FROM ${toTableName(tableId)}
+    WHERE ${toTableName(keyColumn)} = @keyValue
   `, { keyValue }));
 
   return rows.reduce((acc, row) => {

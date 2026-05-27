@@ -54,6 +54,25 @@ const authenticatePendingOrAccessToken = (req, _res, next) => {
   }
 };
 
+const authenticateAdminPanelToken = (req, _res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) throw unauthorized();
+
+    const payload = verifyToken(token);
+    if (!['admin', 'access'].includes(payload.tokenType)) {
+      throw unauthorized('An admin session is required to access this resource.');
+    }
+
+    req.auth = payload;
+    next();
+  } catch (error) {
+    next(error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError'
+      ? unauthorized('Your session has expired. Please sign in again.')
+      : error);
+  }
+};
+
 const ensureSameUser = (req, userId) => {
   if (Number(req.auth?.userId) !== Number(userId)) {
     throw forbidden('You can only access your own company assignments.');
@@ -63,5 +82,6 @@ const ensureSameUser = (req, userId) => {
 module.exports = {
   authenticateAccessToken,
   authenticatePendingOrAccessToken,
+  authenticateAdminPanelToken,
   ensureSameUser,
 };

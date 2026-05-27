@@ -60,6 +60,17 @@ export const RequireAuth = () => {
   return <Outlet />;
 };
 
+export const RequireAdminAuth = () => {
+  const { isAdminAuthenticated } = useAuth();
+  const location = useLocation();
+
+  if (!isAdminAuthenticated) {
+    return <Navigate to="/admin-login" replace state={{ from: location.pathname }} />;
+  }
+
+  return <Outlet />;
+};
+
 export const RouteFallback = () => {
   const { isAuthenticated, hasPendingSelection, defaultRoute } = useAuth();
 

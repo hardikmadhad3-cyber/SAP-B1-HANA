@@ -56,11 +56,13 @@ export const createCopyFromApi = (baseUrl) => ({
 export const deliveryCopyFromApi    = createCopyFromApi('/delivery');
 export const dcDeliveryCopyFromApi  = createCopyFromApi('/dc-delivery');
 export const ncDeliveryCopyFromApi  = createCopyFromApi('/nc-delivery');
+export const sodaDeliveryCopyFromApi = createCopyFromApi('/soda-delivery');
 export const arInvoiceCopyFromApi   = createCopyFromApi('/ar-invoice');
 export const arCreditMemoCopyFromApi = createCopyFromApi('/ar-credit-memo');
 export const salesOrderCopyFromApi  = createCopyFromApi('/sales-order');
 export const dcSalesOrderCopyFromApi = createCopyFromApi('/dc-sales-order');
 export const ncSalesOrderCopyFromApi = createCopyFromApi('/nc-sales-order');
+export const sodaSalesOrderCopyFromApi = createCopyFromApi('/soda-sales-order');
 export const salesQuotationCopyFromApi = createCopyFromApi('/sales-quotation');
 
 // ── Shared base-type map ──────────────────────────────────────────────────────
@@ -70,9 +72,11 @@ export const BASE_TYPE = {
   salesOrder:     17,
   dcSalesOrder:   17,
   ncSalesOrder:   17,
+  sodaSalesOrder: 17,
   delivery:       15,
   dcDelivery:     15,
   ncDelivery:     15,
+  sodaDelivery:   15,
   purchaseQuotation: 540000006,
   purchaseOrder:  22,
   grpo:           20,

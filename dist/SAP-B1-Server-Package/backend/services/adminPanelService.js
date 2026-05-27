@@ -7,6 +7,7 @@ const {
   syncReportMenuSidebarMenuById,
 } = require('./reportMenuSidebarSyncService');
 const { clearReportSessions } = require('./reportService');
+const { clearServiceLayerSessions } = require('./sapService');
 
 const MAX_LIST_ROWS = 500;
 
@@ -19,7 +20,8 @@ const ENTITY_CONFIGS = [
     path: '/admin/companies',
     group: 'Core Setup',
     lookupLabelColumns: ['CompanyName', 'DbName'],
-    listColumns: ['CompanyId', 'CompanyName', 'DbName', 'DbServer', 'SapBaseUrl', 'SAPVersion', 'IsActive', 'CreatedAt'],
+    listColumns: ['CompanyId', 'CompanyName', 'DbName', 'DbServer', 'SapBaseUrl', 'SalesOrderDefaultToVendorCode', 'SAPVersion', 'IsActive', 'CreatedAt'],
+    revealSensitiveColumns: ['SapPassword', 'ReportServicePassword', 'DbPassword'],
     formSections: [
       {
         key: 'master-data',
@@ -42,6 +44,11 @@ const ENTITY_CONFIGS = [
           'ReportServiceDefaultSchema',
           'ReportServiceRejectUnauthorized',
         ],
+      },
+      {
+        key: 'sales-order-defaults',
+        title: 'Sales Order Defaults',
+        columns: ['SalesOrderDefaultToVendorCode'],
       },
       {
         key: 'odbc-connection',
@@ -234,7 +241,7 @@ const sanitizeRecord = (columns, row) => {
   const sanitized = { ...row };
 
   for (const column of columns) {
-    if (column.isSensitive) {
+    if (column.isSensitive && !column.canRevealSensitive) {
       sanitized[column.name] = '';
     }
   }
@@ -260,6 +267,9 @@ const buildLookupLabel = (config, row) => {
 };
 
 const buildEntitySchema = (config, schemaRows) => {
+  const revealSensitiveColumnNames = new Set(
+    (config.revealSensitiveColumns || []).map((columnName) => String(columnName).toLowerCase()),
+  );
   const sectionByColumn = new Map(
     (config.formSections || []).flatMap((section) =>
       (section.columns || []).map((columnName) => [columnName, section.key]),
@@ -294,6 +304,7 @@ const buildEntitySchema = (config, schemaRows) => {
       referencedEntityKey: referencedConfig?.key || null,
       readOnly: isIdentity,
       hidden: isHidden,
+      canRevealSensitive: isSensitive && revealSensitiveColumnNames.has(String(name).toLowerCase()),
       multiSelect: isMultiSelect,
       editable: !isIdentity && !isHidden,
       inputType: isMultiSelect ? 'multiselect' : '',
@@ -650,6 +661,7 @@ const applyForcedValues = (entityKey, payload) => ({
 
 const clearRuntimeCachesAfterAdminMutation = () => {
   authDbService.clearCache();
+  clearServiceLayerSessions();
   clearReportSessions();
 };
 
