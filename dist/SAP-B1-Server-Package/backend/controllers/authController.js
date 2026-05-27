@@ -11,6 +11,16 @@ const login = async (req, res, next) => {
   }
 };
 
+const adminLogin = async (req, res, next) => {
+  try {
+    const { username, password } = req.body || {};
+    const result = await authService.adminLogin(username, password);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getActiveCompanies = async (_req, res, next) => {
   try {
     const companies = await authService.getActiveCompanies();
@@ -52,6 +62,7 @@ const selectCompany = async (req, res, next) => {
 
 module.exports = {
   login,
+  adminLogin,
   getActiveCompanies,
   getCompanies,
   selectCompany,

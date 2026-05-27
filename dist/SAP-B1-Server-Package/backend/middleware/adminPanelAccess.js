@@ -16,7 +16,7 @@ const requireAdminPanelAccess = async (req, _res, next) => {
     const role = await authDbService.getRoleById(roleId);
     const normalizedRoleName = String(role?.RoleName || '').trim().toLowerCase();
 
-    if (normalizedRoleName !== 'admin') {
+    if (!['admin', 'superadmin'].includes(normalizedRoleName)) {
       throw forbidden('Only Admin users can access the admin panel.');
     }
 

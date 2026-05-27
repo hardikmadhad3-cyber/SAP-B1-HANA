@@ -15,6 +15,7 @@ const COMPANY_CREDENTIAL_COLUMNS = [
   { name: 'ReportServiceCompanyDb', definition: 'NVARCHAR(128) NULL' },
   { name: 'ReportServiceDefaultSchema', definition: 'NVARCHAR(128) NULL' },
   { name: 'ReportServiceRejectUnauthorized', definition: 'BIT NULL' },
+  { name: 'SalesOrderDefaultToVendorCode', definition: 'NVARCHAR(50) NULL' },
   { name: 'DbServer', definition: 'NVARCHAR(255) NULL' },
   { name: 'DbEncrypt', definition: 'BIT NULL' },
   { name: 'DbTrustCert', definition: 'BIT NULL' },
@@ -199,6 +200,7 @@ const COMPANY_SELECT_COLUMNS = `
     ReportServiceCompanyDb,
     ReportServiceDefaultSchema,
     ReportServiceRejectUnauthorized,
+    SalesOrderDefaultToVendorCode,
     DbServer,
     DbEncrypt,
     DbTrustCert
@@ -268,6 +270,16 @@ const getUserRoleForCompany = async (userId, companyId) => cachedQuery(`userRole
     AND ur.CompanyId = @companyId
 `, { userId, companyId }));
 
+const getAdminRoleForUser = async (userId) => cachedQuery(`adminRole:${userId}`, () => queryOne(`
+  SELECT TOP 1 ur.RoleId, r.RoleName
+  FROM dbo.UserRoles ur
+  INNER JOIN dbo.Roles r
+    ON r.RoleId = ur.RoleId
+  WHERE ur.UserId = @userId
+    AND LOWER(r.RoleName) IN ('admin', 'superadmin')
+  ORDER BY CASE WHEN LOWER(r.RoleName) = 'superadmin' THEN 0 ELSE 1 END, ur.RoleId ASC
+`, { userId }));
+
 const getRoleById = async (roleId) => cachedQuery(`role:${roleId}`, () => queryOne(`
   SELECT RoleId, RoleName
   FROM dbo.Roles
@@ -298,6 +310,7 @@ module.exports = {
   getUserCompanies,
   getAssignedCompanyForUser,
   getUserRoleForCompany,
+  getAdminRoleForUser,
   getRoleById,
   getAllMenus,
   getRoleRights,

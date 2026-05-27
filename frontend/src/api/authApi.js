@@ -3,6 +3,9 @@ import apiClient from './client';
 export const loginUser = (credentials) =>
   apiClient.post('/login', credentials).then((response) => response.data);
 
+export const loginAdminUser = (credentials) =>
+  apiClient.post('/admin-login', credentials).then((response) => response.data);
+
 export const fetchPublicCompanies = () =>
   apiClient.get('/companies-public').then((response) => response.data);
 

@@ -33,6 +33,11 @@ const pendingLoginsByCompanyDb = new Map();
 const userStampFieldsByCompanyTable = new Map();
 const userStampUserById = new Map();
 
+const clearServiceLayerSessions = () => {
+  sessionsByCompanyDb.clear();
+  pendingLoginsByCompanyDb.clear();
+};
+
 const USER_STAMP_ENDPOINT_TABLES = new Map([
   ['Items', 'OITM'],
   ['Orders', 'ORDR'],
@@ -467,6 +472,7 @@ module.exports = {
   request,
   resolveCompanyDb,
   resolveServiceLayerConfig,
+  clearServiceLayerSessions,
   createItem,
   createItem_generic,
   getItem,

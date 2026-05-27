@@ -151,6 +151,9 @@ const buildCompanyConfig = (company = {}) => {
         defaultSchema: reportDefaultSchemaSource(company, !hasSelectedCompany),
       },
     },
+    documentDefaults: {
+      salesOrderToVendorCode: firstText(company.SalesOrderDefaultToVendorCode),
+    },
   };
 };
 

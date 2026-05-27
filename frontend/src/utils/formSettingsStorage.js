@@ -7,6 +7,14 @@ const normalizeScopePart = (value) =>
     .trim()
     .replace(/\s+/g, ' ');
 
+const areSettingsEqual = (left, right) => {
+  try {
+    return JSON.stringify(left || {}) === JSON.stringify(right || {});
+  } catch (_error) {
+    return false;
+  }
+};
+
 export const buildCompanyScopedFormSettingsKey = (baseKey, company = {}) => {
   const safeCompany = company || {};
   const companyScope = [
@@ -114,16 +122,24 @@ export const useCompanyScopedFormSettings = (
   const setScopedFormSettings = useCallback(
     (nextSettings) => {
       setState((previous) => {
+        const isCurrentScope = previous.storageKey === storageKey;
         const currentSettings =
-          previous.storageKey === storageKey ? previous.settings : readSettings(storageKey);
+          isCurrentScope ? previous.settings : readSettings(storageKey);
         const resolvedSettings =
           typeof nextSettings === 'function' ? nextSettings(currentSettings) : nextSettings;
+        const didChange = !areSettingsEqual(currentSettings, resolvedSettings);
+
+        if (isCurrentScope && !didChange) {
+          return previous;
+        }
 
         return {
           storageKey,
           settings: resolvedSettings,
-          loaded: true,
-          saveVersion: (previous.saveVersion || 0) + 1,
+          loaded: isCurrentScope ? previous.loaded : false,
+          saveVersion: didChange && isCurrentScope && previous.loaded
+            ? (previous.saveVersion || 0) + 1
+            : (isCurrentScope ? (previous.saveVersion || 0) : 0),
         };
       });
     },

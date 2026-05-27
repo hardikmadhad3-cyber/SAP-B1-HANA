@@ -58,6 +58,19 @@ const copyTargetConfig = {
       targetPath: '/ar-invoice',
     },
   },
+  sodaSalesOrder: {
+    delivery: {
+      targetDocType: 'sodaDelivery',
+      targetLabel: 'SODA Delivery',
+      targetPath: '/soda-delivery/new',
+      targetAliases: ['/soda-delivery'],
+    },
+    'ar-invoice': {
+      targetDocType: 'arInvoice',
+      targetLabel: 'A/R Invoice',
+      targetPath: '/ar-invoice',
+    },
+  },
   delivery: {
     'ar-invoice': {
       targetDocType: 'arInvoice',
@@ -73,6 +86,13 @@ const copyTargetConfig = {
     },
   },
   ncDelivery: {
+    'ar-invoice': {
+      targetDocType: 'arInvoice',
+      targetLabel: 'A/R Invoice',
+      targetPath: '/ar-invoice',
+    },
+  },
+  sodaDelivery: {
     'ar-invoice': {
       targetDocType: 'arInvoice',
       targetLabel: 'A/R Invoice',
@@ -165,9 +185,11 @@ const sourceLabels = {
   salesOrder: 'Sales Order',
   dcSalesOrder: 'DC Sales Order',
   ncSalesOrder: 'NC Sales Order',
+  sodaSalesOrder: 'SODA Sales Order',
   delivery: 'Delivery',
   dcDelivery: 'DC Delivery',
   ncDelivery: 'NC Delivery',
+  sodaDelivery: 'SODA Delivery',
   arInvoice: 'A/R Invoice',
   serviceArInvoice: 'Service A/R Invoice',
   serviceApInvoice: 'Service A/P Invoice',
@@ -182,9 +204,11 @@ const sourceBaseTypes = {
   salesOrder: 17,
   dcSalesOrder: 17,
   ncSalesOrder: 17,
+  sodaSalesOrder: 17,
   delivery: 15,
   dcDelivery: 15,
   ncDelivery: 15,
+  sodaDelivery: 15,
   arInvoice: 13,
   serviceArInvoice: 13,
   serviceApInvoice: 18,

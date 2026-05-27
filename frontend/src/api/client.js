@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config/appConfig';
-import { getActiveToken } from '../auth/storage';
+import { getActiveAdminToken, getActiveToken } from '../auth/storage';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -33,13 +33,20 @@ const getCacheKey = (url, config = {}) => {
   return `${getActiveToken() || 'public'}:${url}:${params}`;
 };
 
+const isAdminPanelRequest = (url = '') => {
+  const normalized = String(url || '').trim().replace(/^https?:\/\/[^/]+\/api/i, '');
+  return normalized === '/admin-panel' || normalized.startsWith('/admin-panel/');
+};
+
 const clearGetCache = () => {
   getCache.clear();
   pendingGets.clear();
 };
 
 apiClient.interceptors.request.use((config) => {
-  const token = getActiveToken();
+  const token = isAdminPanelRequest(config.url)
+    ? getActiveAdminToken()
+    : getActiveToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }

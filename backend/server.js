@@ -35,7 +35,10 @@ if (!env.verboseSapLogs) {
   };
 }
 
-const { authenticateAccessToken } = require('./middleware/authMiddleware');
+const {
+  authenticateAccessToken,
+  authenticateAdminPanelToken,
+} = require('./middleware/authMiddleware');
 const { runWithRequestContext } = require('./services/requestContextService');
 const apiTimingMiddleware = require('./middleware/apiTiming');
 const { cacheMiddleware, invalidateCacheMiddleware } = require('./middleware/cacheMiddleware');
@@ -59,6 +62,7 @@ const purchaseRequestRoutes = require('./routes/purchaseRequest');
 const salesOrderRoutes      = require('./routes/salesOrder');
 const dcSalesOrderRoutes    = require('./routes/dcSalesOrder');
 const ncSalesOrderRoutes    = require('./routes/ncSalesOrder');
+const sodaSalesOrderRoutes  = require('./routes/sodaSalesOrder');
 const salesQuotationRoutes  = require('./routes/salesQuotation');
 const blanketAgreementRoutes = require('./routes/blanketAgreement');
 const printRoutes           = require('./routes/printRoutes');
@@ -73,6 +77,7 @@ const grpoRoutes                 = require('./routes/grpo');
 const deliveryRoutes             = require('./routes/delivery');
 const dcDeliveryRoutes           = require('./routes/dcDelivery');
 const ncDeliveryRoutes           = require('./routes/ncDelivery');
+const sodaDeliveryRoutes         = require('./routes/sodaDelivery');
 const apInvoiceRoutes            = require('./routes/apInvoice');
 const arInvoiceRoutes            = require('./routes/arInvoice');
 const serviceArInvoiceRoutes      = require('./routes/serviceArInvoice');
@@ -210,11 +215,15 @@ app.use((req, res, next) => {
   if (!req.path.startsWith('/api')) return next();
   if (
     req.path === '/api/login' ||
+    req.path === '/api/admin-login' ||
     req.path === '/api/companies-public' ||
     req.path === '/api/select-company' ||
     req.path.startsWith('/api/companies/')
   ) {
     return next();
+  }
+  if (req.path.startsWith('/api/admin-panel')) {
+    return authenticateAdminPanelToken(req, res, next);
   }
   return authenticateAccessToken(req, res, next);
 });
@@ -244,6 +253,7 @@ app.use('/api/purchase-request',   purchaseRequestRoutes);
 app.use('/api/sales-order',        salesOrderRoutes);
 app.use('/api/dc-sales-order',     dcSalesOrderRoutes);
 app.use('/api/nc-sales-order',     ncSalesOrderRoutes);
+app.use('/api/soda-sales-order',   sodaSalesOrderRoutes);
 app.use('/api/sales-quotation',    salesQuotationRoutes);
 app.use('/api/blanket-agreements', blanketAgreementRoutes);
 app.use('/api',                    printRoutes);
@@ -259,6 +269,7 @@ app.use('/api/grpo',               grpoRoutes);
 app.use('/api/delivery',           deliveryRoutes);
 app.use('/api/dc-delivery',        dcDeliveryRoutes);
 app.use('/api/nc-delivery',        ncDeliveryRoutes);
+app.use('/api/soda-delivery',      sodaDeliveryRoutes);
 app.use('/api/ap-invoice',         apInvoiceRoutes);
 app.use('/api/ar-invoice',         arInvoiceRoutes);
 app.use('/api/services/ar-invoice', serviceArInvoiceRoutes);

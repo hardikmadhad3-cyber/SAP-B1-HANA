@@ -11,11 +11,13 @@ const APP_MENU_DEFINITIONS = [
   { key: 'sales-order', parentKey: 'sales', menuName: 'Sales Order', menuPath: '/sales-order', icon: 'document', sortOrder: 2, enforceSortOrder: true },
   { key: 'dc-sales-order', parentKey: 'sales', menuName: 'DC Sales Order', menuPath: '/dc-sales-order', icon: 'document', sortOrder: 3, enforceSortOrder: true },
   { key: 'nc-sales-order', parentKey: 'sales', menuName: 'NC Sales Order', menuPath: '/nc-sales-order', icon: 'document', sortOrder: 4, enforceSortOrder: true },
-  { key: 'delivery', parentKey: 'sales', menuName: 'Delivery', menuPath: '/delivery', icon: 'delivery', sortOrder: 5, enforceSortOrder: true },
-  { key: 'dc-delivery', parentKey: 'sales', menuName: 'DC Delivery', menuPath: '/dc-delivery', icon: 'delivery', sortOrder: 6, enforceSortOrder: true },
-  { key: 'nc-delivery', parentKey: 'sales', menuName: 'NC Delivery', menuPath: '/nc-delivery', icon: 'delivery', sortOrder: 7, enforceSortOrder: true },
-  { key: 'ar-invoice', parentKey: 'sales', menuName: 'A/R Invoice', menuPath: '/ar-invoice', icon: 'invoice', sortOrder: 8, enforceSortOrder: true },
-  { key: 'ar-credit-memo', parentKey: 'sales', menuName: 'A/R Credit Memo', menuPath: '/ar-credit-memo', icon: 'invoice', sortOrder: 9, enforceSortOrder: true },
+  { key: 'soda-sales-order', parentKey: 'sales', menuName: 'SODA Sales Order', menuPath: '/soda-sales-order', icon: 'document', sortOrder: 5, enforceSortOrder: true },
+  { key: 'delivery', parentKey: 'sales', menuName: 'Delivery', menuPath: '/delivery', icon: 'delivery', sortOrder: 6, enforceSortOrder: true },
+  { key: 'dc-delivery', parentKey: 'sales', menuName: 'DC Delivery', menuPath: '/dc-delivery', icon: 'delivery', sortOrder: 7, enforceSortOrder: true },
+  { key: 'nc-delivery', parentKey: 'sales', menuName: 'NC Delivery', menuPath: '/nc-delivery', icon: 'delivery', sortOrder: 8, enforceSortOrder: true },
+  { key: 'soda-delivery', parentKey: 'sales', menuName: 'SODA Delivery', menuPath: '/soda-delivery', icon: 'delivery', sortOrder: 9, enforceSortOrder: true },
+  { key: 'ar-invoice', parentKey: 'sales', menuName: 'A/R Invoice', menuPath: '/ar-invoice', icon: 'invoice', sortOrder: 10, enforceSortOrder: true },
+  { key: 'ar-credit-memo', parentKey: 'sales', menuName: 'A/R Credit Memo', menuPath: '/ar-credit-memo', icon: 'invoice', sortOrder: 11, enforceSortOrder: true },
 
   { key: 'services', menuName: 'Services', icon: 'invoice', sortOrder: 2 },
   { key: 'service-ar-invoice', parentKey: 'services', menuName: 'A/R Invoice', menuPath: '/services/ar-invoice', icon: 'invoice', sortOrder: 1, enforceSortOrder: true },
@@ -285,6 +287,11 @@ const syncApplicationSidebarMenus = async (db) => {
   );
   syncCount += await cloneRoleRightsForDuplicateMenu(
     db,
+    menuByKey.get('sales-order')?.MenuId,
+    menuByKey.get('soda-sales-order')?.MenuId,
+  );
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
     menuByKey.get('delivery')?.MenuId,
     menuByKey.get('dc-delivery')?.MenuId,
   );
@@ -292,6 +299,11 @@ const syncApplicationSidebarMenus = async (db) => {
     db,
     menuByKey.get('delivery')?.MenuId,
     menuByKey.get('nc-delivery')?.MenuId,
+  );
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
+    menuByKey.get('delivery')?.MenuId,
+    menuByKey.get('soda-delivery')?.MenuId,
   );
 
   return syncCount;

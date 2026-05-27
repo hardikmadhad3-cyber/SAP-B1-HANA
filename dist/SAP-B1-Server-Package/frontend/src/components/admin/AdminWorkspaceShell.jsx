@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { fetchAdminEntities } from '../../api/adminPanelApi';
 import { useAuth } from '../../auth/AuthContext';
 
@@ -7,9 +7,21 @@ const GROUP_ORDER = ['Core Setup', 'Security', 'Navigation', 'Reporting'];
 
 const AdminWorkspaceShell = ({ children }) => {
   const location = useLocation();
-  const { company, user, roleName } = useAuth();
+  const navigate = useNavigate();
+  const {
+    adminLogout,
+    adminRoleName,
+    adminUser,
+    company,
+    isAdminAuthenticated,
+    roleName,
+    user,
+  } = useAuth();
   const [entities, setEntities] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const displayUser = adminUser || user;
+  const displayRoleName = adminRoleName || roleName;
+  const workspaceSubtitle = isAdminAuthenticated ? 'Master Setup' : (company?.dbName || 'Configuration');
 
   useEffect(() => {
     let ignore = false;
@@ -65,6 +77,11 @@ const AdminWorkspaceShell = ({ children }) => {
   const pageTitle = currentEntity?.title || (location.pathname === '/admin' ? 'Overview' : 'Admin Workspace');
   const pageDescription = currentEntity?.description || 'Manage application setup, users, roles, and access rights.';
 
+  const handleAdminLogout = () => {
+    adminLogout();
+    navigate('/admin-login', { replace: true });
+  };
+
   return (
     <div className="admin-workspace">
       <aside className="admin-workspace__sidebar">
@@ -72,7 +89,7 @@ const AdminWorkspaceShell = ({ children }) => {
           <div className="admin-workspace__brand-mark">AP</div>
           <div>
             <div className="admin-workspace__brand-title">Admin Panel</div>
-            <div className="admin-workspace__brand-subtitle">{company?.dbName || 'Configuration'}</div>
+            <div className="admin-workspace__brand-subtitle">{workspaceSubtitle}</div>
           </div>
         </div>
 
@@ -115,12 +132,17 @@ const AdminWorkspaceShell = ({ children }) => {
           <div className="admin-workspace__meta">
             <div className="admin-workspace__meta-card">
               <span>User</span>
-              <strong>{user?.fullName || user?.username || 'Admin'}</strong>
+              <strong>{displayUser?.fullName || displayUser?.username || 'Admin'}</strong>
             </div>
             <div className="admin-workspace__meta-card">
               <span>Role</span>
-              <strong>{roleName || 'Admin'}</strong>
+              <strong>{displayRoleName || 'Admin'}</strong>
             </div>
+            {isAdminAuthenticated ? (
+              <button className="admin-panel-button admin-panel-button--ghost" type="button" onClick={handleAdminLogout}>
+                Log Out
+              </button>
+            ) : null}
           </div>
         </header>
 

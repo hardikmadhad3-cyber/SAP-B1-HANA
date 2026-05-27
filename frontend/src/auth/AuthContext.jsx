@@ -1,12 +1,15 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { fetchMenu, fetchUserCompanies, loginUser, selectCompany } from '../api/authApi';
+import { fetchMenu, fetchUserCompanies, loginAdminUser, loginUser, selectCompany } from '../api/authApi';
 import {
+  clearAdminSession,
   clearAuthSession,
   clearPendingAuth,
+  getAdminSession,
   getAuthSession,
   getLastSelectedCompanyId,
   getLastSelectedCompanyInfo,
   getPendingAuth,
+  setAdminSession,
   setAuthSession,
   setLastSelectedCompanyId,
   setLastSelectedCompanyInfo,
@@ -26,8 +29,16 @@ const buildSessionFromSelection = (selectionResult, pendingAuth) => ({
   menuPaths: selectionResult.menuPaths || [],
 });
 
+const buildAdminSession = (loginResult) => ({
+  token: loginResult.token,
+  user: loginResult.user,
+  roleId: loginResult.roleId,
+  roleName: loginResult.roleName,
+});
+
 export const AuthProvider = ({ children }) => {
   const [session, setSessionState] = useState(() => getAuthSession());
+  const [adminSession, setAdminSessionState] = useState(() => getAdminSession());
   const [pendingAuth, setPendingAuthState] = useState(() => getPendingAuth());
   const [isBootstrapping, setIsBootstrapping] = useState(() => Boolean(getAuthSession()?.token));
 
@@ -89,6 +100,15 @@ export const AuthProvider = ({ children }) => {
 
   const loadCompanies = useCallback(async (userId) => fetchUserCompanies(userId), []);
 
+  const adminLogin = useCallback(async (username, password) => {
+    const response = await loginAdminUser({ username, password });
+    const nextAdminSession = buildAdminSession(response);
+
+    setAdminSession(nextAdminSession);
+    setAdminSessionState(nextAdminSession);
+    return nextAdminSession;
+  }, []);
+
   const completeCompanySelection = useCallback(async (companyId) => {
     const activePendingAuth = pendingAuth || getPendingAuth();
 
@@ -119,6 +139,11 @@ export const AuthProvider = ({ children }) => {
     setPendingAuthState(null);
   }, []);
 
+  const adminLogout = useCallback(() => {
+    clearAdminSession();
+    setAdminSessionState(null);
+  }, []);
+
   const getRememberedCompanyId = useCallback(
     () => getLastSelectedCompanyId(pendingAuth?.user?.userId),
     [pendingAuth?.user?.userId],
@@ -126,20 +151,26 @@ export const AuthProvider = ({ children }) => {
 
   const value = {
     session,
+    adminSession,
     pendingAuth,
     isBootstrapping,
     isAuthenticated: Boolean(session?.token),
+    isAdminAuthenticated: Boolean(adminSession?.token),
     hasPendingSelection: Boolean(pendingAuth?.preAuthToken && pendingAuth?.user?.userId),
     user: session?.user || pendingAuth?.user || null,
+    adminUser: adminSession?.user || null,
     company: session?.company || null,
     menus: session?.menus || [],
     menuPaths: session?.menuPaths || [],
     roleName: session?.roleName || '',
+    adminRoleName: adminSession?.roleName || '',
     defaultRoute: getDefaultRoute(session?.menuPaths || []),
     login,
+    adminLogin,
     loadCompanies,
     completeCompanySelection,
     logout,
+    adminLogout,
     getRememberedCompanyId,
     getLastSelectedCompanyInfo,
   };

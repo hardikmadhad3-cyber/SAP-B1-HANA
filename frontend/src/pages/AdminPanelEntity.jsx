@@ -9,6 +9,9 @@ import {
 
 const EMPTY_RECORDS = [];
 const EMPTY_LOOKUPS = {};
+const COMPANY_DB_SOURCE_FIELD = 'SapCompanyDb';
+const COMPANY_DB_TARGET_FIELDS = ['AuthDbName', 'ReportServiceCompanyDb', 'ReportServiceDefaultSchema', 'DbName'];
+const LONG_TEXT_FIELD_PATTERN = /(description|remarks|notes|comment|message|body|content|template|query|json)/i;
 
 const formatDateTimeForInput = (value) => {
   if (!value) return '';
@@ -276,6 +279,12 @@ const AdminMultiSelectDropdown = ({ column, value, options, onChange }) => {
 const renderField = (column, value, selectedRecord, isCreating, lookups, handleFieldChange, context = {}) => {
   const fieldId = `admin-field-${column.name}`;
   const isMenusEntity = context.entityKey === 'menus';
+  const isPasswordField = column.inputType === 'password';
+  const isPasswordVisible = Boolean(context.visiblePasswordFields?.has(column.name));
+  const hasPasswordValue = isPasswordField && value !== null && value !== undefined && value !== '';
+  const helpText = isPasswordField && hasPasswordValue
+    ? 'Saved password loaded. Use See to view it, or clear the field to keep the stored value unchanged.'
+    : column.helpText;
 
   if (!column.editable) {
     return (
@@ -462,7 +471,11 @@ const renderField = (column, value, selectedRecord, isCreating, lookups, handleF
     );
   }
 
-  const isLongText = (column.maxLength && column.maxLength > 180) || column.name === 'ApiUrl';
+  const isLongText =
+    !isPasswordField &&
+    (column.maxLength === -1 ||
+      (column.maxLength && column.maxLength > 500) ||
+      LONG_TEXT_FIELD_PATTERN.test(column.name));
 
   return (
     <div
@@ -478,17 +491,37 @@ const renderField = (column, value, selectedRecord, isCreating, lookups, handleF
           maxLength={column.maxLength && column.maxLength > 0 ? column.maxLength : undefined}
           onChange={(event) => handleFieldChange(column, event.target.value)}
         />
+      ) : isPasswordField ? (
+        <div className="admin-input-with-action admin-password-field">
+          <input
+            id={fieldId}
+            className="admin-panel-input"
+            type={isPasswordVisible ? 'text' : 'password'}
+            value={value ?? ''}
+            maxLength={column.maxLength && column.maxLength > 0 ? column.maxLength : undefined}
+            onChange={(event) => handleFieldChange(column, event.target.value)}
+          />
+          <button
+            type="button"
+            className="admin-password-field__toggle"
+            onClick={() => context.onTogglePasswordVisibility?.(column.name)}
+            aria-label={`${isPasswordVisible ? 'Hide' : 'Show'} ${column.label}`}
+            aria-pressed={isPasswordVisible}
+          >
+            {isPasswordVisible ? 'Hide' : 'See'}
+          </button>
+        </div>
       ) : (
         <input
           id={fieldId}
           className="admin-panel-input"
-          type={column.inputType === 'password' ? 'password' : column.inputType}
+          type={column.inputType}
           value={value ?? ''}
           maxLength={column.maxLength && column.maxLength > 0 ? column.maxLength : undefined}
           onChange={(event) => handleFieldChange(column, event.target.value)}
         />
       )}
-      {column.helpText ? <small>{column.helpText}</small> : null}
+      {helpText ? <small>{helpText}</small> : null}
     </div>
   );
 };
@@ -511,6 +544,7 @@ const AdminPanelEntity = () => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(location.state?.notice || '');
   const [openRoleGroups, setOpenRoleGroups] = useState(() => new Set());
+  const [visiblePasswordFields, setVisiblePasswordFields] = useState(() => new Set());
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
   const schema = bootstrap?.schema || null;
@@ -685,6 +719,10 @@ const AdminPanelEntity = () => {
   }, [initialFormData]);
 
   useEffect(() => {
+    setVisiblePasswordFields(new Set());
+  }, [editingRecordId, entityKey, pageMode]);
+
+  useEffect(() => {
     if (pageMode === 'edit' && schema && records.length && !selectedRecord) {
       setError('The selected record was not found.');
     }
@@ -716,10 +754,35 @@ const AdminPanelEntity = () => {
   };
 
   const handleFieldChange = (column, nextValue) => {
-    setFormData((current) => ({
-      ...current,
-      [column.name]: nextValue,
-    }));
+    setFormData((current) => {
+      const nextFormData = {
+        ...current,
+        [column.name]: nextValue,
+      };
+
+      if (entityKey === 'companies' && column.name === COMPANY_DB_SOURCE_FIELD) {
+        COMPANY_DB_TARGET_FIELDS.forEach((targetFieldName) => {
+          if (Object.prototype.hasOwnProperty.call(nextFormData, targetFieldName)) {
+            nextFormData[targetFieldName] = nextValue;
+          }
+        });
+      }
+
+      return nextFormData;
+    });
+  };
+
+  const togglePasswordVisibility = (columnName) => {
+    setVisiblePasswordFields((current) => {
+      const nextSet = new Set(current);
+      if (nextSet.has(columnName)) {
+        nextSet.delete(columnName);
+      } else {
+        nextSet.add(columnName);
+      }
+
+      return nextSet;
+    });
   };
 
   const handleRefresh = async () => {
@@ -758,12 +821,14 @@ const AdminPanelEntity = () => {
       setNotice('');
 
       if (pageMode === 'create') {
-        await createAdminRecord(entityKey, formData);
+        const updatedBootstrap = await createAdminRecord(entityKey, formData);
+        setBootstrap(updatedBootstrap);
         goToList('Record created successfully.', true);
         return;
       }
 
-      await updateAdminRecord(entityKey, editingRecordId, formData);
+      const updatedBootstrap = await updateAdminRecord(entityKey, editingRecordId, formData);
+      setBootstrap(updatedBootstrap);
       goToList('Record updated successfully.', true);
     } catch (saveError) {
       setError(saveError.response?.data?.message || saveError.message || 'Unable to save the record.');
@@ -782,7 +847,8 @@ const AdminPanelEntity = () => {
       setIsSaving(true);
       setError('');
       setNotice('');
-      await deleteAdminRecord(entityKey, editingRecordId);
+      const updatedBootstrap = await deleteAdminRecord(entityKey, editingRecordId);
+      setBootstrap(updatedBootstrap);
       goToList('Record deleted successfully.', true);
     } catch (deleteError) {
       setError(deleteError.response?.data?.message || deleteError.message || 'Unable to delete the record.');
@@ -801,7 +867,13 @@ const AdminPanelEntity = () => {
         pageMode === 'create',
         lookups,
         handleFieldChange,
-        { entityKey, records, formData },
+        {
+          entityKey,
+          records,
+          formData,
+          visiblePasswordFields,
+          onTogglePasswordVisibility: togglePasswordVisibility,
+        },
       );
 
   const formActions = (
