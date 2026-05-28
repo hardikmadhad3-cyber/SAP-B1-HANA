@@ -362,7 +362,7 @@ function Delivery() {
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
   );
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
@@ -461,7 +461,7 @@ function Delivery() {
   const primaryActionLabel = pageState.posting
     ? 'Saving...'
     : isUpdateMode
-      ? (hasUnsavedChanges ? 'Update (Alt+U)' : 'OK')
+      ? updateActionLabel
       : 'Add';
   const secondaryActionLabel = pageState.posting
     ? 'Saving…'
@@ -915,6 +915,7 @@ function Delivery() {
       vendor:           normalizedHeader.vendor || srcHeader.vendor || srcHeader.CardCode || '',
       name:             normalizedHeader.name || srcHeader.name || srcHeader.CardName || '',
       contactPerson:    normalizedHeader.contactPerson || srcHeader.contactPerson || srcHeader.CntctCode || '',
+      salesContractNo:  normalizedHeader.salesContractNo || normalizedHeader.customerRefNo || srcHeader.salesContractNo || srcHeader.customerRefNo || srcHeader.CustomerRefNo || srcHeader.NumAtCard || '',
       branch:           copiedLocation.branch,
       warehouse:        copiedLocation.warehouse,
       paymentTerms:     normalizedHeader.paymentTerms || srcHeader.paymentTerms || srcHeader.GroupNum || '',
@@ -3037,6 +3038,8 @@ function Delivery() {
 
   // ── Copy From Modal Handlers ───────────────────────────────────────────────
   const openCopyFromModal = (docType) => {
+    if (currentDocEntry) return;
+
     console.log('🟢 Copy From Clicked');
 
     // ✅ ONLY BUYER VALIDATION
@@ -3314,12 +3317,12 @@ function Delivery() {
           <button
             type="button"
             className="del-btn"
-            disabled={!isDocumentEditable || !hasBuyerCode}
-            style={{ opacity: (!isDocumentEditable || !hasBuyerCode) ? 0.5 : 1 }}
+            disabled={!isDocumentEditable || !!currentDocEntry || !hasBuyerCode}
+            style={{ opacity: (!isDocumentEditable || !!currentDocEntry || !hasBuyerCode) ? 0.5 : 1 }}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              if (!hasBuyerCode) return;
+              if (currentDocEntry || !hasBuyerCode) return;
               setValErrors({ header: {}, lines: {}, form: '' });
               setPageState(p => ({ ...p, error: '', success: '' }));
               const dropdown = e.currentTarget.parentElement;
@@ -3825,12 +3828,12 @@ function Delivery() {
                   <button
                     type="button"
                     className="del-btn"
-                    disabled={!isDocumentEditable || !hasBuyerCode}
-                    style={{ opacity: (!isDocumentEditable || !hasBuyerCode) ? 0.5 : 1 }}
+                    disabled={!isDocumentEditable || !!currentDocEntry || !hasBuyerCode}
+                    style={{ opacity: (!isDocumentEditable || !!currentDocEntry || !hasBuyerCode) ? 0.5 : 1 }}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (!hasBuyerCode) return;
+                      if (currentDocEntry || !hasBuyerCode) return;
                       setValErrors({ header: {}, lines: {}, form: '' });
                       setPageState(p => ({ ...p, error: '', success: '' }));
                       const dropdown = e.currentTarget.parentElement;

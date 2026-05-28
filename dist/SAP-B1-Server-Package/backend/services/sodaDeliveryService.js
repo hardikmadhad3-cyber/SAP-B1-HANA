@@ -27,6 +27,14 @@ const SODA_DELIVERY_LINE_UDFS = [
     type: 'db_Float',
     subType: 'st_Sum',
   },
+  {
+    tableName: 'DLN1',
+    name: 'Seller_Payment_Terms',
+    fieldName: 'U_Seller_Payment_Terms',
+    description: 'Seller - Terms of Payment',
+    type: 'db_Alpha',
+    size: 100,
+  },
 ];
 
 let ensureUdfsPromise = null;
@@ -51,16 +59,20 @@ const isAlreadyExistsError = (error) => {
 };
 
 const createLineUdf = async (udf) => {
+  const data = {
+    TableName: udf.tableName,
+    Name: udf.name,
+    Description: udf.description,
+    Type: udf.type,
+  };
+
+  if (udf.subType) data.SubType = udf.subType;
+  if (udf.size) data.Size = udf.size;
+
   await sapService.request({
     method: 'POST',
     url: '/UserFieldsMD',
-    data: {
-      TableName: udf.tableName,
-      Name: udf.name,
-      Description: udf.description,
-      Type: udf.type,
-      SubType: udf.subType,
-    },
+    data,
   });
 };
 

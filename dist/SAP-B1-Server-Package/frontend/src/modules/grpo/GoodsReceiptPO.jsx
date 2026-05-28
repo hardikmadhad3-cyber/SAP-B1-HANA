@@ -259,7 +259,7 @@ function GoodsReceiptPO() {
     readSavedFormSettings,
     [headerUdfDefinitions, rowUdfDefinitions],
   );
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
     company: '',
@@ -1302,6 +1302,8 @@ function GoodsReceiptPO() {
   };
 
   const openCopyFromModal = () => {
+    if (currentDocEntry) return;
+
     if (!String(header.vendor || '').trim()) {
       setValErrors({ header: { vendor: 'Select a vendor first.' }, lines: {}, form: '' });
       setPageState((prev) => ({ ...prev, error: '', success: '' }));
@@ -1609,7 +1611,7 @@ function GoodsReceiptPO() {
           <button
             type="button"
             className="po-btn"
-            disabled={!isDocumentEditable}
+            disabled={!isDocumentEditable || !!currentDocEntry}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -1976,7 +1978,7 @@ function GoodsReceiptPO() {
                   <button
                     type="button"
                     className="po-btn"
-                    disabled={!isDocumentEditable}
+                    disabled={!isDocumentEditable || !!currentDocEntry}
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();

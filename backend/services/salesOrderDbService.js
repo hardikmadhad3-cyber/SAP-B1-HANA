@@ -197,6 +197,7 @@ const buildSalesOrderListFilterQuery = ({
   query = '',
   openOnly = true,
   docNum = '',
+  customerRefNo = '',
   customerCode = '',
   customerName = '',
   sellerCode = '',
@@ -211,6 +212,7 @@ const buildSalesOrderListFilterQuery = ({
   } = options.sellerExpressions || getFallbackSalesOrderSellerExpressions();
   const normalizedQuery = String(query || '').trim();
   const normalizedDocNum = String(docNum || '').trim();
+  const normalizedCustomerRefNo = String(customerRefNo || '').trim();
   const normalizedCustomerCode = String(customerCode || '').trim();
   const normalizedCustomerName = String(customerName || '').trim();
   const normalizedSellerCode = String(sellerCode || '').trim();
@@ -233,6 +235,7 @@ const buildSalesOrderListFilterQuery = ({
   if (normalizedQuery) {
     whereClauses.push(`(
       CAST(T0.DocNum AS NVARCHAR(50)) LIKE @query
+      OR T0.NumAtCard LIKE @query
       OR T0.CardCode LIKE @query
       OR T0.CardName LIKE @query
       OR ${salesOrderSellerCodeExpression} LIKE @query
@@ -244,6 +247,11 @@ const buildSalesOrderListFilterQuery = ({
   if (normalizedDocNum && excludeField !== 'docNum') {
     whereClauses.push('CAST(T0.DocNum AS NVARCHAR(50)) = @docNum');
     params.docNum = normalizedDocNum;
+  }
+
+  if (normalizedCustomerRefNo && excludeField !== 'customerRefNo') {
+    whereClauses.push('T0.NumAtCard LIKE @customerRefNo');
+    params.customerRefNo = `%${escapeLike(normalizedCustomerRefNo)}%`;
   }
 
   if (normalizedCustomerCode && excludeField !== 'customerCode') {
@@ -937,20 +945,34 @@ const getDocumentSeries = async (targetDate = null) => {
 
   let result = await safe(db.query(`
     SELECT 
-    T0.Series,
-    T0.SeriesName,
-    T0.Indicator,
-    T0.NextNumber,
-    T1.Name AS FinancialYear,
-    T1.F_RefDate AS FromDate,
-    T1.T_RefDate AS ToDate
-FROM NNM1 T0
-INNER JOIN OFPR T1 
-    ON T0.Indicator = T1.Indicator
-WHERE T0.ObjectCode = '17'
-    AND T0.Locked = 'N'
-    AND CAST(@targetDate AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate
-ORDER BY T0.SeriesName
+      T0.Series,
+      T0.SeriesName,
+      T0.Indicator,
+      CASE
+        WHEN ISNULL(MAX(T2.DocNum), 0) + 1 > ISNULL(T0.NextNumber, 0)
+          THEN ISNULL(MAX(T2.DocNum), 0) + 1
+        ELSE T0.NextNumber
+      END AS NextNumber,
+      T1.Name AS FinancialYear,
+      T1.F_RefDate AS FromDate,
+      T1.T_RefDate AS ToDate
+    FROM NNM1 T0
+    INNER JOIN OFPR T1 
+      ON T0.Indicator = T1.Indicator
+    LEFT JOIN ORDR T2
+      ON T2.Series = T0.Series
+    WHERE T0.ObjectCode = '17'
+      AND T0.Locked = 'N'
+      AND CAST(@targetDate AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate
+    GROUP BY
+      T0.Series,
+      T0.SeriesName,
+      T0.Indicator,
+      T0.NextNumber,
+      T1.Name,
+      T1.F_RefDate,
+      T1.T_RefDate
+    ORDER BY T0.SeriesName
   `, { targetDate: effectiveTargetDate }));
 
   if (!result.length) {
@@ -959,10 +981,21 @@ ORDER BY T0.SeriesName
         T0.Series,
         T0.SeriesName,
         T0.Indicator,
-        T0.NextNumber
+        CASE
+          WHEN ISNULL(MAX(T1.DocNum), 0) + 1 > ISNULL(T0.NextNumber, 0)
+            THEN ISNULL(MAX(T1.DocNum), 0) + 1
+          ELSE T0.NextNumber
+        END AS NextNumber
       FROM NNM1 T0
+      LEFT JOIN ORDR T1
+        ON T1.Series = T0.Series
       WHERE T0.ObjectCode = '17'
         AND T0.Locked = 'N'
+      GROUP BY
+        T0.Series,
+        T0.SeriesName,
+        T0.Indicator,
+        T0.NextNumber
       ORDER BY T0.SeriesName
     `));
   }
@@ -977,11 +1010,19 @@ ORDER BY T0.SeriesName
 
 const getNextNumber = async (series) => {
   const result = await safe(db.query(`
-    SELECT NextNumber
-    FROM   NNM1
-    WHERE  ObjectCode = '17'
-      AND  Series = @series
-      AND  Locked = 'N'
+    SELECT
+      CASE
+        WHEN ISNULL(MAX(T1.DocNum), 0) + 1 > ISNULL(T0.NextNumber, 0)
+          THEN ISNULL(MAX(T1.DocNum), 0) + 1
+        ELSE T0.NextNumber
+      END AS NextNumber
+    FROM NNM1 T0
+    LEFT JOIN ORDR T1
+      ON T1.Series = T0.Series
+    WHERE T0.ObjectCode = '17'
+      AND T0.Series = @series
+      AND T0.Locked = 'N'
+    GROUP BY T0.NextNumber
   `, { series }));
   
   if (result.length === 0) {
@@ -1203,6 +1244,7 @@ const getSalesOrderList = async ({
   query = '',
   openOnly = true,
   docNum = '',
+  customerRefNo = '',
   customerCode = '',
   customerName = '',
   sellerCode = '',
@@ -1225,6 +1267,7 @@ const getSalesOrderList = async ({
     query,
     openOnly,
     docNum,
+    customerRefNo,
     customerCode,
     customerName,
     sellerCode,
@@ -1247,6 +1290,7 @@ const getSalesOrderList = async ({
     SELECT
            T0.DocEntry,
            T0.DocNum,
+           T0.NumAtCard,
            T0.CardCode,
            T0.CardName,
            ${salesOrderSellerCodeExpression} AS SellerCode,
@@ -1272,6 +1316,7 @@ const getSalesOrderList = async ({
     orders: orders.map(o => ({
       doc_entry: o.DocEntry,
       doc_num: o.DocNum,
+      customer_ref_no: o.NumAtCard || '',
       customer_code: o.CardCode,
       customer_name: o.CardName,
       seller_code: o.SellerCode || '',
@@ -1297,6 +1342,7 @@ const getSalesOrderFilterOptions = async ({
   query = '',
   openOnly = true,
   docNum = '',
+  customerRefNo = '',
   customerCode = '',
   customerName = '',
   sellerCode = '',
@@ -1420,6 +1466,7 @@ const getSalesOrderFilterOptions = async ({
     query: '',
     openOnly,
     docNum,
+    customerRefNo,
     customerCode,
     customerName,
     sellerCode,
@@ -1572,8 +1619,8 @@ const getSalesOrder = async (docEntry) => {
     ${lineField('U_Seller_Price', 'SellerPrice')},
     ${lineField('U_Buyer_SPINS', 'BuyerSpecialInstruction')},
     ${lineField('U_Seller_SPINS', 'SellerSpecialInstruction')},
-    ${lineField('U_Buyer_SPINS', 'QtySpecialInstruction')},
-    ${lineField('U_Seller_SPINS', 'DeliverySpecialInstruction')},
+    ${lineField('U_Seller_SPINS', 'QtySpecialInstruction')},
+    ${lineField('U_Buyer_SPINS', 'DeliverySpecialInstruction')},
     ${lineField('U_Sel_Brok_AP', 'SellerBrokerageAmtPer')},
     ${lineField('U_Seller_Brok_Per', 'SellerBrokeragePercent')},
     ${lineField('U_Buyer_Bill_Disc', 'BuyerBillDiscount')},
@@ -1928,8 +1975,8 @@ ORDER BY T1.LineNum
           sellerBrokeragePerQty: lineUdf.U_S_BrokPerQty != null ? String(lineUdf.U_S_BrokPerQty) : (line.SellerBrokeragePerQty != null ? String(line.SellerBrokeragePerQty) : ''),
           buyerPaymentTerms: lineUdf.U_Buyer_Payment_Terms || line.BuyerPaymentTerms || '',
           sellerPaymentTerms: lineUdf.U_Seller_Payment_Terms || line.SellerPaymentTerms || '',
-          qtySpecialInstruction: lineUdf.U_Buyer_SPINS || line.QtySpecialInstruction || line.BuyerSpecialInstruction || '',
-          deliverySpecialInstruction: lineUdf.U_Seller_SPINS || line.DeliverySpecialInstruction || line.SellerSpecialInstruction || '',
+          qtySpecialInstruction: lineUdf.U_Seller_SPINS || line.QtySpecialInstruction || line.SellerSpecialInstruction || '',
+          deliverySpecialInstruction: lineUdf.U_Buyer_SPINS || line.DeliverySpecialInstruction || line.BuyerSpecialInstruction || '',
           buyerSpecialInstruction: lineUdf.U_Buyer_SPINS || line.BuyerSpecialInstruction || '',
           sellerSpecialInstruction: lineUdf.U_Seller_SPINS || line.SellerSpecialInstruction || '',
           buyerBillDiscount: lineUdf.U_Buyer_Bill_Disc != null ? String(lineUdf.U_Buyer_Bill_Disc) : (line.BuyerBillDiscount != null ? String(line.BuyerBillDiscount) : ''),
@@ -2106,8 +2153,8 @@ const getSalesOrderForCopy = async (docEntry) => {
       ${lineField('U_Seller_Price', 'SellerPrice')},
       ${lineField('U_Buyer_SPINS', 'BuyerSpecialInstruction')},
       ${lineField('U_Seller_SPINS', 'SellerSpecialInstruction')},
-      ${lineField('U_Buyer_SPINS', 'QtySpecialInstruction')},
-      ${lineField('U_Seller_SPINS', 'DeliverySpecialInstruction')},
+      ${lineField('U_Seller_SPINS', 'QtySpecialInstruction')},
+      ${lineField('U_Buyer_SPINS', 'DeliverySpecialInstruction')},
       ${lineField('U_Sel_Brok_AP', 'SellerBrokerageAmtPer')},
       ${lineField('U_Seller_Brok_Per', 'SellerBrokeragePercent')},
       ${lineField('U_Buyer_Bill_Disc', 'BuyerBillDiscount')},

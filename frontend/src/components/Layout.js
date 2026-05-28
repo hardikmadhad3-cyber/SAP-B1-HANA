@@ -3,6 +3,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
 import AdminWorkspaceShell from "./admin/AdminWorkspaceShell";
+import AutoDismissNotifications from "./AutoDismissNotifications";
 import PageWindowFrame from "./PageWindowFrame";
 import { SapWindowTaskbar, SapWindowTaskbarProvider } from "./SapWindowTaskbarContext";
 import "../styles/sidebar.css";
@@ -13,6 +14,7 @@ const Layout = () => {
 
   return (
     <SapWindowTaskbarProvider>
+      <AutoDismissNotifications />
       {isAdminWorkspace ? (
         <div className="admin-standalone-shell" key={location.pathname}>
           <AdminWorkspaceShell>

@@ -256,12 +256,100 @@ const isToVendorAddressUdf = (field) => {
         identity.includes('tovendoraddress');
 };
 
+const isContactIdUdf = (field) => {
+    const label = normalizeUdfFieldText(field?.label);
+    const key = getUdfFieldKeyText(field);
+
+    return label === 'contactid' ||
+        label === 'contactpersonid' ||
+        label === 'bpcontactid' ||
+        label === 'buyercontactid' ||
+        key === 'contactid' ||
+        key === 'contactpersonid' ||
+        key === 'bpcontactid' ||
+        key === 'buyercontactid' ||
+        key === 'cntctid' ||
+        key === 'cntctname';
+};
+
 const getToVendorUdfFields = (fields = []) => ({
     code: fields.find(isToVendorCodeUdf),
     name: fields.find(isToVendorNameUdf),
     addressId: fields.find(isToVendorAddressIdUdf),
     address: fields.find(isToVendorAddressUdf),
+    contactId: fields.find(isContactIdUdf),
 });
+
+const getContactIdentifier = (contact) =>
+    String(
+        contact?.ContactID ||
+        contact?.ContactId ||
+        contact?.Name ||
+        contact?.ContactPerson ||
+        [contact?.FirstName, contact?.LastName].filter(Boolean).join(' ') ||
+        ''
+    ).trim();
+
+const getContactCode = (contact) =>
+    String(
+        contact?.CntctCode ??
+        contact?.InternalCode ??
+        contact?.ContactCode ??
+        contact?.ContactID ??
+        contact?.ContactId ??
+        contact?.ContactPersonCode ??
+        contact?.Code ??
+        contact?.id ??
+        ''
+    ).trim();
+
+const getContactDisplayValue = (contact) =>
+    getContactIdentifier(contact) || getContactCode(contact);
+
+const isActiveContact = (contact) => {
+    const active = String(contact?.Active || contact?.active || '').trim().toUpperCase();
+    return !active || active === 'Y' || active === 'YES' || active === 'TYES' || active === '1';
+};
+
+const selectBusinessPartnerContactId = (bp = {}, contacts = []) => {
+    const allContacts = [
+        ...(Array.isArray(contacts) ? contacts : []),
+        ...(Array.isArray(bp?.contacts) ? bp.contacts : []),
+        ...(Array.isArray(bp?.ContactEmployees) ? bp.ContactEmployees : []),
+    ];
+    const directContactCode = String(
+        bp.ContactPersonCode ??
+        bp.ContactPersonID ??
+        bp.DefaultContactPersonCode ??
+        bp.CntctCode ??
+        ''
+    ).trim();
+
+    if (directContactCode) {
+        const matchingContact = allContacts.find((contact) => getContactCode(contact) === directContactCode);
+        return getContactDisplayValue(matchingContact) || directContactCode;
+    }
+
+    const directContactName = String(
+        bp.ContactPerson ||
+        bp.ContactPersonName ||
+        bp.DefaultContactPerson ||
+        ''
+    ).trim();
+
+    if (directContactName) {
+        const normalizedDirectName = normalizeUdfFieldText(directContactName);
+        const matchingContact = allContacts.find((contact) =>
+            normalizeUdfFieldText(getContactIdentifier(contact)) === normalizedDirectName ||
+            String(getContactCode(contact)) === directContactName
+        );
+        return getContactDisplayValue(matchingContact) || directContactName;
+    }
+
+    const activeContact = allContacts.find((contact) => getContactDisplayValue(contact) && isActiveContact(contact));
+    const fallbackContact = activeContact || allContacts.find((contact) => getContactDisplayValue(contact));
+    return getContactDisplayValue(fallbackContact) || '';
+};
 
 const getBpAddressId = (address) =>
     address?.AddressName || address?.Address || address?.AddressID || address?.AddressId || '';
@@ -316,13 +404,14 @@ const buildBillToPartyUdfPatch = (fields, { code = '', name, address = null } = 
     return patch;
 };
 
-const buildToVendorUdfPatch = (fields, { code = '', name, address = null } = {}) => {
+const buildToVendorUdfPatch = (fields, { code = '', name, address = null, contactId } = {}) => {
     const patch = {};
 
     if (fields.code?.key) patch[fields.code.key] = code;
     if (fields.name?.key && name !== undefined) patch[fields.name.key] = name;
     if (fields.addressId?.key) patch[fields.addressId.key] = getBpAddressId(address);
     if (fields.address?.key) patch[fields.address.key] = fmtAddr(address);
+    if (fields.contactId?.key && contactId !== undefined) patch[fields.contactId.key] = contactId;
 
     return patch;
 };
@@ -383,7 +472,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
 });
 
 const INIT_HEADER = {
-    vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
+    vendor: '', name: '', contactPerson: '', salesContractNo: '', customerRefNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
     docNo: '', status: 'Open', series: '', nextNumber: '',
     postingDate: today(), deliveryDate: today(), documentDate: today(), contractDate: '',
     branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
@@ -436,7 +525,7 @@ function DCSalesOrder() {
         FORM_SETTINGS_STORAGE_KEY,
         readSavedFormSettings,
     );
-    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [sidebarOpen, setSidebarOpen] = useState(true);
     const [formSettingsOpen, setFormSettingsOpen] = useState(false);
     const [refData, setRefData] = useState({
         company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
@@ -560,7 +649,7 @@ function DCSalesOrder() {
     const primaryActionLabel = pageState.posting
         ? 'Saving...'
         : isUpdateMode
-            ? (hasUnsavedChanges ? 'Update (Alt+U)' : 'OK')
+            ? updateActionLabel
             : 'Add';
     const secondaryActionLabel = pageState.posting
         ? 'Saving…'
@@ -573,7 +662,8 @@ function DCSalesOrder() {
         setSnapshotPending(false);
     }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
-    const markDirty = useCallback(() => {
+    const markDirty = useCallback((event) => {
+        if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
         if (currentDocEntry) {
             setIsDirty(true);
         }
@@ -854,7 +944,8 @@ function DCSalesOrder() {
                     postingDate: so.header?.postingDate || '',
                     deliveryDate: so.header?.deliveryDate || '',
                     documentDate: so.header?.documentDate || '',
-                    customerRefNo: so.header?.customerRefNo || '',
+                    salesContractNo: so.header?.customerRefNo || so.header?.salesContractNo || '',
+                    customerRefNo: so.header?.customerRefNo || so.header?.salesContractNo || '',
                     docNo: String(so.header?.docNum || ''),
                     nextNumber: String(so.header?.docNum || ''),
                     status: so.header?.status || '',
@@ -1038,10 +1129,12 @@ function DCSalesOrder() {
         const applyDefaultToVendor = async () => {
             let vendor = null;
             let addresses = [];
+            let contacts = [];
 
             try {
                 vendor = await getBP(defaultToVendorCode).catch(() => null);
                 addresses = Array.isArray(vendor?.BPAddresses) ? vendor.BPAddresses : [];
+                contacts = Array.isArray(vendor?.ContactEmployees) ? vendor.ContactEmployees : [];
 
                 if (!addresses.length || !vendor?.CardName) {
                     const detailsResponse = await fetchSalesOrderVendorDetails(defaultToVendorCode);
@@ -1049,6 +1142,10 @@ function DCSalesOrder() {
 
                     const details = detailsResponse.data || {};
                     vendor = vendor || details.businessPartner || details.vendor || details.bp || null;
+                    contacts = contacts.length ? contacts : [
+                        ...(Array.isArray(details.contacts) ? details.contacts : []),
+                        ...(Array.isArray(details.ContactEmployees) ? details.ContactEmployees : []),
+                    ];
                     addresses = addresses.length ? addresses : [
                         ...(Array.isArray(details.addresses) ? details.addresses : []),
                         ...(Array.isArray(details.BPAddresses) ? details.BPAddresses : []),
@@ -1067,6 +1164,7 @@ function DCSalesOrder() {
                 code: defaultToVendorCode,
                 name: vendor?.CardName || '',
                 address: selectedAddress,
+                contactId: selectBusinessPartnerContactId(vendor || {}, contacts),
             });
 
             setHeaderUdfs((prev) => {
@@ -1296,7 +1394,10 @@ function DCSalesOrder() {
             next.stdDiscount = fmtDec(roundTo(getLineDiscountPercent(next), numDec.stdDiscount), numDec.stdDiscount);
         }
         next.total = fmtDec(calcLineTotal(next), numDec.total);
-        next.sellerBrokerage = calcLineCommission(next);
+        const calculatedSellerBrokerage = calcLineCommission(next);
+        if (!String(next.sellerBrokerage ?? '').trim() && calculatedSellerBrokerage) {
+            next.sellerBrokerage = calculatedSellerBrokerage;
+        }
         return next;
     };
 
@@ -1973,9 +2074,19 @@ function DCSalesOrder() {
                 }));
             }
 
+            if (k === toVendorCodeKey && !String(v || '').trim()) {
+                defaultToVendorAppliedRef.current = '';
+                return applyChangedUdfPatch(p, buildToVendorUdfPatch(toVendorUdfFields, {
+                    code: '',
+                    name: '',
+                    address: null,
+                    contactId: '',
+                }));
+            }
+
             return String(p?.[k] ?? '') === String(v ?? '') ? p : { ...p, [k]: v };
         });
-    }, [billToPartyCodeKey, billToPartyUdfFields, markDirty]);
+    }, [billToPartyCodeKey, billToPartyUdfFields, markDirty, toVendorCodeKey, toVendorUdfFields]);
     const handleRowUdfChange = (i, k, v) => setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
     const updateFormSetting = useCallback((g, k, prop, val) => setFormSettings(p => {
         const currentValue = p?.[g]?.[k]?.[prop];
@@ -2403,6 +2514,8 @@ function DCSalesOrder() {
     }, [location.pathname, location.state?.copyFrom, navigate]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const openCopyFromModal = (docType) => {
+        if (currentDocEntry) return;
+
         console.log('🟢 Copy From Clicked');
 
         // ✅ ONLY BUYER VALIDATION
@@ -2676,6 +2789,7 @@ function DCSalesOrder() {
         try {
             const prep = {
                 ...header,
+                customerRefNo: header.customerRefNo || header.salesContractNo || '',
                 deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
                 placeOfSupply: header.placeOfSupply,
                 branch: header.branch,
@@ -2833,7 +2947,7 @@ function DCSalesOrder() {
 
     // ── render ────────────────────────────────────────────────────────────────
     return (
-        <form ref={formRef} className={`so-page sap-document-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit}>
+        <form ref={formRef} className={`so-page sap-document-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
             {/* toolbar */}
             <div className="so-toolbar sap-document-toolbar">
@@ -2865,11 +2979,11 @@ function DCSalesOrder() {
                     <button
                         type="button"
                         className="so-btn"
-                        disabled={!isDocumentEditable || !hasBuyerCode}
+                        disabled={!isDocumentEditable || !!currentDocEntry || !hasBuyerCode}
                         onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            if (!hasBuyerCode) return;
+                            if (currentDocEntry || !hasBuyerCode) return;
 
                             console.log('🔵 Copy From dropdown clicked');
 
@@ -2890,7 +3004,7 @@ function DCSalesOrder() {
                                 dropdown.classList.add('active');
                             }
                         }}
-                        style={{ opacity: (!isDocumentEditable || !hasBuyerCode) ? 0.5 : 1 }}
+                        style={{ opacity: (!isDocumentEditable || !!currentDocEntry || !hasBuyerCode) ? 0.5 : 1 }}
                     >
                         Copy From ▼
                     </button>
@@ -3202,7 +3316,7 @@ function DCSalesOrder() {
                                         {/* Customer Ref. No. */}
                                         <div className="so-field">
                                             <label className="so-field__label">Customer Ref. No.</label>
-                                            <input name="salesContractNo" className="so-field__input" value={header.salesContractNo} onChange={handleHeaderChange} />
+                                            <input name="customerRefNo" className="so-field__input" value={header.customerRefNo || header.salesContractNo || ''} onChange={handleHeaderChange} />
                                         </div>
 
                                         {/* Status */}
@@ -3472,11 +3586,11 @@ function DCSalesOrder() {
                                     <button
                                       type="button"
                                       className="so-btn"
-                                      disabled={!isDocumentEditable || !hasBuyerCode}
+                                      disabled={!isDocumentEditable || !!currentDocEntry || !hasBuyerCode}
                                       onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
-                                        if (!hasBuyerCode) return;
+                                        if (currentDocEntry || !hasBuyerCode) return;
                                         setCopyFromMode(true);
                                         setValErrors({ header: {}, lines: {}, form: '' });
                                         setPageState({ error: '', success: '', loading: false, posting: false, vendorLoading: false, seriesLoading: false });
@@ -3485,7 +3599,7 @@ function DCSalesOrder() {
                                         document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
                                         if (!isActive) dropdown.classList.add('active');
                                       }}
-                                      style={{ opacity: (!isDocumentEditable || !hasBuyerCode) ? 0.5 : 1 }}
+                                      style={{ opacity: (!isDocumentEditable || !!currentDocEntry || !hasBuyerCode) ? 0.5 : 1 }}
                                     >
                                       Copy From ▼
                                     </button>

@@ -10,12 +10,21 @@ const GET_CACHE_TTL_MS = 2 * 60 * 1000;
 const getCache = new Map();
 const pendingGets = new Map();
 
+const isNextNumberLookup = (path = '') => (
+  path.includes('/next-number') ||
+  path.endsWith('/series/next') ||
+  /\/lookup\/series\/[^/?#]+\/next$/.test(path)
+);
+
 const isCacheableGet = (url = '') => {
   const normalized = String(url || '').toLowerCase();
+  const pathOnly = normalized.split(/[?#]/)[0];
+  if (isNextNumberLookup(pathOnly)) return false;
+
   return (
     normalized.includes('/reference-data') ||
     normalized.includes('/lookup/') ||
-    normalized.includes('/series') ||
+    pathOnly.endsWith('/series') ||
     normalized.includes('/items-modal') ||
     normalized.includes('/freight-charges') ||
     normalized.includes('/print-layouts') ||

@@ -201,7 +201,7 @@ function PurchaseRequest() {
     readSavedFormSettings,
     [HEADER_UDF_DEFINITIONS, ROW_UDF_DEFINITIONS],
   );
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
     company: '',
@@ -239,6 +239,7 @@ function PurchaseRequest() {
     lines: {},
     form: '',
   });
+  const [isDirty, setIsDirty] = useState(false);
   useValidationHighlights(valErrors);
   const [addressModal, setAddressModal] = useState(null);
   const [taxInfoModal, setTaxInfoModal] = useState(false);
@@ -285,6 +286,18 @@ function PurchaseRequest() {
     withinDays: 0,
   };
   const isDocumentEditable = !currentDocEntry || String(header.status || '').toLowerCase() === 'open';
+  const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
+  const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+  const primaryActionLabel = pageState.posting
+    ? 'Saving...'
+    : currentDocEntry
+      ? updateActionLabel
+      : 'Add';
+
+  const markDirty = useCallback((event) => {
+    if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
+    if (currentDocEntry) setIsDirty(true);
+  }, [currentDocEntry]);
 
   // ── load reference data ───────────────────────────────────────────────────
   useEffect(() => {
@@ -363,6 +376,7 @@ function PurchaseRequest() {
             : [createLine()]
         );
         setHeaderUdfs({ ...createUdfState(HEADER_UDF_DEFINITIONS), ...(purchaseRequest.header_udfs || {}) });
+        setIsDirty(false);
         if (purchaseRequest.header?.vendor) {
           loadVendorDetails(purchaseRequest.header.vendor);
         }
@@ -1214,6 +1228,7 @@ function PurchaseRequest() {
       setPageState(p => ({ ...p, error: 'This document is closed and cannot be edited.', success: '' }));
       return;
     }
+    if (currentDocEntry && !hasUnsavedChanges) return;
     const e = validate();
     if (e.form || Object.values(e.header).some(Boolean) || Object.values(e.lines).some(le => Object.values(le || {}).some(Boolean))) {
       setValErrors(e);
@@ -1234,6 +1249,7 @@ function PurchaseRequest() {
         ? await updatePurchaseRequest(currentDocEntry, payload)
         : await submitPurchaseRequest(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
+      setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
       setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
       setRefData(p => ({
@@ -1259,6 +1275,7 @@ function PurchaseRequest() {
   };
 
   const resetForm = () => {
+    setIsDirty(false);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
     setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
@@ -1273,13 +1290,13 @@ function PurchaseRequest() {
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <form className={`po-page sap-document-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit}>
+    <form className={`po-page sap-document-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
       {/* toolbar */}
       <div className="po-toolbar sap-document-toolbar">
         <span className="po-toolbar__title">Purchase Request{currentDocEntry ? ` — #${header.docNo || currentDocEntry}` : ''}</span>
-        <button type="submit" className="po-btn po-btn--primary sap-document-toolbar__primary" disabled={pageState.posting}>
-          {pageState.posting ? 'Saving…' : currentDocEntry ? 'Update' : 'Add'}
+        <button type="submit" className="po-btn po-btn--primary sap-document-toolbar__primary" disabled={pageState.posting || !isDocumentEditable} title={primaryActionLabel}>
+          {primaryActionLabel}
         </button>
         <button type="button" className="po-btn sap-document-toolbar__cancel" onClick={resetForm}>
           Cancel

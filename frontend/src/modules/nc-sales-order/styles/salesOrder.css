@@ -224,6 +224,11 @@
   padding: 4px 6px;
   border: 1px solid #a0aab4;
   border-radius: 2px;
+  background-color: #fff;
+}
+
+.so-layout__sidebar .po-udf-sidebar-card .form-control:disabled,
+.so-layout__sidebar .po-udf-sidebar-card .form-control-sm:disabled {
   background-color: #f8fafc;
 }
 

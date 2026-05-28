@@ -19,6 +19,7 @@ const STATUS_OPTIONS = [
 const INITIAL_FILTERS = {
   query: '',
   docNum: '',
+  customerRefNo: '',
   customerCode: '',
   customerName: '',
   sellerCode: '',
@@ -40,6 +41,7 @@ const buildFilterParams = (filters, extra = {}) => ({
   openOnly: false,
   query: filters.query || '',
   docNum: filters.docNum || '',
+  customerRefNo: filters.customerRefNo || '',
   customerCode: filters.customerCode || '',
   customerName: filters.customerName || '',
   sellerCode: filters.sellerCode || '',
@@ -218,6 +220,19 @@ function NCSalesOrderListPage() {
           </div>
 
           <div className="sap-find-field">
+            <label className="form-label mb-1">Customer Ref. No.</label>
+            <input
+              type="text"
+              className="form-control"
+              name="customerRefNo"
+              value={filters.customerRefNo}
+              onChange={handleFilterChange}
+              onKeyDown={handleFilterKeyDown}
+              placeholder="Enter Customer Ref. No."
+            />
+          </div>
+
+          <div className="sap-find-field">
             <label className="form-label mb-1">Seller Code</label>
             <div onKeyDown={handleFilterKeyDown}>
               <ComboBox
@@ -363,7 +378,7 @@ function NCSalesOrderListPage() {
               value={filters.query}
               onChange={handleFilterChange}
               onKeyDown={handleFilterKeyDown}
-              placeholder="Search by Doc No., Customer Code, Customer Name, Seller Code or Seller Name"
+              placeholder="Search by Doc No., Customer Ref. No., Customer Code, Customer Name, Seller Code or Seller Name"
             />
           </div>
 
@@ -401,6 +416,7 @@ function NCSalesOrderListPage() {
               <tr>
                 <th>Action</th>
                 <th>Doc No</th>
+                <th>Customer Ref. No.</th>
                 <th>Customer Code</th>
                 <th>Customer Name</th>
                 <th>Seller Code</th>
@@ -415,7 +431,7 @@ function NCSalesOrderListPage() {
             <tbody>
               {pageState.loading && (
                 <tr>
-                  <td colSpan="11" className="text-center py-4">
+                  <td colSpan="12" className="text-center py-4">
                     Loading NC sales orders...
                   </td>
                 </tr>
@@ -423,7 +439,7 @@ function NCSalesOrderListPage() {
 
               {!pageState.loading && orders.length === 0 && (
                 <tr>
-                  <td colSpan="11" className="text-center text-muted py-4">
+                  <td colSpan="12" className="text-center text-muted py-4">
                     {hasActiveFilters ? 'No NC sales orders found for the selected filters.' : 'No NC sales orders found.'}
                   </td>
                 </tr>
@@ -449,6 +465,7 @@ function NCSalesOrderListPage() {
                       </button>
                     </td>
                     <td>{order.doc_num}</td>
+                    <td>{order.customer_ref_no || '-'}</td>
                     <td>{order.customer_code}</td>
                     <td>{order.customer_name}</td>
                     <td>{order.seller_code || '-'}</td>

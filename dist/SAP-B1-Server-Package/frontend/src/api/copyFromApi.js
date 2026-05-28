@@ -212,8 +212,8 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
   unitPriceUdf:    line.UnitPriceUdf != null ? String(line.UnitPriceUdf) : (line.unitPriceUdf != null ? String(line.unitPriceUdf) : String(line.UnitPrice || line.Price || line.unitPrice || 0)),
   buyerPaymentTerms: firstString(line.buyerPaymentTerms, line.BuyerPaymentTerms),
   sellerPaymentTerms: firstString(line.sellerPaymentTerms, line.SellerPaymentTerms),
-  qtySpecialInstruction: firstString(line.qtySpecialInstruction, line.QtySpecialInstruction, line.buyerSpecialInstruction, line.BuyerSpecialInstruction),
-  deliverySpecialInstruction: firstString(line.deliverySpecialInstruction, line.DeliverySpecialInstruction, line.sellerSpecialInstruction, line.SellerSpecialInstruction),
+  qtySpecialInstruction: firstString(line.qtySpecialInstruction, line.QtySpecialInstruction, line.sellerSpecialInstruction, line.SellerSpecialInstruction),
+  deliverySpecialInstruction: firstString(line.deliverySpecialInstruction, line.DeliverySpecialInstruction, line.buyerSpecialInstruction, line.BuyerSpecialInstruction),
   buyerSpecialInstruction: firstString(line.buyerSpecialInstruction, line.BuyerSpecialInstruction),
   sellerSpecialInstruction: firstString(line.sellerSpecialInstruction, line.SellerSpecialInstruction),
   buyerBillDiscount: line.BuyerBillDiscount != null ? String(line.BuyerBillDiscount) : (line.buyerBillDiscount != null ? String(line.buyerBillDiscount) : ''),
@@ -254,6 +254,14 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
 // ── Shared header normaliser ──────────────────────────────────────────────────
 export const normaliseDocumentHeader = (data) => {
   const h = data.header || data;
+  const documentRefNo = firstString(
+    h.customerRefNo,
+    h.salesContractNo,
+    h.CustomerRefNo,
+    h.VendorRefNo,
+    h.NumAtCard
+  );
+
   return {
     vendor:           firstString(h.CardCode, h.customerCode, h.vendor, h.customer),
     name:             firstString(h.CardName, h.customerName, h.name),
@@ -265,7 +273,8 @@ export const normaliseDocumentHeader = (data) => {
     postingDate:      formatDateForInput(firstValue(h.postingDate, h.DocDate)),
     deliveryDate:     formatDateForInput(firstValue(h.deliveryDate, h.DocDueDate)),
     documentDate:     formatDateForInput(firstValue(h.documentDate, h.TaxDate)),
-    customerRefNo:    firstString(h.customerRefNo, h.NumAtCard),
+    customerRefNo:    documentRefNo,
+    salesContractNo:  documentRefNo,
     salesEmployee:    firstString(h.salesEmployee, h.SlpCode),
     purchaser:        firstString(h.purchaser, h.SalesEmployeeName),
     owner:            firstString(h.owner, h.OwnerName),

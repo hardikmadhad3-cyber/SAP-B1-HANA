@@ -209,7 +209,7 @@ function ARCreditMemo() {
     readSavedFormSettings,
     [headerUdfDefinitions, rowUdfDefinitions],
   );
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
     company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
@@ -643,7 +643,7 @@ function ARCreditMemo() {
       vendor:           srcHeader.vendor           || srcHeader.CardCode  || '',
       name:             srcHeader.name             || srcHeader.CardName  || '',
       contactPerson:    srcHeader.contactPerson    || srcHeader.CntctCode || '',
-      salesContractNo:  srcHeader.salesContractNo  || srcHeader.NumAtCard || '',
+      salesContractNo:  srcHeader.salesContractNo  || srcHeader.customerRefNo || srcHeader.CustomerRefNo || srcHeader.NumAtCard || '',
       branch:           srcHeader.branch           || srcHeader.BPL_IDAssignedToInvoice || '',
       warehouse:        srcHeader.warehouse        || '',
       paymentTerms:     srcHeader.paymentTerms     || srcHeader.GroupNum  || '',
@@ -1933,6 +1933,8 @@ function ARCreditMemo() {
 
   // ── Copy From Modal Handlers ───────────────────────────────────────────────
   const openCopyFromModal = () => {
+    if (currentDocEntry) return;
+
     console.log('🟢 Copy From Clicked');
 
     // ✅ ONLY BUYER VALIDATION
@@ -2194,6 +2196,7 @@ function ARCreditMemo() {
           <button
             type="button"
             className="del-btn"
+            disabled={!isDocumentEditable || !!currentDocEntry}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -2648,6 +2651,7 @@ function ARCreditMemo() {
                   <button
                     type="button"
                     className="del-btn"
+                    disabled={!isDocumentEditable || !!currentDocEntry}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
