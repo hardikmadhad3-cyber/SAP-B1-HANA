@@ -145,17 +145,17 @@ const buildCompanyMatrixColumnSettings = (rowUdfDefinitions = [], savedSettings 
   return BASE_MATRIX_COLUMNS.reduce((acc, field) => {
     const requiredUdfKey = SODA_MATRIX_COLUMN_UDF_KEYS[field.key];
     const hasRequiredUdf = !requiredUdfKey || availableUdfKeys.has(normalizeSapUdfKey(requiredUdfKey));
-    const savedFieldSettings = savedSettings[field.key] || {};
+    const savedFieldSettings = { ...(savedSettings[field.key] || {}) };
+    delete savedFieldSettings.available;
 
     acc[field.key] = {
       visible: hasRequiredUdf && REQUESTED_VISIBLE_COLUMNS.has(field.key),
       active: true,
-      available: hasRequiredUdf,
       ...savedFieldSettings,
+      available: hasRequiredUdf,
     };
 
     if (requiredUdfKey && !hasRequiredUdf) {
-      acc[field.key].visible = false;
       acc[field.key].available = false;
     }
 
@@ -172,6 +172,13 @@ const buildVisibilitySettings = (definitions, defaultVisible = null) =>
     return acc;
   }, {});
 
+const stripSavedMatrixAvailability = (settings = {}) =>
+  Object.keys(settings || {}).reduce((acc, key) => {
+    acc[key] = { ...(settings[key] || {}) };
+    delete acc[key].available;
+    return acc;
+  }, {});
+
 const createDefaultFormSettings = () => ({
   headerUdfs: buildVisibilitySettings(HEADER_UDF_DEFINITIONS),
   matrixColumns: buildVisibilitySettings(BASE_MATRIX_COLUMNS),
@@ -180,9 +187,13 @@ const createDefaultFormSettings = () => ({
 
 const mergeNestedSettings = (defaults, saved = {}) =>
   Object.keys(defaults).reduce((acc, groupKey) => {
+    const savedGroup = groupKey === 'matrixColumns'
+      ? stripSavedMatrixAvailability(saved[groupKey])
+      : (saved[groupKey] || {});
+
     acc[groupKey] = {
       ...defaults[groupKey],
-      ...(saved[groupKey] || {}),
+      ...savedGroup,
     };
     return acc;
   }, {});

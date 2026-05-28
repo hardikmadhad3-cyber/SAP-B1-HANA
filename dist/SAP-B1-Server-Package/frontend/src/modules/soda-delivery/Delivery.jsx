@@ -311,7 +311,7 @@ const FALLBACK_SHIPPING = [
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 const DEFAULT_WAREHOUSE = '01';
-const DEFAULT_COMMISSION_PERCENT = '2.5';
+const DEFAULT_COMMISSION_PERCENT = '';
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '',
@@ -389,7 +389,7 @@ function SODADelivery() {
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
   );
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
@@ -488,7 +488,7 @@ function SODADelivery() {
   const primaryActionLabel = pageState.posting
     ? 'Saving...'
     : isUpdateMode
-      ? (hasUnsavedChanges ? 'Update (Alt+U)' : 'OK')
+      ? updateActionLabel
       : 'Add';
   const secondaryActionLabel = pageState.posting
     ? 'Saving…'
@@ -954,6 +954,7 @@ function SODADelivery() {
       vendor:           normalizedHeader.vendor || srcHeader.vendor || srcHeader.CardCode || '',
       name:             normalizedHeader.name || srcHeader.name || srcHeader.CardName || '',
       contactPerson:    normalizedHeader.contactPerson || srcHeader.contactPerson || srcHeader.CntctCode || '',
+      salesContractNo:  normalizedHeader.salesContractNo || normalizedHeader.customerRefNo || srcHeader.salesContractNo || srcHeader.customerRefNo || srcHeader.CustomerRefNo || srcHeader.NumAtCard || '',
       branch:           copiedLocation.branch,
       warehouse:        copiedLocation.warehouse || DEFAULT_WAREHOUSE,
       paymentTerms:     normalizedHeader.paymentTerms || srcHeader.paymentTerms || srcHeader.GroupNum || '',
@@ -1946,9 +1947,6 @@ function SODADelivery() {
     setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
   };
   const updateFormSetting = (g, k, prop, val) => setFormSettings(p => {
-    if (g === 'matrixColumns' && prop === 'visible' && val === true && p?.matrixColumns?.[k]?.available === false) {
-      return p;
-    }
     return { ...p, [g]: { ...(p[g] || {}), [k]: { ...((p[g] || {})[k] || {}), [prop]: val } } };
   });
   const loadHeaderBillToPartyDetails = useCallback(
@@ -3212,6 +3210,8 @@ function SODADelivery() {
 
   // ── Copy From Modal Handlers ───────────────────────────────────────────────
   const openCopyFromModal = (docType) => {
+    if (currentDocEntry) return;
+
     console.log('🟢 Copy From Clicked');
 
     // ✅ ONLY BUYER VALIDATION
@@ -3510,12 +3510,12 @@ function SODADelivery() {
           <button
             type="button"
             className="del-btn"
-            disabled={!isDocumentEditable || !hasBuyerCode}
-            style={{ opacity: (!isDocumentEditable || !hasBuyerCode) ? 0.5 : 1 }}
+            disabled={!isDocumentEditable || !!currentDocEntry || !hasBuyerCode}
+            style={{ opacity: (!isDocumentEditable || !!currentDocEntry || !hasBuyerCode) ? 0.5 : 1 }}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              if (!hasBuyerCode) return;
+              if (currentDocEntry || !hasBuyerCode) return;
               setValErrors({ header: {}, lines: {}, form: '' });
               setPageState(p => ({ ...p, error: '', success: '' }));
               const dropdown = e.currentTarget.parentElement;
@@ -4024,12 +4024,12 @@ function SODADelivery() {
                   <button
                     type="button"
                     className="del-btn"
-                    disabled={!isDocumentEditable || !hasBuyerCode}
-                    style={{ opacity: (!isDocumentEditable || !hasBuyerCode) ? 0.5 : 1 }}
+                    disabled={!isDocumentEditable || !!currentDocEntry || !hasBuyerCode}
+                    style={{ opacity: (!isDocumentEditable || !!currentDocEntry || !hasBuyerCode) ? 0.5 : 1 }}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (!hasBuyerCode) return;
+                      if (currentDocEntry || !hasBuyerCode) return;
                       setValErrors({ header: {}, lines: {}, form: '' });
                       setPageState(p => ({ ...p, error: '', success: '' }));
                       const dropdown = e.currentTarget.parentElement;

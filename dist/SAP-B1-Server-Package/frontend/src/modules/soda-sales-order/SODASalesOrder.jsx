@@ -370,7 +370,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
     sellerDelivery: '', buyerDelivery: '',
     sellerBrokerageAmtPer: '', sellerBrokeragePercent: '',
     sellerBrokerage: '', buyerBrokerage: '',
-    specialRebate: '', commission: '2.5', sellerBrokeragePerQty: '', unitPriceUdf: '',
+    specialRebate: '', commission: '', sellerBrokeragePerQty: '', unitPriceUdf: '',
     qtySpecialInstruction: '', deliverySpecialInstruction: '',
     buyerPaymentTerms: '', sellerPaymentTerms: '', buyerSpecialInstruction: '', sellerSpecialInstruction: '',
     buyerBillDiscount: '', sellerBillDiscount: '', sellerItem: '', sellerQty: '',
@@ -384,7 +384,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
 });
 
 const INIT_HEADER = {
-    vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
+    vendor: '', name: '', contactPerson: '', salesContractNo: '', customerRefNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
     docNo: '', status: 'Open', series: '', nextNumber: '',
     postingDate: today(), deliveryDate: today(), documentDate: today(), contractDate: '',
     branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
@@ -437,7 +437,7 @@ function SODASalesOrder() {
         FORM_SETTINGS_STORAGE_KEY,
         readSavedFormSettings,
     );
-    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [sidebarOpen, setSidebarOpen] = useState(true);
     const [formSettingsOpen, setFormSettingsOpen] = useState(false);
     const [refData, setRefData] = useState({
         company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
@@ -561,7 +561,7 @@ function SODASalesOrder() {
     const primaryActionLabel = pageState.posting
         ? 'Saving...'
         : isUpdateMode
-            ? (hasUnsavedChanges ? 'Update (Alt+U)' : 'OK')
+            ? updateActionLabel
             : 'Add';
     const secondaryActionLabel = pageState.posting
         ? 'Saving…'
@@ -574,7 +574,8 @@ function SODASalesOrder() {
         setSnapshotPending(false);
     }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
-    const markDirty = useCallback(() => {
+    const markDirty = useCallback((event) => {
+        if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
         if (currentDocEntry) {
             setIsDirty(true);
         }
@@ -857,7 +858,8 @@ function SODASalesOrder() {
                     postingDate: so.header?.postingDate || '',
                     deliveryDate: so.header?.deliveryDate || '',
                     documentDate: so.header?.documentDate || '',
-                    customerRefNo: so.header?.customerRefNo || '',
+                    salesContractNo: so.header?.customerRefNo || so.header?.salesContractNo || '',
+                    customerRefNo: so.header?.customerRefNo || so.header?.salesContractNo || '',
                     docNo: String(so.header?.docNum || ''),
                     nextNumber: String(so.header?.docNum || ''),
                     status: so.header?.status || '',
@@ -1299,7 +1301,10 @@ function SODASalesOrder() {
             next.stdDiscount = fmtDec(roundTo(getLineDiscountPercent(next), numDec.stdDiscount), numDec.stdDiscount);
         }
         next.total = fmtDec(calcLineTotal(next), numDec.total);
-        next.sellerBrokerage = calcLineCommission(next);
+        const calculatedSellerBrokerage = calcLineCommission(next);
+        if (!String(next.sellerBrokerage ?? '').trim() && calculatedSellerBrokerage) {
+            next.sellerBrokerage = calculatedSellerBrokerage;
+        }
         return next;
     };
 
@@ -1981,9 +1986,6 @@ function SODASalesOrder() {
     }, [billToPartyCodeKey, billToPartyUdfFields, markDirty]);
     const handleRowUdfChange = (i, k, v) => setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
     const updateFormSetting = useCallback((g, k, prop, val) => setFormSettings(p => {
-        if (g === 'matrixColumns' && prop === 'visible' && val === true && p?.matrixColumns?.[k]?.available === false) {
-            return p;
-        }
         const currentValue = p?.[g]?.[k]?.[prop];
         if (currentValue === val) return p;
         return { ...p, [g]: { ...(p[g] || {}), [k]: { ...((p[g] || {})[k] || {}), [prop]: val } } };
@@ -2409,6 +2411,8 @@ function SODASalesOrder() {
     }, [location.pathname, location.state?.copyFrom, navigate]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const openCopyFromModal = (docType) => {
+        if (currentDocEntry) return;
+
         console.log('🟢 Copy From Clicked');
 
         // ✅ ONLY BUYER VALIDATION
@@ -2682,6 +2686,7 @@ function SODASalesOrder() {
         try {
             const prep = {
                 ...header,
+                customerRefNo: header.customerRefNo || header.salesContractNo || '',
                 deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
                 placeOfSupply: header.placeOfSupply,
                 branch: header.branch,
@@ -2839,7 +2844,7 @@ function SODASalesOrder() {
 
     // ── render ────────────────────────────────────────────────────────────────
     return (
-        <form ref={formRef} className={`so-page sap-document-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit}>
+        <form ref={formRef} className={`so-page sap-document-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
             {/* toolbar */}
             <div className="so-toolbar sap-document-toolbar">
@@ -2871,11 +2876,11 @@ function SODASalesOrder() {
                     <button
                         type="button"
                         className="so-btn"
-                        disabled={!isDocumentEditable || !hasBuyerCode}
+                        disabled={!isDocumentEditable || !!currentDocEntry || !hasBuyerCode}
                         onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            if (!hasBuyerCode) return;
+                            if (currentDocEntry || !hasBuyerCode) return;
 
                             console.log('🔵 Copy From dropdown clicked');
 
@@ -2896,7 +2901,7 @@ function SODASalesOrder() {
                                 dropdown.classList.add('active');
                             }
                         }}
-                        style={{ opacity: (!isDocumentEditable || !hasBuyerCode) ? 0.5 : 1 }}
+                        style={{ opacity: (!isDocumentEditable || !!currentDocEntry || !hasBuyerCode) ? 0.5 : 1 }}
                     >
                         Copy From ▼
                     </button>
@@ -3208,7 +3213,7 @@ function SODASalesOrder() {
                                         {/* Customer Ref. No. */}
                                         <div className="so-field">
                                             <label className="so-field__label">Customer Ref. No.</label>
-                                            <input name="salesContractNo" className="so-field__input" value={header.salesContractNo} onChange={handleHeaderChange} />
+                                            <input name="customerRefNo" className="so-field__input" value={header.customerRefNo || header.salesContractNo || ''} onChange={handleHeaderChange} />
                                         </div>
 
                                         {/* Status */}
@@ -3478,11 +3483,11 @@ function SODASalesOrder() {
                                     <button
                                       type="button"
                                       className="so-btn"
-                                      disabled={!isDocumentEditable || !hasBuyerCode}
+                                      disabled={!isDocumentEditable || !!currentDocEntry || !hasBuyerCode}
                                       onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
-                                        if (!hasBuyerCode) return;
+                                        if (currentDocEntry || !hasBuyerCode) return;
                                         setCopyFromMode(true);
                                         setValErrors({ header: {}, lines: {}, form: '' });
                                         setPageState({ error: '', success: '', loading: false, posting: false, vendorLoading: false, seriesLoading: false });
@@ -3491,7 +3496,7 @@ function SODASalesOrder() {
                                         document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
                                         if (!isActive) dropdown.classList.add('active');
                                       }}
-                                      style={{ opacity: (!isDocumentEditable || !hasBuyerCode) ? 0.5 : 1 }}
+                                      style={{ opacity: (!isDocumentEditable || !!currentDocEntry || !hasBuyerCode) ? 0.5 : 1 }}
                                     >
                                       Copy From ▼
                                     </button>

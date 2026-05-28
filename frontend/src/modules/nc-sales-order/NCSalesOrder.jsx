@@ -59,8 +59,7 @@ import {
     FORM_SETTINGS_STORAGE_KEY,
     HEADER_UDF_DEFINITIONS,
     ROW_UDF_DEFINITIONS,
-    FORM_SETTINGS_LAYOUT_VERSION,
-    buildNCSalesOrderMatrixColumns,
+    BASE_MATRIX_COLUMNS,
     createUdfState,
     filterSalesOrderRowUdfDefinitions,
     normalizeUdfState,
@@ -264,6 +263,41 @@ const getToVendorUdfFields = (fields = []) => ({
     address: fields.find(isToVendorAddressUdf),
 });
 
+const isContactIdUdf = (field) => {
+    const label = normalizeUdfFieldText(field?.label);
+    const key = getUdfFieldKeyText(field);
+
+    return label === 'contactid' ||
+        label === 'contactpersonid' ||
+        label === 'bpcontactid' ||
+        label === 'buyercontactid' ||
+        key === 'contactid' ||
+        key === 'contactpersonid' ||
+        key === 'bpcontactid' ||
+        key === 'buyercontactid' ||
+        key === 'cntctid' ||
+        key === 'cntctname';
+};
+
+const getContactIdentifier = (contact) =>
+    String(
+        contact?.ContactID ||
+        contact?.ContactId ||
+        contact?.Name ||
+        contact?.ContactPerson ||
+        [contact?.FirstName, contact?.LastName].filter(Boolean).join(' ') ||
+        ''
+    ).trim();
+
+const findContactByCode = (contacts = [], contactCode = '') => {
+    const normalizedCode = String(contactCode || '').trim();
+    if (!normalizedCode) return null;
+
+    return contacts.find((contact) => String(contact?.CntctCode || '').trim() === normalizedCode)
+        || contacts.find((contact) => getContactIdentifier(contact) === normalizedCode)
+        || null;
+};
+
 const getBpAddressId = (address) =>
     address?.AddressName || address?.Address || address?.AddressID || address?.AddressId || '';
 
@@ -384,7 +418,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
 });
 
 const INIT_HEADER = {
-    vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
+    vendor: '', name: '', contactPerson: '', salesContractNo: '', customerRefNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
     docNo: '', status: 'Open', series: '', nextNumber: '',
     postingDate: today(), deliveryDate: today(), documentDate: today(), contractDate: '',
     branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
@@ -412,43 +446,6 @@ const closeDocumentDropdowns = () => {
     document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
 };
 
-const buildFieldVisibilitySettings = (fields = []) =>
-    fields.reduce((acc, field) => {
-        if (field?.key) {
-            acc[field.key] = {
-                visible: field.visible !== false,
-                active: true,
-            };
-        }
-        return acc;
-    }, {});
-
-const mergeLiveFormSettings = (previous = {}, {
-    matrixColumns = [],
-    headerUdfs = [],
-    rowUdfs = [],
-} = {}) => {
-    const preserveMatrixSettings =
-        Number(previous._layoutVersion || 0) >= FORM_SETTINGS_LAYOUT_VERSION;
-
-    return {
-        ...previous,
-        _layoutVersion: FORM_SETTINGS_LAYOUT_VERSION,
-        matrixColumns: {
-            ...buildFieldVisibilitySettings(matrixColumns),
-            ...(preserveMatrixSettings ? (previous.matrixColumns || {}) : {}),
-        },
-        headerUdfs: {
-            ...buildFieldVisibilitySettings(headerUdfs),
-            ...(previous.headerUdfs || {}),
-        },
-        rowUdfs: {
-            ...buildFieldVisibilitySettings(rowUdfs),
-            ...(previous.rowUdfs || {}),
-        },
-    };
-};
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 function NCSalesOrder() {
     const location = useLocation();
@@ -466,7 +463,6 @@ function NCSalesOrder() {
     const [header, setHeader] = useState(() => createInitialHeader());
     const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
     const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
-    const [matrixFields, setMatrixFields] = useState(() => buildNCSalesOrderMatrixColumns());
     const [lines, setLines] = useState([createLine()]);
     const [attachments] = useState(INIT_ATTACH);
     const [activeTab, setActiveTab] = useState('Contents');
@@ -475,7 +471,7 @@ function NCSalesOrder() {
         FORM_SETTINGS_STORAGE_KEY,
         readSavedFormSettings,
     );
-    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [sidebarOpen, setSidebarOpen] = useState(true);
     const [formSettingsOpen, setFormSettingsOpen] = useState(false);
     const [refData, setRefData] = useState({
         company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
@@ -570,7 +566,7 @@ function NCSalesOrder() {
     // decimal config
     const dec = { ...DEC, ...(refData.decimal_settings || {}) };
     const numDec = {
-        quantity: Number(dec.QtyDec), unitPrice: Number(dec.PriceDec), unitPriceUdf: Number(dec.PriceDec),
+        quantity: Number(dec.QtyDec), unitPrice: Number(dec.PriceDec),
         stdDiscount: Number(dec.PercentDec), discountAmount: Number(dec.PriceDec), total: Number(dec.SumDec),
         discount: Number(dec.PercentDec), freight: Number(dec.SumDec),
         tax: Number(dec.SumDec), totalPaymentDue: Number(dec.SumDec),
@@ -599,7 +595,7 @@ function NCSalesOrder() {
     const primaryActionLabel = pageState.posting
         ? 'Saving...'
         : isUpdateMode
-            ? (hasUnsavedChanges ? 'Update (Alt+U)' : 'OK')
+            ? updateActionLabel
             : 'Add';
     const secondaryActionLabel = pageState.posting
         ? 'Saving…'
@@ -612,7 +608,8 @@ function NCSalesOrder() {
         setSnapshotPending(false);
     }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
-    const markDirty = useCallback(() => {
+    const markDirty = useCallback((event) => {
+        if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
         if (currentDocEntry) {
             setIsDirty(true);
         }
@@ -625,7 +622,6 @@ function NCSalesOrder() {
         let ignore = false;
         const load = async () => {
             setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
-            setMatrixFields(buildNCSalesOrderMatrixColumns());
             setRefData(prev => ({
                 ...prev,
                 vendors: [],
@@ -698,25 +694,28 @@ function NCSalesOrder() {
 
                 if (!ignore) {
                     const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
-                    const rawRowUdfs = refDataRes.data.udf_metadata?.rows || [];
-                    const nextRowUdfs = filterSalesOrderRowUdfDefinitions(rawRowUdfs);
-                    const nextMatrixColumns = buildNCSalesOrderMatrixColumns(rawRowUdfs);
+                    const nextRowUdfs = filterSalesOrderRowUdfDefinitions(refDataRes.data.udf_metadata?.rows || []);
                     const nextUdfMetadata = {
                         ...(refDataRes.data.udf_metadata || {}),
                         rows: nextRowUdfs,
                     };
                     setHeaderUdfDefinitions(nextHeaderUdfs);
                     setRowUdfDefinitions(nextRowUdfs);
-                    setMatrixFields(nextMatrixColumns);
                     setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
                     setLines((prev) => prev.map((line) => ({
                         ...line,
                         udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
                     })));
-                    setFormSettings((prev) => mergeLiveFormSettings(prev, {
-                        matrixColumns: nextMatrixColumns,
-                        headerUdfs: nextHeaderUdfs,
-                        rowUdfs: nextRowUdfs,
+                    setFormSettings((prev) => ({
+                        ...prev,
+                        headerUdfs: {
+                            ...nextHeaderUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
+                            ...(prev.headerUdfs || {}),
+                        },
+                        rowUdfs: {
+                            ...nextRowUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
+                            ...(prev.rowUdfs || {}),
+                        },
                     }));
                     setRefData(prev => ({
                         ...prev,
@@ -891,7 +890,8 @@ function NCSalesOrder() {
                     postingDate: so.header?.postingDate || '',
                     deliveryDate: so.header?.deliveryDate || '',
                     documentDate: so.header?.documentDate || '',
-                    customerRefNo: so.header?.customerRefNo || '',
+                    salesContractNo: so.header?.customerRefNo || so.header?.salesContractNo || '',
+                    customerRefNo: so.header?.customerRefNo || so.header?.salesContractNo || '',
                     docNo: String(so.header?.docNum || ''),
                     nextNumber: String(so.header?.docNum || ''),
                     status: so.header?.status || '',
@@ -1028,6 +1028,11 @@ function NCSalesOrder() {
         () => getToVendorUdfFields(headerUdfDefinitions),
         [headerUdfDefinitions],
     );
+    const contactIdUdfField = useMemo(
+        () => headerUdfDefinitions.find(isContactIdUdf),
+        [headerUdfDefinitions],
+    );
+    const contactIdUdfKey = contactIdUdfField?.key || '';
     const toVendorCodeKey = toVendorUdfFields.code?.key || '';
     const toVendorCodeValue = String(toVendorCodeKey ? headerUdfs[toVendorCodeKey] : '').trim();
     const defaultToVendorCode = String(refData.defaults?.toVendorCode || '').trim();
@@ -1058,6 +1063,23 @@ function NCSalesOrder() {
     const shipTypeOpts = refData.shipping_types.length
         ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
         : FALLBACK_SHIPPING;
+
+    useEffect(() => {
+        if (copyFromMode || !contactIdUdfKey || toVendorCodeValue) return;
+
+        const selectedContact = findContactByCode(vendorContacts, header.contactPerson);
+        if (header.contactPerson && !selectedContact) return;
+
+        const contactIdValue = header.contactPerson ? getContactIdentifier(selectedContact) : '';
+
+        setHeaderUdfs((prev) => applyChangedUdfPatch(prev, { [contactIdUdfKey]: contactIdValue }));
+    }, [
+        copyFromMode,
+        contactIdUdfKey,
+        header.contactPerson,
+        toVendorCodeValue,
+        vendorContacts,
+    ]);
 
     useEffect(() => {
         if (currentDocEntry || copyFromMode || !toVendorCodeKey) return;
@@ -1333,7 +1355,10 @@ function NCSalesOrder() {
             next.stdDiscount = fmtDec(roundTo(getLineDiscountPercent(next), numDec.stdDiscount), numDec.stdDiscount);
         }
         next.total = fmtDec(calcLineTotal(next), numDec.total);
-        next.sellerBrokerage = calcLineCommission(next);
+        const calculatedSellerBrokerage = calcLineCommission(next);
+        if (!String(next.sellerBrokerage ?? '').trim() && calculatedSellerBrokerage) {
+            next.sellerBrokerage = calculatedSellerBrokerage;
+        }
         return next;
     };
 
@@ -2440,6 +2465,8 @@ function NCSalesOrder() {
     }, [location.pathname, location.state?.copyFrom, navigate]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const openCopyFromModal = (docType) => {
+        if (currentDocEntry) return;
+
         console.log('🟢 Copy From Clicked');
 
         // ✅ ONLY BUYER VALIDATION
@@ -2713,6 +2740,7 @@ function NCSalesOrder() {
         try {
             const prep = {
                 ...header,
+                customerRefNo: header.customerRefNo || header.salesContractNo || '',
                 deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
                 placeOfSupply: header.placeOfSupply,
                 branch: header.branch,
@@ -2870,7 +2898,7 @@ function NCSalesOrder() {
 
     // ── render ────────────────────────────────────────────────────────────────
     return (
-        <form ref={formRef} className={`so-page sap-document-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit}>
+        <form ref={formRef} className={`so-page sap-document-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
             {/* toolbar */}
             <div className="so-toolbar sap-document-toolbar">
@@ -2902,11 +2930,11 @@ function NCSalesOrder() {
                     <button
                         type="button"
                         className="so-btn"
-                        disabled={!isDocumentEditable || !hasBuyerCode}
+                        disabled={!isDocumentEditable || !!currentDocEntry || !hasBuyerCode}
                         onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            if (!hasBuyerCode) return;
+                            if (currentDocEntry || !hasBuyerCode) return;
 
                             console.log('🔵 Copy From dropdown clicked');
 
@@ -2927,7 +2955,7 @@ function NCSalesOrder() {
                                 dropdown.classList.add('active');
                             }
                         }}
-                        style={{ opacity: (!isDocumentEditable || !hasBuyerCode) ? 0.5 : 1 }}
+                        style={{ opacity: (!isDocumentEditable || !!currentDocEntry || !hasBuyerCode) ? 0.5 : 1 }}
                     >
                         Copy From ▼
                     </button>
@@ -3239,7 +3267,7 @@ function NCSalesOrder() {
                                         {/* Customer Ref. No. */}
                                         <div className="so-field">
                                             <label className="so-field__label">Customer Ref. No.</label>
-                                            <input name="salesContractNo" className="so-field__input" value={header.salesContractNo} onChange={handleHeaderChange} />
+                                            <input name="customerRefNo" className="so-field__input" value={header.customerRefNo || header.salesContractNo || ''} onChange={handleHeaderChange} />
                                         </div>
 
                                         {/* Status */}
@@ -3325,7 +3353,6 @@ function NCSalesOrder() {
                                 getBranchName={getBranchName}
                                 copyFromMode={copyFromMode}
                                 formSettings={formSettings}
-                                matrixFields={matrixFields}
                                 rowUdfFields={visibleRowUdfs}
                                 onRowUdfChange={handleRowUdfChange}
                             />
@@ -3510,11 +3537,11 @@ function NCSalesOrder() {
                                     <button
                                       type="button"
                                       className="so-btn"
-                                      disabled={!isDocumentEditable || !hasBuyerCode}
+                                      disabled={!isDocumentEditable || !!currentDocEntry || !hasBuyerCode}
                                       onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
-                                        if (!hasBuyerCode) return;
+                                        if (currentDocEntry || !hasBuyerCode) return;
                                         setCopyFromMode(true);
                                         setValErrors({ header: {}, lines: {}, form: '' });
                                         setPageState({ error: '', success: '', loading: false, posting: false, vendorLoading: false, seriesLoading: false });
@@ -3523,7 +3550,7 @@ function NCSalesOrder() {
                                         document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
                                         if (!isActive) dropdown.classList.add('active');
                                       }}
-                                      style={{ opacity: (!isDocumentEditable || !hasBuyerCode) ? 0.5 : 1 }}
+                                      style={{ opacity: (!isDocumentEditable || !!currentDocEntry || !hasBuyerCode) ? 0.5 : 1 }}
                                     >
                                       Copy From ▼
                                     </button>
@@ -3616,7 +3643,7 @@ function NCSalesOrder() {
                         className="so-layout__sidebar"
                         isOpen={formSettingsOpen}
                         onClose={() => setFormSettingsOpen(false)}
-                        matrixFields={matrixFields}
+                        matrixFields={BASE_MATRIX_COLUMNS}
                         headerUdfFields={headerUdfDefinitions}
                         rowUdfFields={rowUdfDefinitions}
                         formSettings={formSettings}

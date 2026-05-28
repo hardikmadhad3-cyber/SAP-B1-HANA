@@ -171,12 +171,12 @@ export default function ContentsTab({
     if (col.isUdf) {
       return formSettings.rowUdfs?.[col.key]?.visible !== false;
     }
-    return setting?.visible !== false && setting?.available !== false;
+    return setting?.visible !== false;
   });
 
   const isColumnVisible = (columnKey) => {
     const setting = formSettings.matrixColumns?.[columnKey];
-    return setting?.visible !== false && setting?.available !== false;
+    return setting?.visible !== false;
   };
 
   const renderBatchCell = (line, i) => {

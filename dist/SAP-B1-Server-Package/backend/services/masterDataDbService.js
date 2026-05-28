@@ -331,7 +331,10 @@ const mapBPAddress = (row) => ({
 });
 
 const mapBPContact = (row) => ({
+  CntctCode: row.CntctCode ?? "",
   Name: row.Name || "",
+  FirstName: row.FirstName || "",
+  LastName: row.LastName || "",
   Title: row.Title || "",
   Position: row.Position || "",
   Department: "",

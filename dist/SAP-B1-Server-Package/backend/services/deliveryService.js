@@ -3,6 +3,7 @@ const deliveryDb = require('./deliveryDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { getActiveCompanyConfig } = require('./companyConfigService');
 
 // ───────── HELPERS ─────────
 
@@ -390,8 +391,21 @@ const buildDocumentLinesPayload = async (lines = [], includeLineNum = false) => 
 
 const getReferenceData = async (companyId) => {
   try {
-    const data = await deliveryDb.getReferenceData();
-    return data;
+    const [data, companyConfig] = await Promise.all([
+      deliveryDb.getReferenceData(),
+      getActiveCompanyConfig(),
+    ]);
+    const toVendorCode = String(
+      companyConfig?.documentDefaults?.salesOrderToVendorCode || '',
+    ).trim();
+
+    return {
+      ...data,
+      defaults: {
+        ...(data.defaults || {}),
+        toVendorCode,
+      },
+    };
   } catch (error) {
     return {
       company: '',
@@ -412,6 +426,9 @@ const getReferenceData = async (companyId) => {
       contacts: [],
       pay_to_addresses: [],
       company_address: {},
+      defaults: {
+        toVendorCode: '',
+      },
       decimal_settings: {
         QtyDec: 2,
         PriceDec: 2,

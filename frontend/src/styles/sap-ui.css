@@ -93,23 +93,27 @@
 }
 
 .sap-document-toolbar :is(.sap-document-toolbar__udf) {
-  order: 3;
+  order: 7;
 }
 
 .sap-document-toolbar :is(.sap-document-toolbar__settings) {
-  order: 4;
+  order: 8;
 }
 
 .sap-document-toolbar :is(.sap-document-toolbar__find) {
-  order: 5;
+  order: 3;
 }
 
 .sap-document-toolbar :is(.sap-document-toolbar__new) {
-  order: 6;
+  order: 4;
 }
 
 .sap-document-toolbar :is(.po-dropdown, .so-dropdown, .del-dropdown, .sap-document-toolbar__copy) {
-  order: 7;
+  order: 5;
+}
+
+.sap-document-toolbar :is(.sap-document-toolbar__duplicate) {
+  order: 9;
 }
 
 .sap-document-toolbar :is(.po-dropdown, .so-dropdown, .del-dropdown) {
@@ -132,7 +136,7 @@
 }
 
 .sap-document-toolbar :is(.po-mode-badge, .so-mode-badge, .del-mode-badge) {
-  order: 8;
+  order: 10;
 }
 
 :is(.po-mode-badge, .so-mode-badge, .del-mode-badge, .im-mode-badge) {
@@ -1060,6 +1064,15 @@
 
 :is(.po-alert--warning, .so-alert--warning, .del-alert--warning) {
   color: var(--sap-warning);
+}
+
+.sap-auto-dismiss-notification {
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.sap-auto-dismiss-notification.is-dismissing {
+  opacity: 0;
+  transform: translateY(-2px);
 }
 
 .sap-copy-from-overlay {

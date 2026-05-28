@@ -193,7 +193,7 @@ function ARInvoicePage() {
     readSavedFormSettings,
     [headerUdfDefinitions, rowUdfDefinitions],
   );
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
     company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
@@ -559,6 +559,7 @@ function ARInvoicePage() {
     handledCopyFromRef.current = copyFromKey;
 
     const { header: srcHeader = {}, lines: srcLines = [], baseDocument } = copyFrom;
+    const normalizedHeader = normaliseDocumentHeader(srcHeader || {});
     const firstSourceLine = Array.isArray(srcLines) && srcLines.length ? srcLines[0] : {};
     const copiedWarehouse = normalizeWarehouse(firstSourceLine, srcHeader);
     const copiedBranch = srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || srcHeader.BPLId || firstSourceLine.branch || '';
@@ -570,6 +571,7 @@ function ARInvoicePage() {
       vendor:           srcHeader.vendor        || srcHeader.CardCode  || '',
       name:             srcHeader.name          || srcHeader.CardName  || '',
       contactPerson:    srcHeader.contactPerson || srcHeader.CntctCode || '',
+      salesContractNo:  normalizedHeader.salesContractNo || normalizedHeader.customerRefNo || srcHeader.salesContractNo || srcHeader.customerRefNo || srcHeader.CustomerRefNo || srcHeader.NumAtCard || '',
       branch:           copiedBranch,
       warehouse:        copiedWarehouse,
       paymentTerms:     srcHeader.paymentTerms  || srcHeader.GroupNum  || '',
@@ -1751,7 +1753,7 @@ function ARInvoicePage() {
 
   // ── Copy From Modal Handlers ───────────────────────────────────────────────
   const openCopyFromModal = (docType) => {
-    if (!isDocumentEditable) return;
+    if (!isDocumentEditable || currentDocEntry) return;
     console.log('🟢 Copy From Clicked');
 
     // ✅ ONLY BUYER VALIDATION
@@ -2032,6 +2034,7 @@ function ARInvoicePage() {
           <button
             type="button"
             className="del-btn"
+            disabled={!isDocumentEditable || !!currentDocEntry}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -2498,7 +2501,7 @@ function ARInvoicePage() {
                   <button
                     type="button"
                     className="del-btn"
-                    disabled={!isDocumentEditable}
+                    disabled={!isDocumentEditable || !!currentDocEntry}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();

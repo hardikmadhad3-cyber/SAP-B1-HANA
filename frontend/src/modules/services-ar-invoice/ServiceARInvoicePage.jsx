@@ -385,7 +385,7 @@ function ServiceARInvoicePage() {
     readSavedFormSettings,
     [headerUdfDefinitions, rowUdfDefinitions, CONTENT_COLUMNS],
   );
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
     vendors: [],
@@ -412,6 +412,7 @@ function ServiceARInvoicePage() {
   const [activeTab, setActiveTab] = useState('Contents');
   const [pageState, setPageState] = useState({ loading: true, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
+  const [isDirty, setIsDirty] = useState(false);
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyFromDocType, setCopyFromDocType] = useState('salesOrder');
   const [bpModalOpen, setBpModalOpen] = useState(false);
@@ -468,6 +469,17 @@ function ServiceARInvoicePage() {
   });
 
   const isDocumentEditable = !currentDocEntry || String(header.status || '').toLowerCase() === 'open';
+  const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
+  const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+  const primaryActionLabel = pageState.posting
+    ? 'Saving...'
+    : currentDocEntry
+      ? updateActionLabel
+      : 'Add';
+  const markDirty = (event) => {
+    if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
+    if (currentDocEntry) setIsDirty(true);
+  };
   const hasCustomerCode = Boolean(String(header.vendor || '').trim());
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
   const taxCodes = refData.tax_codes || [];
@@ -774,6 +786,7 @@ function ServiceARInvoicePage() {
             udf: rowUdfDefinitions.length ? normalizeUdfState(rowUdfDefinitions, line.udf || {}) : (line.udf || {}),
           }))
           : [createLine(rowUdfDefinitions)]);
+        setIsDirty(false);
         setPageState((prev) => ({ ...prev, loading: false, success: `Service A/R Invoice ${doc.doc_num || requestedDocEntry} loaded.` }));
       } catch (error) {
         if (!ignore) setPageState((prev) => ({ ...prev, loading: false, error: error.response?.data?.message || error.message || 'Failed to load Service A/R Invoice.' }));
@@ -1189,6 +1202,7 @@ function ServiceARInvoicePage() {
       setPageState((prev) => ({ ...prev, success: '', error: 'Closed Service A/R Invoices cannot be edited.' }));
       return;
     }
+    if (currentDocEntry && !hasUnsavedChanges) return;
 
     const errors = validate();
     if (errors.form || Object.keys(errors.header).length || Object.keys(errors.lines).length) {
@@ -1206,6 +1220,7 @@ function ServiceARInvoicePage() {
       const docNum = res.data?.doc_num || res.data?.DocNum || header.docNo;
       setCurrentDocEntry(docEntry);
       setHeader((prev) => ({ ...prev, docNo: docNum ? String(docNum) : prev.docNo, status: 'Open' }));
+      setIsDirty(false);
       setPageState((prev) => ({ ...prev, posting: false, success: `${res.data?.message || 'Service A/R Invoice saved.'}${docNum ? ` Doc No: ${docNum}` : ''}` }));
     } catch (error) {
       const message = error.response?.data?.detail?.error?.message?.value || error.response?.data?.message || error.message || 'Service A/R Invoice submission failed.';
@@ -1215,6 +1230,7 @@ function ServiceARInvoicePage() {
 
   const resetForm = () => {
     const firstSeries = (refData.series || [])[0];
+    setIsDirty(false);
     setCurrentDocEntry(null);
     setHeader({
       ...INIT_HEADER,
@@ -1229,7 +1245,7 @@ function ServiceARInvoicePage() {
   };
 
   const openCopyFromModal = (docType) => {
-    if (!isDocumentEditable) return;
+    if (!isDocumentEditable || currentDocEntry) return;
     if (!header.vendor) {
       setValErrors({ header: { vendor: 'Select Customer first' }, lines: {}, form: '' });
       return;
@@ -1545,11 +1561,11 @@ function ServiceARInvoicePage() {
   const tableMinWidth = 42 + 48 + visibleLineColumns.reduce((sum, column) => sum + column.width, 0);
 
   return (
-    <form className={`ar-invoice-page del-page sap-document-page service-ar-invoice-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`} onSubmit={handleSubmit}>
+    <form className={`ar-invoice-page del-page sap-document-page service-ar-invoice-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
       <div className="del-toolbar sap-document-toolbar">
         <span className="del-toolbar__title sap-document-toolbar__title">Service A/R Invoice{currentDocEntry ? ` - #${header.docNo || currentDocEntry}` : ''}</span>
-        <button type="submit" className="del-btn del-btn--primary sap-document-toolbar__primary" disabled={pageState.posting || !isDocumentEditable}>
-          {currentDocEntry ? 'Update' : 'Add'}
+        <button type="submit" className="del-btn del-btn--primary sap-document-toolbar__primary" disabled={pageState.posting || !isDocumentEditable} title={primaryActionLabel}>
+          {primaryActionLabel}
         </button>
         <button type="button" className="del-btn sap-document-toolbar__cancel" onClick={resetForm}>Cancel</button>
         <button type="button" className="del-btn sap-document-toolbar__udf" onClick={toggleHeaderUdfs}>
@@ -1569,7 +1585,7 @@ function ServiceARInvoicePage() {
         <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/services/ar-invoice/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
-          <button type="button" className="del-btn" disabled={!isDocumentEditable} onClick={(event) => {
+          <button type="button" className="del-btn" disabled={!isDocumentEditable || !!currentDocEntry} onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
             const dropdown = event.currentTarget.parentElement;

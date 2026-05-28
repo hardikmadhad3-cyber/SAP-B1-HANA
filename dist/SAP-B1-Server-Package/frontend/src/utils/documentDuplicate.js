@@ -1,5 +1,8 @@
 import { getWindowOnlyRouteState } from './copyToState';
 
+const DUPLICATE_NOTIFICATION_DISMISS_MS = 6500;
+const duplicateDismissTimers = new WeakMap();
+
 const clonePlain = (value) => {
   if (Array.isArray(value)) return value.map(clonePlain);
   if (value && typeof value === 'object') {
@@ -38,6 +41,17 @@ const HEADER_ID_KEYS = [
   'DocumentNumber',
   'number',
   'Number',
+];
+
+const HEADER_NEXT_NUMBER_KEYS = [
+  'nextNumber',
+  'NextNumber',
+  'nextNum',
+  'NextNum',
+  'nextDocNum',
+  'NextDocNum',
+  'nextDocumentNumber',
+  'NextDocumentNumber',
 ];
 
 const LINE_ID_KEYS = [
@@ -81,9 +95,11 @@ export const buildDuplicateHeader = (header = {}, initialHeader = {}) => {
   };
 
   clearKeys(duplicate, HEADER_ID_KEYS);
-  duplicate.status = 'Open';
+  clearKeys(duplicate, HEADER_NEXT_NUMBER_KEYS);
+  const duplicateStatus = initialHeader?.status || 'Open';
+  duplicate.status = duplicateStatus;
   duplicate.nextNumber = '';
-  ['Status', 'documentStatus', 'DocumentStatus'].forEach((key) => setIfPresent(duplicate, key, 'Open'));
+  ['Status', 'documentStatus', 'DocumentStatus'].forEach((key) => setIfPresent(duplicate, key, duplicateStatus));
   ['canceled', 'cancelled', 'Canceled', 'Cancelled'].forEach((key) => setIfPresent(duplicate, key, false));
 
   return duplicate;
@@ -145,6 +161,7 @@ export const duplicateDocumentInPlace = ({
   navigate,
   location,
   successMessage = 'Document duplicated. Review and add it as a new entry.',
+  dismissAfterMs = DUPLICATE_NOTIFICATION_DISMISS_MS,
 }) => {
   if (!currentDocEntry) return false;
 
@@ -168,6 +185,23 @@ export const duplicateDocumentInPlace = ({
     error: '',
     success: successMessage,
   }));
+
+  if (typeof window !== 'undefined' && typeof setPageState === 'function' && dismissAfterMs > 0) {
+    const existingTimer = duplicateDismissTimers.get(setPageState);
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+    }
+
+    const timer = window.setTimeout(() => {
+      setPageState((prev) => {
+        if (prev?.success !== successMessage) return prev;
+        return { ...prev, success: '' };
+      });
+      duplicateDismissTimers.delete(setPageState);
+    }, dismissAfterMs);
+
+    duplicateDismissTimers.set(setPageState, timer);
+  }
 
   return true;
 };

@@ -105,6 +105,7 @@ function GoodsIssue() {
     lines: {},
     form: '',
   });
+  const [isDirty, setIsDirty] = useState(false);
   useValidationHighlights(valErrors);
   const [batchModal, setBatchModal] = useState({
     open: false,
@@ -122,6 +123,17 @@ function GoodsIssue() {
     seriesOptions.find((seriesOption) => seriesOption.series === String(header.series)) ||
     seriesOptions[0] ||
     null;
+  const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
+  const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+  const primaryActionLabel = pageState.posting
+    ? 'Saving...'
+    : currentDocEntry
+      ? updateActionLabel
+      : 'Add';
+  const markDirty = (event) => {
+    if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
+    if (currentDocEntry) setIsDirty(true);
+  };
   const defaultPriceList = priceLists[0] || null;
   const defaultBranch = branches[0] || null;
   const getBranchName = useCallback(
@@ -384,6 +396,7 @@ function GoodsIssue() {
         setSelectedAttachmentId(null);
         setActiveTab('Contents');
         setValErrors({ lines: {}, form: '' });
+        setIsDirty(false);
         setPageState((current) => ({
           ...current,
           success: document.docNum ? `Goods Issue ${document.docNum} loaded.` : 'Goods Issue loaded.',
@@ -552,6 +565,7 @@ function GoodsIssue() {
     const nextSeries = currentSeriesOption?.series || '';
     const nextBranch = header.branch || defaultBranch?.id || '';
 
+    setIsDirty(false);
     setCurrentDocEntry(null);
     setHeader(() => ({
       ...createHeader(),
@@ -762,6 +776,7 @@ function GoodsIssue() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (currentDocEntry && !hasUnsavedChanges) return;
 
     if (!validateDocument()) {
       setPageState((current) => ({
@@ -830,6 +845,7 @@ function GoodsIssue() {
       if (result.docEntry != null) {
         setCurrentDocEntry(Number(result.docEntry));
       }
+      setIsDirty(false);
       setHeader((current) => ({
         ...current,
         number: result.docNum != null ? String(result.docNum) : current.number,
@@ -862,7 +878,7 @@ function GoodsIssue() {
       : null;
 
   return (
-    <form className="po-page gr-goods-receipt__page" onSubmit={handleSubmit}>
+    <form className="po-page gr-goods-receipt__page" onSubmit={handleSubmit} onChangeCapture={markDirty}>
       <div className="po-toolbar">
         <div className="po-toolbar__title">
           Goods Issue{currentDocEntry ? ` - #${header.number || currentDocEntry}` : ''}
@@ -870,8 +886,8 @@ function GoodsIssue() {
         <span className={`po-mode-badge po-mode-badge--${currentDocEntry ? 'update' : 'add'}`}>
           {currentDocEntry ? 'Update' : 'Add'} Mode
         </span>
-        <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting}>
-          {pageState.posting ? 'Saving...' : currentDocEntry ? 'Update' : 'Add'}
+        <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting} title={primaryActionLabel}>
+          {primaryActionLabel}
         </button>
         <button
           type="button"

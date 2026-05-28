@@ -212,7 +212,7 @@ function SalesQuotation() {
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
   );
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
     company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
@@ -356,7 +356,7 @@ function SalesQuotation() {
   const primaryActionLabel = pageState.posting
     ? 'Saving...'
     : isUpdateMode
-      ? (hasUnsavedChanges ? 'Update (Alt+U)' : 'OK')
+      ? updateActionLabel
       : 'Add';
   const secondaryActionLabel = pageState.posting
     ? 'Saving…'
@@ -369,7 +369,8 @@ function SalesQuotation() {
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
 
-  const markDirty = useCallback(() => {
+  const markDirty = useCallback((event) => {
+    if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
     if (currentDocEntry) setIsDirty(true);
   }, [currentDocEntry]);
 
@@ -1707,6 +1708,8 @@ function SalesQuotation() {
 
   // ── Copy From Handler ──────────────────────────────────────────────────────
   const openCopyFromModal = () => {
+    if (currentDocEntry) return;
+
     const bpCode = String(header.vendor || '').trim();
     if (!bpCode) {
       setValErrors({ header: { vendor: 'Select Customer first' }, lines: {}, form: '' });
@@ -2154,7 +2157,7 @@ function SalesQuotation() {
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
         />
-        <button type="button" className="so-btn sap-document-toolbar__copy" onClick={() => openCopyFromModal()}>
+        <button type="button" className="so-btn sap-document-toolbar__copy" onClick={() => openCopyFromModal()} disabled={!isDocumentEditable || !!currentDocEntry}>
           Copy From
         </button>
         <CopyToDropdown

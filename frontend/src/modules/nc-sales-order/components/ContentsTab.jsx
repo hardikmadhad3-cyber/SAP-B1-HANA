@@ -5,55 +5,6 @@ import { filterSalesOrderRowUdfDefinitions } from '../../../config/ncSalesOrderF
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
 
 const TABLE_MIN_WIDTH = 2700;
-const DEFAULT_COLUMN_WIDTH = 125;
-
-const COLUMN_WIDTHS = {
-  itemNo: 160,
-  itemDescription: 240,
-  sellerQuality: 170,
-  buyerQuality: 170,
-  quantity: 85,
-  unitPrice: 110,
-  sellerPrice: 110,
-  buyerPrice: 110,
-  sellerDelivery: 120,
-  buyerDelivery: 120,
-  sellerBrokerageAmtPer: 155,
-  sellerBrokeragePercent: 170,
-  sellerBrokerage: 120,
-  buyerBrokerage: 120,
-  qtySpecialInstruction: 165,
-  deliverySpecialInstruction: 185,
-  buyerBillDiscount: 130,
-  sellerBillDiscount: 130,
-  deliveredQty: 110,
-  stdDiscount: 90,
-  stcode: 110,
-  taxCode: 110,
-  taxAmount: 115,
-  totalLC: 115,
-  whse: 75,
-  distRule: 105,
-  openQty: 85,
-  countryOfOrigin: 175,
-  freeText: 150,
-  uomCode: 105,
-  uomName: 120,
-  loc: 120,
-  specialRebate: 110,
-  commission: 100,
-  hsnCode: 95,
-  unitPriceUdf: 110,
-  sacCode: 90,
-  buyerPaymentTerms: 170,
-  sellerPaymentTerms: 170,
-  freightPurchase: 130,
-  freightSales: 120,
-  freightProvider: 120,
-  freightProviderName: 160,
-  documentCreated: 140,
-  brokerageNumber: 140,
-};
 
 const MATRIX_COLS = [
   { key: 'itemNo', label: 'Item No.', minWidth: 160 },
@@ -181,7 +132,6 @@ export default function ContentsTab({
   onOpenQualityModal,
   onOpenPaymentTermsModal,
   formSettings = {},
-  matrixFields = [],
   rowUdfFields = [],
   onRowUdfChange,
 }) {
@@ -194,14 +144,8 @@ export default function ContentsTab({
 
   // Filter visible columns based on form settings
   const visibleRowUdfFields = filterSalesOrderRowUdfDefinitions(rowUdfFields);
-  const baseMatrixColumns = (Array.isArray(matrixFields) && matrixFields.length ? matrixFields : MATRIX_COLS)
-    .map((column) => ({
-      ...column,
-      minWidth: column.minWidth || COLUMN_WIDTHS[column.key] || DEFAULT_COLUMN_WIDTH,
-    }));
-
   const matrixColumns = [
-    ...baseMatrixColumns,
+    ...MATRIX_COLS,
     ...visibleRowUdfFields.map((field) => ({
       key: field.key,
       label: field.label || field.key,
@@ -218,10 +162,6 @@ export default function ContentsTab({
     const setting = formSettings.matrixColumns?.[col.key];
     return setting?.visible !== false;
   });
-  const tableMinWidth = Math.max(
-    TABLE_MIN_WIDTH,
-    visibleColumns.reduce((total, column) => total + (column.minWidth || DEFAULT_COLUMN_WIDTH), 90)
-  );
 
   // Helper to check if a column is visible
   const isColumnVisible = (columnKey) => {
@@ -380,16 +320,6 @@ export default function ContentsTab({
           {valErrors.lines[i]?.unitPrice && (
             <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].unitPrice}</div>
           )}
-        </td>
-      ),
-      unitPriceUdf: () => (
-        <td key="unitPriceUdf">
-          <input
-            className="so-grid__input"
-            name="unitPriceUdf"
-            value={line.unitPriceUdf || ''}
-            onChange={(e) => onLineChange(i, e)}
-          />
         </td>
       ),
       discountAmount: () => (
@@ -1034,7 +964,7 @@ export default function ContentsTab({
             className="so-grid so-grid--contents"
             style={{
               width: 'max-content',
-              minWidth: tableMinWidth,
+              minWidth: TABLE_MIN_WIDTH,
             }}
           >
           <colgroup>

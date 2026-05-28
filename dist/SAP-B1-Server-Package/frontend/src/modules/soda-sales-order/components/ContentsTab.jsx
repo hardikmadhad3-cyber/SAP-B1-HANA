@@ -161,13 +161,13 @@ export default function ContentsTab({
       return formSettings.rowUdfs?.[col.key]?.visible !== false;
     }
     const setting = formSettings.matrixColumns?.[col.key];
-    return setting?.visible !== false && setting?.available !== false;
+    return setting?.visible !== false;
   });
 
   // Helper to check if a column is visible
   const isColumnVisible = (columnKey) => {
     const setting = formSettings.matrixColumns?.[columnKey];
-    return setting?.visible !== false && setting?.available !== false;
+    return setting?.visible !== false;
   };
 
   // Create a map of column renderers

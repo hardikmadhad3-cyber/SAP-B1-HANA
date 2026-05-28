@@ -143,6 +143,35 @@ const isSellerContactPersonField = (field) => {
     normalizedKey === 'sellerperson';
 };
 
+const isToVendorContactIdField = (field) => {
+  if (isSellerContactPersonField(field)) return false;
+
+  const identity = getFieldIdentity(field);
+  const label = normalizeFieldText(field?.label);
+  const key = normalizeFieldText(String(field?.key || '').replace(/^U_/i, ''));
+
+  return label === 'contactid' ||
+    label === 'contactpersonid' ||
+    label === 'bpcontactid' ||
+    label === 'buyercontactid' ||
+    label === 'tocontactid' ||
+    label === 'tovendorcontactid' ||
+    label === 'vendorcontactid' ||
+    label === 'cntctname' ||
+    key === 'contactid' ||
+    key === 'contactpersonid' ||
+    key === 'bpcontactid' ||
+    key === 'buyercontactid' ||
+    key === 'tocontactid' ||
+    key === 'tovendorcontactid' ||
+    key === 'vendorcontactid' ||
+    key === 'cntctid' ||
+    key === 'cntctname' ||
+    identity.includes('tocontactid') ||
+    identity.includes('tovendorcontactid') ||
+    identity.includes('vendorcontactid');
+};
+
 const sortHeaderUdfFields = (fields = []) => {
   const sellerAddressIndex = fields.findIndex(isSellerAddressField);
   const sellerContactIndex = fields.findIndex(isSellerContactPersonField);
@@ -319,6 +348,63 @@ const selectSellerContactPerson = (seller = {}) => {
   const contacts = Array.isArray(seller.ContactEmployees) ? seller.ContactEmployees : [];
   const activeContact = contacts.find((contact) => getContactName(contact) && isActiveContact(contact));
   return getContactName(activeContact || contacts.find(getContactName));
+};
+
+const getContactCode = (contact) =>
+  String(
+    contact?.CntctCode ??
+    contact?.InternalCode ??
+    contact?.ContactCode ??
+    contact?.ContactID ??
+    contact?.ContactId ??
+    contact?.ContactPersonCode ??
+    contact?.Code ??
+    contact?.id ??
+    ''
+  ).trim();
+
+const getContactDisplayValue = (contact) =>
+  getContactName(contact) || getContactCode(contact);
+
+const selectBusinessPartnerContactId = (bp = {}) => {
+  const contacts = [
+    ...(Array.isArray(bp?.contacts) ? bp.contacts : []),
+    ...(Array.isArray(bp?.ContactEmployees) ? bp.ContactEmployees : []),
+  ];
+  const directContactCode = String(
+    bp.ContactPersonCode ??
+    bp.ContactPersonID ??
+    bp.DefaultContactPersonCode ??
+    bp.CntctCode ??
+    ''
+  ).trim();
+
+  if (directContactCode) {
+    const matchingContact = contacts.find((contact) => getContactCode(contact) === directContactCode);
+    return getContactDisplayValue(matchingContact) || directContactCode;
+  }
+
+  const directContactName = String(
+    bp.ContactPerson ||
+    bp.ContactPersonName ||
+    bp.DefaultContactPerson ||
+    ''
+  ).trim();
+
+  if (directContactName) {
+    const normalizedDirectName = normalizeFieldText(directContactName);
+    const matchingContact = contacts.find((contact) =>
+      normalizeFieldText(getContactName(contact)) === normalizedDirectName ||
+      String(getContactCode(contact)) === directContactName
+    );
+    const matchingContactValue = getContactDisplayValue(matchingContact);
+    if (matchingContactValue) return matchingContactValue;
+    return directContactName;
+  }
+
+  const activeContact = contacts.find((contact) => getContactDisplayValue(contact) && isActiveContact(contact));
+  const fallbackContact = activeContact || contacts.find((contact) => getContactDisplayValue(contact));
+  return getContactDisplayValue(fallbackContact) || '';
 };
 
 function renderField(field, value, disabled, onChange, onLookup) {
@@ -725,6 +811,7 @@ function HeaderUdfSidebar({
   const toVendorNameField = orderedFields.find(isToVendorNameField);
   const toVendorAddressIdField = orderedFields.find(isToVendorAddressIdField);
   const toVendorAddressField = orderedFields.find(isToVendorAddressField);
+  const toVendorContactIdField = orderedFields.find(isToVendorContactIdField);
   const toVendorCode = String(toVendorCodeField?.key ? values?.[toVendorCodeField.key] : '').trim();
   const toVendorNameValue = String(toVendorNameField?.key ? values?.[toVendorNameField.key] : '').trim();
   const toVendorAddressIdValue = String(toVendorAddressIdField?.key ? values?.[toVendorAddressIdField.key] : '').trim();
@@ -743,10 +830,15 @@ function HeaderUdfSidebar({
 
     let vendor = null;
     let addresses = [];
+    let contacts = [];
 
     if (typeof loadToVendorDetailsRef.current === 'function') {
       const details = await loadToVendorDetailsRef.current(normalizedCode);
       vendor = details?.businessPartner || details?.vendor || details?.bp || null;
+      contacts = [
+        ...(Array.isArray(details?.contacts) ? details.contacts : []),
+        ...(Array.isArray(details?.ContactEmployees) ? details.ContactEmployees : []),
+      ];
       addresses = [
         ...(Array.isArray(details?.addresses) ? details.addresses : []),
         ...(Array.isArray(details?.BPAddresses) ? details.BPAddresses : []),
@@ -760,18 +852,29 @@ function HeaderUdfSidebar({
         const bp = await getBP(normalizedCode);
         vendor = vendor || bp;
         addresses = addresses.length ? addresses : (Array.isArray(bp?.BPAddresses) ? bp.BPAddresses : []);
+        contacts = contacts.length ? contacts : (Array.isArray(bp?.ContactEmployees) ? bp.ContactEmployees : []);
       } catch (error) {
-        if (!addresses.length) throw error;
+        if (!addresses.length && !contacts.length && !vendor) throw error;
       }
     }
 
     const usableAddresses = filterBillToAddresses(dedupeAddresses(addresses));
+    const contactEmployees = contacts.length
+      ? contacts
+      : (Array.isArray(vendor?.ContactEmployees) ? vendor.ContactEmployees : []);
+
+    if (contactEmployees.length) {
+      vendor = { ...(vendor || {}), ContactEmployees: contactEmployees, contacts: contactEmployees };
+    }
 
     return { vendor, addresses: usableAddresses };
   }, []);
 
   useEffect(() => {
     if (!isOpen || !toVendorCodeField?.key || !toVendorCode) {
+      if (isOpen && toVendorCodeField?.key && !toVendorCode && toVendorContactIdField?.key) {
+        changeField(toVendorContactIdField.key, '');
+      }
       setToVendorAddressList([]);
       lastLoadedToVendorCodeRef.current = '';
       return undefined;
@@ -797,6 +900,10 @@ function HeaderUdfSidebar({
 
         if (toVendorNameField?.key && vendor?.CardName && !toVendorNameValue) {
           changeField(toVendorNameField.key, vendor.CardName);
+        }
+
+        if (toVendorContactIdField?.key) {
+          changeField(toVendorContactIdField.key, selectBusinessPartnerContactId(vendor || {}));
         }
 
         if (selectedAddress && toVendorAddressIdField?.key && !toVendorAddressIdValue) {
@@ -827,6 +934,7 @@ function HeaderUdfSidebar({
     toVendorNameField?.key,
     toVendorAddressIdField?.key,
     toVendorAddressField?.key,
+    toVendorContactIdField?.key,
     toVendorNameValue,
     toVendorAddressIdValue,
     toVendorAddressTextValue,
@@ -1205,6 +1313,9 @@ function HeaderUdfSidebar({
     if (toVendorAddressField?.key) {
       changeField(toVendorAddressField.key, '');
     }
+    if (toVendorContactIdField?.key) {
+      changeField(toVendorContactIdField.key, '');
+    }
     setToVendorAddressList([]);
     lastLoadedToVendorCodeRef.current = '';
 
@@ -1220,6 +1331,9 @@ function HeaderUdfSidebar({
       if (toVendorNameField?.key && vendor?.CardName) {
         changeField(toVendorNameField.key, vendor.CardName);
       }
+      if (toVendorContactIdField?.key) {
+        changeField(toVendorContactIdField.key, selectBusinessPartnerContactId(vendor || bp));
+      }
     } catch (error) {
       console.error('Failed to load To Vendor details:', error);
       const addresses = Array.isArray(bp?.BPAddresses) ? bp.BPAddresses : [];
@@ -1227,6 +1341,9 @@ function HeaderUdfSidebar({
       setToVendorAddressList(usableAddresses);
       lastLoadedToVendorCodeRef.current = cardCode;
       applyToVendorAddress(selectBillToPartyAddress(usableAddresses, bp));
+      if (toVendorContactIdField?.key) {
+        changeField(toVendorContactIdField.key, selectBusinessPartnerContactId(bp));
+      }
     }
   };
 

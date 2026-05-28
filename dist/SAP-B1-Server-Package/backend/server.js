@@ -111,6 +111,13 @@ const isReusableLookupRequest = (req) => {
   if (req.method !== 'GET') return false;
 
   const path = req.path.toLowerCase();
+  const isNextNumberRoute =
+    path.includes('/next-number') ||
+    path.endsWith('/series/next') ||
+    /\/lookup\/series\/[^/]+\/next$/.test(path);
+
+  if (isNextNumberRoute) return false;
+
   return (
     path.endsWith('/reference-data') ||
     path.includes('/lookup/') ||

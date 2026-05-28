@@ -276,8 +276,8 @@ const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Seller_Quality', getValue: (line) => line.sellerQuality },
   { sapField: 'U_Buyer_Price', getValue: (line) => line.buyerPrice },
   { sapField: 'U_Seller_Price', getValue: (line) => line.sellerPrice },
-  { sapField: 'U_Buyer_SPINS', getValue: (line) => line.qtySpecialInstruction ?? line.buyerSpecialInstruction },
-  { sapField: 'U_Seller_SPINS', getValue: (line) => line.deliverySpecialInstruction ?? line.sellerSpecialInstruction },
+  { sapField: 'U_Seller_SPINS', getValue: (line) => line.qtySpecialInstruction ?? line.sellerSpecialInstruction },
+  { sapField: 'U_Buyer_SPINS', getValue: (line) => line.deliverySpecialInstruction ?? line.buyerSpecialInstruction },
   { sapField: 'U_Sel_Brok_AP', getValue: (line) => line.sellerBrokerageAmtPer },
   { sapField: 'U_Seller_Brok_Per', getValue: (line) => line.sellerBrokeragePercent },
   { sapField: 'U_Buyer_Bill_Disc', getValue: (line) => line.buyerBillDiscount },
@@ -682,6 +682,7 @@ const getSalesOrderList = async ({
   query = '',
   openOnly = true,
   docNum = '',
+  customerRefNo = '',
   customerCode = '',
   customerName = '',
   sellerCode = '',
@@ -698,6 +699,7 @@ const getSalesOrderList = async ({
       query,
       openOnly,
       docNum,
+      customerRefNo,
       customerCode,
       customerName,
       sellerCode,
@@ -760,6 +762,7 @@ const getSalesOrderFilterOptions = async ({
   query = '',
   openOnly = true,
   docNum = '',
+  customerRefNo = '',
   customerCode = '',
   customerName = '',
   sellerCode = '',
@@ -775,6 +778,7 @@ const getSalesOrderFilterOptions = async ({
       query,
       openOnly,
       docNum,
+      customerRefNo,
       customerCode,
       customerName,
       sellerCode,
@@ -910,7 +914,7 @@ const submitSalesOrder = async (payload) => {
       ...(documentAdditionalExpenses.length > 0 ? { DocumentAdditionalExpenses: documentAdditionalExpenses } : {}),
 
       // ✅ Add NumAtCard for customer reference
-      NumAtCard: payload.header.customerRefNo || undefined,
+      NumAtCard: payload.header.customerRefNo || payload.header.salesContractNo || undefined,
 
       DocumentLines: documentLines
     };
@@ -1076,6 +1080,7 @@ const updateSalesOrder = async (docEntry, payload) => {
       ...(OwnerCode !== null && OwnerCode !== undefined && { DocumentsOwner: OwnerCode }),
       ...(Remarks && { Comments: Remarks }),
       ...(documentAdditionalExpenses.length > 0 ? { DocumentAdditionalExpenses: documentAdditionalExpenses } : {}),
+      NumAtCard: payload.header.customerRefNo || payload.header.salesContractNo || undefined,
 
       DocumentLines: documentLines
     };
