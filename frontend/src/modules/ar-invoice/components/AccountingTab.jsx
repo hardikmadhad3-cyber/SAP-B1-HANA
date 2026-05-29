@@ -50,6 +50,9 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts, isE
             <option>Cheque</option>
             <option>Cash</option>
             <option>Credit Card</option>
+            {header.paymentMethod && !['Bank Transfer', 'Cheque', 'Cash', 'Credit Card'].includes(String(header.paymentMethod)) && (
+              <option value={header.paymentMethod}>{header.paymentMethod}</option>
+            )}
           </select>
         </div>
 

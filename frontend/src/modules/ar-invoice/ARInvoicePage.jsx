@@ -166,6 +166,8 @@ const INIT_HEADER = {
   totalPaymentDue: '', rounding: false, owner: '', purchaser: '', salesEmployee: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
   billToAddress: '', billToCode: '', shipToAddress: '',
+  ownerCode: '', language: '', trackingNo: '', stampNo: '', pickPackRemarks: '',
+  bpChannelName: '', bpChannelContact: '',
 };
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
@@ -798,7 +800,7 @@ function ARInvoicePage() {
       if (contacts.length > 0) {
         setHeader(prev => ({
           ...prev,
-          contactPerson: contacts[0].CntctCode
+          contactPerson: prev.contactPerson || contacts[0].CntctCode
         }));
       }
 
@@ -809,13 +811,14 @@ function ARInvoicePage() {
         const formattedBillTo = defaultBillTo ? fmtAddr(defaultBillTo) : formattedShipTo;
         setHeader(prev => ({
           ...prev,
-          placeOfSupply: defaultShipTo?.State || defaultBillTo?.State || prev.placeOfSupply,
-          shipToCode: defaultShipTo?.Address || '',
-          shipToAddress: formattedShipTo,
-          billToCode: defaultBillTo?.Address || '',
-          billToAddress: formattedBillTo,
-          payToCode: defaultBillTo?.Address || '',
-          payTo: formattedBillTo
+          placeOfSupply: prev.placeOfSupply || defaultShipTo?.State || defaultBillTo?.State || '',
+          shipToCode: prev.shipToCode || defaultShipTo?.Address || '',
+          shipToAddress: prev.shipToAddress || prev.shipTo || formattedShipTo,
+          shipTo: prev.shipTo || prev.shipToAddress || formattedShipTo,
+          billToCode: prev.billToCode || prev.payToCode || defaultBillTo?.Address || '',
+          billToAddress: prev.billToAddress || prev.payTo || formattedBillTo,
+          payToCode: prev.payToCode || prev.billToCode || defaultBillTo?.Address || '',
+          payTo: prev.payTo || prev.billToAddress || formattedBillTo
         }));
       }
 

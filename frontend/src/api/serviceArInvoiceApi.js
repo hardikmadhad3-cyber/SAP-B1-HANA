@@ -29,6 +29,13 @@ export const submitServiceARInvoice = (data) =>
 export const updateServiceARInvoice = (docEntry, data) =>
   client.patch(`${API_BASE}/${encodeURIComponent(docEntry)}`, data);
 
+export const generateServiceARInvoiceJournalEntry = ({ docEntry, payload, persist = false }) =>
+  client.post('/journal-entry/generate-from-ar-invoice', {
+    ...(docEntry ? { docEntry } : {}),
+    ...(payload ? { payload } : {}),
+    persist,
+  });
+
 export const fetchOpenServiceSalesQuotationsForARInvoice = (customerCode = null) =>
   client.get(`${API_BASE}/open-sales-quotations`, {
     params: customerCode ? { customerCode } : {},

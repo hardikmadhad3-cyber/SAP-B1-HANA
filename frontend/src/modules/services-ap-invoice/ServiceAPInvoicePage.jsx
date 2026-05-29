@@ -9,6 +9,7 @@ import LineValueLookupModal from '../../components/sales-document/LineValueLooku
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { createActiveCompanyScopedRouteState } from '../../utils/companyStorageScope';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { BASE_TYPE, normaliseDocumentHeader, unwrapCopyFromDocument } from '../../api/copyFromApi';
@@ -21,6 +22,7 @@ import ElectronicDocumentsTab from '../APInvoice/components/ElectronicDocumentsT
 import AttachmentsTab from '../APInvoice/components/AttachmentsTab';
 import AddressModal from '../APInvoice/components/AddressModal';
 import TaxInfoModal from '../APInvoice/components/TaxInfoModal';
+import JournalEntryPreviewModal from '../services-ar-invoice/JournalEntryPreviewModal';
 import {
   fetchOpenServiceGRPOForAPInvoice,
   fetchOpenServicePurchaseOrdersForAPInvoice,
@@ -33,6 +35,7 @@ import {
   fetchServiceGRPOForAPInvoiceCopy,
   fetchServicePurchaseOrderForAPInvoiceCopy,
   fetchServicePurchaseQuotationForAPInvoiceCopy,
+  generateServiceAPInvoiceJournalEntry,
   submitServiceAPInvoice,
   updateServiceAPInvoice,
 } from '../../api/serviceApInvoiceApi';
@@ -45,6 +48,7 @@ import {
   readSavedFormSettings,
 } from '../../config/serviceApInvoiceForm';
 import '../ar-invoice/styles/arInvoice.css';
+import '../services-ar-invoice/serviceArInvoice.css';
 import './serviceApInvoice.css';
 
 const today = () => new Date().toISOString().split('T')[0];
@@ -578,6 +582,11 @@ function ServiceAPInvoicePage() {
     itrFiling: '',
     gstType: '',
     gstin: '',
+  });
+  const [journalPreview, setJournalPreview] = useState({
+    open: false,
+    loading: false,
+    data: null,
   });
   const [lineLookupModal, setLineLookupModal] = useState({
     open: false,
@@ -1312,7 +1321,7 @@ function ServiceAPInvoicePage() {
     input.click();
   };
 
-  const validate = () => {
+  const validate = ({ requireDescription = true } = {}) => {
     const errors = { header: {}, lines: {}, form: '' };
     if (!String(header.vendor || '').trim()) errors.header.vendor = 'Vendor is required';
     if (!String(header.postingDate || '').trim()) errors.header.postingDate = 'Posting Date is required';
@@ -1324,7 +1333,7 @@ function ServiceAPInvoicePage() {
     lines.forEach((line, index) => {
       if (!String(line.description || line.glAccount || line.totalLC || '').trim()) return;
       const lineErrors = {};
-      if (!String(line.description || '').trim()) lineErrors.description = 'Description is required';
+      if (requireDescription && !String(line.description || '').trim()) lineErrors.description = 'Description is required';
       if (!String(line.glAccount || '').trim()) lineErrors.glAccount = 'G/L Account is required';
       if (!String(line.taxCode || '').trim()) lineErrors.taxCode = 'Tax Code is required';
       if (parseNum(line.totalLC) <= 0) lineErrors.totalLC = 'Total is required';
@@ -1344,6 +1353,56 @@ function ServiceAPInvoicePage() {
     header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
     totals,
   });
+
+  const openJournalLinkedMaster = (line = {}) => {
+    const code = String(line.account || '').trim();
+    if (!code) return;
+
+    setJournalPreview((prev) => ({ ...prev, open: false }));
+    const isBusinessPartnerLine = line.goldenArrowTarget === 'businessPartner' || Boolean(String(line.controlAccount || '').trim());
+    if (isBusinessPartnerLine) {
+      navigate(`/business-partner?cardCode=${encodeURIComponent(code)}`, {
+        state: createActiveCompanyScopedRouteState({
+          businessPartnerCardCode: code,
+          cardCode: code,
+        }),
+      });
+      return;
+    }
+
+    navigate(`/chart-of-accounts?accountCode=${encodeURIComponent(code)}`, {
+      state: createActiveCompanyScopedRouteState({
+        accountCode: code,
+        glAccountCode: code,
+      }),
+    });
+  };
+
+  const previewJournalEntry = async ({ persist = false, docEntry = currentDocEntry } = {}) => {
+    const errors = validate({ requireDescription: false });
+    if (errors.form || Object.keys(errors.header).length || Object.keys(errors.lines).length) {
+      setValErrors(errors);
+      setPageState((prev) => ({ ...prev, success: '', error: errors.form || 'Please correct the highlighted fields before previewing Journal Entry.' }));
+      return null;
+    }
+
+    setJournalPreview((prev) => ({ ...prev, open: true, loading: true }));
+    try {
+      const res = await generateServiceAPInvoiceJournalEntry({
+        docEntry,
+        payload: docEntry ? null : buildPayload(),
+        persist,
+      });
+      setJournalPreview({ open: true, loading: false, data: res.data });
+      setPageState((prev) => ({ ...prev, error: '' }));
+      return res.data;
+    } catch (error) {
+      const message = error.response?.data?.message || error.message || 'Failed to preview Journal Entry.';
+      setJournalPreview((prev) => ({ ...prev, loading: false }));
+      setPageState((prev) => ({ ...prev, success: '', error: message }));
+      return null;
+    }
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -1371,6 +1430,9 @@ function ServiceAPInvoicePage() {
       setHeader((prev) => ({ ...prev, docNo: docNum ? String(docNum) : prev.docNo, status: 'Open' }));
       setIsDirty(false);
       setPageState((prev) => ({ ...prev, posting: false, success: `${res.data?.message || 'Service A/P Invoice saved.'}${docNum ? ` Doc No: ${docNum}` : ''}` }));
+      if (docEntry) {
+        await previewJournalEntry({ persist: true, docEntry });
+      }
     } catch (error) {
       const message = error.response?.data?.detail?.error?.message?.value || error.response?.data?.message || error.message || 'Service A/P Invoice submission failed.';
       setPageState((prev) => ({ ...prev, posting: false, error: message }));
@@ -1390,6 +1452,7 @@ function ServiceAPInvoicePage() {
     setLines([createLine(rowUdfDefinitions)]);
     setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
+    setJournalPreview({ open: false, loading: false, data: null });
     setPageState((prev) => ({ ...prev, error: '', success: '' }));
   };
 
@@ -1733,6 +1796,14 @@ function ServiceAPInvoicePage() {
           onSuccess={(message) => setPageState((prev) => ({ ...prev, error: '', success: message }))}
           onError={(message) => setPageState((prev) => ({ ...prev, success: '', error: message }))}
         />
+        <button
+          type="button"
+          className="del-btn sap-document-toolbar__journal-preview"
+          onClick={() => previewJournalEntry({ persist: Boolean(currentDocEntry) })}
+          disabled={pageState.posting || journalPreview.loading}
+        >
+          Preview Journal Entry
+        </button>
         <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/services/ap-invoice/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
@@ -1898,34 +1969,6 @@ function ServiceAPInvoicePage() {
         {activeTab === 'Contents' && (
           <div className="del-tab-panel" style={{ overflow: 'visible', minWidth: 0 }}>
             <div className="service-ap-content-toolbar">
-              <div className="service-ap-content-controls">
-                <label className="service-ap-content-control">
-                  <span>Item/Service Type</span>
-                  <select
-                    className="del-field__select"
-                    name="itemServiceType"
-                    value={header.itemServiceType}
-                    onChange={handleHeaderChange}
-                    disabled
-                  >
-                    <option value="Service">Service</option>
-                  </select>
-                </label>
-                <label className="service-ap-content-control">
-                  <span>Summary Type</span>
-                  <select
-                    className="del-field__select"
-                    name="summaryType"
-                    value={header.summaryType}
-                    onChange={handleHeaderChange}
-                    disabled={!isDocumentEditable}
-                  >
-                    <option value="No Summary">No Summary</option>
-                    <option value="By Documents">By Documents</option>
-                    <option value="By Items">By Items</option>
-                  </select>
-                </label>
-              </div>
               <button type="button" className="del-btn del-btn--primary" onClick={addLine} disabled={!isDocumentEditable}>+ Add Line</button>
             </div>
 
@@ -2134,6 +2177,21 @@ function ServiceAPInvoicePage() {
         onSave={saveTaxInfoModal}
         taxInfoForm={taxInfoForm}
         onFormChange={handleTaxInfoFormChange}
+      />
+
+      <JournalEntryPreviewModal
+        isOpen={journalPreview.open}
+        loading={journalPreview.loading}
+        journalEntry={journalPreview.data}
+        onClose={() => setJournalPreview((prev) => ({ ...prev, open: false }))}
+        onOpenLinkedMaster={openJournalLinkedMaster}
+        onRegenerate={() => previewJournalEntry({ persist: Boolean(currentDocEntry) })}
+        onOpenSource={() => {
+          setJournalPreview((prev) => ({ ...prev, open: false }));
+          if (currentDocEntry) {
+            navigate('/services/ap-invoice', { state: { serviceApInvoiceDocEntry: currentDocEntry } });
+          }
+        }}
       />
 
     </form>
