@@ -11,6 +11,16 @@ export const fetchHSNCodes = async (query = '') => {
 };
 
 /**
+ * Get all SAC service codes from SAP B1 via ODBC
+ * @param {string} query - Optional search query
+ * @returns {Promise} Array of SAC service codes
+ */
+export const fetchSACCodes = async (query = '') => {
+  const params = query ? { query } : {};
+  return apiClient.get('/hsn-codes/sac', { params });
+};
+
+/**
  * Get single HSN Code by ChapterID via ODBC
  * @param {string} code - HSN Code (ChapterID)
  * @returns {Promise} HSN code details

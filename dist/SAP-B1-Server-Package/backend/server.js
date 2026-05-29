@@ -99,6 +99,7 @@ const reportLookupsRoutes        = require('./routes/reportLookups');
 const adminPanelRoutes           = require('./routes/adminPanelRoutes');
 const performanceRoutes          = require('./routes/performanceRoutes');
 const formSettingsRoutes         = require('./routes/formSettings');
+const predefinedTextRoutes       = require('./routes/predefinedTextRoutes');
 
 const app = express();
 
@@ -296,6 +297,7 @@ app.use('/api/lookups',            reportLookupsRoutes);
 app.use('/api/admin-panel',        adminPanelRoutes);
 app.use('/api/performance',        performanceRoutes);
 app.use('/api/form-settings',      formSettingsRoutes);
+app.use('/api/predefined-texts',   predefinedTextRoutes);
 app.use('/api',                    sapRoutes);
 
 // Health check

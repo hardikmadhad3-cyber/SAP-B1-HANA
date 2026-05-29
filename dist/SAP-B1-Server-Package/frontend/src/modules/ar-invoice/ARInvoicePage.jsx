@@ -29,6 +29,7 @@ import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/docume
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
+import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
@@ -1954,7 +1955,7 @@ function ARInvoicePage() {
         header: prep,
         lines: lines.map((line) => ({
           ...line,
-          udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
+          udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
         })),
         freightCharges: freightModal.freightCharges,
         header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),

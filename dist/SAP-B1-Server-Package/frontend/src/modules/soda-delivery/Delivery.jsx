@@ -29,6 +29,7 @@ import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/docume
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
+import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
 import { isRouteStateForActiveCompany } from '../../utils/companyStorageScope';
@@ -553,6 +554,7 @@ function SODADelivery() {
       quantity: String(line?.quantity ?? line?.Quantity ?? ''),
       openQty: String(line?.openQty ?? line?.OpenQuantity ?? line?.OpenQty ?? ''),
       unitPrice: String(line?.unitPrice ?? line?.UnitPrice ?? line?.Price ?? ''),
+      discountAmount: String(line?.discountAmount ?? line?.DiscountAmount ?? line?.U_Rate ?? line?.udf?.U_Rate ?? line?.line_udfs?.U_Rate ?? line?.lineUdfs?.U_Rate ?? ''),
       sellerPrice: String(line?.sellerPrice ?? line?.SellerPrice ?? ''),
       buyerPrice: String(line?.buyerPrice ?? line?.BuyerPrice ?? ''),
       sellerDelivery: line?.sellerDelivery || line?.SellerDelivery || '',
@@ -3384,9 +3386,11 @@ function SODADelivery() {
           const lineWithCalculatedFields = applyLineCalculatedFields(line);
           return {
             ...line,
+            discountAmount: lineWithCalculatedFields.discountAmount,
+            stdDiscount: lineWithCalculatedFields.stdDiscount,
             sellerBrokerage: lineWithCalculatedFields.sellerBrokerage,
             total: lineWithCalculatedFields.total,
-            udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
+            udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, sodaDeliveryFormSettings),
           };
         }),
         freightCharges: freightModal.freightCharges,

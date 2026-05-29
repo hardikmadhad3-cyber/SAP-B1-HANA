@@ -1,5 +1,6 @@
 const sapService = require('./sapService');
 const salesOrderDb = require('./salesOrderDbService');
+const hsnCodeDbService = require('./hsnCodeDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getActiveCompanyConfig } = require('./companyConfigService');
 
@@ -245,27 +246,43 @@ const DATE_DATA_TYPES = new Set([
   'time',
 ]);
 
-const getLineDiscountAmount = (line) => {
-  if (hasValue(line.discountAmount)) {
-    return toRequiredNumber(line.discountAmount, 0);
+const getExplicitLineDiscountAmount = (line = {}) => (
+  line.discountAmount ?? line.DiscountAmount ?? line.U_Rate ?? line.udf?.U_Rate
+);
+
+const getLineDiscountAmount = (line = {}) => {
+  const explicitDiscountAmount = getExplicitLineDiscountAmount(line);
+  if (hasValue(explicitDiscountAmount)) {
+    return toRequiredNumber(explicitDiscountAmount, 0);
   }
 
-  const unitPrice = toRequiredNumber(line.unitPrice, 0);
-  const discountPercent = toRequiredNumber(line.stdDiscount, 0);
+  const unitPrice = toRequiredNumber(line.unitPrice ?? line.UnitPrice ?? line.Price, 0);
+  const discountPercent = toRequiredNumber(line.stdDiscount ?? line.DiscountPercent ?? line.DiscPrcnt, 0);
   return unitPrice * discountPercent / 100;
 };
 
-const getLineDiscountPercent = (line) => {
-  const unitPrice = toRequiredNumber(line.unitPrice, 0);
+const getLineDiscountPercent = (line = {}) => {
+  const unitPrice = toRequiredNumber(line.unitPrice ?? line.UnitPrice ?? line.Price, 0);
   if (unitPrice <= 0) return 0;
   return getLineDiscountAmount(line) * 100 / unitPrice;
 };
+
+const hasLineDiscountValue = (line = {}) => [
+  line.discountAmount,
+  line.DiscountAmount,
+  line.U_Rate,
+  line.udf?.U_Rate,
+  line.stdDiscount,
+  line.DiscountPercent,
+  line.DiscPrcnt,
+].some(hasValue);
 
 const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
   { sapField: 'U_COMPRC', getValue: (line) => line.commission },
   { sapField: 'U_S_BrokPerQty', getValue: (line) => line.sellerBrokeragePerQty },
   { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf ?? line.unitPrice },
+  { sapField: 'U_Rate', getValue: (line) => (hasLineDiscountValue(line) ? getLineDiscountAmount(line) : undefined) },
   { sapField: 'U_Brok_Seller', getValue: (line) => line.sellerBrokerage },
   { sapField: 'U_Brok_Buyer', getValue: (line) => line.buyerBrokerage },
   { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
@@ -387,10 +404,11 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
     documentLine.UoMEntry = resolvedUomEntry;
   }
 
-  if (hasValue(line.discountAmount) || hasValue(line.stdDiscount)) {
-    const discountPercent = hasValue(line.discountAmount)
+  if (hasLineDiscountValue(line)) {
+    const explicitDiscountAmount = getExplicitLineDiscountAmount(line);
+    const discountPercent = hasValue(explicitDiscountAmount)
       ? getLineDiscountPercent(line)
-      : toOptionalNumber(line.stdDiscount);
+      : toOptionalNumber(line.stdDiscount ?? line.DiscountPercent ?? line.DiscPrcnt);
     if (discountPercent !== undefined) {
       documentLine.DiscountPercent = discountPercent;
     }
@@ -410,9 +428,14 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
   }
   setValidatedRdr1Field(documentLine, fieldMetadata, 'CountryOrg', countryOrg);
 
-  const sacEntry = toOptionalNumber(line.sacCode);
-  if (sacEntry !== undefined) {
-    documentLine.SACEntry = sacEntry;
+  const sacValue = line.sacCode ?? line.SACCode ?? line.SACEntry;
+  if (hasValue(sacValue)) {
+    const sacEntry = await hsnCodeDbService.resolveSACCodeToAbsEntry(sacValue);
+    if (sacEntry !== null && sacEntry !== undefined) {
+      documentLine.SACEntry = sacEntry;
+    } else {
+      console.warn(`[Sales Order Service] Skipping SAC value because it was not found in OSAC/OCHP: ${sacValue}`);
+    }
   }
 
   for (const mapping of SALES_ORDER_LINE_UDF_MAPPINGS) {

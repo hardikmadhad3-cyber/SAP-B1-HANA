@@ -28,6 +28,7 @@ const isCacheableGet = (url = '') => {
     normalized.includes('/items-modal') ||
     normalized.includes('/freight-charges') ||
     normalized.includes('/print-layouts') ||
+    pathOnly.endsWith('/predefined-texts') ||
     normalized.includes('/warehouse-state') ||
     normalized.includes('/state-from-address') ||
     normalized.includes('/customers/search') ||

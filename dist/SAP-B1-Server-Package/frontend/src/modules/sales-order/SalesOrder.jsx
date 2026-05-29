@@ -28,6 +28,7 @@ import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
+import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
@@ -2188,7 +2189,7 @@ function SalesOrder() {
                 baseEntry: line.baseEntry,
                 baseType: line.baseType,
                 baseLine: line.baseLine,
-                udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
+                udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
             }));
 
             const payload = {

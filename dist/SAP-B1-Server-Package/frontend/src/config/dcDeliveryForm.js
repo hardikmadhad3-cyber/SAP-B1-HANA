@@ -383,7 +383,25 @@ const BASE_MATRIX_COLUMNS = DC_DELIVERY_MATRIX_COLUMNS.map((field) => ({
 
 const getOptionValue = (option) => (typeof option === 'string' ? option : option?.value ?? '');
 
-const getDefaultUdfValue = (field) => {
+const getUdfIdentity = (field = {}) =>
+  [
+    field.key,
+    field.sapField,
+    field.aliasId,
+    field.label,
+    field.description,
+    field.Descr,
+  ].join(' ').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+const shouldKeepUdfBlankByDefault = (field = {}) => {
+  const identity = getUdfIdentity(field);
+  return identity.includes('termsofsupply') ||
+    identity.includes('supplyterms');
+};
+
+const getDefaultUdfValue = (field = {}) => {
+  if (shouldKeepUdfBlankByDefault(field)) return '';
+
   if (field.defaultValue !== undefined && field.defaultValue !== null && field.defaultValue !== '') {
     return field.defaultValue;
   }

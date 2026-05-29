@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import "./styles/itemMaster.css";
 import GeneralTab        from "./components/GeneralTab";
 import PurchasingTab     from "./components/PurchasingTab";
@@ -13,6 +14,8 @@ import LookupField       from "./components/LookupField";
 import ItemGroupSetup     from "./components/ItemGroupSetup";
 import ManufacturerSetup  from "./components/ManufacturerSetup";
 import { useAuth } from "../../auth/AuthContext";
+import { isRouteStateForActiveCompany } from "../../utils/companyStorageScope";
+import { replaceRouteStatePreservingWindow } from "../../utils/copyToState";
 import {
   createItem, getItem, updateItem, checkItemCodeExists,
   fetchItemGroups, fetchVendors, fetchPriceLists, fetchUoMGroups, fetchItemCodePrefixes,
@@ -139,6 +142,8 @@ const EMPTY_FORM = {
 
 export default function ItemMaster() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [mode, setMode]       = useState(MODES.ADD);
   const [tab, setTab]         = useState(0);
   const [form, setForm]       = useState(EMPTY_FORM);
@@ -185,14 +190,8 @@ export default function ItemMaster() {
   // Activate Find Mode
   const activateFindMode = useCallback(() => {
     if (isDirty && !window.confirm("You have unsaved changes. Discard them?")) return;
-    setMode(MODES.FIND);
-    resetForm();
-    // Auto-focus on primary search field (ItemCode)
-    setTimeout(() => {
-      const itemCodeInput = document.querySelector('input[name="ItemCodeNumber"]');
-      if (itemCodeInput) itemCodeInput.focus();
-    }, 100);
-  }, [isDirty, resetForm]);
+    navigate("/item-master/find");
+  }, [isDirty, navigate]);
 
   // Handle New
   const handleNew = useCallback(async () => {
@@ -294,6 +293,43 @@ export default function ItemMaster() {
     setPrefVendors(data.ItemPreferredVendors || []);
     setMode(MODES.UPDATE);
   }, [splitItemCode]);
+
+  useEffect(() => {
+    const stateItemCode = location.state?.itemMasterItemCode || location.state?.itemCode;
+    const queryItemCode = new URLSearchParams(location.search).get("itemCode");
+    const itemCodeToLoad = String(stateItemCode || queryItemCode || "").trim();
+
+    if (!itemCodeToLoad) return;
+
+    if (stateItemCode && !isRouteStateForActiveCompany(location.state)) {
+      replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+      return;
+    }
+
+    let ignore = false;
+    setLoading(true);
+    loadItem(itemCodeToLoad)
+      .then(() => {
+        if (!ignore) {
+          showAlert("success", `Item "${itemCodeToLoad}" loaded.`);
+          if (stateItemCode) {
+            replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+          }
+        }
+      })
+      .catch((err) => {
+        if (!ignore) {
+          showAlert("error", err.response?.data?.message || `Could not load "${itemCodeToLoad}".`);
+        }
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [location.pathname, location.search, location.state, loadItem, navigate, showAlert]);
 
   // Handle Find logic
   const handleFind = useCallback(async () => {
@@ -691,6 +727,42 @@ export default function ItemMaster() {
   const handleWarehouseChange = (i, field, value) =>
     setStock((prev) => prev.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
 
+  const handleDuplicate = useCallback(() => {
+    if (mode !== MODES.UPDATE || !form.ItemCode) return;
+
+    const duplicatedForm = {
+      ...form,
+      ItemCode: "",
+      ItemCodePrefix: "",
+      ItemCodeNumber: "",
+      BarCode: "",
+    };
+
+    const warehouseStock = warehouses.map((wh) => ({
+      WarehouseCode: wh.code,
+      WarehouseName: wh.name,
+      Branch: "",
+      Locked: "tNO",
+      InStock: 0,
+      Committed: 0,
+      Ordered: 0,
+      MinimalStock: "",
+      MaximalStock: "",
+      MinimalOrder: "",
+      StandardAveragePrice: 0,
+    }));
+
+    setForm(duplicatedForm);
+    setInitialForm(EMPTY_FORM);
+    setBarcodes([]);
+    setAttachments([]);
+    if (warehouseStock.length > 0) setStock(warehouseStock);
+    setItemCodeError("");
+    setMode(MODES.ADD);
+    showAlert("success", "Item duplicated. Enter a new item number and add it as a new item.");
+    setTimeout(() => document.querySelector('input[name="ItemCodeNumber"]')?.focus(), 50);
+  }, [form, mode, showAlert, warehouses]);
+
   const handleCFLSelect = async (item) => {
     setShowCFL(false);
     setLoading(true);
@@ -732,6 +804,11 @@ export default function ItemMaster() {
           >
             Find
           </button>
+          {mode === MODES.UPDATE && (
+            <button className="im-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+              Duplicate
+            </button>
+          )}
           {mode === MODES.UPDATE && (
             <button className="im-btn im-btn--danger" onClick={resetForm}>Cancel</button>
           )}

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getBP, searchBP } from '../../api/businessPartnerApi';
+import { createPredefinedText, fetchPredefinedTexts } from '../../api/predefinedTextApi';
+import LineValueLookupModal from '../sales-document/LineValueLookupModal';
 import BusinessPartnerModal from '../../modules/sales-order/components/BusinessPartnerModal';
 
 const SELLER_CODE_KEY = 'U_Seller_Code';
@@ -16,6 +18,11 @@ const normalizeFieldText = (value) =>
 const getFieldIdentity = (field) => normalizeFieldText(
   `${String(field?.key || '').replace(/^U_/i, '')} ${field?.label || ''}`
 );
+
+const isTermsOfSupplyField = (field) => {
+  const identity = getFieldIdentity(field);
+  return identity.includes('termsofsupply') || identity.includes('supplyterms');
+};
 
 const isSellerCodeField = (field) =>
   String(field?.key || '') === SELLER_CODE_KEY ||
@@ -67,11 +74,19 @@ const isBillToPartyCodeField = (field) => {
   return label === 'billtopartycode' ||
     label === 'billpartycode' ||
     label === 'partycode' ||
+    label === 'buyerscode2' ||
+    label === 'buyercode2' ||
     key === 'billtopartycode' ||
     key === 'billpartycode' ||
     key === 'partycode' ||
+    key === 'buyers2code' ||
+    key === 'buyerscode2' ||
+    key === 'buyercode2' ||
     identity.includes('billtopartycode') ||
-    identity.includes('billpartycode');
+    identity.includes('billpartycode') ||
+    identity.includes('buyers2code') ||
+    identity.includes('buyerscode2') ||
+    identity.includes('buyercode2');
 };
 
 const isBillToPartyNameField = (field) => {
@@ -82,11 +97,19 @@ const isBillToPartyNameField = (field) => {
   return label === 'billtopartyname' ||
     label === 'billpartyname' ||
     label === 'partyname' ||
+    label === 'buyersname2' ||
+    label === 'buyername2' ||
     key === 'billtopartyname' ||
     key === 'billpartyname' ||
     key === 'partyname' ||
+    key === 'buyers2name' ||
+    key === 'buyersname2' ||
+    key === 'buyername2' ||
     identity.includes('billtopartyname') ||
-    identity.includes('billpartyname');
+    identity.includes('billpartyname') ||
+    identity.includes('buyers2name') ||
+    identity.includes('buyersname2') ||
+    identity.includes('buyername2');
 };
 
 const isBillToPartyAddressIdField = (field) => {
@@ -97,12 +120,18 @@ const isBillToPartyAddressIdField = (field) => {
   return label === 'billtopartyaddressid' ||
     label === 'billtoaddressid' ||
     label === 'partyaddressid' ||
+    label === 'buyersaddressid' ||
+    label === 'buyeraddressid' ||
     key === 'billtopartyaddressid' ||
     key === 'billtoaddressid' ||
     key === 'partyaddressid' ||
+    key === 'buyersaddressid' ||
+    key === 'buyeraddressid' ||
     identity.includes('billtopartyaddressid') ||
     identity.includes('billtoaddressid') ||
-    identity.includes('partyaddressid');
+    identity.includes('partyaddressid') ||
+    identity.includes('buyersaddressid') ||
+    identity.includes('buyeraddressid');
 };
 
 const isBillToPartyAddressField = (field) => {
@@ -115,13 +144,19 @@ const isBillToPartyAddressField = (field) => {
     label === 'billtoaddressbillto' ||
     label === 'billpartyaddress' ||
     label === 'partyaddress' ||
+    label === 'buyersaddress2' ||
+    label === 'buyeraddress2' ||
     key === 'billtopartyaddress' ||
     key === 'billtoaddressbillto' ||
     key === 'billpartyaddress' ||
     key === 'partyaddress' ||
+    key === 'buyersaddress' ||
+    key === 'buyeraddress' ||
     identity.includes('billtopartyaddress') ||
     identity.includes('billtoaddressbillto') ||
-    identity.includes('billpartyaddress');
+    identity.includes('billpartyaddress') ||
+    identity.includes('buyersaddress') ||
+    identity.includes('buyeraddress');
 };
 
 const isSellerAddressField = (field) =>
@@ -525,6 +560,11 @@ function renderLookupInputControl(value, onChange, onLookup, disabled, title = '
   return showLookup ? renderLookupControl(input, onLookup, disabled, title) : input;
 }
 
+const PREDEFINED_TEXT_COLUMNS = [
+  { key: 'code', label: 'Text Code', width: 150 },
+  { key: 'text', label: 'Text', primary: true },
+];
+
 function SellerAddressModal({
   isOpen,
   onClose,
@@ -747,6 +787,11 @@ function HeaderUdfSidebar({
   const [billToPartyAddressLoading, setBillToPartyAddressLoading] = useState(false);
   const [billToPartyAddressError, setBillToPartyAddressError] = useState('');
   const lastLoadedBillToPartyCodeRef = useRef('');
+  const [termsLookupOpen, setTermsLookupOpen] = useState(false);
+  const [termsLookupFieldKey, setTermsLookupFieldKey] = useState('');
+  const [termsLookupOptions, setTermsLookupOptions] = useState([]);
+  const [termsLookupLoading, setTermsLookupLoading] = useState(false);
+  const [termsLookupError, setTermsLookupError] = useState('');
   const valuesRef = useRef(values || {});
   const onFieldChangeRef = useRef(onFieldChange);
   const loadBillToPartyDetailsRef = useRef(loadBillToPartyDetails);
@@ -1112,6 +1157,48 @@ function HeaderUdfSidebar({
     }
   };
 
+  const openTermsOfSupplyLookup = async (field) => {
+    setTermsLookupFieldKey(field?.key || '');
+    setTermsLookupOpen(true);
+    setTermsLookupLoading(true);
+    setTermsLookupError('');
+
+    try {
+      const rows = await fetchPredefinedTexts();
+      setTermsLookupOptions(rows);
+    } catch (error) {
+      console.error('Failed to load predefined texts:', error);
+      setTermsLookupOptions([]);
+      setTermsLookupError(error?.response?.data?.detail || error?.message || 'Failed to load predefined texts.');
+    } finally {
+      setTermsLookupLoading(false);
+    }
+  };
+
+  const handleTermsLookupSelect = (option) => {
+    const selectedText = String(option?.text || option?.value || '').trim();
+    if (termsLookupFieldKey) {
+      changeField(termsLookupFieldKey, selectedText);
+    }
+  };
+
+  const handleTermsLookupCreate = async ({ value, description }) => {
+    const result = await createPredefinedText({
+      textCode: value,
+      text: description,
+    });
+    const createdOption = result?.option || {
+      code: value,
+      text: description,
+      value: description,
+      description: value,
+      label: value ? `${value} - ${description}` : description,
+    };
+    const nextOptions = result?.texts || await fetchPredefinedTexts();
+    setTermsLookupOptions(nextOptions);
+    return createdOption;
+  };
+
   const applySellerAddress = (seller) => {
     const selectedAddress = selectSellerAddress(seller?.BPAddresses, seller);
     changeField(SELLER_ADDRESS_ID_KEY, getAddressId(selectedAddress));
@@ -1414,10 +1501,16 @@ function HeaderUdfSidebar({
 
           <div className="po-udf-sidebar-body">
             {orderedFields.map((field) => {
-              const fieldDisabled = disabled || field.readOnly || formSettings.headerUdfs?.[field.key]?.active === false;
-              const currentToVendorAddressId = String(values[field.key] || '');
-              const currentBillToPartyAddressId = String(values[field.key] || '');
-              const fieldLookup = isSellerCodeField(field)
+              const termsOfSupplyField = isTermsOfSupplyField(field);
+              const fieldValue = values[field.key];
+              const fieldDisabled = disabled ||
+                (!termsOfSupplyField && field.readOnly) ||
+                formSettings.headerUdfs?.[field.key]?.active === false;
+              const currentToVendorAddressId = String(fieldValue || '');
+              const currentBillToPartyAddressId = String(fieldValue || '');
+              const fieldLookup = termsOfSupplyField
+                ? () => openTermsOfSupplyLookup(field)
+                : isSellerCodeField(field)
                 ? openSellerLookup
                 : isToVendorCodeField(field)
                   ? openToVendorLookup
@@ -1446,9 +1539,17 @@ function HeaderUdfSidebar({
                     fieldDisabled,
                     'List of Bill To Party Addresses'
                   )
+                : termsOfSupplyField
+                  ? renderLookupInputControl(
+                    fieldValue || '',
+                    (nextValue) => changeField(field.key, nextValue),
+                    () => openTermsOfSupplyLookup(field),
+                    fieldDisabled,
+                    'List of Predefined Text'
+                  )
                 : renderField(
                   field,
-                  values[field.key],
+                  fieldValue,
                   fieldDisabled,
                   (nextValue) => {
                     if (isToVendorAddressIdField(field)) {
@@ -1538,6 +1639,20 @@ function HeaderUdfSidebar({
         error={billToPartyAddressError}
         title="Bill To Party Address"
         emptyMessage="No bill-to addresses found"
+      />
+      <LineValueLookupModal
+        isOpen={termsLookupOpen}
+        onClose={() => setTermsLookupOpen(false)}
+        onSelect={handleTermsLookupSelect}
+        onCreate={handleTermsLookupCreate}
+        options={termsLookupOptions}
+        title="List of Predefined Text"
+        searchPlaceholder="Search predefined text"
+        emptyMessage={termsLookupLoading ? 'Loading predefined texts...' : (termsLookupError || 'No predefined text found')}
+        allowCreate
+        columns={PREDEFINED_TEXT_COLUMNS}
+        createValueLabel="Text Code"
+        createDescriptionLabel="Text"
       />
     </>
   );

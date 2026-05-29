@@ -57,6 +57,8 @@ export default function LineValueLookupModal({
   emptyMessage = 'No values found',
   allowCreate = true,
   columns = null,
+  createValueLabel = 'Value',
+  createDescriptionLabel = 'Description',
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(-1);
@@ -181,9 +183,9 @@ export default function LineValueLookupModal({
         {allowCreate && showCreateForm && (
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sap-border)', background: 'var(--sap-surface-soft)' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: 8, alignItems: 'center' }}>
-              <label style={{ fontSize: 12, fontWeight: 600 }}>Value</label>
+              <label style={{ fontSize: 12, fontWeight: 600 }}>{createValueLabel}</label>
               <input type="text" value={newValue} onChange={(event) => setNewValue(event.target.value)} style={{ padding: '4px 8px', fontSize: 12, border: '1px solid var(--sap-border-strong)', borderRadius: 'var(--sap-radius-xs)' }} autoFocus />
-              <label style={{ fontSize: 12, fontWeight: 600 }}>Description</label>
+              <label style={{ fontSize: 12, fontWeight: 600 }}>{createDescriptionLabel}</label>
               <input type="text" value={newDescription} onChange={(event) => setNewDescription(event.target.value)} style={{ padding: '4px 8px', fontSize: 12, border: '1px solid var(--sap-border-strong)', borderRadius: 'var(--sap-radius-xs)' }} />
             </div>
             {createError && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--sap-danger)' }}>{createError}</div>}

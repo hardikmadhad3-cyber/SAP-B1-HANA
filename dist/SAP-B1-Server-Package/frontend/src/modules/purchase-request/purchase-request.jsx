@@ -20,6 +20,7 @@ import { recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
+import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
@@ -1244,7 +1245,11 @@ function PurchaseRequest() {
         series: header.series ? Number(header.series) : undefined,
       };
 
-      const payload = { company_id: PURCHASE_ORDER_COMPANY_ID, header: prep, lines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
+      const payloadLines = lines.map((line) => ({
+        ...line,
+        udf: buildVisibleEnteredRowUdfPayload(ROW_UDF_DEFINITIONS, line.udf || {}, formSettings),
+      }));
+      const payload = { company_id: PURCHASE_ORDER_COMPANY_ID, header: prep, lines: payloadLines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
       const r = currentDocEntry
         ? await updatePurchaseRequest(currentDocEntry, payload)
         : await submitPurchaseRequest(payload);

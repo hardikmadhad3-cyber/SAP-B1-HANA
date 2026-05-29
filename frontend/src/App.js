@@ -23,7 +23,9 @@ import "./styles/sap-ui.css";
 import "./styles/route-loading.css";
 
 const ItemMaster = lazyWithRetry(() => import("./pages/ItemMaster"));
+const ItemMasterList = lazyWithRetry(() => import("./pages/ItemMasterList"));
 const BusinessPartner = lazyWithRetry(() => import("./pages/BusinessPartner"));
+const BusinessPartnerList = lazyWithRetry(() => import("./pages/BusinessPartnerList"));
 const Warehouse = lazyWithRetry(() => import("./pages/Warehouse"));
 const PriceList = lazyWithRetry(() => import("./pages/PriceList"));
 const Delivery = lazyWithRetry(() => import("./pages/Delivery"));
@@ -147,7 +149,9 @@ function App() {
                   <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/item-master" element={<ItemMaster />} />
+                  <Route path="/item-master/find" element={<ItemMasterList />} />
                   <Route path="/business-partner" element={<BusinessPartner />} />
+                  <Route path="/business-partner/find" element={<BusinessPartnerList />} />
                   <Route path="/warehouse" element={<Warehouse />} />
                   <Route path="/price-list" element={<PriceList />} />
                   <Route path="/tax-code" element={<TaxCode />} />

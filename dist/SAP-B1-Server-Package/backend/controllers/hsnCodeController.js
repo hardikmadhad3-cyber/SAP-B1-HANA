@@ -27,6 +27,31 @@ const getHSNCodes = async (req, res) => {
 };
 
 /**
+ * Get all India SAC service codes from SAP B1 OSAC table via ODBC
+ * GET /api/hsn-codes/sac
+ */
+const getSACCodes = async (req, res) => {
+  try {
+    const { query = "", top = 5000, skip = 0 } = req.query;
+
+    const sacCodes = await hsnCodeDb.getSACCodes(
+      query,
+      parseInt(top) || 5000,
+      parseInt(skip) || 0
+    );
+
+    res.json(sacCodes);
+  } catch (err) {
+    const msg = err.message || "Failed to fetch SAC codes";
+    console.error("[HSN Code Controller] getSACCodes error:", msg, err);
+    res.status(500).json({
+      message: msg,
+      detail: { error: { message: msg } }
+    });
+  }
+};
+
+/**
  * Get single HSN Code by ChapterID via ODBC
  * GET /api/hsn-codes/:code
  */
@@ -70,6 +95,7 @@ const getHSNCodeFromItem = async (req, res) => {
 
 module.exports = {
   getHSNCodes,
+  getSACCodes,
   getHSNCode,
   getHSNCodeFromItem,
 };

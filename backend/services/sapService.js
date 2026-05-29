@@ -10,21 +10,53 @@ const { getRequestContext, getOrSetContextValue } = require('./requestContextSer
 const { getActiveCompanyConfig } = require('./companyConfigService');
 
 const httpsAgentsByRejectMode = new Map();
+const SERVICE_LAYER_REQUEST_TIMEOUT_MS = Number(process.env.SAP_SERVICE_LAYER_TIMEOUT_MS || 180000);
+const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+]);
 
-const getHttpsAgent = (rejectUnauthorized) => {
-  const key = rejectUnauthorized ? 'strict' : 'relaxed';
+const getHttpsAgent = (rejectUnauthorized, { keepAlive = true } = {}) => {
+  const key = `${rejectUnauthorized ? 'strict' : 'relaxed'}:${keepAlive ? 'keep-alive' : 'single-use'}`;
   if (!httpsAgentsByRejectMode.has(key)) {
     httpsAgentsByRejectMode.set(key, new https.Agent({
-      keepAlive: true,
-      keepAliveMsecs: 30000,
+      keepAlive,
+      ...(keepAlive ? { keepAliveMsecs: 30000, maxFreeSockets: 10 } : {}),
       maxSockets: 50,
-      maxFreeSockets: 10,
-      timeout: 60000,
+      timeout: SERVICE_LAYER_REQUEST_TIMEOUT_MS,
       rejectUnauthorized,
     }));
   }
 
   return httpsAgentsByRejectMode.get(key);
+};
+
+const isTransientNetworkError = (error) => (
+  !error.response &&
+  (
+    TRANSIENT_NETWORK_CODES.has(error.code) ||
+    /socket hang up|connection reset|timed out|timeout/i.test(String(error.message || ''))
+  )
+);
+
+const createServiceLayerNetworkError = (error, method, fullUrl) => {
+  const parsed = new URL(fullUrl);
+  const wrapped = new Error(`SAP Service Layer connection closed before a response (${error.message || error.code || 'network error'}). Please try the save again after confirming SAP Service Layer is reachable.`);
+  wrapped.code = error.code || 'SAP_SERVICE_LAYER_NETWORK';
+  wrapped.cause = error;
+  wrapped.serviceLayer = {
+    method,
+    host: parsed.host,
+    path: parsed.pathname,
+  };
+  return wrapped;
 };
 
 const SESSION_TTL_MS = 25 * 60 * 1000;
@@ -317,14 +349,19 @@ const login = async (companyDbOrConfig) => {
     return pendingLogin;
   }
 
+  const loginUrl = buildUrl(config.baseUrl, '/Login');
   const loginPromise = axios.post(
-    buildUrl(config.baseUrl, '/Login'),
+    loginUrl,
     {
       UserName: config.username,
       Password: config.password,
       CompanyDB: resolvedCompanyDb,
     },
-    { httpsAgent: getHttpsAgent(config.rejectUnauthorized) },
+    {
+      httpsAgent: getHttpsAgent(config.rejectUnauthorized, { keepAlive: false }),
+      timeout: SERVICE_LAYER_REQUEST_TIMEOUT_MS,
+      headers: { Connection: 'close' },
+    },
   ).then((response) => {
     const sessionState = getSessionState(config);
     sessionState.sessionCookie = extractCookie(response.headers['set-cookie']);
@@ -332,6 +369,10 @@ const login = async (companyDbOrConfig) => {
     sessionState.sessionExpireAt = Date.now() + SESSION_TTL_MS;
     console.log(`[SAP] Session established for ${resolvedCompanyDb}`);
     return sessionState.sessionCookie;
+  }).catch((error) => {
+    throw isTransientNetworkError(error)
+      ? createServiceLayerNetworkError(error, 'POST', loginUrl)
+      : error;
   }).finally(() => {
     pendingLoginsByCompanyDb.delete(loginKey);
   });
@@ -349,21 +390,24 @@ const ensureSession = async (companyDb) => {
   }
 };
 
-const rawRequest = (method, fullUrl, headers, body, rejectUnauthorized) =>
+const rawRequest = (method, fullUrl, headers, body, rejectUnauthorized, requestOptions = {}) =>
   new Promise((resolve, reject) => {
     const parsed = new URL(fullUrl);
     const requestBody = body === undefined || body === null ? '' : JSON.stringify(body);
+    const normalizedMethod = method.toUpperCase();
+    const keepAlive = requestOptions.keepAlive !== false;
     const options = {
       hostname: parsed.hostname,
       port: parsed.port || 443,
       path: parsed.pathname + parsed.search,
-      method: method.toUpperCase(),
+      method: normalizedMethod,
       headers: {
         'Content-Type': 'application/json',
         ...(requestBody ? { 'Content-Length': Buffer.byteLength(requestBody) } : {}),
+        ...(!keepAlive ? { Connection: 'close' } : {}),
         ...headers,
       },
-      agent: getHttpsAgent(rejectUnauthorized),
+      agent: getHttpsAgent(rejectUnauthorized, { keepAlive }),
       rejectUnauthorized,
     };
 
@@ -389,25 +433,35 @@ const rawRequest = (method, fullUrl, headers, body, rejectUnauthorized) =>
       });
     });
 
-    req.on('error', reject);
+    req.setTimeout(SERVICE_LAYER_REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`SAP Service Layer request timed out after ${SERVICE_LAYER_REQUEST_TIMEOUT_MS}ms`));
+    });
+    req.on('error', (error) => reject(
+      isTransientNetworkError(error)
+        ? createServiceLayerNetworkError(error, normalizedMethod, fullUrl)
+        : error,
+    ));
     if (requestBody) req.write(requestBody);
     req.end();
   });
 
-const request = async (config, retryOnAuth = true) => {
+const request = async (config, retryOnAuth = true, retryOnTransientRead = true) => {
   const serviceLayerConfig = await resolveServiceLayerConfig(config);
   const companyDb = serviceLayerConfig.companyDb;
   await ensureSession(companyDb);
   const sessionState = getSessionState(serviceLayerConfig);
   const requestData = await withAuthenticatedUserStamp(config, companyDb);
+  const normalizedMethod = String(config.method || 'get').trim().toUpperCase();
+  const useKeepAlive = !WRITE_METHODS.has(normalizedMethod);
 
   try {
     return await rawRequest(
-      config.method || 'get',
+      normalizedMethod,
       buildUrl(serviceLayerConfig.baseUrl, config.url),
       { Cookie: sessionState.sessionCookie, ...(config.headers || {}) },
       requestData,
       serviceLayerConfig.rejectUnauthorized,
+      { keepAlive: useKeepAlive },
     );
   } catch (error) {
     if (retryOnAuth && [401, 403].includes(error.response?.status)) {
@@ -416,7 +470,12 @@ const request = async (config, retryOnAuth = true) => {
       sessionState.sessionCookie = '';
       sessionState.sessionExpireAt = 0;
       await login(serviceLayerConfig);
-      return request(config, false);
+      return request(config, false, retryOnTransientRead);
+    }
+
+    if (retryOnTransientRead && IDEMPOTENT_METHODS.has(normalizedMethod) && isTransientNetworkError(error.cause || error)) {
+      console.warn(`[SAP] Transient ${normalizedMethod} connection error; retrying once: ${error.message}`);
+      return request(config, retryOnAuth, false);
     }
 
     throw error;
