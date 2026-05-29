@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import "../item-master/styles/itemMaster.css";
 import "./styles/businessPartner.css";
 import GeneralTab    from "./components/GeneralTab";
@@ -19,6 +19,8 @@ import {
 } from "../../api/businessPartnerApi";
 import { searchShippingTypes } from "../../api/shippingTypeApi";
 import { searchAccounts }      from "../../api/chartOfAccountsApi";
+import { isRouteStateForActiveCompany } from "../../utils/companyStorageScope";
+import { replaceRouteStatePreservingWindow } from "../../utils/copyToState";
 
 const TABS  = ["General", "Contact Persons", "Addresses", "Payment Terms", "Payment Run", "Accounting", "Properties", "Remarks"];
 const MODES = { ADD: "add", FIND: "find", UPDATE: "update" };
@@ -574,6 +576,7 @@ function buildPayload(form) {
 
 export default function BusinessPartnerModule() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [mode, setMode]       = useState(MODES.ADD);
   const [tab, setTab]         = useState(0);
   const [form, setForm]       = useState(EMPTY_FORM);
@@ -627,10 +630,18 @@ export default function BusinessPartnerModule() {
 
   useEffect(() => {
     let ignore = false;
-    const cardCode = new URLSearchParams(location.search).get("cardCode");
+    const stateCardCode = location.state?.businessPartnerCardCode || location.state?.cardCode;
+    const cardCode = stateCardCode || new URLSearchParams(location.search).get("cardCode");
     const normalizedCardCode = String(cardCode || "").trim();
 
     if (!normalizedCardCode) {
+      return () => {
+        ignore = true;
+      };
+    }
+
+    if (stateCardCode && !isRouteStateForActiveCompany(location.state)) {
+      replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
       return () => {
         ignore = true;
       };
@@ -648,6 +659,9 @@ export default function BusinessPartnerModule() {
         setMode(MODES.UPDATE);
         setTab(0);
         showAlert("success", `"${data.CardCode}" loaded.`);
+        if (stateCardCode) {
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+        }
       } catch (error) {
         if (!ignore) {
           showAlert("error", error.response?.data?.message || `Could not load "${normalizedCardCode}".`);
@@ -664,7 +678,7 @@ export default function BusinessPartnerModule() {
     return () => {
       ignore = true;
     };
-  }, [location.search]);
+  }, [location.pathname, location.search, location.state, navigate]);
 
   useEffect(() => {
     const currentContactPerson = String(form.ContactPerson || "").trim();
@@ -743,10 +757,8 @@ export default function BusinessPartnerModule() {
   };
 
   const activateFind = useCallback(() => {
-    setMode(MODES.FIND);
-    resetForm();
-    setTimeout(() => document.querySelector('input[name="CardCode"]')?.focus(), 100);
-  }, []);
+    navigate("/business-partner/find");
+  }, [navigate]);
 
   // Lookup helpers
   const fetchShippingTypesLookup = async (q = "") => {
@@ -919,6 +931,29 @@ export default function BusinessPartnerModule() {
     } finally { setLoading(false); }
   };
 
+  const handleDuplicate = useCallback(() => {
+    if (mode !== MODES.UPDATE || !form.CardCode) return;
+
+    const duplicatedAddresses = (form.BPAddresses || []).map(({ RowNum, ...address }) => address);
+    const duplicatedBanks = (form.BPBankAccounts || []).map(({ InternalKey, ...bank }) => bank);
+    const duplicatedContacts = (form.ContactEmployees || []).map(({ InternalCode, CardCode, ...contact }) => contact);
+
+    setForm({
+      ...form,
+      Series: "",
+      CardCode: "",
+      BPAddresses: duplicatedAddresses,
+      BPBankAccounts: duplicatedBanks,
+      ContactEmployees: duplicatedContacts,
+      PaymentBankInternalKey: "",
+      PaymentBankSelectedIndex: duplicatedBanks.length > 0 ? 0 : -1,
+    });
+    setMode(MODES.ADD);
+    setTab(0);
+    showAlert("success", "Business partner duplicated. Enter a new code and add it as a new business partner.");
+    setTimeout(() => document.querySelector('input[name="CardCode"]')?.focus(), 50);
+  }, [form, mode]);
+
   const handleUpdate = useCallback(async () => {
     if (!form.CardCode.trim()) { showAlert("error", "Card Code is required."); return; }
     setLoading(true);
@@ -966,6 +1001,9 @@ export default function BusinessPartnerModule() {
         <button className="im-btn" onClick={() => { setMode(MODES.ADD); resetForm(); }}>New</button>
         <button className={`im-btn${mode === MODES.FIND ? " im-btn--find-active" : ""}`}
           onClick={activateFind} title="Ctrl+F">Find</button>
+        {mode === MODES.UPDATE && (
+          <button className="im-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>Duplicate</button>
+        )}
         {mode === MODES.UPDATE && (
           <button className="im-btn" onClick={resetForm}>Cancel</button>
         )}

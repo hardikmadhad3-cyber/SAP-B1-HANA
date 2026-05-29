@@ -15,6 +15,8 @@ const normalizeMenuPath = (rawPath) => {
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 };
 
+const ALWAYS_ALLOWED_PATHS = ['/dashboard'];
+
 export const normalizePath = (path) => {
   const normalized = normalizeMenuPath(path);
   return normalized === '' ? '/dashboard' : normalized;
@@ -33,15 +35,17 @@ export const flattenMenuTree = (menus = []) => {
   return flattened;
 };
 
-export const getDefaultRoute = (menuPaths = []) => {
-  const normalizedPaths = menuPaths.map(normalizePath);
-  if (normalizedPaths.includes('/dashboard')) return '/dashboard';
-  return normalizedPaths[0] || '/dashboard';
+export const getDefaultRoute = () => {
+  return '/dashboard';
 };
 
 export const isPathAllowed = (menuPaths = [], pathname = '/') => {
   const normalizedPath = normalizePath(pathname);
   const normalizedMenuPaths = menuPaths.map(normalizePath);
+
+  if (ALWAYS_ALLOWED_PATHS.includes(normalizedPath)) {
+    return true;
+  }
 
   if (!normalizedMenuPaths.length) {
     return normalizedPath === '/dashboard';

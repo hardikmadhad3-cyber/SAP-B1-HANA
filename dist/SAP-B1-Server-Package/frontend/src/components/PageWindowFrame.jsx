@@ -60,8 +60,8 @@ const prettifyPathTitle = (pathname = "") => {
 function PageWindowFrame({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { menus, menuPaths } = useAuth();
-  const { closeActiveAndRestorePrevious } = useSapWindowTaskbarActions();
+  const { menus } = useAuth();
+  const { closeActiveAndRestorePrevious, minimizeCurrentRouteTask } = useSapWindowTaskbarActions();
   const normalizedPath = normalizePath(location.pathname);
   const isExcludedPath = WINDOW_FRAME_EXCLUDED_PATHS.has(normalizedPath);
   const routedWindow = location.state?.sapWindow || null;
@@ -88,23 +88,7 @@ function PageWindowFrame({ children }) {
     ? getDisplayMenuName(currentMenu.menuName)
     : prettifyPathTitle(normalizedPath));
 
-  const availablePaths = useMemo(
-    () => Array.from(new Set((menuPaths || []).map(normalizePath).filter(Boolean))),
-    [menuPaths],
-  );
-
-  const getFallbackPath = () => {
-    const nonCurrentPaths = availablePaths.filter((path) => path !== normalizedPath);
-    if (normalizedPath === DASHBOARD_PATH) {
-      return nonCurrentPaths[0] || DASHBOARD_PATH;
-    }
-
-    if (availablePaths.includes(DASHBOARD_PATH)) {
-      return DASHBOARD_PATH;
-    }
-
-    return nonCurrentPaths[0] || normalizedPath;
-  };
+  const getFallbackPath = () => DASHBOARD_PATH;
 
   const windowFrame = useFloatingWindow({
     isOpen: !isExcludedPath,
@@ -136,7 +120,8 @@ function PageWindowFrame({ children }) {
   }
 
   const handleMinimize = () => {
-    windowFrame.toggleMinimize();
+    minimizeCurrentRouteTask();
+    navigate(DASHBOARD_PATH, { state: null });
   };
 
   const handleClose = () => {

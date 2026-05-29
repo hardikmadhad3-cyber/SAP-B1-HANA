@@ -31,6 +31,7 @@ import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/docume
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
+import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
 import { copyToDocument } from '../../services/documentCopyService';
@@ -2062,7 +2063,7 @@ function SalesQuotation() {
         whse: line.whse,
         loc: line.loc,
         branch: line.branch,
-        udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
+        udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
       }));
       
       const payload = {

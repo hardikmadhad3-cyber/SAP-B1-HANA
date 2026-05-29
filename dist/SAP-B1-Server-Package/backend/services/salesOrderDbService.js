@@ -4,6 +4,7 @@
  */
 const db = require('./dbService');
 const masterDataDbService = require('./masterDataDbService');
+const hsnCodeDbService = require('./hsnCodeDbService');
 const {
   getHeaderUdfValues,
   getLineUdfValues,
@@ -34,6 +35,28 @@ const formatSapDate = (value) => {
   if (!value) return '';
   if (value instanceof Date) return value.toISOString().split('T')[0];
   return String(value).split('T')[0];
+};
+
+const toFiniteNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatDecimal = (value, decimals = 2) => {
+  const number = toFiniteNumber(value);
+  if (number === null) return '';
+
+  const normalizedDecimals = Number.isInteger(decimals) && decimals >= 0 ? decimals : 2;
+  const factor = 10 ** normalizedDecimals;
+  return (Math.round((number + Number.EPSILON) * factor) / factor).toFixed(normalizedDecimals);
+};
+
+const getDisplayDiscountAmount = (unitPrice, discountPercent) => {
+  const price = toFiniteNumber(unitPrice);
+  const percent = toFiniteNumber(discountPercent);
+  if (price === null || percent === null) return '';
+
+  return formatDecimal((price * percent) / 100, 2);
 };
 
 const normalizeSalesOrderStatusCode = (value) => {
@@ -637,6 +660,28 @@ const getSalesOrderLineFieldMetadata = async () => {
   return getTableFieldMetadata('RDR1');
 };
 
+const getSacLookupSqlParts = (lineAlias, sacAlias, sacFieldMetadata = {}) => {
+  const hasOsacTable = Object.keys(sacFieldMetadata || {}).length > 0;
+  const serviceNameColumn = sacFieldMetadata.ServName
+    ? `${sacAlias}.ServName`
+    : sacFieldMetadata.ServiceName
+      ? `${sacAlias}.ServiceName`
+      : "''";
+  const serviceCodeColumn = sacFieldMetadata.ServCode
+    ? `${sacAlias}.ServCode`
+    : sacFieldMetadata.ServiceCode
+      ? `${sacAlias}.ServiceCode`
+      : "''";
+  const sacEntryExpression = `CAST(${lineAlias}.SACEntry AS NVARCHAR(50))`;
+
+  return {
+    joinSql: hasOsacTable ? `LEFT JOIN OSAC ${sacAlias} ON ${sacAlias}.AbsEntry = ${lineAlias}.SACEntry` : '',
+    serviceNameColumn,
+    serviceCodeColumn,
+    displayExpression: `COALESCE(NULLIF(LTRIM(RTRIM(${serviceNameColumn})), ''), NULLIF(LTRIM(RTRIM(${serviceCodeColumn})), ''), ${sacEntryExpression})`,
+  };
+};
+
 const getItemUomContext = async (itemCode) => {
   const normalizedItemCode = String(itemCode || '').trim();
   if (!normalizedItemCode) return null;
@@ -1083,11 +1128,11 @@ const getStateFromAddress = async (cardCode, addressCode) => {
 const getReferenceData = async () => {
   const [
     customers, items, warehouses, paymentTerms,
-    shippingTypes, branches, states, countries, distributionRules, taxCodes, uomRaw, salesEmployees, owners,
+    shippingTypes, branches, states, countries, distributionRules, taxCodes, sacCodes, uomRaw, salesEmployees, owners,
     buyerQualityOptions, sellerQualityOptions, buyerPriceOptions, sellerPriceOptions, udfMetadata,
   ] = await Promise.all([
     getCustomers(), getItems(), getWarehouses(), getPaymentTerms(),
-    getShippingTypes(), getBranches(), getStates(), getCountries(), getDistributionRules(), getTaxCodes(), getUomGroups(), getSalesEmployees(), getOwners(),
+    getShippingTypes(), getBranches(), getStates(), getCountries(), getDistributionRules(), getTaxCodes(), hsnCodeDbService.getSACCodes('', 5000, 0), getUomGroups(), getSalesEmployees(), getOwners(),
     getLookupValues('U_Buyer_Quality'),
     getLookupValues('U_Seller_Quality'),
     getLookupValues('U_Buyer_Price'),
@@ -1154,6 +1199,11 @@ const getReferenceData = async () => {
       FactorDescription: rule.FactorDescription || '',
     })),
     tax_codes:      taxCodes.map(t => ({ Code: t.Code, Name: t.Name, Rate: t.Rate, GSTType: t.GSTType })),
+    sac_codes:      sacCodes.map(s => ({
+      absEntry: s.absEntry ?? s.AbsEntry ?? null,
+      serviceCode: s.serviceCode || s.code || s.ServiceCode || s.ServCode || '',
+      serviceName: s.serviceName || s.description || s.ServiceName || s.ServName || '',
+    })),
     uom_groups,
     sales_employees: salesEmployees.map(e => ({ SlpCode: e.SlpCode, SlpName: e.SlpName })),
     owners:         owners.map(o => ({ empID: o.empID, firstName: o.firstName, lastName: o.lastName, FullName: o.FullName })),
@@ -1528,12 +1578,15 @@ const getSalesOrder = async (docEntry) => {
 
   const resolvedDocEntry = resolvedDocument.DocEntry;
   const lineFieldMetadata = await getSalesOrderLineFieldMetadata();
+  const sacFieldMetadata = await getTableFieldMetadata('OSAC');
   const lineField = (columnName, alias, fallback = "''") => (
     lineFieldMetadata?.[columnName]
       ? `T1.${quoteSqlIdentifier(columnName)} AS ${quoteSqlIdentifier(alias)}`
       : `${fallback} AS ${quoteSqlIdentifier(alias)}`
   );
   const hasSellerPaymentTermsField = Boolean(lineFieldMetadata?.U_Seller_Payment_Terms);
+  const hasRateField = Boolean(lineFieldMetadata?.U_Rate);
+  const sacSql = getSacLookupSqlParts('T1', 'SAC', sacFieldMetadata);
 
   // ✅ Get complete header and line data with Place of Supply and HSN Code
   let rows = await safe(db.query(`
@@ -1597,6 +1650,10 @@ const getSalesOrder = async (docEntry) => {
     T1.unitMsr AS UomCode,
     T1.unitMsr AS UomName,
     T1.OcrCode AS DistributionRule,
+    ${lineField('SACEntry', 'SACEntry', 'NULL')},
+    ${sacSql.displayExpression} AS SACCode,
+    ${sacSql.serviceNameColumn} AS SACServiceName,
+    ${sacSql.serviceCodeColumn} AS SACServiceCode,
     ${lineField('FreeTxt', 'FreeText')},
     ${lineField('CountryOrg', 'CountryOfOrigin')},
     T1.OpenQty AS OpenQuantity,
@@ -1607,6 +1664,7 @@ const getSalesOrder = async (docEntry) => {
     ${lineField('U_COMPRC', 'Commission')},
     ${lineField('U_S_BrokPerQty', 'SellerBrokeragePerQty')},
     ${lineField('U_Unit_Price', 'UnitPriceUdf', 'COALESCE(T1.PriceBefDi, T1.Price)')},
+    ${lineField('U_Rate', 'DiscountAmount', 'CAST(NULL AS DECIMAL(19, 6))')},
     ${lineField('U_Brok_Seller', 'SellerBrokerage')},
     ${lineField('U_Brok_Buyer', 'BuyerBrokerage')},
     ${lineField('U_Buyer_Delivery', 'BuyerDelivery')},
@@ -1664,6 +1722,7 @@ LEFT JOIN OCST ST
 -- ✅ HSN
 LEFT JOIN OITM ITM ON ITM.ItemCode = T1.ItemCode
 LEFT JOIN OCHP CHP ON CHP.AbsEntry = ITM.ChapterID
+${sacSql.joinSql}
 
 WHERE T0.DocEntry = @DocEntry
 
@@ -1807,6 +1866,7 @@ ORDER BY T1.LineNum
         U_COMPRC,
         U_S_BrokPerQty,
         U_Unit_Price,
+        ${hasRateField ? 'U_Rate,' : ''}
         U_Brok_Seller,
         U_Brok_Buyer,
         U_Buyer_Delivery,
@@ -1846,6 +1906,7 @@ ORDER BY T1.LineNum
           U_COMPRC: row.U_COMPRC ?? '',
           U_S_BrokPerQty: row.U_S_BrokPerQty ?? '',
           U_Unit_Price: row.U_Unit_Price ?? '',
+          U_Rate: row.U_Rate ?? '',
           U_Brok_Seller: row.U_Brok_Seller ?? '',
           U_Brok_Buyer: row.U_Brok_Buyer ?? '',
           U_Buyer_Delivery: row.U_Buyer_Delivery || '',
@@ -1946,6 +2007,12 @@ ORDER BY T1.LineNum
         const displayUnitPrice = savedUnitPrice != null && savedUnitPrice !== ''
           ? String(savedUnitPrice)
           : '0';
+        const savedDiscountAmount = lineUdf.U_Rate != null && String(lineUdf.U_Rate).trim() !== ''
+          ? lineUdf.U_Rate
+          : line.DiscountAmount;
+        const displayDiscountAmount = savedDiscountAmount != null && String(savedDiscountAmount).trim() !== ''
+          ? String(savedDiscountAmount)
+          : getDisplayDiscountAmount(displayUnitPrice, line.LineDiscPrcnt);
         // Get HSN Code from the joined query
         const hsnCode = line.HSNCode || '';
         
@@ -1956,6 +2023,10 @@ ORDER BY T1.LineNum
           itemNo: line.ItemCode,
           itemDescription: line.Dscription || '',
           hsnCode: hsnCode,
+          sacCode: line.SACCode || line.SACServiceName || line.SACServiceCode || (line.SACEntry != null ? String(line.SACEntry) : ''),
+          sacEntry: line.SACEntry != null ? String(line.SACEntry) : '',
+          sacServiceName: line.SACServiceName || '',
+          sacServiceCode: line.SACServiceCode || '',
           quantity: String(line.Quantity || 0),
           unitPrice: displayUnitPrice,
           unitPriceUdf: displayUnitPrice,
@@ -1990,7 +2061,7 @@ ORDER BY T1.LineNum
           brokerageNumber: lineUdf.U_BDNum || line.BrokerageNumber || '',
           uomCode: line.UomCode || '',
           uomName: line.UomName || line.UomCode || '',
-          discountAmount: String((Number(displayUnitPrice || 0) * Number(line.LineDiscPrcnt || 0)) / 100),
+          discountAmount: displayDiscountAmount,
           stdDiscount: String(line.LineDiscPrcnt || ''),
           taxCode: line.TaxCode || '',
           total: String(line.LineTotal || 0),
@@ -2013,6 +2084,9 @@ ORDER BY T1.LineNum
             U_COMPRC: lineUdf.U_COMPRC ?? '',
             U_S_BrokPerQty: lineUdf.U_S_BrokPerQty ?? '',
             U_Unit_Price: lineUdf.U_Unit_Price ?? '',
+            U_Rate: lineUdf.U_Rate != null && String(lineUdf.U_Rate).trim() !== ''
+              ? lineUdf.U_Rate
+              : displayDiscountAmount,
             U_Brok_Seller: lineUdf.U_Brok_Seller ?? '',
             U_Brok_Buyer: lineUdf.U_Brok_Buyer ?? '',
             U_Buyer_Delivery: lineUdf.U_Buyer_Delivery || '',
@@ -2085,6 +2159,7 @@ const getOpenSalesOrders = (customerCode = '') => {
 const getSalesOrderForCopy = async (docEntry) => {
   const headerFieldMetadata = await getTableFieldMetadata('ORDR');
   const lineFieldMetadata = await getSalesOrderLineFieldMetadata();
+  const sacFieldMetadata = await getTableFieldMetadata('OSAC');
   const sqlAlias = (alias) => `[${String(alias || '').replace(/]/g, ']]')}]`;
   const headerBranchField = headerFieldMetadata?.BPL_IDAssignedToInvoice
     ? 'T0.BPL_IDAssignedToInvoice'
@@ -2096,6 +2171,7 @@ const getSalesOrderForCopy = async (docEntry) => {
       ? `T0.${columnName} AS ${sqlAlias(alias)}`
       : `${fallback} AS ${sqlAlias(alias)}`
   );
+  const sacSql = getSacLookupSqlParts('T0', 'SAC', sacFieldMetadata);
 
   const headerResult = await db.query(`
     SELECT
@@ -2122,6 +2198,10 @@ const getSalesOrderForCopy = async (docEntry) => {
       T0.WhsCode AS WarehouseCode,
       T0.TaxCode, T0.unitMsr AS UomCode, T0.unitMsr AS UomName,
       T0.OcrCode AS DistributionRule,
+      ${lineField('SACEntry', 'SACEntry', 'NULL')},
+      ${sacSql.displayExpression} AS SACCode,
+      ${sacSql.serviceNameColumn} AS SACServiceName,
+      ${sacSql.serviceCodeColumn} AS SACServiceCode,
       ${lineField('FreeTxt', 'FreeText')},
       ${lineField('CountryOrg', 'CountryOfOrigin')},
       T0.OpenQty AS OpenQty,
@@ -2142,6 +2222,7 @@ const getSalesOrderForCopy = async (docEntry) => {
       ${lineField('U_COMPRC', 'Commission')},
       ${lineField('U_S_BrokPerQty', 'SellerBrokeragePerQty')},
       ${lineField('U_Unit_Price', 'UnitPriceUdf', 'COALESCE(T0.PriceBefDi, T0.Price)')},
+      ${lineField('U_Rate', 'DiscountAmount', 'CAST(NULL AS DECIMAL(19, 6))')},
       ${lineField('U_Brok_Seller', 'SellerBrokerage')},
       ${lineField('U_Brok_Buyer', 'BuyerBrokerage')},
       ${lineField('U_Buyer_Delivery', 'BuyerDelivery')},
@@ -2170,6 +2251,7 @@ const getSalesOrderForCopy = async (docEntry) => {
     FROM RDR1 T0
     LEFT JOIN OITM ITM ON T0.ItemCode = ITM.ItemCode
     LEFT JOIN OCHP CHP ON ITM.ChapterID = CHP.AbsEntry
+    ${sacSql.joinSql}
     WHERE T0.DocEntry = @DocEntry
       AND T0.LineStatus = 'O'
       AND T0.OpenQty > 0

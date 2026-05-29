@@ -235,6 +235,7 @@ export function useSapWindowTaskbarActions() {
 
   return {
     closeActiveAndRestorePrevious,
+    minimizeCurrentRouteTask,
     removeTask: taskbar?.removeTask,
     restoreTask,
     upsertTask: taskbar?.upsertTask,

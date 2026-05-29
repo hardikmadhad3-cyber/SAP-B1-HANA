@@ -26,6 +26,22 @@ const quoteSqlIdentifier = (identifier) => `[${String(identifier || '').replace(
 const normalizeUdfNameForMatch = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const unique = (values = []) => [...new Set(values.filter(Boolean))];
 
+const toFiniteNumberOrUndefined = (value) => {
+  if (value == null || String(value).trim() === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const getLineDiscountPercent = (discountAmount, unitPrice, fallbackDiscountPercent) => {
+  const discount = toFiniteNumberOrUndefined(discountAmount);
+  const price = toFiniteNumberOrUndefined(unitPrice);
+  if (discount !== undefined && price !== undefined && price > 0) {
+    return (discount * 100) / price;
+  }
+
+  return toFiniteNumberOrUndefined(fallbackDiscountPercent);
+};
+
 const buildNullableTrimmedTextExpression = (expression) => (
   `NULLIF(LTRIM(RTRIM(CAST(${expression} AS NVARCHAR(254)))), '')`
 );
@@ -1015,6 +1031,7 @@ const getDelivery = async (docEntry) => {
     hasDln1Column('BaseEntry') ? 'T0.BaseEntry' : 'NULL AS BaseEntry',
     hasDln1Column('BaseType') ? 'T0.BaseType' : 'NULL AS BaseType',
     hasDln1Column('BaseLine') ? 'T0.BaseLine' : 'NULL AS BaseLine',
+    hasDln1Column('U_Rate') ? 'T0.U_Rate AS DiscountAmount' : 'CAST(NULL AS DECIMAL(19, 6)) AS DiscountAmount',
   ];
 
   let lineRows = [];
@@ -1061,6 +1078,7 @@ const getDelivery = async (docEntry) => {
         T0.NumPerMsr AS UomFactor,
         T0.UomEntry AS UoMEntry,
         COALESCE(UOM.UomCode, NULLIF(LTRIM(RTRIM(T0.unitMsr)), ''), '') AS UoMCode,
+        CAST(NULL AS DECIMAL(19, 6)) AS DiscountAmount,
         '' AS TaxCode,
         CAST(0 AS DECIMAL(19, 6)) AS LineTaxAmount,
         '' AS DistributionRule,
@@ -1238,6 +1256,8 @@ const getDelivery = async (docEntry) => {
           ...(dynamicLineUdfs[l.LineNum] || {}),
           ...(lineUdfs[l.LineNum] || {}),
         };
+        const discountAmount = lineUdf.U_Rate ?? l.DiscountAmount;
+        const discountPercent = getLineDiscountPercent(discountAmount, l.UnitPrice, l.DiscountPercent);
         return {
           lineNum: l.LineNum != null ? Number(l.LineNum) : undefined,
           baseEntry: l.BaseEntry || null,
@@ -1249,6 +1269,7 @@ const getDelivery = async (docEntry) => {
           quantity: l.Quantity != null ? String(l.Quantity) : '',
           openQty: l.OpenQuantity != null ? String(l.OpenQuantity) : '',
           unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
+          discountAmount: discountAmount != null && String(discountAmount).trim() !== '' ? String(discountAmount) : '',
           unitPriceUdf: lineUdf.U_Unit_Price != null && lineUdf.U_Unit_Price !== '' ? String(lineUdf.U_Unit_Price) : String(l.UnitPrice || 0),
           sellerQuality: lineUdf.U_Seller_Quality || '',
           buyerQuality: lineUdf.U_Buyer_Quality || '',
@@ -1277,7 +1298,7 @@ const getDelivery = async (docEntry) => {
           freightProvider: lineUdf.U_Fr_trans || '',
           freightProviderName: lineUdf.U_Fr_trans_name || '',
           brokerageNumber: lineUdf.U_BDNum || '',
-          stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
+          stdDiscount: discountPercent != null ? String(discountPercent) : '',
           taxCode: l.TaxCode || '',
           taxAmount: l.LineTaxAmount != null ? String(l.LineTaxAmount) : '',
           total: l.LineTotal != null ? String(l.LineTotal) : '',
@@ -1299,6 +1320,7 @@ const getDelivery = async (docEntry) => {
             U_COMPRC: lineUdf.U_COMPRC ?? '',
             U_S_BrokPerQty: lineUdf.U_S_BrokPerQty ?? '',
             U_Unit_Price: lineUdf.U_Unit_Price ?? '',
+            U_Rate: lineUdf.U_Rate ?? discountAmount ?? '',
             U_Brok_Seller: lineUdf.U_Brok_Seller ?? '',
             U_Brok_Buyer: lineUdf.U_Brok_Buyer ?? '',
             U_Buyer_Delivery: lineUdf.U_Buyer_Delivery || '',

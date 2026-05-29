@@ -19,9 +19,25 @@ const BASE_MATRIX_COLUMNS = [
   { key: 'whse', label: 'Whse' },
 ];
 
+const getUdfIdentity = (field = {}) =>
+  [
+    field.key,
+    field.sapField,
+    field.aliasId,
+    field.label,
+    field.description,
+    field.Descr,
+  ].join(' ').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+const shouldKeepUdfBlankByDefault = (field = {}) => {
+  const identity = getUdfIdentity(field);
+  return identity.includes('termsofsupply') ||
+    identity.includes('supplyterms');
+};
+
 const createUdfState = (definitions = [], values = {}) =>
   definitions.reduce((acc, field) => {
-    acc[field.key] = values[field.key] ?? field.defaultValue ?? '';
+    acc[field.key] = values[field.key] ?? (shouldKeepUdfBlankByDefault(field) ? '' : field.defaultValue ?? '');
     return acc;
   }, {});
 

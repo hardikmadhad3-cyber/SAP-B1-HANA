@@ -48,6 +48,16 @@ const toRequiredNumber = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const getLineDiscountPercent = (line = {}) => {
+  const discountAmount = toOptionalNumber(line.discountAmount ?? line.DiscountAmount);
+  const unitPrice = toOptionalNumber(line.unitPrice ?? line.UnitPrice ?? line.Price);
+  if (discountAmount !== undefined && unitPrice !== undefined && unitPrice > 0) {
+    return (discountAmount * 100) / unitPrice;
+  }
+
+  return toOptionalNumber(line.stdDiscount ?? line.DiscountPercent ?? line.DiscPrcnt) ?? 0;
+};
+
 const toRequiredString = (value, fallback = '') => {
   const normalized = value == null ? '' : String(value).trim();
   return normalized || fallback;
@@ -183,6 +193,7 @@ const DELIVERY_LINE_UDF_MAPPINGS = [
   { sapField: 'U_COMPRC', getValue: (line) => line.commission },
   { sapField: 'U_S_BrokPerQty', getValue: (line) => line.sellerBrokeragePerQty },
   { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf ?? line.unitPrice },
+  { sapField: 'U_Rate', getValue: (line) => line.discountAmount ?? line.DiscountAmount },
   { sapField: 'U_Brok_Seller', getValue: (line) => line.sellerBrokerage },
   { sapField: 'U_Brok_Buyer', getValue: (line) => line.buyerBrokerage },
   { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
@@ -300,7 +311,6 @@ const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLi
   const documentLine = {
     Quantity: toRequiredNumber(line.quantity, 0),
     WarehouseCode: toRequiredString(line.whse, ''),
-    DiscountPercent: toRequiredNumber(line.stdDiscount, 0),
   };
 
   if (includeLineNum && line.lineNum != null && line.lineNum !== '') {

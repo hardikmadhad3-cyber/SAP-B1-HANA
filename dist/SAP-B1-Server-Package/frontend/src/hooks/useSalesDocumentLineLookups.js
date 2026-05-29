@@ -9,6 +9,7 @@ const INITIAL_LOOKUP_MODAL = {
   searchPlaceholder: 'Search values',
   emptyMessage: 'No values found',
   allowCreate: true,
+  columns: null,
 };
 
 const FIELD_TO_REF_BUCKET = {
@@ -51,6 +52,21 @@ const buildPaymentTermOptions = (paymentTerms = []) => {
       label: term.code ? `${term.name} (${term.code})` : term.name,
     }));
 };
+
+const buildSacOptions = (sacCodes = []) => sacCodes
+  .map((sac) => {
+    const serviceCode = String(sac.serviceCode || sac.code || sac.ServiceCode || sac.ServCode || '').trim();
+    const serviceName = String(sac.serviceName || sac.description || sac.ServiceName || sac.ServName || '').trim();
+    const value = serviceName || serviceCode;
+    return {
+      value,
+      description: serviceCode ? `Service Code: ${serviceCode}` : '',
+      label: serviceName && serviceCode ? `${serviceName} (${serviceCode})` : value,
+      serviceName,
+      serviceCode,
+    };
+  })
+  .filter((option) => option.value);
 
 const getLookupConfig = (field, refData) => {
   const configs = {
@@ -102,6 +118,28 @@ export default function useSalesDocumentLineLookups({
     [refData.payment_terms]
   );
 
+  const sacOptions = useMemo(
+    () => buildSacOptions(refData.sac_codes || []),
+    [refData.sac_codes]
+  );
+
+  const openSACModal = useCallback((lineIndex) => {
+    setLineLookupModal({
+      open: true,
+      lineIndex,
+      field: 'sacCode',
+      title: 'List of India SAC Code',
+      options: sacOptions,
+      searchPlaceholder: 'Search service name or service code',
+      emptyMessage: 'No service SAC codes found',
+      allowCreate: false,
+      columns: [
+        { key: 'serviceName', label: 'Service Name', primary: true },
+        { key: 'serviceCode', label: 'Service Code', width: 140 },
+      ],
+    });
+  }, [sacOptions]);
+
   const openPaymentTermsModal = useCallback((field, lineIndex) => {
     const isSellerField = field === 'sellerPaymentTerms';
     setLineLookupModal({
@@ -113,6 +151,7 @@ export default function useSalesDocumentLineLookups({
       searchPlaceholder: 'Search payment terms',
       emptyMessage: 'No payment terms found',
       allowCreate: false,
+      columns: null,
     });
   }, [paymentTermOptions]);
 
@@ -127,6 +166,7 @@ export default function useSalesDocumentLineLookups({
       searchPlaceholder: nextConfig.searchPlaceholder,
       emptyMessage: nextConfig.emptyMessage,
       allowCreate: nextConfig.allowCreate !== false,
+      columns: null,
     });
   }, [refData]);
 
@@ -179,6 +219,7 @@ export default function useSalesDocumentLineLookups({
 
   return {
     lineLookupModal,
+    openSACModal,
     openQualityModal,
     openPaymentTermsModal,
     closeLineLookupModal,

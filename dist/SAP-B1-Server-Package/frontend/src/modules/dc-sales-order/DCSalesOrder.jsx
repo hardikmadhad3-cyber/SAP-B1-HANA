@@ -29,6 +29,7 @@ import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
+import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
@@ -53,7 +54,7 @@ import {
     fetchFreightCharges,
     createSalesOrderLookupValue,
 } from '../../api/dcSalesOrderApi';
-import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
+import { fetchHSNCodes, fetchHSNCodeFromItem, fetchSACCodes } from '../../api/hsnCodeApi';
 import { dcSalesOrderCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
     FORM_SETTINGS_STORAGE_KEY,
@@ -529,7 +530,7 @@ function DCSalesOrder() {
     const [formSettingsOpen, setFormSettingsOpen] = useState(false);
     const [refData, setRefData] = useState({
         company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
-        warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
+        warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [], sac_codes: [],
         payment_terms: [], shipping_types: [], branches: [], uom_groups: [], sales_employees: [], owners: [],
         countries: [], distribution_rules: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
         defaults: { toVendorCode: '' },
@@ -564,6 +565,7 @@ function DCSalesOrder() {
     });
     const {
         lineLookupModal,
+        openSACModal,
         openQualityModal,
         openPaymentTermsModal,
         closeLineLookupModal,
@@ -700,13 +702,15 @@ function DCSalesOrder() {
                 distribution_rules: [],
                 quality_options: { buyer: [], seller: [] },
                 price_options: { buyer: [], seller: [] },
+                sac_codes: [],
                 defaults: { toVendorCode: '' },
                 warnings: [],
             }));
             try {
-                const [refDataRes, hsnRes] = await Promise.all([
+                const [refDataRes, hsnRes, sacRes] = await Promise.all([
                     fetchSalesOrderReferenceData(activeCompanyId),
                     fetchHSNCodes(),
+                    fetchSACCodes(),
                 ]);
 
                 // ═══ LOGGING: Reference Data ═══
@@ -721,6 +725,7 @@ function DCSalesOrder() {
                 console.log('  - Branches:', refDataRes.data.branches?.length || 0);
                 console.log('  - States:', refDataRes.data.states?.length || 0);
                 console.log('  - HSN Codes:', hsnRes.data?.length || 0);
+                console.log('  - SAC Codes:', refDataRes.data.sac_codes?.length || sacRes.data?.length || 0);
                 console.log('  - Sales Employees:', refDataRes.data.sales_employees?.length || 0);
                 console.log('  - Owners:', refDataRes.data.owners?.length || 0);
                 console.log('───────────────────────────────────────────────────');
@@ -785,6 +790,7 @@ function DCSalesOrder() {
                         company_address: refDataRes.data.company_address || {},
                         tax_codes: refDataRes.data.tax_codes || [],
                         hsn_codes: hsnRes.data || [],
+                        sac_codes: refDataRes.data.sac_codes?.length ? refDataRes.data.sac_codes : (sacRes.data || []),
                         payment_terms: refDataRes.data.payment_terms || [],
                         shipping_types: refDataRes.data.shipping_types || [],
                         branches: refDataRes.data.branches || [],
@@ -2854,7 +2860,7 @@ function DCSalesOrder() {
                 baseEntry: line.baseEntry,
                 baseType: line.baseType,
                 baseLine: line.baseLine,
-                udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
+                udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
             });
             });
 
@@ -3396,6 +3402,7 @@ function DCSalesOrder() {
                                 distributionRules={refData.distribution_rules || []}
                                 countries={refData.countries || []}
                                 onOpenHSNModal={openHSNModal}
+                                onOpenSACModal={openSACModal}
                                 onOpenItemModal={openItemModalSafe}
                                 onOpenQualityModal={openQualityModal}
                                 onOpenPaymentTermsModal={openPaymentTermsModal}
@@ -3789,6 +3796,7 @@ function DCSalesOrder() {
                 searchPlaceholder={lineLookupModal.searchPlaceholder}
                 emptyMessage={lineLookupModal.emptyMessage}
                 allowCreate={lineLookupModal.allowCreate}
+                columns={lineLookupModal.columns}
             />
 
             <SalesEmployeeSetupModal

@@ -29,6 +29,7 @@ import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
+import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
@@ -138,11 +139,19 @@ const isBillToPartyCodeUdf = (field) => {
     return label === 'billtopartycode' ||
         label === 'billpartycode' ||
         label === 'partycode' ||
+        label === 'buyerscode2' ||
+        label === 'buyercode2' ||
         key === 'billtopartycode' ||
         key === 'billpartycode' ||
         key === 'partycode' ||
+        key === 'buyers2code' ||
+        key === 'buyerscode2' ||
+        key === 'buyercode2' ||
         identity.includes('billtopartycode') ||
-        identity.includes('billpartycode');
+        identity.includes('billpartycode') ||
+        identity.includes('buyers2code') ||
+        identity.includes('buyerscode2') ||
+        identity.includes('buyercode2');
 };
 
 const isBillToPartyNameUdf = (field) => {
@@ -153,11 +162,19 @@ const isBillToPartyNameUdf = (field) => {
     return label === 'billtopartyname' ||
         label === 'billpartyname' ||
         label === 'partyname' ||
+        label === 'buyersname2' ||
+        label === 'buyername2' ||
         key === 'billtopartyname' ||
         key === 'billpartyname' ||
         key === 'partyname' ||
+        key === 'buyers2name' ||
+        key === 'buyersname2' ||
+        key === 'buyername2' ||
         identity.includes('billtopartyname') ||
-        identity.includes('billpartyname');
+        identity.includes('billpartyname') ||
+        identity.includes('buyers2name') ||
+        identity.includes('buyersname2') ||
+        identity.includes('buyername2');
 };
 
 const isBillToPartyAddressIdUdf = (field) => {
@@ -168,12 +185,18 @@ const isBillToPartyAddressIdUdf = (field) => {
     return label === 'billtopartyaddressid' ||
         label === 'billtoaddressid' ||
         label === 'partyaddressid' ||
+        label === 'buyersaddressid' ||
+        label === 'buyeraddressid' ||
         key === 'billtopartyaddressid' ||
         key === 'billtoaddressid' ||
         key === 'partyaddressid' ||
+        key === 'buyersaddressid' ||
+        key === 'buyeraddressid' ||
         identity.includes('billtopartyaddressid') ||
         identity.includes('billtoaddressid') ||
-        identity.includes('partyaddressid');
+        identity.includes('partyaddressid') ||
+        identity.includes('buyersaddressid') ||
+        identity.includes('buyeraddressid');
 };
 
 const isBillToPartyAddressUdf = (field) => {
@@ -187,13 +210,19 @@ const isBillToPartyAddressUdf = (field) => {
         label === 'billtoaddressbillto' ||
         label === 'billpartyaddress' ||
         label === 'partyaddress' ||
+        label === 'buyersaddress2' ||
+        label === 'buyeraddress2' ||
         key === 'billtopartyaddress' ||
         key === 'billtoaddressbillto' ||
         key === 'billpartyaddress' ||
         key === 'partyaddress' ||
+        key === 'buyersaddress' ||
+        key === 'buyeraddress' ||
         identity.includes('billtopartyaddress') ||
         identity.includes('billtoaddressbillto') ||
-        identity.includes('billpartyaddress');
+        identity.includes('billpartyaddress') ||
+        identity.includes('buyersaddress') ||
+        identity.includes('buyeraddress');
 };
 
 const getBillToPartyUdfFields = (fields = []) => ({
@@ -2751,8 +2780,25 @@ function SODASalesOrder() {
                 baseEntry: line.baseEntry,
                 baseType: line.baseType,
                 baseLine: line.baseLine,
-                udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}),
+                udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
             });
+            });
+
+            const headerUdfPayload = normalizeUdfState(headerUdfDefinitions, headerUdfs);
+            const buyerAddressForPayload = vendorEffectiveBillToAddresses.find(
+                (address) => String(getBpAddressId(address)) === String(header.billToCode || ''),
+            ) || selectBillToPartyAddress(vendorEffectiveBillToAddresses, { BillToDef: header.billToCode });
+            const buyerUdfPatch = buildBillToPartyUdfPatch(billToPartyUdfFields, {
+                code: header.vendor,
+                name: header.name || '',
+                address: buyerAddressForPayload,
+            });
+
+            Object.entries(buyerUdfPatch).forEach(([key, value]) => {
+                if (!key || value == null) return;
+                if (!String(headerUdfPayload[key] || '').trim() && String(value || '').trim()) {
+                    headerUdfPayload[key] = value;
+                }
             });
 
             const payload = {
@@ -2760,7 +2806,7 @@ function SODASalesOrder() {
                 header: prep,
                 lines: cleanedLines,
                 freightCharges: freightModal.freightCharges,
-                header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
+                header_udfs: headerUdfPayload,
             };
 
             // ═══ LOGGING: Payload Before Submit ═══

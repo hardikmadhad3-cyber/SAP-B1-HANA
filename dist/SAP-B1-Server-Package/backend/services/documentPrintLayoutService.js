@@ -501,20 +501,52 @@ const getLayoutForDocument = async (config, docCode, schema = '') => {
   return layout;
 };
 
+const SALES_ORDER_PRINT_UDF_SETTERS = {
+  U_DocKey: 'DocEntry',
+  U_ItemCode: 'ItemCode',
+  U_Item_Desc: 'Dscription',
+  U_UoM: "COALESCE(NULLIF(unitMsr, ''), NULLIF(UomCode, ''))",
+};
+
+const getExistingTableColumns = async (tableName, columnNames, schema) => {
+  const result = await dbService.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+      AND COLUMN_NAME IN (${columnNames.map((_, index) => `@columnName${index}`).join(', ')})
+  `, columnNames.reduce((params, columnName, index) => ({
+    ...params,
+    [`columnName${index}`]: columnName,
+  }), { tableName }), { databaseName: schema });
+
+  return new Set((result.recordset || []).map((row) => String(row.COLUMN_NAME || '').trim()));
+};
+
 const hydrateSalesOrderPrintFields = async (config, docEntry, schema) => {
   if (config.key !== 'salesOrder') {
     return;
   }
 
   const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
+  const columnsToHydrate = Object.keys(SALES_ORDER_PRINT_UDF_SETTERS);
+  const existingColumns = await getExistingTableColumns('RDR1', columnsToHydrate, schema);
+  const setClauses = columnsToHydrate
+    .filter((columnName) => existingColumns.has(columnName))
+    .map((columnName) => `${columnName} = ${SALES_ORDER_PRINT_UDF_SETTERS[columnName]}`);
+
+  if (!setClauses.length) {
+    console.info('[DocumentPrint] Skipped sales order Crystal print UDF sync; no expected RDR1 UDF columns exist', {
+      docEntry: normalizedDocEntry,
+      schema,
+      expectedColumns: columnsToHydrate,
+    });
+    return;
+  }
 
   const result = await dbService.query(`
     UPDATE RDR1
     SET
-      U_DocKey = DocEntry,
-      U_ItemCode = ItemCode,
-      U_Item_Desc = Dscription,
-      U_UoM = COALESCE(NULLIF(unitMsr, ''), NULLIF(UomCode, ''))
+      ${setClauses.join(',\n      ')}
     WHERE DocEntry = @docEntry
   `, {
     docEntry: normalizedDocEntry,
@@ -523,6 +555,7 @@ const hydrateSalesOrderPrintFields = async (config, docEntry, schema) => {
   console.info('[DocumentPrint] Synced sales order Crystal print UDFs', {
     docEntry: normalizedDocEntry,
     rowsAffected: result.rowsAffected,
+    columns: setClauses.map((clause) => clause.split('=')[0].trim()),
   });
 };
 

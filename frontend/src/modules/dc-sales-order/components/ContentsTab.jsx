@@ -128,6 +128,7 @@ export default function ContentsTab({
   valErrors,
   distributionRules = [],
   onOpenHSNModal,
+  onOpenSACModal,
   onOpenItemModal,
   onOpenQualityModal,
   onOpenPaymentTermsModal,
@@ -713,12 +714,24 @@ export default function ContentsTab({
       ),
       sacCode: () => (
         <td key="sacCode">
-          <input
-            className="so-grid__input"
-            name="sacCode"
-            value={line.sacCode || ''}
-            onChange={(e) => onLineChange(i, e)}
-          />
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="so-grid__input"
+              style={{ flex: 1, textAlign: 'left' }}
+              name="sacCode"
+              value={line.sacCode || ''}
+              onChange={(e) => onLineChange(i, e)}
+              placeholder="SAC"
+            />
+            <button
+              type="button"
+              onClick={() => onOpenSACModal && onOpenSACModal(i)}
+              style={pickerButtonStyle}
+              title="Select SAC Code"
+            >
+              ...
+            </button>
+          </div>
         </td>
       ),
       specialRebate: () => (
