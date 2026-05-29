@@ -23,6 +23,17 @@ const applyUdfs = (target, udfValues = {}, allowedKeys = null) => {
   });
 };
 
+const addIfPresent = (target, key, value) => {
+  if (!isUdfValuePresent(value)) return;
+  target[key] = value;
+};
+
+const normalizeOptionalNumber = (value) => {
+  if (!isUdfValuePresent(value)) return undefined;
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : undefined;
+};
+
 const getAllowedUdfKeys = async (tableId) => {
   const definitions = await getUdfDefinitions(tableId);
   return new Set(definitions.map((field) => field.key));
@@ -273,6 +284,18 @@ const submitARInvoice = async (payload) => {
       })
     };
 
+    addIfPresent(sapPayload, 'ShipToCode', payload.header.shipToCode);
+    addIfPresent(sapPayload, 'PayToCode', payload.header.billToCode || payload.header.payToCode);
+    addIfPresent(sapPayload, 'TransportationCode', normalizeOptionalNumber(payload.header.shippingType));
+    addIfPresent(sapPayload, 'PaymentMethod', payload.header.paymentMethod);
+    addIfPresent(sapPayload, 'DocumentsOwner', normalizeOptionalNumber(payload.header.ownerCode));
+    if (payload.header.confirmed != null) {
+      sapPayload.Confirmed = payload.header.confirmed ? 'tYES' : 'tNO';
+    }
+    if (allowedHeaderUdfs.has('U_PlaceOfSupply')) {
+      addIfPresent(sapPayload, 'U_PlaceOfSupply', payload.header.placeOfSupply);
+    }
+
     console.log("🔥 [ARInvoiceService] SAP AR INVOICE PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
     applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
@@ -367,6 +390,18 @@ const updateARInvoice = async (docEntry, payload) => {
         return line;
       })
     };
+
+    addIfPresent(sapPayload, 'ShipToCode', payload.header.shipToCode);
+    addIfPresent(sapPayload, 'PayToCode', payload.header.billToCode || payload.header.payToCode);
+    addIfPresent(sapPayload, 'TransportationCode', normalizeOptionalNumber(payload.header.shippingType));
+    addIfPresent(sapPayload, 'PaymentMethod', payload.header.paymentMethod);
+    addIfPresent(sapPayload, 'DocumentsOwner', normalizeOptionalNumber(payload.header.ownerCode));
+    if (payload.header.confirmed != null) {
+      sapPayload.Confirmed = payload.header.confirmed ? 'tYES' : 'tNO';
+    }
+    if (allowedHeaderUdfs.has('U_PlaceOfSupply')) {
+      addIfPresent(sapPayload, 'U_PlaceOfSupply', payload.header.placeOfSupply);
+    }
 
     applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
 

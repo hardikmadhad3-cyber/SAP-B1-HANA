@@ -19,6 +19,43 @@ const safe = async (promise) => {
   }
 };
 
+const tableFieldMetadataPromises = new Map();
+
+const getTableFieldMetadata = async (tableName) => {
+  const normalizedTableName = String(tableName || '').trim();
+  if (!normalizedTableName) return {};
+
+  if (!tableFieldMetadataPromises.has(normalizedTableName)) {
+    tableFieldMetadataPromises.set(normalizedTableName, safe(db.query(`
+      SELECT COLUMN_NAME, DATA_TYPE
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_NAME = @tableName
+      ORDER BY ORDINAL_POSITION
+    `, { tableName: normalizedTableName })).then((rows) => rows.reduce((acc, row) => {
+      const columnName = String(row.COLUMN_NAME || '').trim();
+      if (!columnName) return acc;
+      acc[columnName] = String(row.DATA_TYPE || '').trim().toLowerCase();
+      return acc;
+    }, {})));
+  }
+
+  return tableFieldMetadataPromises.get(normalizedTableName);
+};
+
+const hasTableField = (metadata, columnName) => {
+  const normalizedColumnName = String(columnName || '').trim().toLowerCase();
+  if (!metadata || !normalizedColumnName) return false;
+  return Object.keys(metadata).some((fieldName) => fieldName.toLowerCase() === normalizedColumnName);
+};
+
+const sqlAlias = (alias) => `[${String(alias || '').replace(/]/g, ']]')}]`;
+
+const optionalColumn = (metadata, tableAlias, columnName, alias, fallback = 'NULL') => (
+  hasTableField(metadata, columnName)
+    ? `${tableAlias}.[${columnName}] AS ${sqlAlias(alias)}`
+    : `${fallback} AS ${sqlAlias(alias)}`
+);
+
 // ── queries ───────────────────────────────────────────────────────────────────
 
 const getCustomers = () => safe(db.query(`
@@ -492,6 +529,28 @@ const getARInvoiceList = async ({
 };
 
 const getARInvoice = async (docEntry) => {
+  const [headerFieldMetadata, lineFieldMetadata] = await Promise.all([
+    getTableFieldMetadata('OINV'),
+    getTableFieldMetadata('INV1'),
+  ]);
+
+  const placeOfSupplyExpression = hasTableField(headerFieldMetadata, 'U_PlaceOfSupply')
+    ? "COALESCE(NULLIF(LTRIM(RTRIM(CAST(T0.U_PlaceOfSupply AS NVARCHAR(254)))), ''), C.State, ST.Name, '')"
+    : "COALESCE(C.State, ST.Name, '')";
+  const headerBranchExpression = hasTableField(headerFieldMetadata, 'BPL_IDAssignedToInvoice')
+    ? 'COALESCE(T0.BPL_IDAssignedToInvoice, T0.BPLId)'
+    : 'T0.BPLId';
+  const lineTaxExpression = hasTableField(lineFieldMetadata, 'TaxCode')
+    ? 'T0.TaxCode'
+    : hasTableField(lineFieldMetadata, 'VatGroup')
+      ? 'T0.VatGroup'
+      : "''";
+  const lineUomExpression = hasTableField(lineFieldMetadata, 'unitMsr')
+    ? 'T0.unitMsr'
+    : hasTableField(lineFieldMetadata, 'UomCode')
+      ? 'T0.UomCode'
+      : "''";
+
   const headerRows = await safe(db.query(`
     SELECT
       T0.DocEntry,
@@ -506,7 +565,7 @@ const getARInvoice = async (docEntry) => {
       T0.DocDate AS PostingDate,
       T0.DocDueDate AS DeliveryDate,
       T0.TaxDate AS DocumentDate,
-      T0.BPLId AS Branch,
+      ${headerBranchExpression} AS Branch,
       T0.DocCur AS Currency,
       T0.GroupNum AS PaymentTerms,
       T0.Comments AS Remarks,
@@ -515,8 +574,28 @@ const getARInvoice = async (docEntry) => {
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
+      ${placeOfSupplyExpression} AS PlaceOfSupply,
+      ${optionalColumn(headerFieldMetadata, 'T0', 'ShipToCode', 'ShipToCode', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'PayToCode', 'PayToCode', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'Address', 'ShipToAddress', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'Address2', 'BillToAddress', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'TrnspCode', 'ShippingType', 'NULL')},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'Confirmed', 'Confirmed', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'PeyMethod', 'PaymentMethod', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'OwnerCode', 'OwnerCode', 'NULL')},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'RoundDif', 'RoundingAmount', '0')},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'LangCode', 'Language', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'TrackNo', 'TrackingNo', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'StampNum', 'StampNo', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'PickRmrk', 'PickPackRemarks', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'BPChCode', 'BpChannelName', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'BPChCntc', 'BpChannelContact', "''")},
       T0.SlpCode AS SalesEmployeeCode,
       SLP.SlpName AS SalesEmployeeName,
+      CASE WHEN EMP.empID IS NOT NULL
+        THEN LTRIM(RTRIM(COALESCE(EMP.firstName, '') + ' ' + COALESCE(EMP.lastName, '')))
+        ELSE ''
+      END AS OwnerName,
       CASE T0.DocStatus
         WHEN 'O' THEN 'Open'
         WHEN 'C' THEN 'Closed'
@@ -525,6 +604,15 @@ const getARInvoice = async (docEntry) => {
     FROM OINV T0
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '13' AND NNM.Series = T0.Series
+    LEFT JOIN OHEM EMP ON EMP.empID = ${hasTableField(headerFieldMetadata, 'OwnerCode') ? 'T0.OwnerCode' : 'NULL'}
+    OUTER APPLY (
+      SELECT TOP 1 C.State, C.Country
+      FROM CRD1 C
+      WHERE C.CardCode = T0.CardCode
+        AND C.Address = ${hasTableField(headerFieldMetadata, 'ShipToCode') ? 'T0.ShipToCode' : "''"}
+        AND C.AdresType = 'S'
+    ) C
+    LEFT JOIN OCST ST ON ST.Code = C.State AND ST.Country = C.Country
     WHERE T0.DocEntry = @docEntry
   `, { docEntry }));
 
@@ -543,10 +631,12 @@ const getARInvoice = async (docEntry) => {
       T0.OpenQty AS OpenQuantity,
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
-      T0.TaxCode,
+      ${lineTaxExpression} AS TaxCode,
       T0.LineTotal,
       T0.WhsCode AS Warehouse,
-      T0.unitMsr AS UoMCode,
+      ${lineUomExpression} AS UoMCode,
+      ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode', 'Loc', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode2', 'BranchCode', "''")},
       T0.BaseEntry,
       T0.BaseType,
       T0.BaseLine,
@@ -583,16 +673,38 @@ const getARInvoice = async (docEntry) => {
         postingDate: header.PostingDate ? header.PostingDate.toISOString().split('T')[0] : '',
         deliveryDate: header.DeliveryDate ? header.DeliveryDate.toISOString().split('T')[0] : '',
         documentDate: header.DocumentDate ? header.DocumentDate.toISOString().split('T')[0] : '',
+        placeOfSupply: header.PlaceOfSupply || '',
+        shipToCode: header.ShipToCode || '',
+        payToCode: header.PayToCode || '',
+        billToCode: header.PayToCode || '',
+        shipTo: header.ShipToAddress || '',
+        payTo: header.BillToAddress || '',
+        shipToAddress: header.ShipToAddress || '',
+        billToAddress: header.BillToAddress || '',
+        shippingType: header.ShippingType != null ? String(header.ShippingType) : '',
+        confirmed: String(header.Confirmed || '').toUpperCase() === 'Y',
         journalRemark: header.JournalRemark || '',
         paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
         paymentTermsCode: header.PaymentTerms ? String(header.PaymentTerms) : '',
+        paymentMethod: header.PaymentMethod || '',
+        language: header.Language != null ? String(header.Language) : '',
+        trackingNo: header.TrackingNo || '',
+        stampNo: header.StampNo || '',
+        pickPackRemarks: header.PickPackRemarks || '',
+        bpChannelName: header.BpChannelName || '',
+        bpChannelContact: header.BpChannelContact != null ? String(header.BpChannelContact) : '',
         otherInstruction: header.Remarks || '',
         discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
         freight: header.Freight != null ? String(header.Freight) : '',
+        rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
-        salesEmployee: header.SalesEmployeeCode ? String(header.SalesEmployeeCode) : '',
+        salesEmployee: header.SalesEmployeeCode != null ? String(header.SalesEmployeeCode) : '',
         purchaser: header.SalesEmployeeName || '',
+        ownerCode: header.OwnerCode != null ? String(header.OwnerCode) : '',
+        owner: header.OwnerName || '',
+        currency: header.Currency || 'INR',
       },
       lines: lineRows.map((line) => ({
         baseEntry: line.BaseEntry || null,
@@ -609,6 +721,8 @@ const getARInvoice = async (docEntry) => {
         total: line.LineTotal != null ? String(line.LineTotal) : '',
         whse: line.Warehouse || '',
         uomCode: line.UoMCode || '',
+        loc: line.Loc || '',
+        branch: line.BranchCode || (header.Branch ? String(header.Branch) : ''),
         udf: lineUdfsByLineNum[line.LineNum] || {},
       })),
       header_udfs: headerUdfs,
