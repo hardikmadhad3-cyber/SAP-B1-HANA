@@ -1,5 +1,6 @@
 import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
 
 const MATRIX_COLS = [
@@ -39,6 +40,7 @@ export default function ContentsTab({
   rowUdfFields = [],
   onRowUdfChange,
 }) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
   const matrixCols = [
     ...MATRIX_COLS,
     ...rowUdfFields.map((field) => ({
@@ -96,6 +98,9 @@ export default function ContentsTab({
                         className={`del-grid__input${valErrors.lines[i]?.itemNo ? ' del-field__input--error' : ''}`}
                         style={{ flex: 1, textAlign: 'left' }}
                         name="itemNo"
+              data-sap-lookup="item"
+              data-sap-row-index={i}
+              onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
                         value={line.itemNo}
                         onChange={e => onLineChange(i, e)}
                         placeholder="Item Code"

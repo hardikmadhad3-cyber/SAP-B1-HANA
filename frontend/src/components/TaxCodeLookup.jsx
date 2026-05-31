@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { focusNextSapField } from '../utils/sapTabNavigation';
 
 const normalize = (value) => String(value ?? '').trim().toLowerCase();
 
@@ -152,6 +153,42 @@ export default function TaxCodeLookup({
     closeMenu();
   };
 
+  const validateAndCommitForTab = (event) => {
+    const token = String(open ? search : inputRef.current?.value || value || '').trim();
+    if (!token) {
+      closeMenu();
+      focusNextSapField(inputRef.current, event.shiftKey ? -1 : 1);
+      return;
+    }
+
+    const exact = taxCodes.find((tax) => normalize(tax.Code) === normalize(token));
+    if (exact) {
+      commit(exact.Code);
+      window.setTimeout(() => focusNextSapField(inputRef.current, 1), 40);
+      return;
+    }
+
+    if (options.length === 1) {
+      commit(options[0].Code);
+      window.setTimeout(() => focusNextSapField(inputRef.current, 1), 40);
+      return;
+    }
+
+    if (options.length > 1) {
+      setOpen(true);
+      setSearch(token);
+      inputRef.current?.focus();
+      return;
+    }
+
+    inputRef.current?.setCustomValidity(`No tax code found for "${token}".`);
+    inputRef.current?.reportValidity?.();
+    inputRef.current?.focus();
+    window.setTimeout(() => {
+      inputRef.current?.setCustomValidity('');
+    }, 2500);
+  };
+
   const canShowEmptyMessage = needle.length > 0;
   const shouldRenderMenu = open && !disabled && menuStyle && (options.length > 0 || canShowEmptyMessage);
 
@@ -181,6 +218,12 @@ export default function TaxCodeLookup({
     if (event.key === 'Escape' && open) {
       event.preventDefault();
       closeMenu();
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      validateAndCommitForTab(event);
     }
   };
 

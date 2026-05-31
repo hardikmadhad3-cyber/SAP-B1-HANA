@@ -56,6 +56,14 @@ const optionalColumn = (metadata, tableAlias, columnName, alias, fallback = 'NUL
     : `${fallback} AS ${sqlAlias(alias)}`
 );
 
+const optionalTrimmedText = (metadata, tableAlias, columnName) => (
+  hasTableField(metadata, columnName)
+    ? `NULLIF(LTRIM(RTRIM(CAST(${tableAlias}.[${columnName}] AS NVARCHAR(254)))), '')`
+    : 'NULL'
+);
+
+const coalesceText = (...expressions) => `COALESCE(${expressions.join(', ')}, '')`;
+
 // ── queries ───────────────────────────────────────────────────────────────────
 
 const getCustomers = () => safe(db.query(`
@@ -67,17 +75,61 @@ const getCustomers = () => safe(db.query(`
   ORDER  BY CardName
 `));
 
-const getItems = () => safe(db.query(`
+const getItems = async () => {
+  const [itemMetadata, itemGroupMetadata, itemWarehouseMetadata] = await Promise.all([
+    getTableFieldMetadata('OITM'),
+    getTableFieldMetadata('OITB'),
+    getTableFieldMetadata('OITW'),
+  ]);
+  const salesGlAccountExpression = coalesceText(
+    optionalTrimmedText(itemWarehouseMetadata, 'W', 'RevenuesAc'),
+    optionalTrimmedText(itemWarehouseMetadata, 'W', 'RevenueAcct'),
+    optionalTrimmedText(itemMetadata, 'T0', 'IncomeAcct'),
+    optionalTrimmedText(itemMetadata, 'T0', 'IncomeAccount'),
+    optionalTrimmedText(itemMetadata, 'T0', 'RevenuesAc'),
+    optionalTrimmedText(itemGroupMetadata, 'T1', 'RevenuesAc'),
+    optionalTrimmedText(itemGroupMetadata, 'T1', 'RevenueAcct'),
+    optionalTrimmedText(itemGroupMetadata, 'T1', 'IncomeAcct'),
+    "''"
+  );
+  const distributionRuleExpression = coalesceText(
+    optionalTrimmedText(itemMetadata, 'T0', 'OcrCode'),
+    optionalTrimmedText(itemWarehouseMetadata, 'W', 'OcrCode'),
+    optionalTrimmedText(itemGroupMetadata, 'T1', 'OcrCode'),
+    "''"
+  );
+  const cogsDistributionRuleExpression = coalesceText(
+    optionalTrimmedText(itemMetadata, 'T0', 'CogsOcrCod'),
+    optionalTrimmedText(itemWarehouseMetadata, 'W', 'CogsOcrCod'),
+    optionalTrimmedText(itemGroupMetadata, 'T1', 'CogsOcrCod'),
+    optionalTrimmedText(itemMetadata, 'T0', 'OcrCode'),
+    optionalTrimmedText(itemWarehouseMetadata, 'W', 'OcrCode'),
+    optionalTrimmedText(itemGroupMetadata, 'T1', 'OcrCode'),
+    "''"
+  );
+
+  return safe(db.query(`
   SELECT ItemCode, ItemName,
          SalUnitMsr  AS SalesUnit,
          InvntryUom  AS InventoryUOM,
          SUoMEntry   AS UoMGroupEntry,
-         SWW         AS HSNCode
-  FROM   OITM
-  WHERE  SellItem = 'Y'
-    AND  validFor  <> 'N'
+         SWW         AS HSNCode,
+         CountryOrg  AS ItemCountryOrg,
+         SACEntry    AS SACEntry,
+         VatGourpSa  AS TaxCodeAR,
+         DfltWH      AS DefaultWarehouse,
+         ${salesGlAccountExpression} AS SalesGLAccount,
+         ${salesGlAccountExpression} AS IncomeAccount,
+         ${distributionRuleExpression} AS DistributionRule,
+         ${cogsDistributionRuleExpression} AS COGSDistributionRule
+  FROM   OITM T0
+  LEFT JOIN OITB T1 ON T1.ItmsGrpCod = T0.ItmsGrpCod
+  LEFT JOIN OITW W ON W.ItemCode = T0.ItemCode AND W.WhsCode = T0.DfltWH
+  WHERE  T0.SellItem = 'Y'
+    AND  T0.validFor  <> 'N'
   ORDER  BY ItemCode
 `));
+};
 
 const getWarehouses = () => safe(db.query(`
   SELECT WhsCode, WhsName, Street, Block, Building,
@@ -135,7 +187,68 @@ const getSalesEmployees = () => safe(db.query(`
 
 // ── Document Series (ObjectCode = '18' for A/R Invoice) ───────────────────────────────────────────────────────────
 
-const getDocumentSeries = async (targetDate = null) => {
+const normalizeSeriesText = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+
+const isTransactionTypeField = (field = {}) => {
+  const identity = [field.key, field.aliasId, field.label, field.description, field.Descr]
+    .map(normalizeSeriesText)
+    .join(' ');
+  return identity.includes('transactiontype') ||
+    identity.includes('transtype') ||
+    identity.includes('documenttype') ||
+    identity.includes('doctype');
+};
+
+const extractTransactionTypes = (udfMetadata = {}, series = []) => {
+  const seen = new Set();
+  const options = [];
+  const addOption = (value, label = value, extra = {}) => {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue || seen.has(normalizedValue.toLowerCase())) return;
+    seen.add(normalizedValue.toLowerCase());
+    options.push({ value: normalizedValue, label: String(label || normalizedValue).trim(), ...extra });
+  };
+
+  const transactionTypeUdf = (udfMetadata.header || []).find(isTransactionTypeField);
+  (transactionTypeUdf?.options || []).forEach((option) => addOption(option.value, option.label));
+
+  if (!options.length) {
+    (series || []).forEach((row) => {
+      if (row.Indicator) addOption(row.Indicator, row.Indicator, { indicator: row.Indicator });
+    });
+  }
+
+  return options;
+};
+
+const filterSeriesByTransactionType = (series = [], transactionType = '') => {
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (!normalizedType) return series;
+
+  const matched = (series || []).filter((row) => {
+    const candidates = [
+      row.TransactionType,
+      row.transactionType,
+      row.DocType,
+      row.DocumentType,
+      row.Indicator,
+      row.SeriesName,
+    ].map(normalizeSeriesText).filter(Boolean);
+
+    return candidates.some((candidate) => (
+      candidate === normalizedType ||
+      (normalizedType.length > 3 && candidate.includes(normalizedType)) ||
+      (candidate.length > 3 && normalizedType.includes(candidate))
+    ));
+  });
+
+  return matched.length ? matched : series;
+};
+
+const getDocumentSeries = async (targetDate = null, transactionType = '') => {
   const effectiveTargetDate = targetDate || new Date().toISOString().split('T')[0];
   const result = await safe(db.query(`
     SELECT 
@@ -155,12 +268,14 @@ WHERE T0.ObjectCode = '13'
 ORDER BY T0.SeriesName
   `, { targetDate: effectiveTargetDate }));
 
-  return result.map(s => ({
+  const series = result.map(s => ({
     Series: s.Series,
     SeriesName: s.SeriesName,
     NextNumber: s.NextNumber,
     Indicator: s.Indicator,
   }));
+
+  return filterSeriesByTransactionType(series, transactionType);
 };
 
 const getNextNumber = async (series) => {
@@ -329,6 +444,9 @@ const getReferenceData = async () => {
     openSalesOrders,
     openDeliveries,
     udfMetadata,
+    currentSeries,
+    accounts,
+    distributionRules,
   ] = await Promise.all([
     getCustomers(),
     getItems(),
@@ -343,6 +461,9 @@ const getReferenceData = async () => {
     getOpenSalesOrders(),
     getOpenDeliveries(),
     getMarketingDocumentUdfs({ headerTable: 'OINV', lineTable: 'INV1' }),
+    getDocumentSeries(),
+    masterDataDbService.searchAccounts('', '', 5000, 0),
+    masterDataDbService.lookupDistributionRules(),
   ]);
 
   // Process UOM groups
@@ -371,6 +492,19 @@ const getReferenceData = async () => {
     branches,
     states,
     tax_codes: taxCodes,
+    gl_accounts: accounts
+      .filter((account) => account.ActiveAccount !== 'tNO' && account.IsTitleAccount !== 'tYES')
+      .map((account) => ({
+        code: account.Code,
+        name: account.Name,
+        accountType: account.AccountType,
+        balance: account.Balance ?? 0,
+        inactive: account.ActiveAccount === 'tNO' ? 'Yes' : 'No',
+      })),
+    distribution_rules: distributionRules.map((rule) => ({
+      FactorCode: rule.FactorCode || rule.OcrCode || '',
+      FactorDescription: rule.FactorDescription || rule.OcrName || '',
+    })),
     sales_employees: salesEmployees.map((e) => ({
       SlpCode: e.SlpCode,
       SlpName: e.SlpName,
@@ -379,6 +513,7 @@ const getReferenceData = async () => {
       Active: e.Active,
     })),
     uom_groups: processedUomGroups,
+    transaction_types: extractTransactionTypes(udfMetadata, currentSeries),
     base_documents: {
       sales_orders: openSalesOrders,
       deliveries: openDeliveries,
@@ -633,9 +768,13 @@ const getARInvoice = async (docEntry) => {
       T0.DiscPrcnt AS DiscountPercent,
       ${lineTaxExpression} AS TaxCode,
       T0.LineTotal,
+      ${optionalColumn(lineFieldMetadata, 'T0', 'WTLiable', 'WTLiable', "'N'")},
       T0.WhsCode AS Warehouse,
       ${lineUomExpression} AS UoMCode,
       ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode', 'Loc', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'AcctCode', 'GLAccount', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode', 'DistributionRule', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'CogsOcrCod', 'COGSDistributionRule', "''")},
       ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode2', 'BranchCode', "''")},
       T0.BaseEntry,
       T0.BaseType,
@@ -719,7 +858,11 @@ const getARInvoice = async (docEntry) => {
         stdDiscount: line.DiscountPercent != null ? String(line.DiscountPercent) : '',
         taxCode: line.TaxCode || '',
         total: line.LineTotal != null ? String(line.LineTotal) : '',
+        wTaxLiable: String(line.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
         whse: line.Warehouse || '',
+        glAccount: line.GLAccount || '',
+        distRule: line.DistributionRule || '',
+        cogsDistRule: line.COGSDistributionRule || line.DistributionRule || '',
         uomCode: line.UoMCode || '',
         loc: line.Loc || '',
         branch: line.BranchCode || (header.Branch ? String(header.Branch) : ''),
@@ -831,7 +974,10 @@ const getItemsForModal = () => safe(db.query(`
     T0.InvntItem AS InventoryItem,
     T0.DfltWH AS DefaultWarehouse,
     T0.ManBtchNum AS BatchManaged,
-    T0.ManSerNum AS SerialManaged
+    T0.ManSerNum AS SerialManaged,
+    T0.CountryOrg AS ItemCountryOrg,
+    T0.SACEntry AS SACEntry,
+    T0.VatGourpSa AS TaxCodeAR
   FROM OITM T0
   LEFT JOIN OITB T1 ON T0.ItmsGrpCod = T1.ItmsGrpCod 
   LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID

@@ -128,7 +128,7 @@ const LINE_UDF_ALIASES = {
 };
 
 const HEADER_UDF_ALIASES = {
-  transactionType: ['TransactionType', 'DocType'],
+  transactionType: ['TransactionType', 'TransType', 'DocumentType', 'DocType'],
   placeOfSupply: ['PlaceOfSupply', 'PlaceOfSupplyCode'],
   indicator: ['Indicator'],
   bFromDate: ['B_FromDate', 'BFromDate'],

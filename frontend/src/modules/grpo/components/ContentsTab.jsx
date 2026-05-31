@@ -2,6 +2,7 @@ import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
 
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 
 export default function ContentsTab({
   lines,
@@ -23,6 +24,8 @@ export default function ContentsTab({
   onRowUdfChange,
   formSettings,
 }) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -58,6 +61,9 @@ export default function ContentsTab({
                           className="po-grid__input"
                           style={{ flex: 1, textAlign: 'left', border: valErrors.lines[index]?.itemNo ? '1px solid #c00' : undefined }}
                           name="itemNo" value={line.itemNo || ''} disabled={!isActive}
+                          data-sap-lookup="item"
+                          data-sap-row-index={index}
+                          onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, index)}
                           onChange={e => onLineChange(index, e)}
                           placeholder="Item Code"
                         />

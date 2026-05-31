@@ -67,7 +67,7 @@ function ContentsTab({
     const columnIndex = COLUMN_ORDER.indexOf(columnKey);
     if (columnIndex === -1) return;
 
-    if (event.key === 'ArrowRight' || event.key === 'Tab') {
+    if (event.key === 'ArrowRight') {
       event.preventDefault();
       const nextColumn = COLUMN_ORDER[columnIndex + 1];
       if (nextColumn) {

@@ -6,11 +6,17 @@ const getItemGroup = (item) => item.itemGroup || item.ItemGroup || '';
 const getForeignName = (item) => item.foreignName || item.ForeignName || '';
 const getInStock = (item) => item.inStock || item.InStock || 0;
 
-function ItemSelectionModal({ isOpen, onClose, onSelect, items, loading }) {
+function ItemSelectionModal({ isOpen, onClose, onSelect, items, loading, initialQuery = '' }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredItems, setFilteredItems] = useState([]);
   const [selectedIndex, setSelectedIndex] = useState(-1);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const pendingQuery = initialQuery || window.__sapB1PendingLookupQuery || '';
+    window.__sapB1PendingLookupQuery = '';
+    setSearchQuery(pendingQuery);
+  }, [isOpen, initialQuery]);
   useEffect(() => {
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -43,7 +49,7 @@ function ItemSelectionModal({ isOpen, onClose, onSelect, items, loading }) {
 
   const handleChoose = () => {
     if (selectedIndex < 0 || !filteredItems[selectedIndex]) return;
-    onSelect(filteredItems[selectedIndex]);
+    Promise.resolve(onSelect(filteredItems[selectedIndex])).finally(() => window.SapB1TabNavigation?.completeLookup?.());
     handleClose();
   };
 
@@ -113,7 +119,7 @@ function ItemSelectionModal({ isOpen, onClose, onSelect, items, loading }) {
                       key={`${getItemCode(item)}-${index}`}
                       onClick={() => setSelectedIndex(index)}
                       onDoubleClick={() => {
-                        onSelect(item);
+                        Promise.resolve(onSelect(item)).finally(() => window.SapB1TabNavigation?.completeLookup?.());
                         handleClose();
                       }}
                       style={{

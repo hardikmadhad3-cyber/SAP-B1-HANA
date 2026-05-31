@@ -1,5 +1,6 @@
 import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 import { BASE_MATRIX_COLUMNS } from '../../../config/salesQuotationForm';
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
 
@@ -70,6 +71,7 @@ export default function ContentsTab({
   rowUdfFields = [],
   onRowUdfChange,
 }) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
   const fixedColumnLabels = new Set(BASE_MATRIX_COLUMNS.map((column) => compactLabel(column.label || column.key)));
   const visibleRowUdfFields = rowUdfFields.filter((field) => !fixedColumnLabels.has(compactLabel(field.label || field.key)));
   const matrixColumns = [
@@ -193,6 +195,9 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
               name="itemNo"
+              data-sap-lookup="item"
+              data-sap-row-index={i}
+              onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
               value={line.itemNo || ''}
               onChange={(e) => onLineChange(i, e)}
               placeholder="Item Code"

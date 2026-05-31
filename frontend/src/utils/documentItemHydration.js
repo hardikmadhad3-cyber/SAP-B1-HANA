@@ -18,6 +18,11 @@ export const getItemPrice = (item = {}, side = 'sales') => {
   return hasValue(value) ? String(value) : '';
 };
 
+const firstItemValue = (item = {}, keys = []) => {
+  const value = keys.map((key) => item[key]).find(hasValue);
+  return hasValue(value) ? String(value) : '';
+};
+
 export const hydrateDocumentLineFromItem = (line = {}, item = {}, {
   side = 'sales',
   hsnCode = '',
@@ -35,6 +40,26 @@ export const hydrateDocumentLineFromItem = (line = {}, item = {}, {
     : String(item.SalesUnit || item.InventoryUOM || '').trim();
   const defaultWarehouse = item.DefaultWarehouse || item.WarehouseCode || fallbackWarehouse || '';
   const itemPrice = getItemPrice(item, side);
+  const salesGlAccount = firstItemValue(item, [
+    'SalesGLAccount',
+    'IncomeAccount',
+    'IncomeAcct',
+    'RevenuesAccount',
+    'RevenueAccount',
+    'RevenuesAc',
+    'AccountCode',
+    'AcctCode',
+  ]);
+  const distributionRule = firstItemValue(item, ['DistributionRule', 'OcrCode']);
+  const cogsDistributionRule = firstItemValue(item, [
+    'COGSDistributionRule',
+    'COGSCostingCode',
+    'CogsOcrCod',
+    'CogsOcrCode',
+    'CogsOcrCode1',
+    'DistributionRule',
+    'OcrCode',
+  ]);
 
   const next = {
     ...line,
@@ -45,7 +70,9 @@ export const hydrateDocumentLineFromItem = (line = {}, item = {}, {
     uomName: line.uomName || uomCode || line.uomCode || '',
     countryOfOrigin: item.ItemCountryOrg || item.CountryOrg || line.countryOfOrigin || '',
     sacCode: item.SACEntry != null ? String(item.SACEntry) : (line.sacCode || ''),
-    distRule: line.distRule || item.DistributionRule || '',
+    glAccount: line.glAccount || salesGlAccount || '',
+    distRule: line.distRule || distributionRule || '',
+    cogsDistRule: line.cogsDistRule || cogsDistributionRule || line.distRule || distributionRule || '',
     whse: line.whse || defaultWarehouse,
     inventoryUOM: item.InventoryUOM || line.inventoryUOM || '',
     batchManaged: item.BatchManaged === 'Y' || item.ManageBatchNumbers === 'tYES' || item.ManBtchNum === 'Y' || line.batchManaged || false,

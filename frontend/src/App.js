@@ -1,5 +1,5 @@
 import { Suspense, useEffect } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import Layout from "./components/Layout";
 import LazyLoadErrorBoundary from "./components/LazyLoadErrorBoundary";
@@ -16,6 +16,7 @@ import Dashboard from "./pages/Dashboard";
 import AdminLoginPage from "./pages/AdminLoginPage";
 import LoginPage from "./pages/LoginPage";
 import lazyWithRetry from "./utils/lazyWithRetry";
+import { focusFirstSapField, installSapTabNavigation } from "./utils/sapTabNavigation";
 import "./App.css";
 import "./styles/auth.css";
 import "./styles/admin-panel.css";
@@ -117,11 +118,25 @@ function CompanyTitleManager() {
   return null;
 }
 
+function SapInitialFocusManager() {
+  const location = useLocation();
+
+  useEffect(() => {
+    focusFirstSapField(180);
+    focusFirstSapField(520);
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+
 function App() {
+  useEffect(() => installSapTabNavigation(), []);
+
   return (
     <BrowserRouter>
       <AuthProvider>
         <CompanyTitleManager />
+        <SapInitialFocusManager />
         <LazyLoadErrorBoundary>
           <Suspense fallback={<RouteLoadingFallback />}>
             <Routes>

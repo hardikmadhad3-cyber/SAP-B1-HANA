@@ -58,7 +58,7 @@ const INIT_HEADER = {
   contactPerson: '',
   salesContractNo: '',
   currency: 'INR',
-  transactionType: 'GST Tax Invoice',
+  transactionType: '',
   placeOfSupply: '',
   indicator: '',
   series: '',
@@ -96,10 +96,6 @@ const INIT_HEADER = {
 };
 
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
-const DEFAULT_TRANSACTION_TYPES = [
-  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
-  { value: 'Bill of Supply', label: 'Bill of Supply' },
-];
 
 const toArray = (value, fallbackKeys = []) => {
   if (Array.isArray(value)) return value;
@@ -286,10 +282,57 @@ const normalizeSelectOptions = (options = []) => {
     const value = getOptionValue(option).trim();
     if (!value || seen.has(value)) return acc;
     seen.add(value);
-    acc.push({ value, label: getOptionLabel(option).trim() || value });
+    acc.push({
+      value,
+      label: getOptionLabel(option).trim() || value,
+      indicator: option?.Indicator ?? option?.indicator ?? option?.SeriesIndicator ?? option?.seriesIndicator ?? '',
+    });
     return acc;
   }, []);
 };
+
+const normalizeSeriesText = (value) =>
+  String(value || '')
+    .replace(/^U_/i, '')
+    .replace(/[^a-z0-9]+/gi, '')
+    .toLowerCase();
+
+const getTransactionTypeOptions = (headerUdfDefinitions = [], referenceData = {}) => {
+  const transactionTypeUdf = headerUdfDefinitions.find((field) => fieldNameMatches(field, TRANSACTION_TYPE_FIELD_NAMES));
+  const udfOptions = normalizeSelectOptions(
+    transactionTypeUdf?.options || transactionTypeUdf?.validValues || transactionTypeUdf?.ValidValues || []
+  );
+  const refOptions = normalizeSelectOptions(referenceData.transaction_types || referenceData.transactionTypes);
+  return udfOptions.length ? udfOptions : refOptions;
+};
+
+const filterSeriesByTransactionType = (series = [], transactionType = '') => {
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (!normalizedType) return series;
+
+  const matches = series.filter((item) => {
+    const candidates = [
+      item.TransactionType,
+      item.transactionType,
+      item.DocType,
+      item.DocumentType,
+      item.Indicator,
+      item.SeriesName,
+    ];
+
+    return candidates.some((candidate) => {
+      const normalizedCandidate = normalizeSeriesText(candidate);
+      return normalizedCandidate && (
+        normalizedCandidate.includes(normalizedType) ||
+        normalizedType.includes(normalizedCandidate)
+      );
+    });
+  });
+
+  return matches.length ? matches : series;
+};
+
+const pickFirstSeries = (series = [], transactionType = '') => filterSeriesByTransactionType(series, transactionType)[0];
 
 const LINE_LOOKUP_FIELDS = new Set([
   'buyerTermsOfPayment',
@@ -505,14 +548,14 @@ function ServiceARInvoicePage() {
   const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
   const payTermOpts = paymentTerms.map((term) => ({ value: String(term.GroupNum ?? term.code ?? ''), label: term.PymntGroup || term.name || String(term.GroupNum ?? '') }));
   const shipTypeOpts = shippingTypes.map((type) => ({ value: String(type.TrnspCode ?? type.code ?? ''), label: type.TrnspName || type.name || String(type.TrnspCode ?? '') }));
-  const transactionTypeOptions = useMemo(() => {
-    const transactionTypeUdf = headerUdfDefinitions.find((field) => fieldNameMatches(field, TRANSACTION_TYPE_FIELD_NAMES));
-    const udfOptions = normalizeSelectOptions(
-      transactionTypeUdf?.options || transactionTypeUdf?.validValues || transactionTypeUdf?.ValidValues || []
-    );
-    const refOptions = normalizeSelectOptions(refData.transaction_types || refData.transactionTypes);
-    return udfOptions.length ? udfOptions : (refOptions.length ? refOptions : DEFAULT_TRANSACTION_TYPES);
-  }, [headerUdfDefinitions, refData.transaction_types, refData.transactionTypes]);
+  const transactionTypeOptions = useMemo(
+    () => getTransactionTypeOptions(headerUdfDefinitions, refData),
+    [headerUdfDefinitions, refData.transaction_types, refData.transactionTypes],
+  );
+  const visibleSeries = useMemo(
+    () => filterSeriesByTransactionType(refData.series || [], header.transactionType),
+    [refData.series, header.transactionType],
+  );
 
   const accountLookupOptions = useMemo(() => accounts.map((account) => ({
     value: account.code || '',
@@ -719,11 +762,25 @@ function ServiceARInvoicePage() {
         ]);
         if (ignore) return;
 
-        const nextRefData = {
+        let nextRefData = {
           ...refRes.data,
           series: seriesRes.data?.series || refRes.data?.series || [],
         };
         const nextHeaderUdfs = nextRefData.udf_metadata?.header || [];
+        const liveTransactionTypes = getTransactionTypeOptions(nextHeaderUdfs, nextRefData);
+        const defaultTransactionType = liveTransactionTypes[0]?.value || '';
+        if (defaultTransactionType) {
+          try {
+            const typedSeriesRes = await fetchServiceARInvoiceSeries(header.postingDate, defaultTransactionType);
+            if (ignore) return;
+            nextRefData = {
+              ...nextRefData,
+              series: typedSeriesRes.data?.series || nextRefData.series || [],
+            };
+          } catch (_seriesError) {
+            // Keep the all-series response if the typed series lookup is unavailable.
+          }
+        }
         const nextRowUdfs = applyServiceRowUdfDefaults(nextRefData.udf_metadata?.rows || []);
         const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, CONTENT_COLUMNS, formSettingsStorageKey);
         setHeaderUdfDefinitions(nextHeaderUdfs);
@@ -750,12 +807,15 @@ function ServiceARInvoicePage() {
           },
         }));
         setRefData(nextRefData);
-        const firstSeries = nextRefData.series?.[0];
-        if (firstSeries && !requestedDocEntry) {
+        const defaultIndicator = liveTransactionTypes[0]?.indicator || '';
+        const firstSeries = pickFirstSeries(nextRefData.series || [], defaultTransactionType);
+        if (!requestedDocEntry) {
           setHeader((prev) => ({
             ...prev,
-            series: String(firstSeries.Series || ''),
-            nextNumber: String(firstSeries.NextNumber || ''),
+            transactionType: prev.transactionType || defaultTransactionType,
+            indicator: prev.indicator || defaultIndicator,
+            series: firstSeries ? String(firstSeries.Series || '') : '',
+            nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
           }));
         }
         setPageState((prev) => ({ ...prev, loading: false }));
@@ -947,11 +1007,48 @@ function ServiceARInvoicePage() {
       return;
     }
 
+    if (name === 'transactionType') {
+      const selectedOption = transactionTypeOptions.find((option) => String(option.value) === String(value));
+      setHeader((prev) => ({
+        ...prev,
+        transactionType: value,
+        indicator: selectedOption?.indicator || prev.indicator,
+        series: '',
+        nextNumber: '',
+      }));
+      setPageState((prev) => ({ ...prev, seriesLoading: true }));
+      try {
+        const res = await fetchServiceARInvoiceSeries(header.postingDate, value);
+        const nextSeries = res.data?.series || [];
+        const firstSeries = pickFirstSeries(nextSeries, value);
+        setRefData((prev) => ({ ...prev, series: nextSeries }));
+        setHeader((prev) => ({
+          ...prev,
+          transactionType: value,
+          indicator: selectedOption?.indicator || prev.indicator,
+          series: firstSeries ? String(firstSeries.Series || '') : '',
+          nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
+        }));
+      } catch (_error) {
+        const firstSeries = pickFirstSeries(refData.series || [], value);
+        setHeader((prev) => ({
+          ...prev,
+          transactionType: value,
+          indicator: selectedOption?.indicator || prev.indicator,
+          series: firstSeries ? String(firstSeries.Series || '') : '',
+          nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
+        }));
+      } finally {
+        setPageState((prev) => ({ ...prev, seriesLoading: false }));
+      }
+      return;
+    }
+
     if (name === 'postingDate') {
       setHeader((prev) => ({ ...prev, postingDate: value }));
       setPageState((prev) => ({ ...prev, seriesLoading: true }));
       try {
-        const res = await fetchServiceARInvoiceSeries(value);
+        const res = await fetchServiceARInvoiceSeries(value, header.transactionType);
         const nextSeries = res.data?.series || [];
         setRefData((prev) => ({ ...prev, series: nextSeries }));
         setHeader((prev) => {
@@ -960,8 +1057,8 @@ function ServiceARInvoicePage() {
           }
 
           const selectedSeries =
-            nextSeries.find((series) => String(series.Series || '') === String(prev.series || '')) ||
-            nextSeries[0];
+            filterSeriesByTransactionType(nextSeries, prev.transactionType).find((series) => String(series.Series || '') === String(prev.series || '')) ||
+            pickFirstSeries(nextSeries, prev.transactionType);
 
           return {
             ...prev,
@@ -984,7 +1081,7 @@ function ServiceARInvoicePage() {
         return;
       }
 
-      const selectedSeries = (refData.series || []).find((series) => String(series.Series || '') === String(value || ''));
+      const selectedSeries = visibleSeries.find((series) => String(series.Series || '') === String(value || ''));
       setHeader((prev) => ({
         ...prev,
         series: value,
@@ -1293,11 +1390,14 @@ function ServiceARInvoicePage() {
   };
 
   const resetForm = () => {
-    const firstSeries = (refData.series || [])[0];
+    const defaultTransactionType = transactionTypeOptions[0]?.value || '';
+    const firstSeries = pickFirstSeries(refData.series || [], defaultTransactionType);
     setIsDirty(false);
     setCurrentDocEntry(null);
     setHeader({
       ...INIT_HEADER,
+      transactionType: defaultTransactionType,
+      indicator: transactionTypeOptions[0]?.indicator || '',
       series: firstSeries ? String(firstSeries.Series || '') : '',
       nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
     });
@@ -1362,7 +1462,7 @@ function ServiceARInvoicePage() {
     setHeader((prev) => ({
       ...prev,
       ...normalizedHeader,
-      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice',
+      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || '',
     }));
     const baseType = BASE_TYPE[sourceType] || 17;
     setLines(copySource.lines.length
@@ -1417,8 +1517,8 @@ function ServiceARInvoicePage() {
 
     if (duplicated) {
       const selectedSeries =
-        (refData.series || []).find((series) => String(series.Series || '') === String(header.series || '')) ||
-        (refData.series || [])[0];
+        visibleSeries.find((series) => String(series.Series || '') === String(header.series || '')) ||
+        pickFirstSeries(refData.series || [], header.transactionType);
       if (selectedSeries) {
         setHeader((prev) => ({
           ...prev,
@@ -1737,7 +1837,8 @@ function ServiceARInvoicePage() {
               </div>
               <div className="del-field">
                 <label className="del-field__label">Transaction Type</label>
-                <select className="del-field__select" name="transactionType" value={header.transactionType} onChange={handleHeaderChange} disabled={!isDocumentEditable}>
+                <select className="del-field__select" name="transactionType" value={header.transactionType} onChange={handleHeaderChange} disabled={!isDocumentEditable || !transactionTypeOptions.length}>
+                  <option value=""></option>
                   {transactionTypeOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
@@ -1762,7 +1863,7 @@ function ServiceARInvoicePage() {
                 <div className="service-ar-docnum">
                   <select className="del-field__select" name="series" value={header.series} onChange={handleHeaderChange} disabled={!isDocumentEditable || currentDocEntry || pageState.seriesLoading}>
                     <option value="manual">Manual</option>
-                    {(refData.series || []).map((series) => (
+                    {visibleSeries.map((series) => (
                       <option key={series.Series} value={series.Series}>{series.SeriesName}</option>
                     ))}
                   </select>
