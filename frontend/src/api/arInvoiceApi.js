@@ -15,9 +15,12 @@ export const fetchARInvoiceCustomerOptions = (params = {}) => {
   return client.get(`${API_BASE}/customers/search`, { params });
 };
 
-export const fetchDocumentSeries = (date = '') => {
+export const fetchDocumentSeries = (date = '', transactionType = '') => {
   return client.get(`${API_BASE}/series`, {
-    params: date ? { date } : {},
+    params: {
+      ...(date ? { date } : {}),
+      ...(transactionType ? { transactionType } : {}),
+    },
   });
 };
 

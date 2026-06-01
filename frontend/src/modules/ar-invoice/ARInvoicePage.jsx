@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import './styles/arInvoice.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
+import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import ContentsTab from './components/ContentsTab';
 import LogisticsTab from './components/LogisticsTab';
 import AccountingTab from './components/AccountingTab';
@@ -122,6 +123,49 @@ const normalizeBaseLine = (line, fallbackIndex) =>
 const normalizeWarehouse = (line = {}, header = {}) =>
   line.whse || line.WarehouseCode || line.WhsCode || line.warehouse || header.warehouse || header.WarehouseCode || '';
 const hasUdfValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
+const isCheckedValue = (value) =>
+  ['Y', 'YES', 'TRUE', '1', 'TYES', true].includes(
+    typeof value === 'string' ? value.trim().toUpperCase() : value
+  );
+const normalizeFieldIdentity = (value) =>
+  String(value || '')
+    .replace(/^U_/i, '')
+    .replace(/[^a-z0-9]+/gi, '')
+    .toLowerCase();
+const fieldNameMatches = (field = {}, names = new Set()) =>
+  names.has(normalizeFieldIdentity(field.key)) ||
+  names.has(normalizeFieldIdentity(field.label)) ||
+  names.has(normalizeFieldIdentity(field.aliasId)) ||
+  names.has(normalizeFieldIdentity(field.sapField));
+const toOptionValue = (option) => String(
+  typeof option === 'string'
+    ? option
+    : option?.value ?? option?.Value ?? option?.Code ?? option?.code ?? option?.Name ?? option?.name ?? option?.label ?? ''
+);
+const toOptionLabel = (option) => String(
+  typeof option === 'string'
+    ? option
+    : option?.label ?? option?.Label ?? option?.Description ?? option?.description ?? option?.Name ?? option?.name ?? option?.Value ?? option?.value ?? option?.Code ?? option?.code ?? ''
+);
+const normalizeSelectOptions = (options = []) => {
+  const source = Array.isArray(options) ? options : [];
+  const seen = new Set();
+  return source.reduce((acc, option) => {
+    const value = toOptionValue(option).trim();
+    if (!value || seen.has(value.toLowerCase())) return acc;
+    seen.add(value.toLowerCase());
+    acc.push({
+      value,
+      label: toOptionLabel(option).trim() || value,
+      indicator: option?.indicator ?? option?.Indicator ?? '',
+    });
+    return acc;
+  }, []);
+};
+const getTransactionTypeFromUdfs = (definitions = [], values = {}) => {
+  const field = definitions.find((definition) => fieldNameMatches(definition, TRANSACTION_TYPE_FIELD_NAMES));
+  return field ? String(values?.[field.key] || '').trim() : '';
+};
 const mergeUdfValues = (...sources) =>
   sources.reduce((acc, source) => {
     Object.entries(source || {}).forEach(([key, value]) => {
@@ -148,19 +192,36 @@ const FALLBACK_SHIPPING = [
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
+const DEFAULT_WAREHOUSE_CODE = '01';
+const TRANSACTION_TYPE_FIELD_NAMES = new Set(['transactiontype', 'transtype', 'documenttype', 'doctype']);
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
-  openQty: '', uomCode: '', stdDiscount: '', taxCode: '', total: '', whse: '',
-  loc: '', branch: '',
+  openQty: '', uomCode: '', stdDiscount: '', taxCode: '', total: '', whse: DEFAULT_WAREHOUSE_CODE,
+  loc: '', branch: '', wTaxLiable: 'N', glAccount: '', distRule: '', taxLiable: 'Y',
+  weight: '', taxAmount: '', uomName: '', cogsDistRule: '', countryOfOrigin: '',
+  qtyInventoryUom: '', inventoryUOM: '', changeQtyInvUomIndependently: 'N',
+  uomGroup: '', blanketAgreementNo: '', saudaNodeRef: '', apInvDocKey: '',
+  apInvDocNum: '', apInvLineNum: '', assessableValue: '', bedRate: '',
+  bedAmount: '', rg23dNo: '', specialRebate: '', commission: '',
+  sellerBrokeragePerQty: '', sellerItem: '', sellerUnitPrice: '', sellerQty: '',
+  sellerBrokerage: '', buyerBrokerage: '', buyerDelivery: '', sellerDelivery: '',
+  buyerQuality: '', sellerQuality: '', buyerPrice: '', sellerPrice: '',
+  buyerSpecialInstruction: '', sellerSpecialInstruction: '',
+  sellerBrokerageAmtPer: '', sellerBrokeragePercent: '',
+  buyerBillDiscount: '', sellerBillDiscount: '', sacCode: '', stcode: '',
+  buyerPaymentTerms: '', sellerPaymentTerms: '', freightPurchase: '',
+  freightSales: '', freightProvider: '', freightProviderName: '',
+  documentCreated: '', brokerageNumber: '',
   udf: createUdfState(rowUdfDefinitions),
 });
 
 const INIT_HEADER = {
-  vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: '',
+  vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
   docNo: '', status: 'Open', series: '', nextNumber: '',
   postingDate: today(), deliveryDate: '', documentDate: today(), contractDate: '',
   branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
+  transactionType: '', indicator: '',
   shippingType: '', confirmed: false, journalRemark: '', paymentTerms: '',
   paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
   totalPaymentDue: '', rounding: false, owner: '', purchaser: '', salesEmployee: '',
@@ -201,8 +262,8 @@ function ARInvoicePage() {
   const [refData, setRefData] = useState({
     company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
     warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [],
-    payment_terms: [], shipping_types: [], branches: [], uom_groups: [],
-    decimal_settings: DEC, warnings: [], series: [], states: [],
+    gl_accounts: [], distribution_rules: [], payment_terms: [], shipping_types: [], branches: [], uom_groups: [],
+    decimal_settings: DEC, warnings: [], series: [], states: [], transaction_types: [],
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
@@ -215,6 +276,16 @@ function ARInvoicePage() {
   const [stateModal, setStateModal] = useState(false);
   const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1 });
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
+  const [lineLookupModal, setLineLookupModal] = useState({
+    open: false,
+    lineIndex: -1,
+    field: '',
+    title: '',
+    options: [],
+    searchPlaceholder: 'Search values',
+    emptyMessage: 'No values found',
+    columns: null,
+  });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyFromDocType, setCopyFromDocType] = useState('salesOrder');
@@ -359,8 +430,11 @@ function ARInvoicePage() {
             warehouse_addresses: refDataRes.data.warehouse_addresses || [],
             company_address: refDataRes.data.company_address || {},
             tax_codes: refDataRes.data.tax_codes || [],
+            gl_accounts: refDataRes.data.gl_accounts || [],
+            distribution_rules: refDataRes.data.distribution_rules || [],
             payment_terms: refDataRes.data.payment_terms || [],
             shipping_types: refDataRes.data.shipping_types || [],
+            transaction_types: refDataRes.data.transaction_types || [],
             sales_employees: refDataRes.data.sales_employees || [],
             branches: refDataRes.data.branches || [],
             states: refDataRes.data.states || [],
@@ -396,7 +470,7 @@ function ARInvoicePage() {
 
     const loadSeriesForPostingDate = async () => {
       try {
-        const seriesResponse = await fetchDocumentSeries(seriesDate);
+        const seriesResponse = await fetchDocumentSeries(seriesDate, header.transactionType);
         const availableSeries = seriesResponse.data?.series || [];
 
         if (ignore || requestedEditDocEntry) return;
@@ -423,7 +497,7 @@ function ARInvoicePage() {
 
     loadSeriesForPostingDate();
     return () => { ignore = true; };
-  }, [currentDocEntry, requestedEditDocEntry, header.postingDate]);
+  }, [currentDocEntry, requestedEditDocEntry, header.postingDate, header.transactionType]);
 
   useEffect(() => {
     const docEntry = requestedEditDocEntry;
@@ -437,7 +511,7 @@ function ARInvoicePage() {
         let editSeries = [];
         try {
           const seriesDate = so?.header?.postingDate || so?.header?.documentDate || '';
-          const seriesResponse = await fetchDocumentSeries(seriesDate);
+          const seriesResponse = await fetchDocumentSeries(seriesDate, so?.header?.transactionType || '');
           editSeries = seriesResponse.data?.series || [];
         } catch (_seriesError) {
           editSeries = [];
@@ -472,6 +546,8 @@ function ARInvoicePage() {
           contactPerson: so.header?.contactPerson || '',
           name: so.header?.customerName || so.header?.name || '',
           paymentTerms: so.header?.paymentTermsCode || so.header?.paymentTerms || '',
+          transactionType: so.header?.transactionType || getTransactionTypeFromUdfs(headerUdfDefinitions, so.header_udfs || '') || '',
+          indicator: so.header?.indicator || so.header?.seriesIndicator || '',
           placeOfSupply: so.header?.placeOfSupply || '',
           branch: so.header?.branch || '',
           docNo: so.header?.docNo || so.header?.docNum || '',
@@ -564,7 +640,7 @@ function ARInvoicePage() {
     const { header: srcHeader = {}, lines: srcLines = [], baseDocument } = copyFrom;
     const normalizedHeader = normaliseDocumentHeader(srcHeader || {});
     const firstSourceLine = Array.isArray(srcLines) && srcLines.length ? srcLines[0] : {};
-    const copiedWarehouse = normalizeWarehouse(firstSourceLine, srcHeader);
+    const copiedWarehouse = normalizeWarehouse(firstSourceLine, srcHeader) || DEFAULT_WAREHOUSE_CODE;
     const copiedBranch = srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || srcHeader.BPLId || firstSourceLine.branch || '';
     const copiedBaseType = baseDocument?.baseType || BASE_TYPE[copyFrom.type] || firstSourceLine.baseType || 15;
     const copiedBaseEntry = baseDocument?.baseEntry || copyFrom.docEntry;
@@ -594,7 +670,7 @@ function ARInvoicePage() {
         return {
           ...createLine(rowUdfDefinitions),
           ...normalizedLine,
-          whse: normalizeWarehouse(normalizedLine, srcHeader) || normalizeWarehouse(l, srcHeader),
+          whse: normalizeWarehouse(normalizedLine, srcHeader) || normalizeWarehouse(l, srcHeader) || copiedWarehouse || DEFAULT_WAREHOUSE_CODE,
           baseEntry: l.baseEntry ?? l.BaseEntry ?? copiedBaseEntry,
           baseType: l.baseType ?? l.BaseType ?? copiedBaseType,
           baseLine: normalizeBaseLine(l, idx),
@@ -642,6 +718,21 @@ function ARInvoicePage() {
   const shipTypeOpts = refData.shipping_types.length
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
     : FALLBACK_SHIPPING;
+  const transactionTypeOptions = useMemo(() => {
+    const transactionTypeUdf = headerUdfDefinitions.find((field) => fieldNameMatches(field, TRANSACTION_TYPE_FIELD_NAMES));
+    const udfOptions = normalizeSelectOptions(transactionTypeUdf?.options || []);
+    const refOptions = normalizeSelectOptions(refData.transaction_types || refData.transactionTypes || []);
+    return udfOptions.length ? udfOptions : refOptions;
+  }, [headerUdfDefinitions, refData.transaction_types, refData.transactionTypes]);
+  useEffect(() => {
+    if (currentDocEntry || requestedEditDocEntry || header.transactionType || !transactionTypeOptions.length) return;
+    const firstOption = transactionTypeOptions[0];
+    setHeader((prev) => ({
+      ...prev,
+      transactionType: firstOption.value,
+      indicator: firstOption.indicator || prev.indicator,
+    }));
+  }, [currentDocEntry, requestedEditDocEntry, header.transactionType, transactionTypeOptions]);
   const resolveARInvoiceAddress = useCallback((code, addresses = [], fallbackText = '') => {
     const normalizedCode = String(code || '').trim();
     if (normalizedCode) {
@@ -668,12 +759,40 @@ function ARInvoicePage() {
     return FALLBACK_UOM;
   }, [refData.items, uomGroupMap]);
 
+  const getUomGroupName = useCallback((item = {}) => {
+    if (!item?.UoMGroupEntry && item?.UoMGroupEntry !== 0) return '';
+    const group = (refData.uom_groups || []).find(g => String(g.AbsEntry) === String(item.UoMGroupEntry));
+    return group?.Name || String(item.UoMGroupEntry || '');
+  }, [refData.uom_groups]);
+
   const lineItemOptions = lines.reduce((acc, line, i) => {
     const code = String(line.itemNo || '').trim();
     const exists = refData.items.some(it => String(it.ItemCode || '') === code);
     acc[i] = code && !exists ? [{ ItemCode: code, ItemName: line.itemDescription || code }, ...refData.items] : refData.items;
     return acc;
   }, {});
+
+  const accountLookupOptions = useMemo(() => (refData.gl_accounts || []).map((account) => ({
+    value: account.code || '',
+    description: account.name || '',
+    label: account.name ? `${account.code} - ${account.name}` : account.code,
+    accountNumber: account.code || '',
+    accountName: account.name || '',
+    accountBalance: Number(account.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    inactive: account.inactive || 'No',
+  })).filter((option) => option.value), [refData.gl_accounts]);
+
+  const distributionRuleLookupOptions = useMemo(() => (refData.distribution_rules || []).map((rule) => {
+    const value = rule.FactorCode || rule.OcrCode || rule.code || '';
+    const description = rule.FactorDescription || rule.OcrName || rule.name || '';
+    return {
+      value,
+      description,
+      label: description ? `${value} - ${description}` : value,
+      factorCode: value,
+      factorDescription: description,
+    };
+  }).filter((option) => option.value), [refData.distribution_rules]);
 
   const fmtTaxLabel = (t) => {
     const code = String(t?.Code || '').trim();
@@ -698,9 +817,20 @@ function ARInvoicePage() {
   };
 
   // ── calculations ──────────────────────────────────────────────────────────
-  const calcLineTotal = (line) => {
+  const calcLineTotalFromFields = (line) => {
     const qty = parseNum(line.quantity), price = parseNum(line.unitPrice), disc = parseNum(line.stdDiscount);
     return roundTo(qty * price * (1 - disc / 100), numDec.total);
+  };
+  const calcLineTotal = (line) => {
+    const enteredTotal = String(line.total ?? '').trim();
+    return enteredTotal ? roundTo(parseNum(enteredTotal), numDec.total) : calcLineTotalFromFields(line);
+  };
+  const calcUnitPriceFromTotal = (line) => {
+    const qty = parseNum(line.quantity);
+    const total = parseNum(line.total);
+    const discountFactor = 1 - parseNum(line.stdDiscount) / 100;
+    if (qty <= 0 || total <= 0 || discountFactor <= 0) return '';
+    return fmtDec(total / qty / discountFactor, numDec.unitPrice);
   };
 
   const calcTotals = () => {
@@ -862,6 +992,48 @@ function ARInvoicePage() {
   };
 
   // ── handlers ──────────────────────────────────────────────────────────────
+  const openLineLookup = (field, lineIndex) => {
+    if (!isDocumentEditable) return;
+    const isAccount = field === 'glAccount';
+    setLineLookupModal({
+      open: true,
+      lineIndex,
+      field,
+      title: isAccount ? 'List of G/L Accounts' : 'List of Distribution Rules',
+      options: isAccount ? accountLookupOptions : distributionRuleLookupOptions,
+      searchPlaceholder: isAccount ? 'Search G/L accounts' : 'Search distribution rules',
+      emptyMessage: isAccount ? 'No G/L accounts found' : 'No distribution rules found',
+      columns: isAccount
+        ? [
+            { key: 'accountNumber', label: 'Account Number', width: 150, primary: true },
+            { key: 'accountName', label: 'Account Name' },
+            { key: 'accountBalance', label: 'Account Balance', width: 130, align: 'right' },
+            { key: 'inactive', label: 'Inactive', width: 90 },
+          ]
+        : [
+            { key: 'factorCode', label: 'Distr. Rule', width: 140, primary: true },
+            { key: 'factorDescription', label: 'Description' },
+          ],
+    });
+  };
+
+  const closeLineLookup = () => {
+    setLineLookupModal((prev) => ({ ...prev, open: false, lineIndex: -1, field: '' }));
+  };
+
+  const handleLineLookupSelect = (option) => {
+    if (lineLookupModal.lineIndex < 0 || !lineLookupModal.field) return;
+    const selectedValue = option?.value || '';
+    setLines((prev) => prev.map((line, index) => {
+      if (index !== lineLookupModal.lineIndex) return line;
+      const next = { ...line, [lineLookupModal.field]: selectedValue };
+      if (lineLookupModal.field === 'distRule' && (!line.cogsDistRule || line.cogsDistRule === line.distRule)) {
+        next.cogsDistRule = selectedValue;
+      }
+      return next;
+    }));
+  };
+
   const handleHeaderChange = (e) => {
     if (!isDocumentEditable) return;
     const { name, value, type, checked } = e.target;
@@ -870,6 +1042,18 @@ function ARInvoicePage() {
     
     if (name === 'series') {
       handleSeriesChange(value);
+      return;
+    }
+
+    if (name === 'transactionType') {
+      const selectedOption = transactionTypeOptions.find((option) => String(option.value) === String(value));
+      setHeader(p => ({
+        ...p,
+        transactionType: value,
+        indicator: selectedOption?.indicator || p.indicator,
+        series: '',
+        nextNumber: '',
+      }));
       return;
     }
     
@@ -1004,6 +1188,16 @@ function ARInvoicePage() {
             // Step 1: Set Item Details
             next.itemDescription = item.ItemName || next.itemDescription;
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
+            next.uomName = next.uomCode || next.uomName || '';
+            next.inventoryUOM = String(item.InventoryUOM || '').trim();
+            next.qtyInventoryUom = next.qtyInventoryUom || next.quantity || '';
+            next.uomGroup = getUomGroupName(item);
+            next.countryOfOrigin = item.ItemCountryOrg || item.CountryOrg || next.countryOfOrigin || '';
+            next.glAccount = next.glAccount || item.SalesGLAccount || item.IncomeAccount || item.IncomeAcct || item.RevenuesAccount || item.RevenuesAc || '';
+            next.distRule = next.distRule || item.DistributionRule || item.OcrCode || '';
+            next.cogsDistRule = next.cogsDistRule || item.COGSDistributionRule || item.COGSCostingCode || item.CogsOcrCod || next.distRule || '';
+            next.sellerItem = next.sellerItem || value;
+            next.stcode = next.stcode || item.TaxCodeAR || item.SalTaxCode || '';
             
             // Step 2: Set HSN Code from API response (OCHP.ChapterID via JOIN)
             next.hsnCode = hsnData.hsnCode || hsnData.hsn_sww || '';
@@ -1027,7 +1221,7 @@ function ARInvoicePage() {
             if (!gstState || !companyState) {
               console.warn('⚠️ Missing state information for tax determination');
               next.taxCode = '';
-              next.total = fmtDec(calcLineTotal(next), numDec.total);
+              next.total = fmtDec(calcLineTotalFromFields(next), numDec.total);
               return next;
             }
             
@@ -1049,7 +1243,7 @@ function ARInvoicePage() {
               next.taxCode = '';
             }
             
-            next.total = fmtDec(calcLineTotal(next), numDec.total);
+            next.total = fmtDec(calcLineTotalFromFields(next), numDec.total);
             return next;
           }));
         }
@@ -1063,9 +1257,19 @@ function ARInvoicePage() {
           if (item) {
             next.itemDescription = item.ItemName || next.itemDescription;
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
+            next.uomName = next.uomCode || next.uomName || '';
+            next.inventoryUOM = String(item.InventoryUOM || '').trim();
+            next.qtyInventoryUom = next.qtyInventoryUom || next.quantity || '';
+            next.uomGroup = getUomGroupName(item);
+            next.countryOfOrigin = item.ItemCountryOrg || item.CountryOrg || next.countryOfOrigin || '';
+            next.glAccount = next.glAccount || item.SalesGLAccount || item.IncomeAccount || item.IncomeAcct || item.RevenuesAccount || item.RevenuesAc || '';
+            next.distRule = next.distRule || item.DistributionRule || item.OcrCode || '';
+            next.cogsDistRule = next.cogsDistRule || item.COGSDistributionRule || item.COGSCostingCode || item.CogsOcrCod || next.distRule || '';
+            next.sellerItem = next.sellerItem || value;
+            next.stcode = next.stcode || item.TaxCodeAR || item.SalTaxCode || '';
             next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
           }
-          next.total = fmtDec(calcLineTotal(next), numDec.total);
+          next.total = fmtDec(calcLineTotalFromFields(next), numDec.total);
           return next;
         }));
       }
@@ -1075,7 +1279,22 @@ function ARInvoicePage() {
     setLines(prev => prev.map((line, idx) => {
       if (idx !== i) return line;
       const next = { ...line, [name]: numDec[name] !== undefined ? sanitize(value, numDec[name]) : value };
-      next.total = fmtDec(calcLineTotal(next), numDec.total);
+      if (name === 'uomCode') {
+        next.uomName = value;
+      }
+      if (name === 'distRule' && (!line.cogsDistRule || line.cogsDistRule === line.distRule)) {
+        next.cogsDistRule = value;
+      }
+      if (name === 'quantity' && !isCheckedValue(next.changeQtyInvUomIndependently)) {
+        next.qtyInventoryUom = next.quantity;
+      }
+      if (name === 'total') {
+        next.total = sanitize(value, numDec.total);
+        const unitPrice = calcUnitPriceFromTotal(next);
+        if (unitPrice) next.unitPrice = unitPrice;
+      } else if (['quantity', 'unitPrice', 'stdDiscount'].includes(name)) {
+        next.total = fmtDec(calcLineTotalFromFields(next), numDec.total);
+      }
       return next;
     }));
   };
@@ -1162,9 +1381,12 @@ function ARInvoicePage() {
         errors.quantity = 'Quantity is required before adding a new line';
       }
       
-      // Check if last line has unit price
-      if (!lastLine.unitPrice || Number(lastLine.unitPrice) <= 0) {
-        errors.unitPrice = 'Unit Price is required before adding a new line';
+      // SAP B1 allows either Unit Price or Total (LC) to drive the line amount.
+      if (
+        (!lastLine.unitPrice || Number(lastLine.unitPrice) <= 0) &&
+        (!lastLine.total || Number(lastLine.total) <= 0)
+      ) {
+        errors.total = 'Total (LC) or Unit Price is required before adding a new line';
       }
       
       // Check if last line has Tax Code
@@ -1200,7 +1422,7 @@ function ARInvoicePage() {
       ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
-      whse: header.warehouse || ''
+      whse: header.warehouse || DEFAULT_WAREHOUSE_CODE
     }]);
   };
 
@@ -1460,6 +1682,12 @@ function ARInvoicePage() {
             calcLineTotal,
             formatTotal: (value) => fmtDec(value, numDec.total),
           });
+          updatedLine.uomName = updatedLine.uomName || updatedLine.uomCode || '';
+          updatedLine.inventoryUOM = mergedItem.InventoryUOM || updatedLine.inventoryUOM || '';
+          updatedLine.qtyInventoryUom = updatedLine.qtyInventoryUom || updatedLine.quantity || '';
+          updatedLine.uomGroup = getUomGroupName(mergedItem);
+          updatedLine.sellerItem = updatedLine.sellerItem || mergedItem.ItemCode || '';
+          updatedLine.stcode = updatedLine.stcode || mergedItem.TaxCodeAR || mergedItem.SalTaxCode || '';
           
           // Auto-populate tax code based on HSN
           if (updatedLine.hsnCode) {
@@ -1479,12 +1707,19 @@ function ARInvoicePage() {
       console.error('Error selecting item:', error);
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
-          return hydrateDocumentLineFromItem(line, mergedItem, {
+          const updatedLine = hydrateDocumentLineFromItem(line, mergedItem, {
             side: 'sales',
             fallbackWarehouse: header.warehouse,
             calcLineTotal,
             formatTotal: (value) => fmtDec(value, numDec.total),
           });
+          updatedLine.uomName = updatedLine.uomName || updatedLine.uomCode || '';
+          updatedLine.inventoryUOM = mergedItem.InventoryUOM || updatedLine.inventoryUOM || '';
+          updatedLine.qtyInventoryUom = updatedLine.qtyInventoryUom || updatedLine.quantity || '';
+          updatedLine.uomGroup = getUomGroupName(mergedItem);
+          updatedLine.sellerItem = updatedLine.sellerItem || mergedItem.ItemCode || '';
+          updatedLine.stcode = updatedLine.stcode || mergedItem.TaxCodeAR || mergedItem.SalTaxCode || '';
+          return updatedLine;
         }
         return line;
       }));
@@ -1660,9 +1895,13 @@ function ARInvoicePage() {
           return e;
         }
 
-        if ((!l.unitPrice || Number(l.unitPrice) <= 0) && !isUpdate) {
-          console.log(`❌ Line ${i}: Unit Price validation failed`);
-          e.lines[i] = { ...(e.lines[i] || {}), unitPrice: 'Unit Price must be > 0' };
+        if (
+          (!l.unitPrice || Number(l.unitPrice) <= 0) &&
+          (!l.total || Number(l.total) <= 0) &&
+          !isUpdate
+        ) {
+          console.log(`❌ Line ${i}: Unit Price/Total validation failed`);
+          e.lines[i] = { ...(e.lines[i] || {}), total: 'Total (LC) or Unit Price must be > 0' };
           e.form = 'Please correct the highlighted fields.';
           return e;
         }
@@ -2165,6 +2404,25 @@ function ARInvoicePage() {
                       </select>
                     </div>
 
+                    {/* Transaction Type */}
+                    <div className="del-field">
+                      <label className="del-field__label">Transaction Type</label>
+                      <select
+                        name="transactionType"
+                        className="del-field__select"
+                        value={header.transactionType || ''}
+                        onChange={handleHeaderChange}
+                        disabled={!isDocumentEditable || !transactionTypeOptions.length}
+                      >
+                        <option value="">Select</option>
+                        {transactionTypeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     {/* Place of Supply */}
                     <div className="del-field">
                       <label className="del-field__label">Place of Supply *</label>
@@ -2235,6 +2493,9 @@ function ARInvoicePage() {
                             {w.WhsCode} - {w.WhsName}
                           </option>
                         ))}
+                        {header.warehouse && !branchFilteredWarehouses.some(w => String(w.WhsCode) === String(header.warehouse)) && (
+                          <option value={header.warehouse}>{header.warehouse}</option>
+                        )}
                       </select>
                     </div>
 
@@ -2336,6 +2597,7 @@ function ARInvoicePage() {
                 onRemoveLine={removeLine}
                 onOpenHSNModal={openHSNModal}
                 onOpenItemModal={openItemModal}
+                onOpenLineLookup={openLineLookup}
                 lineItemOptions={lineItemOptions}
                 getUomOptions={getUomOptions}
                 effectiveTaxCodes={effectiveTaxCodes}
@@ -2659,6 +2921,17 @@ function ARInvoicePage() {
         freightCharges={freightModal.freightCharges}
         taxCodes={effectiveTaxCodes}
         loading={freightModal.loading}
+      />
+      <LineValueLookupModal
+        isOpen={lineLookupModal.open}
+        onClose={closeLineLookup}
+        onSelect={handleLineLookupSelect}
+        options={lineLookupModal.options}
+        title={lineLookupModal.title}
+        searchPlaceholder={lineLookupModal.searchPlaceholder}
+        emptyMessage={lineLookupModal.emptyMessage}
+        allowCreate={false}
+        columns={lineLookupModal.columns}
       />
     </form>
   );

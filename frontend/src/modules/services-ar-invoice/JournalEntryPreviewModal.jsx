@@ -7,30 +7,12 @@ const toNumber = (value) => {
 
 const fmt = (value) => toNumber(value).toFixed(2);
 
-const createEmptyLine = (index) => ({
-  lineId: index + 1,
-  account: '',
-  name: '',
-  debit: 0,
-  credit: 0,
-  taxCode: '',
-  remarks: '',
-  project: '',
-  location: '',
-  profitCenter: '',
-});
-
 function JournalEntryPreviewModal({
   isOpen,
   journalEntry,
   onClose,
-  onOpenLinkedMaster,
-  onOpenSource,
-  onRegenerate,
-  loading = false,
 }) {
   const [lines, setLines] = useState([]);
-  const [status, setStatus] = useState('Open');
 
   useEffect(() => {
     setLines((journalEntry?.lines || []).map((line, index) => ({
@@ -39,7 +21,6 @@ function JournalEntryPreviewModal({
       debit: toNumber(line.debit),
       credit: toNumber(line.credit),
     })));
-    setStatus('Open');
   }, [journalEntry]);
 
   const totals = useMemo(() => {
@@ -65,64 +46,6 @@ function JournalEntryPreviewModal({
     )));
   };
 
-  const addRow = () => {
-    setLines((prev) => [...prev, createEmptyLine(prev.length)]);
-  };
-
-  const deleteRow = (index) => {
-    setLines((prev) => prev.length <= 1
-      ? [createEmptyLine(0)]
-      : prev.filter((_line, lineIndex) => lineIndex !== index).map((line, lineIndex) => ({ ...line, lineId: lineIndex + 1 })));
-  };
-
-  const autoBalance = () => {
-    setLines((prev) => {
-      const next = prev.length ? [...prev] : [createEmptyLine(0)];
-      const totalDebit = next.reduce((sum, line) => sum + toNumber(line.debit), 0);
-      const totalCredit = next.reduce((sum, line) => sum + toNumber(line.credit), 0);
-      const difference = Number((totalDebit - totalCredit).toFixed(2));
-      if (Math.abs(difference) < 0.01) return next;
-      const lastIndex = next.length - 1;
-      const last = { ...next[lastIndex] };
-      if (difference > 0) {
-        last.credit = toNumber(last.credit) + difference;
-      } else {
-        last.debit = toNumber(last.debit) + Math.abs(difference);
-      }
-      next[lastIndex] = last;
-      return next;
-    });
-  };
-
-  const printJournalEntry = () => {
-    const printable = document.querySelector('.service-je-window')?.outerHTML || '';
-    const win = window.open('', '_blank', 'noopener,noreferrer,width=1100,height=760');
-    if (!win) return;
-    win.document.write(`
-      <html>
-        <head>
-          <title>Journal Entry ${journalEntry?.number || ''}</title>
-          <style>
-            body{font-family:Arial,sans-serif;font-size:11px;color:#111;margin:16px}
-            table{border-collapse:collapse;width:100%}
-            th,td{border:1px solid #9ca8b3;padding:4px}
-            th{background:#dfe5ea}
-            input{border:0;width:100%;font:inherit}
-            button,.service-je-actions,.service-je-close{display:none!important}
-          </style>
-        </head>
-        <body>${printable}</body>
-      </html>
-    `);
-    win.document.close();
-    win.focus();
-    win.print();
-  };
-
-  const exportPdf = () => {
-    printJournalEntry();
-  };
-
   const lineColumns = [
     ['account', 'G/L Acct/BP Code', '150'],
     ['name', 'G/L Acct/BP Name', '240'],
@@ -136,6 +59,7 @@ function JournalEntryPreviewModal({
   ];
 
   const balanced = Math.abs(totals.difference) < 0.01;
+  const status = journalEntry?.status || 'Open';
 
   return (
     <div className="service-je-backdrop" role="dialog" aria-modal="true" data-document-dirty-ignore="true">
@@ -144,23 +68,6 @@ function JournalEntryPreviewModal({
           <span>Journal Entry</span>
           <button type="button" className="service-je-close" onClick={onClose}>x</button>
         </div>
-
-        <div className="service-je-actions" data-document-dirty-ignore="true">
-          <button type="button" className="del-btn" onClick={onRegenerate} disabled={loading}>Find Mode</button>
-          <button type="button" className="del-btn" onClick={addRow}>Add Row</button>
-          <button type="button" className="del-btn" onClick={autoBalance}>Auto Balance</button>
-          <button type="button" className="del-btn" onClick={printJournalEntry}>Print</button>
-          <button type="button" className="del-btn" onClick={exportPdf}>PDF</button>
-          <button type="button" className="del-btn" onClick={() => setStatus('Cancelled')}>Cancel Journal Entry</button>
-          <button type="button" className="del-btn" onClick={() => setStatus('Reversed')}>Reverse Journal Entry</button>
-          {journalEntry?.originNo && (
-            <button type="button" className="del-btn" onClick={onOpenSource}>Open Source Document</button>
-          )}
-        </div>
-
-        {journalEntry?.persistenceNote && (
-          <div className="service-je-note">{journalEntry.persistenceNote}</div>
-        )}
 
         <div className="service-je-header">
           <div>
@@ -230,13 +137,11 @@ function JournalEntryPreviewModal({
             <colgroup>
               <col style={{ width: 42 }} />
               {lineColumns.map((column) => <col key={column[0]} style={{ width: `${column[2]}px` }} />)}
-              <col style={{ width: 58 }} />
             </colgroup>
             <thead>
               <tr>
                 <th>#</th>
                 {lineColumns.map((column) => <th key={column[0]}>{column[1]}</th>)}
-                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -246,16 +151,6 @@ function JournalEntryPreviewModal({
                   {lineColumns.map(([key]) => (
                     <td key={key} className={['debit', 'credit'].includes(key) ? 'service-je-amount' : ''}>
                       <div className="service-je-cell">
-                        {key === 'account' && (
-                          <button
-                            type="button"
-                            className="service-je-golden"
-                            title="Golden Arrow Navigation"
-                            onClick={() => onOpenLinkedMaster?.(line)}
-                          >
-                            &gt;
-                          </button>
-                        )}
                         <input
                           value={['debit', 'credit'].includes(key) ? fmt(line[key]) : (line[key] || '')}
                           onChange={(event) => updateLine(index, key, event.target.value)}
@@ -264,9 +159,6 @@ function JournalEntryPreviewModal({
                       </div>
                     </td>
                   ))}
-                  <td>
-                    <button type="button" className="del-btn del-btn--danger service-je-delete" onClick={() => deleteRow(index)}>x</button>
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -275,7 +167,7 @@ function JournalEntryPreviewModal({
                 <td colSpan={3}>Grid Footer Totals</td>
                 <td className="service-je-total">{fmt(totals.totalDebit)}</td>
                 <td className="service-je-total">{fmt(totals.totalCredit)}</td>
-                <td colSpan={6}></td>
+                <td colSpan={5}></td>
               </tr>
             </tfoot>
           </table>

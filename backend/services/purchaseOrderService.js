@@ -48,6 +48,7 @@ const getReferenceData = async (companyId) => {
         RateDec: 2,
         PercentDec: 2
       },
+      line_field_metadata: { matrix_columns: [], sap_form: {} },
       warnings: [`Failed to load reference data: ${error.message}`],
     };
   }
@@ -234,10 +235,23 @@ const cleanObject = (value) => {
   return value;
 };
 
-const buildDocumentLines = (lines = []) =>
-  lines
+const buildDocumentLines = async (lines = []) =>
+  Promise.all(lines
     .filter((line) => String(line.itemNo || '').trim())
-    .map((line) => {
+    .map(async (line, index) => {
+      const uomValue = line.uomEntry ?? line.UoMEntry ?? line.uomCode;
+      const resolvedUomEntry = await purchaseOrderDb.resolvePurchaseOrderLineUomEntry(line.itemNo, uomValue);
+
+      if (resolvedUomEntry === null || resolvedUomEntry === undefined) {
+        const displayLine = index + 1;
+        const requestedUom = String(uomValue || '').trim();
+        throw new Error(
+          requestedUom
+            ? `Line ${displayLine}: UoM "${requestedUom}" is not valid for item "${line.itemNo}".`
+            : `Line ${displayLine}: Specify a UoM for item "${line.itemNo}".`
+        );
+      }
+
       const documentLine = cleanObject({
         ItemCode: line.itemNo,
         ItemDescription: line.itemDescription,
@@ -247,7 +261,7 @@ const buildDocumentLines = (lines = []) =>
         DiscountPercent: toNumberOrUndefined(line.stdDiscount),
         TaxCode: line.taxCode,
         WarehouseCode: line.whse,
-        UoMCode: line.uomCode,
+        UoMEntry: resolvedUomEntry,
         ...(line.udf || {}),
       });
 
@@ -266,9 +280,9 @@ const buildDocumentLines = (lines = []) =>
       }
 
       return documentLine;
-    });
+    }));
 
-const buildPurchaseOrderPayload = ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) =>
+const buildPurchaseOrderPayload = async ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) =>
   cleanObject({
     CardCode: header.vendor,
     NumAtCard: header.salesContractNo,
@@ -287,7 +301,7 @@ const buildPurchaseOrderPayload = ({ header = {}, lines = [], header_udfs = {}, 
     DiscountPercent: toNumberOrUndefined(header.discount),
     ...header_udfs,
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
-    DocumentLines: buildDocumentLines(lines),
+    DocumentLines: await buildDocumentLines(lines),
   });
 
 const validatePurchaseOrderPayload = async ({ header = {}, lines = [] }) => {
@@ -311,7 +325,7 @@ const validatePurchaseOrderPayload = async ({ header = {}, lines = [] }) => {
 
 const submitPurchaseOrder = async (payload) => {
   await validatePurchaseOrderPayload(payload);
-  const purchaseOrderPayload = buildPurchaseOrderPayload(payload);
+  const purchaseOrderPayload = await buildPurchaseOrderPayload(payload);
 
   const response = await sapService.request({
     method: 'post',
@@ -331,7 +345,7 @@ const submitPurchaseOrder = async (payload) => {
 
 const updatePurchaseOrder = async (docEntry, payload) => {
   await validatePurchaseOrderPayload(payload);
-  const purchaseOrderPayload = buildPurchaseOrderPayload(payload);
+  const purchaseOrderPayload = await buildPurchaseOrderPayload(payload);
 
   const response = await sapService.request({
     method: 'patch',

@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 
 const MATRIX_COLS = [
   { key: 'itemNo', label: 'Item No.', minWidth: 160 },
@@ -40,6 +41,8 @@ export default function ContentsTab({
   onOpenItemModal,
   getBranchName,
 }) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
+
   return (
     <div className="so-tab-panel" style={{ overflow: 'visible', minWidth: 0, maxWidth: 'none' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -87,6 +90,9 @@ export default function ContentsTab({
                         className="so-grid__input"
                         style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
                         name="itemNo"
+              data-sap-lookup="item"
+              data-sap-row-index={i}
+              onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
                         value={line.itemNo}
                         onChange={e => onLineChange(i, e)}
                         placeholder="Item Code"
