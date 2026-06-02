@@ -1,4 +1,5 @@
 const sapService = require("../services/sapService");
+const masterDataDbService = require("../services/masterDataDbService");
 const escapeOData = (v) => String(v || "").replace(/'/g, "''");
 
 // ── List BOMs ─────────────────────────────────────────────────────────────────
@@ -11,7 +12,7 @@ const listBOMs = async (req, res) => {
       : "";
     const resp = await sapService.request({
       method: "GET",
-      url: `/ProductTrees?$select=TreeCode,TreeType,Quantity,ProductDescription,Warehouse,PriceList,PlanAvgProdSize${filter}&$top=${top}&$skip=${skip}`,
+      url: `/ProductTrees?$select=TreeCode,TreeType,Quantity,ProductDescription,Warehouse,PriceList,PlanAvgProdSize,HideBOMComponentsInPrintout${filter}&$top=${top}&$skip=${skip}`,
     });
     res.json(resp.data.value || []);
   } catch (err) {
@@ -100,65 +101,45 @@ const deleteBOM = async (req, res) => {
 // ── Lookups ───────────────────────────────────────────────────────────────────
 const lookupItems = async (req, res) => {
   try {
-    await sapService.ensureSession();
     const q = req.query.query || "";
-    const filter = q ? `&$filter=contains(ItemCode,'${q}') or contains(ItemName,'${q}')` : "";
-    const resp = await sapService.request({
-      method: "GET",
-      url: `/Items?$select=ItemCode,ItemName,InventoryUOM,PurchaseItem,SalesItem,InventoryItem,QuantityOnStock,ItemsGroupCode&$top=50${filter}`,
-    });
-    res.json(resp.data.value || []);
+    const items = await masterDataDbService.lookupBOMItems(q);
+    res.json(items);
   } catch (err) { res.status(500).json({ message: _sapMsg(err) }); }
 };
 
 const lookupWarehouses = async (req, res) => {
   try {
-    await sapService.ensureSession();
-    const resp = await sapService.request({ method: "GET", url: "/Warehouses?$select=WarehouseCode,WarehouseName" });
-    res.json(resp.data.value || []);
+    const rows = await masterDataDbService.lookupBOMWarehouses();
+    res.json(rows);
   } catch (err) { res.status(500).json({ message: _sapMsg(err) }); }
 };
 
 const lookupPriceLists = async (req, res) => {
   try {
-    await sapService.ensureSession();
-    const resp = await sapService.request({ method: "GET", url: "/PriceLists?$select=PriceListNo,PriceListName" });
-    res.json(resp.data.value || []);
+    const rows = await masterDataDbService.lookupBOMPriceLists();
+    res.json(rows);
   } catch (err) { res.status(500).json({ message: _sapMsg(err) }); }
 };
 
 const lookupDistributionRules = async (req, res) => {
   try {
-    await sapService.ensureSession();
-    const resp = await sapService.request({
-      method: "GET",
-      url: "/DistributionRules?$select=FactorCode,FactorDescription&$top=100",
-    });
-    res.json(resp.data.value || []);
+    const rows = await masterDataDbService.lookupDistributionRules();
+    res.json(rows);
   } catch (err) { res.status(500).json({ message: _sapMsg(err) }); }
 };
 
 const lookupProjects = async (req, res) => {
   try {
-    await sapService.ensureSession();
-    const resp = await sapService.request({
-      method: "GET",
-      url: "/Projects?$select=Code,Name&$top=100",
-    });
-    res.json(resp.data.value || []);
+    const rows = await masterDataDbService.lookupProjects();
+    res.json(rows);
   } catch (err) { res.status(500).json({ message: _sapMsg(err) }); }
 };
 
 const lookupGLAccounts = async (req, res) => {
   try {
-    await sapService.ensureSession();
     const q = req.query.query || "";
-    const filter = q ? `?$filter=contains(Code,'${q}') or contains(Name,'${q}')` : "";
-    const resp = await sapService.request({
-      method: "GET",
-      url: `/ChartOfAccounts?$select=Code,Name${filter}&$top=50`,
-    });
-    res.json(resp.data.value || []);
+    const rows = await masterDataDbService.lookupGLAccounts(q, 100);
+    res.json(rows);
   } catch (err) { res.status(500).json({ message: _sapMsg(err) }); }
 };
 
@@ -178,6 +159,37 @@ function _isDuplicateEntryError(err) {
   return code.includes("-2035") || message.includes("ODBC -2035") || /already exists/i.test(message);
 }
 
+async function _getAllServiceLayerPages(initialUrl, limit) {
+  const rows = [];
+  const seen = new Set();
+  let url = initialUrl;
+
+  while (url && rows.length < limit && !seen.has(url)) {
+    seen.add(url);
+    const resp = await sapService.request({ method: "GET", url });
+    const pageRows = resp.data?.value || [];
+    rows.push(...pageRows);
+
+    const nextLink = resp.data?.["odata.nextLink"] || resp.data?.["@odata.nextLink"];
+    url = _normalizeServiceLayerNextLink(nextLink);
+  }
+
+  return rows.slice(0, limit);
+}
+
+function _normalizeServiceLayerNextLink(nextLink) {
+  if (!nextLink) return "";
+  const raw = String(nextLink);
+  const serviceLayerMarker = "/b1s/v2/";
+  const markerIndex = raw.indexOf(serviceLayerMarker);
+
+  if (markerIndex >= 0) {
+    return `/${raw.slice(markerIndex + serviceLayerMarker.length)}`;
+  }
+
+  return raw.startsWith("/") ? raw : `/${raw}`;
+}
+
 function _buildPayload(body) {
   const opt = (v) => v !== "" && v != null;
   const p = {};
@@ -189,6 +201,9 @@ function _buildPayload(body) {
   if (opt(body.Warehouse))        p.Warehouse        = body.Warehouse;
   if (opt(body.PriceList))        p.PriceList        = Number(body.PriceList);
   if (opt(body.PlanAvgProdSize))  p.PlanAvgProdSize  = Number(body.PlanAvgProdSize);
+  if (body.TreeType === "iSalesTree" && opt(body.HideBOMComponentsInPrintout)) {
+    p.HideBOMComponentsInPrintout = body.HideBOMComponentsInPrintout;
+  }
   if (opt(body.DistributionRule)) p.DistributionRule = body.DistributionRule;
   if (opt(body.Project))          p.Project          = body.Project;
 
@@ -222,27 +237,14 @@ function _buildPayload(body) {
 // ── Get Item Details (for auto-populating BOM fields) ────────────────────────
 const getItemDetails = async (req, res) => {
   try {
-    await sapService.ensureSession();
     const itemCode = req.params.itemCode;
-    const resp = await sapService.request({
-      method: "GET",
-      url: `/Items('${encodeURIComponent(itemCode)}')`,
-    });
-    const item = resp.data;
-    
-    // Return relevant fields for BOM auto-population
-    res.json({
-      ItemCode: item.ItemCode,
-      ItemName: item.ItemName,
-      InventoryUOM: item.InventoryUOM,
-      DefaultWarehouse: item.DefaultWarehouse || item.WarehouseCode || "",
-      PriceList: item.Mainsupplier || "",
-      DistributionRule: item.DistributionRule || "",
-      Project: item.Project || "",
-      ManageSerialNumbers: item.ManageSerialNumbers,
-      ManageBatchNumbers: item.ManageBatchNumbers,
-      IssuePrimarilyBy: item.IssuePrimarilyBy || "",
-    });
+    const item = await masterDataDbService.getBOMItemDetails(itemCode);
+
+    if (!item) {
+      return res.status(404).json({ message: `Item "${itemCode}" not found.` });
+    }
+
+    res.json(item);
   } catch (err) {
     res.status(err.response?.status || 500).json({ message: _sapMsg(err) });
   }

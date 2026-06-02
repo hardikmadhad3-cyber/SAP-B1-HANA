@@ -20,6 +20,7 @@ const isCacheableGet = (url = '') => {
   const normalized = String(url || '').toLowerCase();
   const pathOnly = normalized.split(/[?#]/)[0];
   if (isNextNumberLookup(pathOnly)) return false;
+  if (pathOnly.includes('/bom/lookup/')) return false;
 
   return (
     normalized.includes('/reference-data') ||
