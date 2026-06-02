@@ -35,11 +35,33 @@ const EMPTY_HEADER = {
   Quantity: 1,
   ProductionStdCost: 0,
   PlanAvgProdSize: 1,
+  HideBOMComponentsInPrintout: "tNO",
   Warehouse: "",
   PriceList: "",
   DistributionRule: "",
   Project: "",
 };
+
+const getDefaultWarehouseCode = (warehouses = []) => {
+  const preferred = warehouses.find((warehouse) => String(warehouse.WarehouseCode) === "01");
+  return preferred?.WarehouseCode || warehouses[0]?.WarehouseCode || "";
+};
+
+const getDefaultPriceListNo = (priceLists = []) => {
+  const preferred = priceLists.find((priceList) => {
+    const no = String(priceList.PriceListNo ?? "");
+    const name = String(priceList.PriceListName || "").trim().toLowerCase();
+    return no === "1" || name === "price list 01";
+  });
+  const value = preferred?.PriceListNo ?? priceLists[0]?.PriceListNo ?? "";
+  return value === "" || value == null ? "" : String(value);
+};
+
+const getHeaderDefaults = (warehouses = [], priceLists = []) => ({
+  ...EMPTY_HEADER,
+  Warehouse: getDefaultWarehouseCode(warehouses),
+  PriceList: getDefaultPriceListNo(priceLists),
+});
 
 export const EMPTY_LINE = () => ({
   _id: Date.now() + Math.random(),
@@ -66,14 +88,8 @@ export default function BOMModule() {
   const [mode, setMode] = useState(MODES.ADD);
   const [tab, setTab] = useState(0);
   const [header, setHeader] = useState(EMPTY_HEADER);
-  const [lines, setLines] = useState(() => {
-    const firstLine = EMPTY_LINE();
-    return [firstLine];
-  });
-  const [selectedLineId, setSelectedLineId] = useState(() => {
-    const firstLine = EMPTY_LINE();
-    return firstLine._id;
-  });
+  const [lines, setLines] = useState(() => [EMPTY_LINE()]);
+  const [selectedLineId, setSelectedLineId] = useState(null);
   const [attachments, setAttachments] = useState([]);
   const [alert, setAlert] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -88,10 +104,28 @@ export default function BOMModule() {
   const [showFindResults, setShowFindResults] = useState(false);
 
   const alertTimer = useRef(null);
+  const isProductionBOM = header.TreeType === "iProductionTree";
+  const isSalesBOM = header.TreeType === "iSalesTree";
 
   useEffect(() => {
-    fetchBOMWarehouses().then(setWarehouses).catch(() => {});
-    fetchBOMPriceLists().then(setPriceLists).catch(() => {});
+    fetchBOMWarehouses()
+      .then((rows) => {
+        setWarehouses(rows);
+        setHeader((prev) => ({
+          ...prev,
+          Warehouse: prev.Warehouse || getDefaultWarehouseCode(rows),
+        }));
+      })
+      .catch(() => {});
+    fetchBOMPriceLists()
+      .then((rows) => {
+        setPriceLists(rows);
+        setHeader((prev) => ({
+          ...prev,
+          PriceList: prev.PriceList || getDefaultPriceListNo(rows),
+        }));
+      })
+      .catch(() => {});
     fetchBOMDistributionRules().then(setDistRules).catch(() => {});
     fetchBOMProjects().then(setProjects).catch(() => {});
   }, []);
@@ -115,7 +149,7 @@ export default function BOMModule() {
 
   const resetForm = useCallback(() => {
     const firstLine = EMPTY_LINE();
-    setHeader(EMPTY_HEADER);
+    setHeader(getHeaderDefaults(warehouses, priceLists));
     setLines([firstLine]);
     setSelectedLineId(firstLine._id);
     setAttachments([]);
@@ -127,8 +161,17 @@ export default function BOMModule() {
 
   const handleHeaderChange = useCallback((e) => {
     const { name, value } = e.target;
-    setHeader((prev) => ({ ...prev, [name]: value }));
-  }, []);
+    const nextValue = e.target.type === "checkbox" ? (e.target.checked ? "tYES" : "tNO") : value;
+    setHeader((prev) => ({
+      ...prev,
+      [name]: nextValue,
+      ...(name === "TreeType" && value === "iProductionTree" && !prev.Warehouse
+        ? { Warehouse: getDefaultWarehouseCode(warehouses) }
+        : {}),
+      ...(name === "TreeType" && value !== "iProductionTree" ? { Warehouse: "" } : {}),
+      ...(name === "TreeType" && value !== "iSalesTree" ? { HideBOMComponentsInPrintout: "tNO" } : {}),
+    }));
+  }, [warehouses]);
 
   const handleItemSelect = useCallback(
     async (item) => {
@@ -284,9 +327,12 @@ export default function BOMModule() {
       TreeCode: header.TreeCode,
       TreeType: header.TreeType,
       Quantity: Number(header.Quantity),
-      ...(opt(header.Warehouse) && { Warehouse: header.Warehouse }),
+      ...(header.TreeType === "iProductionTree" && opt(header.Warehouse) && { Warehouse: header.Warehouse }),
       ...(opt(header.PriceList) && { PriceList: Number(header.PriceList) }),
       ...(opt(header.PlanAvgProdSize) && { PlanAvgProdSize: Number(header.PlanAvgProdSize) }),
+      ...(header.TreeType === "iSalesTree" && {
+        HideBOMComponentsInPrintout: header.HideBOMComponentsInPrintout || "tNO",
+      }),
       ...(opt(header.DistributionRule) && { DistributionRule: header.DistributionRule }),
       ...(opt(header.Project) && { Project: header.Project }),
       ProductTreeLines: lines
@@ -408,14 +454,14 @@ export default function BOMModule() {
       Quantity: data.Quantity ?? 1,
       ProductionStdCost: 0,
       PlanAvgProdSize: data.PlanAvgProdSize ?? 1,
-      Warehouse: data.Warehouse || "",
+      HideBOMComponentsInPrintout: data.HideBOMComponentsInPrintout || "tNO",
+      Warehouse: data.TreeType === "iProductionTree" ? data.Warehouse || "" : "",
       PriceList: data.PriceList != null ? String(data.PriceList) : "",
       DistributionRule: data.DistributionRule || "",
       Project: data.Project || "",
     });
 
-    setLines(
-      (data.ProductTreeLines || []).map((line) => {
+    const loadedLines = (data.ProductTreeLines || []).map((line) => {
         const qty = line.Quantity ?? 1;
         const stdCost = 0;
         const price = line.Price ?? 0;
@@ -440,10 +486,10 @@ export default function BOMModule() {
           RouteSequence: line.VisualOrder ?? 0,
           Project: line.Project || "",
         };
-      })
-    );
-    setSelectedLineId(null);
-  }, []);
+      });
+    setLines(loadedLines.length ? loadedLines : [EMPTY_LINE()]);
+    setSelectedLineId(loadedLines[0]?._id || null);
+  }, [priceLists, warehouses]);
 
   useEffect(() => {
     if (!lines.length) return;
@@ -558,25 +604,40 @@ export default function BOMModule() {
                 onChange={handleHeaderChange}
               />
             </div>
+
+            {isSalesBOM && (
+              <label className="bom-checkbox-field">
+                <span className="bom-checkbox-spacer" />
+                <input
+                  type="checkbox"
+                  name="HideBOMComponentsInPrintout"
+                  checked={header.HideBOMComponentsInPrintout === "tYES"}
+                  onChange={handleHeaderChange}
+                />
+                <span>Hide BOM Components in Printout</span>
+              </label>
+            )}
           </div>
 
           <div className="bom-header-right">
-            <div className="im-field">
-              <label className="im-field__label bom-lbl-r">Warehouse</label>
-              <select
-                className="im-field__select bom-field__select"
-                name="Warehouse"
-                value={header.Warehouse}
-                onChange={handleHeaderChange}
-              >
-                <option value="">--</option>
-                {warehouses.map((warehouse) => (
-                  <option key={warehouse.WarehouseCode} value={warehouse.WarehouseCode}>
-                    {warehouse.WarehouseCode}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {isProductionBOM && (
+              <div className="im-field">
+                <label className="im-field__label bom-lbl-r">Warehouse</label>
+                <select
+                  className="im-field__select bom-field__select"
+                  name="Warehouse"
+                  value={header.Warehouse}
+                  onChange={handleHeaderChange}
+                >
+                  <option value="">--</option>
+                  {warehouses.map((warehouse) => (
+                    <option key={warehouse.WarehouseCode} value={warehouse.WarehouseCode}>
+                      {warehouse.WarehouseCode}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="im-field">
               <label className="im-field__label bom-lbl-r">Price List</label>
@@ -677,8 +738,13 @@ export default function BOMModule() {
           columns={[
             { key: "TreeCode", label: "Product No." },
             { key: "ProductDescription", label: "Description" },
-            { key: "TreeType", label: "Type" },
+            {
+              key: "TreeType",
+              label: "Type",
+              render: (value) => BOM_TYPES.find((type) => type.value === value)?.label || value,
+            },
           ]}
+          title="List of Bill of Materials"
         />
       )}
 
@@ -694,9 +760,22 @@ export default function BOMModule() {
           columns={[
             { key: "ItemCode", label: "Item Code" },
             { key: "ItemName", label: "Item Description" },
-            { key: "QuantityOnStock", label: "In Stock" },
+            {
+              key: "QuantityOnStock",
+              label: "In Stock",
+              className: "im-lookup-table__num",
+              render: (value) => Number(value || 0).toFixed(3),
+            },
             { key: "ItemsGroupCode", label: "Item Group" },
+            {
+              key: "WTaxLiable",
+              label: "WTax Liable",
+              render: (value) => (value === "tNO" || value === "No" ? "No" : "Yes"),
+            },
           ]}
+          title="List of Items"
+          allowNew
+          onNew={() => setItemModal({ open: false, target: null })}
         />
       )}
 

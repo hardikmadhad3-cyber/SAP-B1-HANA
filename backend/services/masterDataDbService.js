@@ -1414,7 +1414,16 @@ const getBOM = async (treeCode) => {
 const lookupBOMItems = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(`
-    SELECT TOP 50 ItemCode, ItemName, InvntryUom AS InventoryUOM, PrchseItem AS PurchaseItem, SellItem AS SalesItem, InvntItem AS InventoryItem
+    SELECT TOP 5000
+      ItemCode,
+      ItemName,
+      InvntryUom AS InventoryUOM,
+      PrchseItem AS PurchaseItem,
+      SellItem AS SalesItem,
+      InvntItem AS InventoryItem,
+      OnHand AS QuantityOnStock,
+      ItmsGrpCod AS ItemsGroupCode,
+      WTLiable
     FROM OITM
     WHERE @query = ''
       OR ItemCode LIKE @like
@@ -1429,6 +1438,9 @@ const lookupBOMItems = async (query = "") => {
     PurchaseItem: toYesNo(row.PurchaseItem),
     SalesItem: toYesNo(row.SalesItem),
     InventoryItem: toYesNo(row.InventoryItem),
+    QuantityOnStock: row.QuantityOnStock ?? 0,
+    ItemsGroupCode: row.ItemsGroupCode ?? "",
+    WTaxLiable: toYesNo(row.WTLiable),
   }));
 };
 
