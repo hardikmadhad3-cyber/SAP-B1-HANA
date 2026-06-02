@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  fetchIncomingPaymentByDocEntry,
   fetchIncomingPaymentOpenInvoices,
   fetchIncomingPaymentReferenceData,
   searchIncomingPayments,
@@ -31,13 +32,31 @@ const parseAmount = (value) => {
 
 const clampPayment = (value, balanceDue) => {
   const amount = Math.max(0, parseAmount(value));
-  return Math.min(amount, Number(balanceDue || 0));
+  return Math.min(amount, parseAmount(balanceDue));
 };
 
 const normalizePercent = (value) => {
   const parsed = Math.max(0, parseAmount(value));
   return Math.min(parsed, 100);
 };
+
+const calculateDiscountedPayment = (invoice, percentValue = invoice.cashDiscountPercent) => {
+  const balanceDue = parseAmount(invoice.balanceDue);
+  const percent = normalizePercent(percentValue);
+  return clampPayment(balanceDue * (1 - percent / 100), balanceDue).toFixed(2);
+};
+
+const sapBusinessPartnerLookupColumns = [
+  { label: "BP Name", key: "name", width: 300 },
+  { label: "BP Code", key: "code", width: 100 },
+  { label: "BP Balance", key: "balance", align: "right", width: 110, render: (row) => money(row.balance) },
+  { label: "BP Type", key: "bpType", width: 95 },
+  { label: "Active", key: "active", width: 70 },
+  { label: "Inactive", key: "inactive", width: 80 },
+  { label: "Bill-to Block", key: "billToBlock", width: 190 },
+  { label: "Bill-to Building/Floor/Room", key: "billToBuilding", width: 260 },
+  { label: "GTS Registration Number", key: "gstRegistrationNumber", width: 220 },
+];
 
 function SapLookupField({
   value,
@@ -50,6 +69,7 @@ function SapLookupField({
   readOnly = false,
   buttonLabel = "...",
   triggerOpen = 0,
+  onBlur = () => {},
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -96,7 +116,7 @@ function SapLookupField({
   return (
     <>
       <span className={`sap-lookup ${className}`}>
-        <input value={value} onChange={(event) => onChange(event.target.value)} readOnly={readOnly} />
+        <input value={value} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} readOnly={readOnly} />
         <button type="button" className="sap-lookup__arrow" onClick={openModal} disabled={readOnly}>
           {buttonLabel}
         </button>
@@ -113,7 +133,11 @@ function SapLookupField({
             <div className="modal-content ip-lookup-content">
               <div className="modal-header ip-lookup-header">
                 <h6 className="modal-title mb-0">List of {title}</h6>
-                <button type="button" className="ip-lookup-close" onClick={() => setOpen(false)}>x</button>
+                <div className="ip-lookup-window-controls" aria-label="Window controls">
+                  <button type="button" className="ip-lookup-window-btn" aria-label="Minimize" disabled>-</button>
+                  <button type="button" className="ip-lookup-window-btn" aria-label="Maximize" disabled>[]</button>
+                  <button type="button" className="ip-lookup-window-btn ip-lookup-close" aria-label="Close" onClick={() => setOpen(false)}>x</button>
+                </div>
               </div>
               <div className="modal-body ip-lookup-body">
                 <div className="ip-lookup-find">
@@ -133,7 +157,13 @@ function SapLookupField({
                       <tr>
                         <th>#</th>
                         {columns.map((column) => (
-                          <th key={column.key}>{column.label}</th>
+                          <th
+                            key={column.key}
+                            className={column.align === "right" ? "ip-lookup-cell--right" : undefined}
+                            style={column.width ? { minWidth: column.width } : undefined}
+                          >
+                            {column.label}
+                          </th>
                         ))}
                       </tr>
                     </thead>
@@ -150,7 +180,13 @@ function SapLookupField({
                           >
                             <td>{index + 1}</td>
                             {columns.map((column) => (
-                              <td key={column.key}>{row[column.key]}</td>
+                              <td
+                                key={column.key}
+                                className={column.align === "right" ? "ip-lookup-cell--right" : undefined}
+                                style={column.width ? { minWidth: column.width } : undefined}
+                              >
+                                {column.render ? column.render(row) : row[column.key]}
+                              </td>
                             ))}
                           </tr>
                         ))
@@ -186,6 +222,22 @@ const getBranchRegNo = (branches = [], branchCode = "") => {
   return branch?.branchRegNo || branch?.vatRegNum || branch?.taxIdNum || "";
 };
 
+const normalizeDistributionRules = (rows = []) =>
+  (rows || [])
+    .map((rule) => ({
+      code: String(rule.code ?? rule.FactorCode ?? rule.OcrCode ?? rule.DistributionRule ?? "").trim(),
+      name: String(rule.name ?? rule.FactorDescription ?? rule.OcrName ?? rule.Description ?? "").trim(),
+    }))
+    .filter((rule) => rule.code);
+
+const normalizeLocations = (rows = []) =>
+  (rows || [])
+    .map((location) => ({
+      code: String(location.code ?? location.Code ?? location.LocationCode ?? "").trim(),
+      name: String(location.name ?? location.Location ?? location.Name ?? "").trim(),
+    }))
+    .filter((location) => location.code);
+
 export default function IncomingPaymentsPage() {
   const createInitialHeader = (branch = "", transactionNumber = "", series = {}) => ({
     businessPartnerCode: "",
@@ -198,6 +250,7 @@ export default function IncomingPaymentsPage() {
     billToAddress: "",
     contactPerson: "",
     project: "",
+    docCurrency: "INR",
     blanketAgreement: "",
     postingDate: today,
     dueDate: today,
@@ -226,6 +279,7 @@ export default function IncomingPaymentsPage() {
     billToAddress: "",
     contactPerson: "",
     project: "",
+    docCurrency: "INR",
     blanketAgreement: "",
     postingDate: today,
     dueDate: today,
@@ -245,12 +299,18 @@ export default function IncomingPaymentsPage() {
   const [branches, setBranches] = useState([]);
   const [documentSeries, setDocumentSeries] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [accountRows, setAccountRows] = useState([]);
+  const [distributionRules, setDistributionRules] = useState([]);
+  const [locations, setLocations] = useState([]);
+  const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [posting, setPosting] = useState(false);
   const [paymentOnAccount, setPaymentOnAccount] = useState(false);
   const [paymentOnAccountAmount, setPaymentOnAccountAmount] = useState("0.00");
+  const [accountDistributionRule, setAccountDistributionRule] = useState("");
+  const [accountLocation, setAccountLocation] = useState("");
   const [wtTaxAmount, setWtTaxAmount] = useState("");
   const [remarks, setRemarks] = useState("");
   const [journalRemarks, setJournalRemarks] = useState("");
@@ -271,6 +331,8 @@ export default function IncomingPaymentsPage() {
         const branchRows = data.branches || [];
         setBranches(branchRows);
         setDocumentSeries(seriesRows);
+        setDistributionRules(normalizeDistributionRules(data.distributionRules || data.distribution_rules || []));
+        setLocations(normalizeLocations(data.locations || []));
         setHeader((current) => {
           const selectedBranch = current.branch || branchRows[0]?.code || "";
           return {
@@ -303,8 +365,16 @@ export default function IncomingPaymentsPage() {
     [invoices],
   );
 
-  const totalAmountDue = selectedTotal + (paymentOnAccount ? parseAmount(paymentOnAccountAmount) : 0);
-  const openBalance = Math.max(0, totalAmountDue - parseAmount(wtTaxAmount));
+  const accountRowsTotal = useMemo(
+    () => accountRows.reduce((sum, row) => sum + parseAmount(row.amount), 0),
+    [accountRows],
+  );
+  const isFoundDocument = Boolean(currentDocEntry);
+  const paymentOnAccountDue = header.bpType === "Account" || paymentOnAccount ? parseAmount(paymentOnAccountAmount) : 0;
+  const totalAmountDue = accountRows.length
+    ? accountRowsTotal
+    : selectedTotal + paymentOnAccountDue;
+  const openBalance = Math.max(0, paymentOnAccountDue);
 
   const getPayableInvoiceTotal = (rows = invoices) =>
     rows.reduce((sum, invoice) => {
@@ -314,11 +384,13 @@ export default function IncomingPaymentsPage() {
     }, 0);
 
   const updateHeader = (field, value) => {
+    if (isFoundDocument) return;
     setSuccessMessage("");
     setHeader((current) => ({ ...current, [field]: value }));
   };
 
   const changeSeries = (value) => {
+    if (isFoundDocument) return;
     setSuccessMessage("");
     if (value === "Manual") {
       setHeader((current) => ({
@@ -343,11 +415,15 @@ export default function IncomingPaymentsPage() {
     rows.map((row) => ({ ...row, selected: false, cashDiscountPercent: "0.00" }));
 
   const changeBpType = (bpType) => {
+    if (isFoundDocument) return;
     setLoadError("");
     setSuccessMessage("");
     setInvoices([]);
+    setAccountRows([]);
     setPaymentOnAccount(bpType === "Account");
     setPaymentOnAccountAmount("0.00");
+    setAccountDistributionRule("");
+    setAccountLocation("");
     setHeader((current) => ({
       ...current,
       bpType,
@@ -357,7 +433,9 @@ export default function IncomingPaymentsPage() {
       billToAddress: "",
       contactPerson: "",
       blanketAgreement: "",
-      controlAccount: bpType === "Account" ? current.controlAccount : "",
+      docCurrency: current.docCurrency || "INR",
+      controlAccount: "",
+      controlAccountName: "",
     }));
     setJournalRemarks("");
   };
@@ -390,6 +468,7 @@ export default function IncomingPaymentsPage() {
   };
 
   const changeBranch = (value) => {
+    if (isFoundDocument) return;
     setSuccessMessage("");
     setHeader((current) => ({
       ...current,
@@ -404,6 +483,7 @@ export default function IncomingPaymentsPage() {
   };
 
   const handleBusinessPartnerSelect = (row) => {
+    if (isFoundDocument) return;
     setLoadError("");
     setSuccessMessage("");
     setHeader((current) => ({
@@ -429,10 +509,13 @@ export default function IncomingPaymentsPage() {
   };
 
   const handleAccountSelect = (row) => {
+    if (isFoundDocument) return;
     setLoadError("");
     setSuccessMessage("");
     setInvoices([]);
     setPaymentOnAccount(true);
+    setAccountDistributionRule("");
+    setAccountLocation("");
     setHeader((current) => ({
       ...current,
       businessPartnerCode: row.code,
@@ -442,7 +525,55 @@ export default function IncomingPaymentsPage() {
     setJournalRemarks(`Incoming Payments - ${row.code}`);
   };
 
+  const clearAccountSelection = () => {
+    setHeader((current) => ({
+      ...current,
+      businessPartnerCode: "",
+      businessPartnerName: "",
+      controlAccount: "",
+      controlAccountName: "",
+    }));
+  };
+
+  const resolveAccountCode = async (value) => {
+    if (isFoundDocument) return null;
+    const accountCode = String(value || "").trim();
+    if (!accountCode) {
+      clearAccountSelection();
+      return null;
+    }
+
+    try {
+      const rows = await searchIncomingPaymentControlAccounts(accountCode);
+      const match = (rows || []).find((row) => String(row.code || "").trim().toUpperCase() === accountCode.toUpperCase());
+      if (!match) {
+        clearAccountSelection();
+        setLoadError(`G/L Account ${accountCode} is not a posting account. Choose a posting G/L account from the lookup, same as SAP B1.`);
+        return null;
+      }
+
+      setLoadError("");
+      setSuccessMessage("");
+      setInvoices([]);
+      setPaymentOnAccount(true);
+      setHeader((current) => ({
+        ...current,
+        businessPartnerCode: match.code,
+        businessPartnerName: match.name,
+        controlAccount: match.code,
+        controlAccountName: match.name,
+      }));
+      setJournalRemarks(`Incoming Payments - ${match.code}`);
+      return match;
+    } catch (_error) {
+      clearAccountSelection();
+      setLoadError(`G/L Account ${accountCode} could not be validated. Choose a posting G/L account from the lookup.`);
+      return null;
+    }
+  };
+
   const toggleInvoice = (id, selected) => {
+    if (isFoundDocument) return;
     setSuccessMessage("");
     setInvoices((current) =>
       current.map((invoice) =>
@@ -451,7 +582,7 @@ export default function IncomingPaymentsPage() {
               ...invoice,
               selected,
               cashDiscountPercent: selected ? normalizePercent(invoice.cashDiscountPercent).toFixed(2) : invoice.cashDiscountPercent,
-              totalPayment: selected ? clampPayment(invoice.totalPayment, invoice.balanceDue).toFixed(2) : invoice.totalPayment,
+              totalPayment: selected ? calculateDiscountedPayment(invoice) : invoice.totalPayment,
             }
           : invoice,
       ),
@@ -459,6 +590,7 @@ export default function IncomingPaymentsPage() {
   };
 
   const changePayment = (id, value) => {
+    if (isFoundDocument) return;
     setSuccessMessage("");
     setInvoices((current) =>
       current.map((invoice) =>
@@ -474,6 +606,7 @@ export default function IncomingPaymentsPage() {
   };
 
   const settlePayment = (id) => {
+    if (isFoundDocument) return;
     setInvoices((current) =>
       current.map((invoice) =>
         invoice.id === id
@@ -487,28 +620,46 @@ export default function IncomingPaymentsPage() {
   };
 
   const changeCashDiscount = (id, value) => {
+    if (isFoundDocument) return;
     setSuccessMessage("");
     setInvoices((current) =>
       current.map((invoice) => {
         if (invoice.id !== id) return invoice;
         const percent = normalizePercent(value);
-        const discountedBalance = Number(invoice.balanceDue || 0) * (1 - percent / 100);
         return {
           ...invoice,
+          selected: true,
           cashDiscountPercent: value,
-          totalPayment: invoice.selected ? discountedBalance.toFixed(2) : invoice.totalPayment,
+          totalPayment: calculateDiscountedPayment(invoice, percent),
         };
       }),
     );
   };
 
   const settleCashDiscount = (id) => {
+    if (isFoundDocument) return;
     setInvoices((current) =>
       current.map((invoice) =>
         invoice.id === id
           ? {
               ...invoice,
               cashDiscountPercent: normalizePercent(invoice.cashDiscountPercent).toFixed(2),
+              totalPayment: invoice.selected ? calculateDiscountedPayment(invoice) : invoice.totalPayment,
+            }
+          : invoice,
+      ),
+    );
+  };
+
+  const changeDistributionRule = (id, value) => {
+    if (isFoundDocument) return;
+    setSuccessMessage("");
+    setInvoices((current) =>
+      current.map((invoice) =>
+        invoice.id === id
+          ? {
+              ...invoice,
+              distributionRule: value,
             }
           : invoice,
       ),
@@ -521,18 +672,20 @@ export default function IncomingPaymentsPage() {
   };
 
   const selectAll = () => {
+    if (isFoundDocument) return;
     setSuccessMessage("");
     setInvoices((current) =>
       current.map((invoice) => ({
         ...invoice,
         selected: true,
         cashDiscountPercent: normalizePercent(invoice.cashDiscountPercent).toFixed(2),
-        totalPayment: clampPayment(invoice.totalPayment || invoice.balanceDue, invoice.balanceDue).toFixed(2),
+        totalPayment: calculateDiscountedPayment(invoice),
       })),
     );
   };
 
   const deselectAll = () => {
+    if (isFoundDocument) return;
     setSuccessMessage("");
     setInvoices((current) => current.map((invoice) => ({ ...invoice, selected: false })));
   };
@@ -551,29 +704,54 @@ export default function IncomingPaymentsPage() {
     setDocumentFindTrigger((value) => value + 1);
   };
 
-  const handleIncomingPaymentSelect = (row) => {
+  const handleIncomingPaymentSelect = async (row) => {
     setLoadError("");
     setSuccessMessage("");
-    const selectedBranch = row.branch || header.branch;
-    setHeader((current) => ({
-      ...current,
-      businessPartnerCode: row.businessPartnerCode || "",
-      businessPartnerName: row.businessPartnerName || "",
-      billToAddress: row.billToAddress || "",
-      postingDate: row.postingDate || current.postingDate,
-      dueDate: row.dueDate || row.postingDate || current.dueDate,
-      documentDate: row.documentDate || current.documentDate,
-      referenceNumber: row.referenceNumber || "",
-      transactionNumber: row.transactionNumber || current.transactionNumber,
-      documentNumber: row.documentNo || row.code || current.documentNumber,
-      branch: selectedBranch || current.branch,
-      branchRegNo: getBranchRegNo(branches, selectedBranch || current.branch),
-    }));
-    setJournalRemarks(row.journalRemarks || `Incoming Payments - ${row.businessPartnerCode || row.code}`);
-    setPaymentOnAccount(Number(row.paymentOnAccountAmount || 0) > 0);
-    setPaymentOnAccountAmount(money(row.paymentOnAccountAmount));
-    setSuccessMessage(`Incoming payment ${row.documentNo || row.code} loaded.`);
-    loadInvoices(row.businessPartnerCode, selectedBranch);
+    setLoading(true);
+    try {
+      const payment = row.docEntry ? await fetchIncomingPaymentByDocEntry(row.docEntry) : row;
+      const selectedBranch = payment.branch || header.branch;
+      const postedAccountRows = payment.accountRows || [];
+      setAccountDistributionRule(postedAccountRows[0]?.distributionRule || "");
+      setAccountLocation(postedAccountRows[0]?.location || "");
+      setHeader((current) => ({
+        ...current,
+        businessPartnerCode: payment.businessPartnerCode || "",
+        businessPartnerName: payment.businessPartnerName || "",
+        bpType: postedAccountRows.length ? "Account" : current.bpType,
+        billToAddress: payment.billToAddress || "",
+        postingDate: payment.postingDate || current.postingDate,
+        dueDate: payment.dueDate || payment.postingDate || current.dueDate,
+        documentDate: payment.documentDate || current.documentDate,
+        referenceNumber: payment.referenceNumber || "",
+        transactionNumber: payment.transactionNumber || current.transactionNumber,
+        documentNumber: payment.documentNo || payment.code || current.documentNumber,
+        branch: selectedBranch || current.branch,
+        branchRegNo: getBranchRegNo(branches, selectedBranch || current.branch),
+        controlAccount: postedAccountRows[0]?.accountCode || current.controlAccount,
+        controlAccountName: postedAccountRows[0]?.accountName || current.controlAccountName,
+      }));
+      const postedInvoices = (payment.invoices || []).map((invoice) => ({
+        ...invoice,
+        selected: true,
+        cashDiscountPercent: invoice.cashDiscountPercent ?? "0.00",
+        totalPayment: money(invoice.totalPayment),
+      }));
+      setInvoices(postedInvoices);
+      setAccountRows(postedAccountRows);
+      setCurrentDocEntry(payment.docEntry || row.docEntry || null);
+      setJournalRemarks(payment.journalRemarks || `Incoming Payments - ${payment.businessPartnerCode || payment.code}`);
+      setRemarks(payment.remarks || "");
+      const postedAccountTotal = postedAccountRows.reduce((sum, account) => sum + parseAmount(account.amount), 0);
+      const hasPaymentOnAccount = postedAccountRows.length > 0 || Number(payment.paymentOnAccountAmount || 0) > 0;
+      setPaymentOnAccount(hasPaymentOnAccount);
+      setPaymentOnAccountAmount(money(hasPaymentOnAccount ? payment.paymentOnAccountAmount || postedAccountTotal || payment.totalAmount : 0));
+      setSuccessMessage(`Incoming payment ${payment.documentNo || payment.code} loaded in view mode.`);
+    } catch (error) {
+      setLoadError(getErrorMessage(error, "Incoming payment could not be loaded."));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const resetForm = () => {
@@ -584,8 +762,12 @@ export default function IncomingPaymentsPage() {
       {};
     setHeader((current) => createInitialHeader(current.branch, current.transactionNumber, selectedSeries));
     setInvoices([]);
+    setAccountRows([]);
+    setCurrentDocEntry(null);
     setPaymentOnAccount(false);
     setPaymentOnAccountAmount("0.00");
+    setAccountDistributionRule("");
+    setAccountLocation("");
     setWtTaxAmount("");
     setRemarks("");
     setJournalRemarks("");
@@ -593,7 +775,38 @@ export default function IncomingPaymentsPage() {
     setSuccessMessage("");
   };
 
+  const clearDraftAfterPost = (message) => {
+    const selectedSeries =
+      documentSeries.find((series) => series.code === header.seriesCode) ||
+      documentSeries.find((series) => series.isDefault) ||
+      documentSeries[0] ||
+      {};
+    setHeader((current) => ({
+      ...createInitialHeader(current.branch, current.transactionNumber, selectedSeries),
+      bpType: current.bpType,
+      seriesCode: current.seriesCode || selectedSeries.code || "",
+      seriesName: current.seriesName || selectedSeries.name || "",
+      branch: current.branch,
+      branchRegNo: current.branchRegNo,
+      cashAccount: current.cashAccount,
+      cashAccountName: current.cashAccountName,
+    }));
+    setInvoices([]);
+    setAccountRows([]);
+    setCurrentDocEntry(null);
+    setPaymentOnAccount(header.bpType === "Account");
+    setPaymentOnAccountAmount("0.00");
+    setAccountDistributionRule("");
+    setAccountLocation("");
+    setWtTaxAmount("");
+    setRemarks("");
+    setJournalRemarks("");
+    setLoadError("");
+    setSuccessMessage(message);
+  };
+
   const addInSequence = () => {
+    if (isFoundDocument) return;
     setSuccessMessage("");
     setInvoices((current) => {
       const nextIndex = current.findIndex((invoice) => !invoice.selected && !invoice.blocked);
@@ -604,7 +817,7 @@ export default function IncomingPaymentsPage() {
           ? {
               ...invoice,
               selected: true,
-              totalPayment: clampPayment(invoice.totalPayment || invoice.balanceDue, invoice.balanceDue).toFixed(2),
+              totalPayment: calculateDiscountedPayment(invoice),
             }
           : invoice,
       );
@@ -623,17 +836,41 @@ export default function IncomingPaymentsPage() {
     setLoadError("");
     setSuccessMessage("");
 
-    if (!header.businessPartnerCode) {
-      setLoadError("Select a business partner before adding the incoming payment.");
-      openBusinessPartnerLookup({ clearMessages: false });
+    if (isFoundDocument) {
+      setLoadError("Found incoming payments are display-only, like SAP B1.");
       return;
     }
 
-    const payableInvoiceTotal = getPayableInvoiceTotal();
-    const payableTotal = payableInvoiceTotal + (paymentOnAccount ? parseAmount(paymentOnAccountAmount) : 0);
+    const isAccountPayment = header.bpType === "Account";
+
+    if (!header.businessPartnerCode) {
+      setLoadError(
+        isAccountPayment
+          ? "Select a G/L Account in the contents grid before adding the incoming payment."
+          : "Select a business partner before adding the incoming payment.",
+      );
+      if (!isAccountPayment) openBusinessPartnerLookup({ clearMessages: false });
+      return;
+    }
+
+    const resolvedAccount = isAccountPayment ? await resolveAccountCode(header.businessPartnerCode) : null;
+    if (isAccountPayment && !resolvedAccount) return;
+    const postingHeader = resolvedAccount
+      ? {
+          ...header,
+          businessPartnerCode: resolvedAccount.code,
+          businessPartnerName: resolvedAccount.name,
+          controlAccount: resolvedAccount.code,
+          controlAccountName: resolvedAccount.name,
+        }
+      : header;
+
+    const payableInvoiceTotal = isAccountPayment ? 0 : getPayableInvoiceTotal();
+    const accountPaymentAmount = parseAmount(paymentOnAccountAmount);
+    const payableTotal = payableInvoiceTotal + (isAccountPayment || paymentOnAccount ? accountPaymentAmount : 0);
 
     if (payableTotal <= 0) {
-      setLoadError("Select at least one document or enter a Payment on Account amount.");
+      setLoadError(isAccountPayment ? "Enter an Amount in the account contents row before posting." : "Select at least one document or enter a Payment on Account amount.");
       return;
     }
 
@@ -668,11 +905,14 @@ export default function IncomingPaymentsPage() {
     );
 
     const payload = {
-      header,
+      header: postingHeader,
       invoices: payableInvoices,
       paymentOnAccount: {
-        enabled: paymentOnAccount,
+        enabled: isAccountPayment || paymentOnAccount,
         amount: paymentOnAccountAmount,
+        remarks,
+        distributionRule: accountDistributionRule,
+        location: accountLocation,
       },
       wtTaxAmount,
       remarks,
@@ -683,7 +923,7 @@ export default function IncomingPaymentsPage() {
     try {
       const response = await submitIncomingPayment(payload);
       const docNo = response?.doc_num || response?.DocNum;
-      setSuccessMessage(
+      clearDraftAfterPost(
         docNo
           ? `Incoming payment posted to SAP. Doc No: ${docNo}.`
           : "Incoming payment posted to SAP.",
@@ -696,24 +936,50 @@ export default function IncomingPaymentsPage() {
   };
 
   const branchName = branches.find((branch) => branch.code === header.branch)?.name || "";
+  const getRuleName = (code) => distributionRules.find((rule) => String(rule.code) === String(code))?.name || "";
+  const getLocationName = (code) => locations.find((location) => String(location.code) === String(code))?.name || "";
+  const findDistributionRules = async (query = "") => {
+    const term = String(query || "").trim().toLowerCase();
+    if (!term) return distributionRules;
+    return distributionRules.filter((rule) =>
+      `${rule.code} ${rule.name}`.toLowerCase().includes(term),
+    );
+  };
   const isCustomer = header.bpType === "Customer";
   const isVendor = header.bpType === "Vendor";
   const isAccount = header.bpType === "Account";
+  const draftAccountRow = {
+    id: "account-draft",
+    accountCode: header.businessPartnerCode || header.controlAccount,
+    accountName: header.businessPartnerName || header.controlAccountName,
+    remarks,
+    amount: paymentOnAccountAmount,
+    distributionRule: accountDistributionRule,
+    location: accountLocation,
+    branch: header.branch,
+    isDraft: true,
+  };
+  const displayAccountRows = accountRows.length
+    ? accountRows
+    : isAccount
+      ? [draftAccountRow]
+      : [];
+  const showAccountContentGrid = isAccount;
   const partnerLookupTitle = isVendor ? "Vendors" : isAccount ? "G/L Accounts" : "Business Partners";
   const partnerAddressLabel = isVendor ? "Pay To" : "Bill To";
 
   return (
     <div className="po-page ip-payments-page">
       <div className="po-toolbar">
-        <span className="po-toolbar__title">Incoming Payments</span>
+        <span className="po-toolbar__title">Incoming Payments{isFoundDocument ? ` - #${header.documentNumber}` : ""}</span>
         <button type="button" className="po-btn" onClick={openFind}>Find</button>
-        <button type="button" className="po-btn po-btn--primary" onClick={handleOk} disabled={posting}>
+        <button type="button" className="po-btn po-btn--primary" onClick={handleOk} disabled={posting || isFoundDocument}>
           {posting ? "Posting..." : "OK"}
         </button>
         <button type="button" className="po-btn" onClick={resetForm} disabled={posting}>Cancel</button>
-        <button type="button" className="po-btn" onClick={deselectAll} disabled={posting}>Deselect All</button>
-        <button type="button" className="po-btn" onClick={selectAll} disabled={posting}>Select All</button>
-        <button type="button" className="po-btn" onClick={addInSequence} disabled={posting}>Add in Sequence</button>
+        <button type="button" className="po-btn" onClick={deselectAll} disabled={posting || isFoundDocument}>Deselect All</button>
+        <button type="button" className="po-btn" onClick={selectAll} disabled={posting || isFoundDocument}>Select All</button>
+        <button type="button" className="po-btn" onClick={addInSequence} disabled={posting || isFoundDocument}>Add in Sequence</button>
       </div>
       <span className="sap-hidden-lookup">
         <SapLookupField
@@ -735,36 +1001,29 @@ export default function IncomingPaymentsPage() {
       {loadError ? <div className="sap-alert sap-alert--top">{loadError}</div> : null}
       {successMessage ? <div className="sap-alert sap-alert--success sap-alert--top">{successMessage}</div> : null}
 
-      <div className="sap-window">
+      <fieldset className={`sap-window sap-readonly-fieldset${isFoundDocument ? " sap-window--readonly" : ""}`} disabled={isFoundDocument}>
         <div className="sap-header-area">
           <div className="sap-header-left">
             <div className="sap-bp-row">
               <div>
-                <FieldRow label="Code">
-                  <SapLookupField
-                    value={header.businessPartnerCode}
-                    onChange={(value) => updateHeader("businessPartnerCode", value)}
-                    onSelect={isAccount ? handleAccountSelect : handleBusinessPartnerSelect}
-                    fetchOptions={(query) =>
-                      isAccount
-                        ? searchIncomingPaymentControlAccounts(query)
-                        : searchIncomingPaymentBusinessPartners(query, header.bpType)
-                    }
-                    title={partnerLookupTitle}
-                    columns={isAccount
-                      ? [{ label: "Code", key: "code" }, { label: "Name", key: "name" }]
-                      : [
-                          { label: "Code", key: "code" },
-                          { label: "Name", key: "name" },
-                          { label: "Currency", key: "currency" },
-                        ]}
-                    triggerOpen={bpLookupTrigger}
-                  />
-                </FieldRow>
-                <FieldRow label="Name">
-                  <input value={header.businessPartnerName} onChange={(event) => updateHeader("businessPartnerName", event.target.value)} />
-                </FieldRow>
-                {!isAccount ? (
+                {isAccount ? (
+                  <div className="sap-account-header-space" aria-hidden="true" />
+                ) : (
+                  <>
+                    <FieldRow label="Code">
+                      <SapLookupField
+                        value={header.businessPartnerCode}
+                        onChange={(value) => updateHeader("businessPartnerCode", value)}
+                        onSelect={handleBusinessPartnerSelect}
+                        fetchOptions={(query) => searchIncomingPaymentBusinessPartners(query, header.bpType)}
+                        title={partnerLookupTitle}
+                        columns={sapBusinessPartnerLookupColumns}
+                        triggerOpen={bpLookupTrigger}
+                      />
+                    </FieldRow>
+                    <FieldRow label="Name">
+                      <input value={header.businessPartnerName} onChange={(event) => updateHeader("businessPartnerName", event.target.value)} />
+                    </FieldRow>
                   <FieldRow label={partnerAddressLabel}>
                     <div className="sap-bill-to">
                       <select value={header.billToCode} onChange={(event) => updateHeader("billToCode", event.target.value)}>
@@ -773,7 +1032,8 @@ export default function IncomingPaymentsPage() {
                       <textarea value={header.billToAddress} onChange={(event) => updateHeader("billToAddress", event.target.value)} />
                     </div>
                   </FieldRow>
-                ) : null}
+                  </>
+                )}
               </div>
 
               <div className="sap-radio-stack">
@@ -806,6 +1066,14 @@ export default function IncomingPaymentsPage() {
                 columns={[{ label: "Code", key: "code" }, { label: "Name", key: "name" }]}
               />
             </FieldRow>
+            {isAccount ? (
+              <FieldRow label="Doc. Currency">
+                <select value={header.docCurrency} onChange={(event) => updateHeader("docCurrency", event.target.value)}>
+                  <option value="INR">INR</option>
+                  <option value="USD">USD</option>
+                </select>
+              </FieldRow>
+            ) : null}
             {isCustomer ? (
               <FieldRow label="Blanket Agreement">
                 <input value={header.blanketAgreement} onChange={(event) => updateHeader("blanketAgreement", event.target.value)} />
@@ -892,7 +1160,99 @@ export default function IncomingPaymentsPage() {
           <button type="button">Attachments</button>
         </div>
 
-        <section className="sap-grid-wrap">
+        <section className={`sap-grid-wrap${showAccountContentGrid ? " sap-grid-wrap--account" : ""}`}>
+          {showAccountContentGrid ? (
+            <table className="sap-grid sap-account-grid">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>G/L Account</th>
+                  <th>Account Name</th>
+                  <th>Doc. Remarks</th>
+                  <th>Amount</th>
+                  <th>Distr. Rule</th>
+                  <th>Loc.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {displayAccountRows.map((row, index) => {
+                  const isDraftRow = row.isDraft && !isFoundDocument;
+                  return (
+                    <tr key={row.id || `${row.accountCode}-${index}`}>
+                      <td className="sap-cell--readonly">{index + 1}</td>
+                      <td className={isDraftRow ? "sap-cell--editable" : "sap-cell--readonly"}>
+                        {isDraftRow ? (
+                          <SapLookupField
+                            value={row.accountCode}
+                            onChange={(value) =>
+                              setHeader((current) => ({
+                                ...current,
+                                businessPartnerCode: value,
+                                controlAccount: value,
+                                businessPartnerName: "",
+                                controlAccountName: "",
+                              }))
+                            }
+                            onBlur={() => resolveAccountCode(row.accountCode)}
+                            onSelect={handleAccountSelect}
+                            fetchOptions={searchIncomingPaymentControlAccounts}
+                            title="G/L Accounts"
+                            columns={[{ label: "Code", key: "code" }, { label: "Name", key: "name" }]}
+                          />
+                        ) : (
+                          <span className="sap-link-cell">{row.accountCode}</span>
+                        )}
+                      </td>
+                      <td className="sap-cell--readonly">{row.accountName}</td>
+                      <td className={isDraftRow ? "sap-cell--editable" : "sap-cell--readonly"}>
+                        {isDraftRow ? (
+                          <input className="sap-account-text-input" value={remarks} onChange={(event) => setRemarks(event.target.value)} />
+                        ) : row.remarks}
+                      </td>
+                      <td className={isDraftRow ? "sap-money sap-cell--editable" : "sap-money sap-cell--readonly"}>
+                        {isDraftRow ? (
+                          <input
+                            className="sap-cell-input"
+                            value={paymentOnAccountAmount}
+                            onChange={(event) => {
+                              setPaymentOnAccount(true);
+                              setPaymentOnAccountAmount(event.target.value);
+                            }}
+                            onBlur={() => setPaymentOnAccountAmount(money(parseAmount(paymentOnAccountAmount)))}
+                          />
+                        ) : `INR ${money(row.amount)}`}
+                      </td>
+                      <td className={isDraftRow ? "sap-cell--editable" : "sap-cell--readonly"}>
+                        {isDraftRow ? (
+                          <select value={accountDistributionRule} onChange={(event) => setAccountDistributionRule(event.target.value)}>
+                            <option value=""></option>
+                            {distributionRules.map((rule) => (
+                              <option key={rule.code} value={rule.code}>{rule.code} - {rule.name}</option>
+                            ))}
+                          </select>
+                        ) : row.distributionRule ? `${row.distributionRule}${getRuleName(row.distributionRule) ? ` - ${getRuleName(row.distributionRule)}` : ""}` : ""}
+                      </td>
+                      <td className={isDraftRow ? "sap-cell--editable" : "sap-cell--readonly"}>
+                        {isDraftRow ? (
+                          <select value={accountLocation} onChange={(event) => setAccountLocation(event.target.value)}>
+                            <option value=""></option>
+                            {locations.map((location) => (
+                              <option key={location.code} value={location.code}>{location.code} - {location.name}</option>
+                            ))}
+                          </select>
+                        ) : row.location ? `${row.location}${getLocationName(row.location) ? ` - ${getLocationName(row.location)}` : ""}` : (row.branch ? `${row.branch} - ${branchName}` : branchName)}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {Array.from({ length: Math.max(3, 5 - displayAccountRows.length) }).map((_, index) => (
+                  <tr key={`account-blank-${index}`} className="sap-blank-row">
+                    {Array.from({ length: 7 }).map((__, colIndex) => <td key={colIndex}></td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
           <table className="sap-grid">
             <thead>
               <tr>
@@ -901,16 +1261,17 @@ export default function IncomingPaymentsPage() {
                 <th>Installment</th>
                 <th>Document Type</th>
                 <th>Date</th>
+                <th>Due Date</th>
                 <th>*</th>
+                <th>Overdue Days</th>
                 <th>Total</th>
                 <th>WTax Amount</th>
                 <th>Balance Due</th>
+                <th>Blocked</th>
                 <th>Cash Discount %</th>
                 <th>Total Rounding Amount</th>
                 <th>Total Payment</th>
                 <th>Distr. Rule</th>
-                <th>Overdue Days</th>
-                <th>Blocked</th>
                 <th>Payment Order Run</th>
                 <th>Branch</th>
                 <th>Blanket Agreement</th>
@@ -918,7 +1279,7 @@ export default function IncomingPaymentsPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="18" className="sap-empty">Loading open invoices...</td></tr>
+                <tr><td colSpan="19" className="sap-empty">Loading open invoices...</td></tr>
               ) : invoices.length ? (
                 invoices.map((invoice) => (
                   <tr key={invoice.id} className={invoice.selected ? "is-selected" : ""}>
@@ -930,10 +1291,13 @@ export default function IncomingPaymentsPage() {
                     <td className="sap-cell--readonly">{invoice.installment || "1 of 1"}</td>
                     <td className="sap-cell--readonly">{invoice.documentType === "A/R Invoice" ? "IN" : invoice.documentType}</td>
                     <td className="sap-cell--readonly">{formatSapDate(invoice.date)}</td>
+                    <td className="sap-cell--readonly">{formatSapDate(invoice.dueDate)}</td>
                     <td className="sap-cell--readonly">*</td>
+                    <td className="sap-cell--readonly">{invoice.overdueDays}</td>
                     <td className="sap-money sap-cell--readonly">{money(invoice.total)}</td>
                     <td className="sap-money sap-cell--readonly">0.00</td>
                     <td className="sap-money sap-cell--readonly">{money(invoice.balanceDue)}</td>
+                    <td className="sap-cell--editable"><input type="checkbox" /></td>
                     <td className="sap-cell--editable">
                       <input
                         className="sap-cell-input"
@@ -951,9 +1315,16 @@ export default function IncomingPaymentsPage() {
                         onBlur={() => settlePayment(invoice.id)}
                       />
                     </td>
-                    <td className="sap-cell--readonly">{invoice.distributionRule}</td>
-                    <td className="sap-cell--readonly">{invoice.overdueDays}</td>
-                    <td className="sap-cell--editable"><input type="checkbox" /></td>
+                    <td className="sap-cell--editable">
+                      <SapLookupField
+                        value={invoice.distributionRule || ""}
+                        onChange={(value) => changeDistributionRule(invoice.id, value)}
+                        onSelect={(row) => changeDistributionRule(invoice.id, row.code)}
+                        fetchOptions={findDistributionRules}
+                        title="Distribution Rules"
+                        columns={[{ label: "Code", key: "code" }, { label: "Name", key: "name" }]}
+                      />
+                    </td>
                     <td className="sap-cell--readonly"><input type="checkbox" checked={Boolean(invoice.paymentOrderRun)} readOnly /></td>
                     <td className="sap-cell--readonly">{invoice.branchDisplay || (invoice.branch ? `${invoice.branch} - ${invoice.branchName || branchName}` : "")}</td>
                     <td className="sap-cell--readonly">{header.blanketAgreement}</td>
@@ -961,7 +1332,7 @@ export default function IncomingPaymentsPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="18" className="sap-empty">
+                  <td colSpan="19" className="sap-empty">
                     {isAccount
                       ? "Account payment mode does not display BP invoices. Use Payment on Account."
                       : isVendor
@@ -972,24 +1343,25 @@ export default function IncomingPaymentsPage() {
                   </td>
                 </tr>
               )}
-              {Array.from({ length: Math.max(8, 14 - invoices.length) }).map((_, index) => (
+              {Array.from({ length: Math.max(4, 8 - invoices.length) }).map((_, index) => (
                 <tr key={`blank-${index}`} className="sap-blank-row">
-                  {Array.from({ length: 18 }).map((__, colIndex) => <td key={colIndex}></td>)}
+                  {Array.from({ length: 19 }).map((__, colIndex) => <td key={colIndex}></td>)}
                 </tr>
               ))}
             </tbody>
           </table>
+          )}
         </section>
 
         <div className="sap-payment-row">
           <div className="sap-payment-on-account">
             <label>
-              <input type="checkbox" checked={paymentOnAccount} onChange={(event) => setPaymentOnAccount(event.target.checked)} />
+              <input type="checkbox" checked={isAccount || paymentOnAccount} disabled={isAccount} onChange={(event) => setPaymentOnAccount(event.target.checked)} />
               <span>Payment on Account</span>
             </label>
             <input
               value={paymentOnAccountAmount}
-              disabled={!paymentOnAccount}
+              disabled={!isAccount && !paymentOnAccount}
               onChange={(event) => setPaymentOnAccountAmount(event.target.value)}
               onBlur={() => setPaymentOnAccountAmount(money(parseAmount(paymentOnAccountAmount)))}
             />
@@ -1036,7 +1408,7 @@ export default function IncomingPaymentsPage() {
             </FieldRow>
           </div>
         </div>
-      </div>
+      </fieldset>
     </div>
   );
 }
