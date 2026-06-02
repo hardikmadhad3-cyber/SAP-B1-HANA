@@ -20,6 +20,7 @@ import CopyFromModal from './components/CopyFromModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintSalesOrderActions from './components/PrintSalesOrderActions';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -3129,6 +3130,14 @@ function NCSalesOrder() {
                                                 ))}
                                             </select>
                                         </div>
+
+                                        <DocumentCurrencySelect
+                                            classPrefix="so"
+                                            header={header}
+                                            onHeaderChange={handleHeaderChange}
+                                            businessPartners={refData.vendors || []}
+                                            disabled={pageState.vendorLoading || !header.vendor || !!currentDocEntry}
+                                        />
 
                                         {/* Place of Supply */}
                                         <div className="so-field">

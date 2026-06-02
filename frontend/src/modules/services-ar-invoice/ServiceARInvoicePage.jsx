@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TaxCodeLookup from '../../components/TaxCodeLookup';
 import CopyFromModal from '../../components/document/CopyFromModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
@@ -96,19 +97,6 @@ const INIT_HEADER = {
 };
 
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
-
-const toArray = (value, fallbackKeys = []) => {
-  if (Array.isArray(value)) return value;
-  if (!value || typeof value !== 'object') return [];
-  for (const key of fallbackKeys) {
-    if (Array.isArray(value[key])) return value[key];
-  }
-  if (Array.isArray(value.value)) return value.value;
-  if (Array.isArray(value.data)) return value.data;
-  if (Array.isArray(value.rows)) return value.rows;
-  if (Array.isArray(value.items)) return value.items;
-  return [];
-};
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
   id: i + 1,
@@ -257,39 +245,11 @@ const isFixedServiceMatrixField = (field = {}) =>
 const applyServiceRowUdfDefaults = (definitions = []) =>
   definitions.map((field) => ({ ...field, visible: false }));
 
-const TRANSACTION_TYPE_FIELD_NAMES = new Set([
-  'transactiontype',
-  'transtype',
-  'documenttype',
-  'doctype',
-]);
-
-const getOptionValue = (option) => String(
-  typeof option === 'string'
-    ? option
-    : option?.value ?? option?.Value ?? option?.Code ?? option?.code ?? option?.Name ?? option?.name ?? option?.label ?? option?.Description ?? ''
-);
-
-const getOptionLabel = (option) => String(
-  typeof option === 'string'
-    ? option
-    : option?.label ?? option?.Label ?? option?.Description ?? option?.description ?? option?.Name ?? option?.name ?? option?.Value ?? option?.value ?? option?.Code ?? option?.code ?? ''
-);
-
-const normalizeSelectOptions = (options = []) => {
-  const seen = new Set();
-  return toArray(options, ['options', 'validValues', 'ValidValues', 'values']).reduce((acc, option) => {
-    const value = getOptionValue(option).trim();
-    if (!value || seen.has(value)) return acc;
-    seen.add(value);
-    acc.push({
-      value,
-      label: getOptionLabel(option).trim() || value,
-      indicator: option?.Indicator ?? option?.indicator ?? option?.SeriesIndicator ?? option?.seriesIndicator ?? '',
-    });
-    return acc;
-  }, []);
-};
+const DEFAULT_TRANSACTION_TYPES = [
+  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
+  { value: 'Bill of Supply', label: 'Bill of Supply' },
+  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
+];
 
 const normalizeSeriesText = (value) =>
   String(value || '')
@@ -297,13 +257,8 @@ const normalizeSeriesText = (value) =>
     .replace(/[^a-z0-9]+/gi, '')
     .toLowerCase();
 
-const getTransactionTypeOptions = (headerUdfDefinitions = [], referenceData = {}) => {
-  const transactionTypeUdf = headerUdfDefinitions.find((field) => fieldNameMatches(field, TRANSACTION_TYPE_FIELD_NAMES));
-  const udfOptions = normalizeSelectOptions(
-    transactionTypeUdf?.options || transactionTypeUdf?.validValues || transactionTypeUdf?.ValidValues || []
-  );
-  const refOptions = normalizeSelectOptions(referenceData.transaction_types || referenceData.transactionTypes);
-  return udfOptions.length ? udfOptions : refOptions;
+const getTransactionTypeOptions = () => {
+  return DEFAULT_TRANSACTION_TYPES;
 };
 
 const filterSeriesByTransactionType = (series = [], transactionType = '') => {
@@ -1831,14 +1786,18 @@ function ServiceARInvoicePage() {
                 <label className="del-field__label">Buyer PO No</label>
                 <input className="del-field__input" name="salesContractNo" value={header.salesContractNo} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
               </div>
-              <div className="del-field">
-                <label className="del-field__label">Local Currency</label>
-                <input className="del-field__input" name="currency" value={header.currency} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
-              </div>
+
+              <DocumentCurrencySelect
+                classPrefix="del"
+                header={header}
+                onHeaderChange={handleHeaderChange}
+                businessPartners={refData.vendors || []}
+                disabled={!isDocumentEditable || !header.vendor}
+              />
+
               <div className="del-field">
                 <label className="del-field__label">Transaction Type</label>
                 <select className="del-field__select" name="transactionType" value={header.transactionType} onChange={handleHeaderChange} disabled={!isDocumentEditable || !transactionTypeOptions.length}>
-                  <option value=""></option>
                   {transactionTypeOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}

@@ -163,6 +163,17 @@ const normalizeLookupColumnKey = (value) =>
     .trim()
     .replace(/[^a-zA-Z0-9]+/g, '');
 
+const DEFAULT_LOOKUP_COLUMNS_BY_TABLE = {
+  OCRD: [
+    { key: 'CardCode', label: 'BP Code' },
+    { key: 'CardName', label: 'BP Name' },
+  ],
+  OITM: [
+    { key: 'ItemCode', label: 'Item Code' },
+    { key: 'ItemName', label: 'Item Name' },
+  ],
+};
+
 const buildParameterOption = (entry, paramType) => {
   if (entry == null || entry === '') {
     return null;
@@ -252,7 +263,7 @@ const extractParameterOptions = (row, paramType, defaultValue, displayName) => {
 
 const parseLookupSpec = (value) => {
   const text = String(value || '').trim();
-  const match = text.match(/^(.+?)@select\s+(.+?)\s+from\s+([A-Za-z0-9_]+)$/i);
+  const match = text.match(/^(.+?)@select\s+(.+?)\s+from\s+([A-Za-z0-9_]+)(?:\s+where\s+.+?)?\s*:?\s*$/i);
 
   if (!match) {
     return null;
@@ -260,15 +271,18 @@ const parseLookupSpec = (value) => {
 
   const label = String(match[1] || '').trim();
   const table = String(match[3] || '').trim().toUpperCase();
-  const columns = String(match[2] || '')
-    .split(',')
-    .map((column) => String(column || '').trim())
-    .filter(Boolean)
-    .map((column) => ({
-      key: normalizeLookupColumnKey(column),
-      label: column,
-    }))
-    .filter((column) => column.key);
+  const rawColumns = String(match[2] || '').trim();
+  const columns = rawColumns === '*'
+    ? DEFAULT_LOOKUP_COLUMNS_BY_TABLE[table] || []
+    : rawColumns
+      .split(',')
+      .map((column) => String(column || '').trim())
+      .filter(Boolean)
+      .map((column) => ({
+        key: normalizeLookupColumnKey(column),
+        label: column,
+      }))
+      .filter((column) => column.key);
 
   if (!table || !columns.length) {
     return null;

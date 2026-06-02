@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import './styles/APInvoice.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/ap-invoice/FormSettingsPanel';
@@ -136,6 +136,11 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
+const DEFAULT_TRANSACTION_TYPES = [
+  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
+  { value: 'Bill of Supply', label: 'Bill of Supply' },
+  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
+];
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
@@ -161,6 +166,7 @@ const INIT_HEADER = {
   name: '',
   contactPerson: '',
   salesContractNo: '',
+  transactionType: '',
   branch: '',
   docNo: '',
   status: 'Open',
@@ -297,6 +303,8 @@ function APInvoice() {
     warnings: [],
     series: [],
     states: [],
+    transaction_types: [],
+    transactionTypes: [],
   });
   const [pageState, setPageState] = useState({
     loading: false,
@@ -463,6 +471,8 @@ function APInvoice() {
             sales_employees: refDataRes.data.sales_employees || [],
             branches: refDataRes.data.branches || [],
             states: refDataRes.data.states || [],
+            transaction_types: refDataRes.data.transaction_types || [],
+            transactionTypes: refDataRes.data.transactionTypes || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
@@ -628,6 +638,20 @@ function APInvoice() {
   const shipTypeOpts = refData.shipping_types.length
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
     : [{ value: 'Air', label: 'Air' }, { value: 'Sea', label: 'Sea' }, { value: 'Road', label: 'Road' }];
+
+  const transactionTypeOptions = useMemo(() => {
+    return DEFAULT_TRANSACTION_TYPES;
+  }, []);
+
+  useEffect(() => {
+    if (currentDocEntry || header.transactionType || !transactionTypeOptions.length) return;
+    const firstOption = transactionTypeOptions[0];
+    setHeader((prev) => ({
+      ...prev,
+      transactionType: firstOption.value,
+      indicator: firstOption.indicator || prev.indicator,
+    }));
+  }, [currentDocEntry, header.transactionType, transactionTypeOptions]);
 
   const lineItemOptions = lines.reduce((acc, line, i) => {
     const code = String(line.itemNo || '').trim();
@@ -890,6 +914,16 @@ function APInvoice() {
 
     if (name === 'series') {
       handleSeriesChange(value);
+      return;
+    }
+
+    if (name === 'transactionType') {
+      const selectedOption = transactionTypeOptions.find((option) => String(option.value) === String(value));
+      setHeader((prev) => ({
+        ...prev,
+        transactionType: value,
+        indicator: selectedOption?.indicator || prev.indicator,
+      }));
       return;
     }
 
@@ -1650,6 +1684,20 @@ function APInvoice() {
                       <option value="">Select</option>
                       {contactOptions.map(c => (
                         <option key={c.CntctCode} value={c.CntctCode}>{c.Name || `${c.FirstName || ''} ${c.LastName || ''}`}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="po-field">
+                    <label className="po-field__label">Transaction Type</label>
+                    <select
+                      name="transactionType"
+                      className="po-field__select"
+                      value={header.transactionType || ''}
+                      onChange={handleHeaderChange}
+                      disabled={!isDocumentEditable || !transactionTypeOptions.length}
+                    >
+                      {transactionTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
                   </div>

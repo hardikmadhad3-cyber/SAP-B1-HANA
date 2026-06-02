@@ -21,6 +21,7 @@ import CopyToDropdown from '../../components/document/CopyToDropdown';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -2255,6 +2256,14 @@ function SalesQuotation() {
                         ))}
                       </select>
                     </div>
+
+                    <DocumentCurrencySelect
+                      classPrefix="so"
+                      header={header}
+                      onHeaderChange={handleHeaderChange}
+                      businessPartners={refData.vendors || []}
+                      disabled={pageState.vendorLoading || !header.vendor || !!currentDocEntry}
+                    />
 
                     {/* Place of Supply */}
                     <div className="so-field">

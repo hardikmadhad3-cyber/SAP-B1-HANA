@@ -79,6 +79,39 @@ const getAllowedUdfKeys = async (tableId) => {
   return new Set(definitions.map((field) => field.key));
 };
 
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
+};
+
+const normalizeUdfAlias = (value) =>
+  String(value || '')
+    .replace(/^U_/i, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase();
+
+const resolveUdfOptionValue = (field, value) => {
+  const text = String(value ?? '').trim();
+  if (!text || !Array.isArray(field?.options) || !field.options.length) return text;
+
+  const normalizedText = text.toLowerCase();
+  const byValue = field.options.find((option) => String(option.value || '').trim().toLowerCase() === normalizedText);
+  if (byValue) return String(byValue.value);
+
+  const byLabel = field.options.find((option) => String(option.label || '').trim().toLowerCase() === normalizedText);
+  if (byLabel) return String(byLabel.value);
+
+  return text;
+};
+
+const setKnownUdfValue = (target, definitionsByKey, aliases, value) => {
+  if (value === undefined || value === null || String(value).trim() === '') return;
+  const normalizedAliases = aliases.map(normalizeUdfAlias);
+  const matchedKey = Array.from(definitionsByKey.keys()).find((key) => normalizedAliases.includes(normalizeUdfAlias(key)));
+  if (!matchedKey) return;
+  target[matchedKey] = resolveUdfOptionValue(definitionsByKey.get(matchedKey), value);
+};
+
 const calculateExpectedTotal = (header, lines) => {
   const subtotal = lines
     .filter((l) => l.itemNo && String(l.itemNo).trim())
@@ -367,9 +400,10 @@ const submitAPInvoice = async (payload) => {
     const header = validatedPayload.header;
     const lines = validatedPayload.lines;
     const { header_udfs } = payload;
-    const [allowedHeaderUdfs, allowedLineUdfs] = await Promise.all([
+    const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('OPCH'),
       getAllowedUdfKeys('PCH1'),
+      getUdfDefinitionsByKey('OPCH'),
     ]);
     console.log('Validated Payload:', { header, lines, header_udfs });
     if (!String(header.gstin || '').trim()) {
@@ -431,6 +465,8 @@ const submitAPInvoice = async (payload) => {
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
     applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
     console.log('Constructed SAP Payload:', sapPayload);
 
     const response = await sapService.request({
@@ -456,7 +492,10 @@ const updateAPInvoice = async (docEntry, payload) => {
     const validatedPayload = await validateAPInvoicePayload(payload, docEntry);
     const header = validatedPayload.header;
     const { header_udfs } = payload;
-    const allowedHeaderUdfs = await getAllowedUdfKeys('OPCH');
+    const [allowedHeaderUdfs, headerUdfDefinitionsByKey] = await Promise.all([
+      getAllowedUdfKeys('OPCH'),
+      getUdfDefinitionsByKey('OPCH'),
+    ]);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const sapPayload = {
       Comments: header.otherInstruction || '',
@@ -468,6 +507,8 @@ const updateAPInvoice = async (docEntry, payload) => {
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
     applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
 
     await sapService.request({
       method: 'PATCH',

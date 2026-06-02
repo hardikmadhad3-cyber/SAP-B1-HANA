@@ -91,6 +91,7 @@ const SalesAnalysisReportPage = lazyWithRetry(() => import("./pages/SalesAnalysi
 const PurchaseAnalysisReport = lazyWithRetry(() => import("./pages/PurchaseAnalysisReport"));
 const PurchaseRequestReportPage = lazyWithRetry(() => import("./pages/PurchaseRequestReportPage"));
 const ReportsStudioPage = lazyWithRetry(() => import("./pages/ReportsStudioPage"));
+const ReportRunnerPage = lazyWithRetry(() => import("./pages/ReportRunnerPage"));
 const AdminPanelHome = lazyWithRetry(() => import("./pages/AdminPanelHome"));
 const AdminPanelEntity = lazyWithRetry(() => import("./pages/AdminPanelEntity"));
 
@@ -216,8 +217,11 @@ function App() {
                   <Route path="/sales-quotation" element={<SalesQuotation />} />
                   <Route path="/sales-quotation/find" element={<SalesQuotationList />} />
                   <Route path="/reportlayoutmanager" element={<ReportsStudioPage />} />
-                  <Route path="/reportlayoutmanager/menu/:menuId" element={<ReportsStudioPage />} />
-                  <Route path="/reportlayoutmanager/report/:reportId" element={<ReportsStudioPage />} />
+                  <Route path="/reportlayoutmanager/menu/:menuId" element={<ReportRunnerPage />} />
+                  <Route path="/reportlayoutmanager/report/:reportId" element={<ReportRunnerPage />} />
+                  <Route path="/reports" element={<ReportsStudioPage />} />
+                  <Route path="/reports/menu/:menuId" element={<ReportRunnerPage />} />
+                  <Route path="/reports/report/:reportId" element={<ReportRunnerPage />} />
                   <Route path="/reports/sales/analysis" element={<SalesAnalysisReportPage />} />
                   <Route path="/reports/purchasing/analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchase-analysis" element={<PurchaseAnalysisReport />} />
