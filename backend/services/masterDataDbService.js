@@ -1448,9 +1448,9 @@ const lookupBOMPriceLists = async () =>
 
 const lookupDistributionRules = async () =>
   queryRows(`
-    SELECT TOP 100 OcrCode AS FactorCode, OcrName AS FactorDescription
+    SELECT TOP 200 OcrCode AS FactorCode, OcrName AS FactorDescription
     FROM OOCR
-    WHERE Active <> 'N'
+    WHERE ISNULL(Active, 'Y') <> 'N'
     ORDER BY OcrCode
   `);
 
