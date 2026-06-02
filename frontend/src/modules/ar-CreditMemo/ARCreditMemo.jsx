@@ -16,6 +16,7 @@ import StateSelectionModal from '../sales-order/components/StateSelectionModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -2320,6 +2321,14 @@ function ARCreditMemo() {
                         ))}
                       </select>
                     </div>
+
+                    <DocumentCurrencySelect
+                      classPrefix="del"
+                      header={header}
+                      onHeaderChange={handleHeaderChange}
+                      businessPartners={refData.vendors || []}
+                      disabled={pageState.vendorLoading || !header.vendor || !!currentDocEntry}
+                    />
 
                     {/* Place of Supply */}
                     <div className="del-field">

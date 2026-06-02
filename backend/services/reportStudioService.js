@@ -7,6 +7,7 @@ const { syncReportMenuSidebarMenuById } = require('./reportMenuSidebarSyncServic
 
 const VALID_PARAM_TYPES = new Set(['date', 'string', 'number']);
 const VALID_REPORT_TYPES = new Set(['GET', 'POST', 'API', 'API_GET', 'API_POST']);
+const DEFAULT_SAP_REPORT_SERVICE_API_PATH = '/rs/v1/ExportPDFData';
 
 let schemaReadyPromise = null;
 let relaxedHttpsAgent = null;
@@ -92,7 +93,7 @@ const normalizeVisibleReport = (row) => ({
   reportName: row.ReportName,
   reportCode: row.ReportCode,
   reportMenuId: row.ReportMenuId,
-  apiUrl: row.ApiUrl,
+  apiUrl: normalizeText(row.ApiUrl) || DEFAULT_SAP_REPORT_SERVICE_API_PATH,
   reportType: row.ReportType,
   companyId: row.CompanyId,
   createdBy: row.CreatedBy,
@@ -235,8 +236,19 @@ const loadStoredReportParameters = async (reportId) =>
     ORDER BY SortOrder ASC, ParamId ASC
   `, { reportId });
 
-const isSapReportServiceApiUrl = (url) =>
-  String(url || '').trim().toLowerCase().includes('/rs/v1/exportpdfdata');
+const isSapReportServiceApiUrl = (url) => {
+  const normalized = String(url || '').trim().toLowerCase();
+  return !normalized || normalized.includes('/rs/v1/exportpdfdata');
+};
+
+const normalizeReportApiUrl = (url) => {
+  const normalized = normalizeText(url);
+  if (!normalized || isSapReportServiceApiUrl(normalized)) {
+    return DEFAULT_SAP_REPORT_SERVICE_API_PATH;
+  }
+
+  return normalized;
+};
 
 const serializeParameterSignature = (parameters = []) =>
   JSON.stringify(
@@ -695,13 +707,13 @@ const createReport = async (payload, auth) => {
   const reportName = normalizeText(payload?.reportName || payload?.ReportName);
   const reportCode = normalizeText(payload?.reportCode || payload?.ReportCode).toUpperCase();
   const reportMenuId = toInt(payload?.reportMenuId ?? payload?.ReportMenuId);
-  const apiUrl = normalizeText(payload?.apiUrl || payload?.ApiUrl);
+  const apiUrl = normalizeReportApiUrl(payload?.apiUrl || payload?.ApiUrl);
   const reportTypeRaw = normalizeText(payload?.reportType || payload?.ReportType).toUpperCase() || 'GET';
   const reportType = VALID_REPORT_TYPES.has(reportTypeRaw) ? reportTypeRaw : 'GET';
   const isPublic = Boolean(payload?.isPublic ?? payload?.IsPublic);
 
-  if (!reportName || !reportCode || !reportMenuId || !apiUrl) {
-    throw createHttpError(400, 'ReportName, ReportCode, ReportMenuId, and ApiUrl are required.');
+  if (!reportName || !reportCode || !reportMenuId) {
+    throw createHttpError(400, 'ReportName, ReportCode, and ReportMenuId are required.');
   }
 
   const menu = await authDbService.queryOne(`
@@ -922,7 +934,35 @@ const normalizeParameterInput = (parameter, rawValue) => {
     return parsed.toISOString().slice(0, 10);
   }
 
-  return String(rawValue);
+  const textValue = String(rawValue);
+  const identity = `${parameter?.displayName || ''} ${parameter?.paramName || ''}`.toLowerCase();
+  if (
+    textValue.includes(' - ')
+    && (
+      identity.includes('item') ||
+      identity.includes('product') ||
+      identity.includes('buyer') ||
+      identity.includes('seller') ||
+      identity.includes('card code') ||
+      identity.includes('cardcode')
+    )
+  ) {
+    return textValue.split(' - ')[0].trim();
+  }
+
+  return textValue;
+};
+
+const isOptionalLookupFilterParameter = (parameter) => {
+  const identity = `${parameter?.displayName || ''} ${parameter?.paramName || ''}`.toLowerCase();
+  return (
+    identity.includes('item') ||
+    identity.includes('product') ||
+    identity.includes('buyer') ||
+    identity.includes('seller') ||
+    identity.includes('enter type') ||
+    identity.includes('type')
+  );
 };
 
 const resolveSubmittedParameterValue = (payload, parameter) => {
@@ -1018,9 +1058,9 @@ const collectReportLines = (data) => {
 const executeReportSource = async ({ report, parameters, values, authHeader }) => {
   const normalizedType = String(report.reportType || 'GET').toUpperCase();
   const method = normalizedType.includes('POST') ? 'post' : 'get';
-  const url = resolveApiUrl(report.apiUrl);
+  const isSapReportServiceReport = isSapReportServiceUrl(report.apiUrl);
 
-  if (isSapReportServiceUrl(url)) {
+  if (isSapReportServiceReport) {
     const sapResponse = await reportService.exportReportPdf({
       docCode: report.reportCode,
       parameters: parameters.map((parameter) => ({
@@ -1037,6 +1077,7 @@ const executeReportSource = async ({ report, parameters, values, authHeader }) =
     };
   }
 
+  const url = resolveApiUrl(report.apiUrl);
   const response = await axios({
     method,
     url,
@@ -1124,7 +1165,7 @@ const runReport = async (payload, auth, authHeader) => {
   detail.parameters.forEach((parameter) => {
     const inputValue = resolveSubmittedParameterValue(payload, parameter);
     const normalized = normalizeParameterInput(parameter, inputValue);
-    if (parameter.isRequired && (normalized === '' || normalized == null)) {
+    if (parameter.isRequired && !isOptionalLookupFilterParameter(parameter) && (normalized === '' || normalized == null)) {
       throw createHttpError(400, `${parameter.displayName} is required.`);
     }
     values[parameter.paramName] = normalized;

@@ -88,6 +88,169 @@ const canPersistToShadowJournal = (shape) => (
   shape?.LineAccountNameColumn != null
 );
 
+const columnExpr = (shape, key, tableAlias, column, fallback = "''") => (
+  shape?.[key] != null ? `${tableAlias}.${column}` : fallback
+);
+
+const coalesceExpr = (parts, fallback = "''") => {
+  const expressions = parts.filter(Boolean);
+  if (!expressions.length) return fallback;
+  if (expressions.length === 1) return expressions[0];
+  return `COALESCE(${expressions.join(', ')})`;
+};
+
+const getPostedJournalShape = async () => {
+  const rows = await safeRows(`
+    SELECT
+      COL_LENGTH('OJDT', 'Series') AS HeaderSeriesColumn,
+      COL_LENGTH('OJDT', 'Number') AS HeaderNumberColumn,
+      COL_LENGTH('OJDT', 'RefDate') AS HeaderRefDateColumn,
+      COL_LENGTH('OJDT', 'DueDate') AS HeaderDueDateColumn,
+      COL_LENGTH('OJDT', 'TaxDate') AS HeaderTaxDateColumn,
+      COL_LENGTH('OJDT', 'Memo') AS HeaderMemoColumn,
+      COL_LENGTH('OJDT', 'Ref1') AS HeaderRef1Column,
+      COL_LENGTH('OJDT', 'Ref2') AS HeaderRef2Column,
+      COL_LENGTH('OJDT', 'Ref3') AS HeaderRef3Column,
+      COL_LENGTH('JDT1', 'Line_ID') AS LineIdColumn,
+      COL_LENGTH('JDT1', 'Account') AS LineAccountColumn,
+      COL_LENGTH('JDT1', 'ShortName') AS LineShortNameColumn,
+      COL_LENGTH('JDT1', 'Debit') AS LineDebitColumn,
+      COL_LENGTH('JDT1', 'Credit') AS LineCreditColumn,
+      COL_LENGTH('JDT1', 'TaxCode') AS LineTaxCodeColumn,
+      COL_LENGTH('JDT1', 'LineMemo') AS LineMemoColumn,
+      COL_LENGTH('JDT1', 'Project') AS LineProjectColumn,
+      COL_LENGTH('JDT1', 'LocCode') AS LineLocCodeColumn,
+      COL_LENGTH('JDT1', 'Location') AS LineLocationColumn,
+      COL_LENGTH('JDT1', 'ProfitCode') AS LineProfitCodeColumn,
+      COL_LENGTH('JDT1', 'OcrCode') AS LineOcrCodeColumn,
+      OBJECT_ID('OLCT', 'U') AS LocationMasterObjectId,
+      COL_LENGTH('OLCT', 'Code') AS LocationMasterCodeColumn,
+      COL_LENGTH('OLCT', 'Location') AS LocationMasterNameColumn
+  `);
+  return rows[0] || {};
+};
+
+const getPostedJournal = async ({
+  transId,
+  origin = 'Service A/R Invoice',
+  originNo = null,
+  reference2 = '',
+}) => {
+  const id = toNumber(transId);
+  if (!id) return null;
+
+  const shape = await getPostedJournalShape();
+  if (shape.HeaderNumberColumn == null || shape.LineAccountColumn == null) return null;
+
+  const headerRows = await safeRows(`
+    SELECT TOP 1
+      T0.TransId,
+      ${columnExpr(shape, 'HeaderSeriesColumn', 'T0', 'Series', 'NULL')} AS Series,
+      NNM.SeriesName,
+      ${columnExpr(shape, 'HeaderNumberColumn', 'T0', 'Number', 'NULL')} AS Number,
+      ${columnExpr(shape, 'HeaderRefDateColumn', 'T0', 'RefDate', 'NULL')} AS RefDate,
+      ${columnExpr(shape, 'HeaderDueDateColumn', 'T0', 'DueDate', 'NULL')} AS DueDate,
+      ${columnExpr(shape, 'HeaderTaxDateColumn', 'T0', 'TaxDate', 'NULL')} AS TaxDate,
+      ${columnExpr(shape, 'HeaderMemoColumn', 'T0', 'Memo', "''")} AS Memo,
+      ${columnExpr(shape, 'HeaderRef1Column', 'T0', 'Ref1', "''")} AS Ref1,
+      ${columnExpr(shape, 'HeaderRef2Column', 'T0', 'Ref2', "''")} AS Ref2,
+      ${columnExpr(shape, 'HeaderRef3Column', 'T0', 'Ref3', "''")} AS Ref3
+    FROM OJDT T0
+    LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '30' AND NNM.Series = ${columnExpr(shape, 'HeaderSeriesColumn', 'T0', 'Series', 'NULL')}
+    WHERE T0.TransId = @transId
+  `, { transId: id });
+
+  const header = headerRows[0];
+  if (!header) return null;
+
+  const accountExpr = shape.LineShortNameColumn != null
+    ? 'COALESCE(NULLIF(T1.ShortName, \'\'), T1.Account)'
+    : 'T1.Account';
+  const profitCenterExpr = coalesceExpr([
+    shape.LineProfitCodeColumn != null ? 'NULLIF(CAST(T1.ProfitCode AS NVARCHAR(50)), \'\')' : null,
+    shape.LineOcrCodeColumn != null ? 'NULLIF(CAST(T1.OcrCode AS NVARCHAR(50)), \'\')' : null,
+  ]);
+  const canJoinLocationMaster = (
+    (shape.LineLocCodeColumn != null || shape.LineLocationColumn != null) &&
+    shape.LocationMasterObjectId != null &&
+    shape.LocationMasterCodeColumn != null &&
+    shape.LocationMasterNameColumn != null
+  );
+  const locationMasterKey = shape.LineLocCodeColumn != null
+    ? 'T1.LocCode'
+    : "CASE WHEN ISNUMERIC(CAST(T1.Location AS NVARCHAR(50))) = 1 THEN CAST(T1.Location AS INT) ELSE NULL END";
+  const locationExpr = coalesceExpr([
+    canJoinLocationMaster ? 'NULLIF(CAST(LOC.Location AS NVARCHAR(50)), \'\')' : null,
+    shape.LineLocationColumn != null ? 'NULLIF(CAST(T1.Location AS NVARCHAR(50)), \'\')' : null,
+    shape.LineLocCodeColumn != null ? 'CAST(T1.LocCode AS NVARCHAR(50))' : null,
+  ]);
+  const locationJoin = canJoinLocationMaster
+    ? `LEFT JOIN OLCT LOC ON LOC.Code = ${locationMasterKey}`
+    : '';
+
+  const lineRows = await safeRows(`
+    SELECT
+      ${columnExpr(shape, 'LineIdColumn', 'T1', 'Line_ID', '0')} AS LineId,
+      ${accountExpr} AS DisplayAccount,
+      T1.Account AS ControlAccount,
+      COALESCE(NULLIF(BP.CardName, ''), NULLIF(ACT.AcctName, ''), ${accountExpr}) AS DisplayName,
+      ${columnExpr(shape, 'LineDebitColumn', 'T1', 'Debit', '0')} AS Debit,
+      ${columnExpr(shape, 'LineCreditColumn', 'T1', 'Credit', '0')} AS Credit,
+      ${columnExpr(shape, 'LineTaxCodeColumn', 'T1', 'TaxCode', "''")} AS TaxCode,
+      ${columnExpr(shape, 'LineMemoColumn', 'T1', 'LineMemo', "''")} AS Remarks,
+      ${columnExpr(shape, 'LineProjectColumn', 'T1', 'Project', "''")} AS Project,
+      ${locationExpr} AS Location,
+      ${profitCenterExpr} AS ProfitCenter,
+      BP.CardCode AS BusinessPartnerCode
+    FROM JDT1 T1
+    LEFT JOIN OCRD BP ON BP.CardCode = ${accountExpr}
+    LEFT JOIN OACT ACT ON ACT.AcctCode = ${accountExpr}
+    ${locationJoin}
+    WHERE T1.TransId = @transId
+    ORDER BY ${columnExpr(shape, 'LineIdColumn', 'T1', 'Line_ID', '0')}
+  `, { transId: id });
+
+  if (!lineRows.length) return null;
+
+  const journal = {
+    series: header.SeriesName || header.Series || '',
+    number: header.Number || '',
+    postingDate: formatDate(header.RefDate),
+    dueDate: formatDate(header.DueDate || header.RefDate),
+    documentDate: formatDate(header.TaxDate || header.RefDate),
+    origin,
+    originNo,
+    transNo: header.TransId,
+    remarks: header.Memo || '',
+    reference1: header.Ref1 || '',
+    reference2: header.Ref2 || reference2 || '',
+    reference3: header.Ref3 || '',
+    project: '',
+    location: '',
+    posted: true,
+    lines: lineRows.map((line, index) => ({
+      lineId: index + 1,
+      account: line.DisplayAccount || '',
+      controlAccount: line.BusinessPartnerCode ? line.ControlAccount || '' : '',
+      name: line.DisplayName || '',
+      debit: round2(line.Debit),
+      credit: round2(line.Credit),
+      taxCode: line.TaxCode || '',
+      remarks: line.Remarks || '',
+      project: line.Project || '',
+      profitCenter: line.ProfitCenter || '',
+      location: line.Location || '',
+      goldenArrowTarget: line.BusinessPartnerCode ? 'businessPartner' : 'account',
+    })),
+  };
+
+  journal.totalDebit = round2(journal.lines.reduce((sum, line) => sum + line.debit, 0));
+  journal.totalCredit = round2(journal.lines.reduce((sum, line) => sum + line.credit, 0));
+  journal.difference = round2(journal.totalDebit - journal.totalCredit);
+  journal.isBalanced = Math.abs(journal.difference) < 0.005;
+  return journal;
+};
+
 const getNextJournalNumber = async () => {
   const rows = await safeRows(`
     SELECT ISNULL(MAX(Number), 0) + 1 AS NextNumber
@@ -431,7 +594,8 @@ const getSavedInvoicePayload = async (docEntry) => {
       T0.Comments,
       T0.JrnlMemo,
       T0.NumAtCard,
-      T0.DiscPrcnt
+      T0.DiscPrcnt,
+      T0.TransId
     FROM OINV T0
     WHERE T0.DocEntry = @docEntry
       AND T0.DocType = 'S'
@@ -479,6 +643,7 @@ const getSavedInvoicePayload = async (docEntry) => {
       taxAmountLC: line.VatSum || 0,
     })),
     originNo: header.DocNum || docEntry,
+    transId: header.TransId || null,
   };
 };
 
@@ -495,7 +660,8 @@ const getSavedAPInvoicePayload = async (docEntry) => {
       T0.Comments,
       T0.JrnlMemo,
       T0.NumAtCard,
-      T0.DiscPrcnt
+      T0.DiscPrcnt,
+      T0.TransId
     FROM OPCH T0
     WHERE T0.DocEntry = @docEntry
       AND T0.DocType = 'S'
@@ -543,6 +709,7 @@ const getSavedAPInvoicePayload = async (docEntry) => {
       taxAmountLC: line.VatSum || 0,
     })),
     originNo: header.DocNum || docEntry,
+    transId: header.TransId || null,
   };
 };
 
@@ -661,12 +828,20 @@ const persistShadowJournal = async (journal) => {
 const generateFromServiceARInvoice = async ({ docEntry, payload, persist = false }) => {
   if (docEntry) {
     const saved = await getSavedInvoicePayload(docEntry);
+    const posted = await getPostedJournal({
+      transId: saved.transId,
+      origin: 'Service A/R Invoice',
+      originNo: saved.originNo,
+      reference2: saved.header.customerCode,
+    });
+    if (posted) return posted;
     const existing = persist ? await getExistingShadowJournal(saved.originNo, 'Service A/R Invoice') : null;
     if (existing) return existing;
     const journal = await buildJournal({
       ...saved,
       origin: 'Service A/R Invoice',
       originNo: saved.originNo,
+      transId: saved.transId,
     });
     return persist ? persistShadowJournal(journal) : journal;
   }
@@ -684,12 +859,20 @@ const generateFromServiceARInvoice = async ({ docEntry, payload, persist = false
 const generateFromServiceAPInvoice = async ({ docEntry, payload, persist = false }) => {
   if (docEntry) {
     const saved = await getSavedAPInvoicePayload(docEntry);
+    const posted = await getPostedJournal({
+      transId: saved.transId,
+      origin: 'Service A/P Invoice',
+      originNo: saved.originNo,
+      reference2: saved.header.vendorCode,
+    });
+    if (posted) return posted;
     const existing = persist ? await getExistingShadowJournal(saved.originNo, 'Service A/P Invoice') : null;
     if (existing) return existing;
     const journal = await buildAPJournal({
       ...saved,
       origin: 'Service A/P Invoice',
       originNo: saved.originNo,
+      transId: saved.transId,
     });
     return persist ? persistShadowJournal(journal) : journal;
   }

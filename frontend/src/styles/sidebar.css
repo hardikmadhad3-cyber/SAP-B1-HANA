@@ -277,8 +277,8 @@ body.sap-floating-window-maximized .app-shell {
   position: sticky;
   top: 0;
   align-self: start;
-  width: 260px;
-  min-width: 260px;
+  width: 300px;
+  min-width: 300px;
   height: 100vh;
   transition: width 0.2s ease, min-width 0.2s ease;
   z-index: 20;
@@ -372,7 +372,7 @@ body.sap-floating-window-maximized .app-shell {
 .sidebar__content {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: auto;
   padding: 10px 8px 14px;
 }
 
@@ -385,6 +385,7 @@ body.sap-floating-window-maximized .app-shell {
 .sidebar__link,
 .sidebar__section-toggle {
   width: 100%;
+  min-width: max-content;
   border: 0;
   border-radius: 12px;
   text-decoration: none;
@@ -423,16 +424,24 @@ body.sap-floating-window-maximized .app-shell {
   justify-content: center;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.12);
-  font-size: 10px;
-  font-weight: 700;
   color: #f7fbff;
+}
+
+.sidebar__icon-svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .sidebar__link-text {
   flex: 1;
   min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
   line-height: 1.28;
   font-size: 13px;
   font-weight: 600;
@@ -470,15 +479,12 @@ body.sap-floating-window-maximized .app-shell {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.12);
   color: #f7fbff;
-  font-size: 10px;
-  font-weight: 700;
 }
 
 .sidebar__section-title {
   flex: 1;
   min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
   line-height: 1.28;
 }
 
@@ -552,6 +558,7 @@ body.sap-floating-window-maximized .app-shell {
 .sidebar-shell.is-collapsed .sidebar__section-toggle {
   justify-content: center;
   padding-inline: 8px;
+  min-width: 100%;
 }
 
 .sidebar-shell.is-collapsed .sidebar__section-body {

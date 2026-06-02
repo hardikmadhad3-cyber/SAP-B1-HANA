@@ -83,7 +83,6 @@ const APP_MENU_DEFINITIONS = [
   { key: 'sales-analysis', parentKey: 'reports', menuName: 'Sales Analysis', menuPath: '/reports/sales/analysis', icon: 'report', sortOrder: 1 },
   { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 2 },
   { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 3 },
-  { key: 'report-layout-manager', menuName: 'Report Layout Manager', aliases: ['Report Studio'], menuPath: '/reportlayoutmanager', icon: 'reports', sortOrder: 9 },
 ];
 
 const normalizeText = (value) => String(value || '').trim();
@@ -242,6 +241,50 @@ const cloneRoleRightsForDuplicateMenu = async (db, sourceMenuId, targetMenuId) =
   return result.rowsAffected?.[0] || 0;
 };
 
+const deleteDeprecatedReportLayoutManagerMenu = async (db) => {
+  const rows = await db.queryRows(`
+    SELECT MenuId, ParentId
+    FROM dbo.Menus
+    WHERE (
+      LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) = '/reportlayoutmanager'
+      OR (
+        LOWER(LTRIM(RTRIM(COALESCE(MenuName, '')))) IN ('report layout manager', 'report studio')
+        AND LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) NOT LIKE '/reportlayoutmanager/menu/%'
+      )
+    )
+  `);
+
+  if (!rows.length) return 0;
+
+  let deleteCount = 0;
+  for (const row of rows) {
+    await db.query(`
+      UPDATE dbo.Menus
+      SET ParentId = @parentId
+      WHERE ParentId = @menuId
+    `, {
+      menuId: row.MenuId,
+      parentId: row.ParentId ?? null,
+    });
+
+    if (await hasRoleRightsTable(db)) {
+      await db.query(`
+        DELETE FROM dbo.RoleRights
+        WHERE MenuId = @menuId
+      `, { menuId: row.MenuId });
+    }
+
+    const result = await db.query(`
+      DELETE FROM dbo.Menus
+      WHERE MenuId = @menuId
+    `, { menuId: row.MenuId });
+
+    deleteCount += result.rowsAffected?.[0] || 0;
+  }
+
+  return deleteCount;
+};
+
 const syncApplicationSidebarMenus = async (db) => {
   if (!(await hasMenusTable(db))) {
     return 0;
@@ -305,6 +348,7 @@ const syncApplicationSidebarMenus = async (db) => {
     menuByKey.get('delivery')?.MenuId,
     menuByKey.get('soda-delivery')?.MenuId,
   );
+  syncCount += await deleteDeprecatedReportLayoutManagerMenu(db);
 
   return syncCount;
 };

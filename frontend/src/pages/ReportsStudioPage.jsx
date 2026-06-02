@@ -45,7 +45,7 @@ const initialReportForm = {
   reportName: '',
   reportCode: '',
   reportMenuId: '',
-  apiUrl: '',
+  apiUrl: '/rs/v1/ExportPDFData',
   reportType: 'GET',
   isPublic: false,
 };
@@ -78,6 +78,9 @@ const isToDateParameter = (parameter) => {
   return lookup.includes('to date') || lookup.includes('todate') || lookup.includes('dateto') || lookup.includes('end date');
 };
 
+const isDateParameter = (parameter) =>
+  String(parameter?.paramType || '').trim().toLowerCase() === 'date';
+
 const buildInitialRunValues = (parameters = []) => {
   const today = new Date();
   const todayValue = formatDateForInput(today);
@@ -95,11 +98,35 @@ const buildInitialRunValues = (parameters = []) => {
       return;
     }
 
-    nextValues[parameter.paramName] = parameter.defaultValue || '';
+    nextValues[parameter.paramName] = isDateParameter(parameter) ? (parameter.defaultValue || todayValue) : '';
   });
 
   return nextValues;
 };
+
+const isLookupCodeParameter = (parameter) => {
+  const identity = `${parameter?.displayName || ''} ${parameter?.paramName || ''}`.toLowerCase();
+  return (
+    identity.includes('item') ||
+    identity.includes('product') ||
+    identity.includes('buyer') ||
+    identity.includes('seller') ||
+    identity.includes('card code') ||
+    identity.includes('cardcode')
+  );
+};
+
+const sanitizeRunValues = (parameters = [], values = {}) =>
+  parameters.reduce((nextValues, parameter) => {
+    const currentValue = values[parameter.paramName];
+    if (typeof currentValue === 'string' && isLookupCodeParameter(parameter) && currentValue.includes(' - ')) {
+      nextValues[parameter.paramName] = currentValue.split(' - ')[0].trim();
+      return nextValues;
+    }
+
+    nextValues[parameter.paramName] = currentValue;
+    return nextValues;
+  }, { ...values });
 
 function ReportsStudioPage() {
   const { menuId: routeMenuId, reportId: routeReportId } = useParams();
@@ -422,7 +449,7 @@ function ReportsStudioPage() {
     try {
       const response = await runReport({
         reportId: selectedReport.reportId,
-        parameters: runValues,
+        parameters: sanitizeRunValues(parameters, runValues),
       });
 
       const blob = base64ToPdfBlob(response.pdfBase64);
@@ -641,6 +668,7 @@ function ReportsStudioPage() {
             ...current,
             reportCode: nextReportCode,
             reportName: current.reportName || String(row?.name || '').trim(),
+            apiUrl: current.apiUrl || initialReportForm.apiUrl,
           }));
           setIsReportCodeLookupOpen(false);
           await loadParametersForReportCode(nextReportCode, true);

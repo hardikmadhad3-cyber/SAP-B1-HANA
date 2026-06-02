@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TaxCodeLookup from '../../components/TaxCodeLookup';
 import CopyFromModal from '../../components/document/CopyFromModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
@@ -100,6 +101,7 @@ const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Doc
 const DEFAULT_TRANSACTION_TYPES = [
   { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
   { value: 'Bill of Supply', label: 'Bill of Supply' },
+  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
 ];
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
@@ -352,36 +354,6 @@ const isFixedServiceMatrixField = (field = {}) =>
 const applyServiceRowUdfDefaults = (definitions = []) =>
   definitions.map((field) => ({ ...field, visible: false }));
 
-const TRANSACTION_TYPE_FIELD_NAMES = new Set([
-  'transactiontype',
-  'transtype',
-  'documenttype',
-  'doctype',
-]);
-
-const getOptionValue = (option) => String(
-  typeof option === 'string'
-    ? option
-    : option?.value ?? option?.Value ?? option?.Code ?? option?.code ?? option?.Name ?? option?.name ?? option?.label ?? option?.Description ?? ''
-);
-
-const getOptionLabel = (option) => String(
-  typeof option === 'string'
-    ? option
-    : option?.label ?? option?.Label ?? option?.Description ?? option?.description ?? option?.Name ?? option?.name ?? option?.Value ?? option?.value ?? option?.Code ?? option?.code ?? ''
-);
-
-const normalizeSelectOptions = (options = []) => {
-  const seen = new Set();
-  return toArray(options, ['options', 'validValues', 'ValidValues', 'values']).reduce((acc, option) => {
-    const value = getOptionValue(option).trim();
-    if (!value || seen.has(value)) return acc;
-    seen.add(value);
-    acc.push({ value, label: getOptionLabel(option).trim() || value });
-    return acc;
-  }, []);
-};
-
 const LINE_LOOKUP_FIELDS = new Set([
   'sellerBrokerage',
   'buyerBrokerage',
@@ -630,13 +602,8 @@ function ServiceAPInvoicePage() {
   const payTermOpts = paymentTerms.map((term) => ({ value: String(term.GroupNum ?? term.code ?? ''), label: term.PymntGroup || term.name || String(term.GroupNum ?? '') }));
   const shipTypeOpts = shippingTypes.map((type) => ({ value: String(type.TrnspCode ?? type.code ?? ''), label: type.TrnspName || type.name || String(type.TrnspCode ?? '') }));
   const transactionTypeOptions = useMemo(() => {
-    const transactionTypeUdf = headerUdfDefinitions.find((field) => fieldNameMatches(field, TRANSACTION_TYPE_FIELD_NAMES));
-    const udfOptions = normalizeSelectOptions(
-      transactionTypeUdf?.options || transactionTypeUdf?.validValues || transactionTypeUdf?.ValidValues || []
-    );
-    const refOptions = normalizeSelectOptions(refData.transaction_types);
-    return udfOptions.length ? udfOptions : (refOptions.length ? refOptions : DEFAULT_TRANSACTION_TYPES);
-  }, [headerUdfDefinitions, refData.transaction_types]);
+    return DEFAULT_TRANSACTION_TYPES;
+  }, []);
 
   const accountLookupOptions = useMemo(() => accounts.map((account) => ({
     value: account.code || '',
@@ -1166,6 +1133,16 @@ function ServiceAPInvoicePage() {
         payToCode: value,
         billToAddress: selected ? fmtAddr(selected) : prev.billToAddress,
         placeOfSupply: (prev.useBillToForTax || prev.usePayToForTax) && selected?.State ? selected.State : prev.placeOfSupply,
+      }));
+      return;
+    }
+
+    if (name === 'transactionType') {
+      const selectedOption = transactionTypeOptions.find((option) => String(option.value) === String(value));
+      setHeader((prev) => ({
+        ...prev,
+        transactionType: value,
+        indicator: selectedOption?.indicator || prev.indicator,
       }));
       return;
     }
@@ -1880,10 +1857,15 @@ function ServiceAPInvoicePage() {
                 <label className="del-field__label">Vendor Ref. No</label>
                 <input className="del-field__input" name="salesContractNo" value={header.salesContractNo} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
               </div>
-              <div className="del-field">
-                <label className="del-field__label">Local Currency</label>
-                <input className="del-field__input" name="currency" value={header.currency} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
-              </div>
+
+              <DocumentCurrencySelect
+                classPrefix="del"
+                header={header}
+                onHeaderChange={handleHeaderChange}
+                businessPartners={refData.vendors || []}
+                disabled={!isDocumentEditable || !header.vendor}
+              />
+
               <div className="del-field">
                 <label className="del-field__label">Transaction Type</label>
                 <select className="del-field__select" name="transactionType" value={header.transactionType} onChange={handleHeaderChange} disabled={!isDocumentEditable}>

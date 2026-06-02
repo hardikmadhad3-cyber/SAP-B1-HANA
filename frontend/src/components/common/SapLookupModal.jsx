@@ -9,6 +9,7 @@ export default function SapLookupModal({
   onClose,
   onSelect,
   initialQuery = "",
+  width = "min(860px, calc(100vw - 40px))",
 }) {
   const [query, setQuery] = useState(initialQuery);
   const [rows, setRows] = useState([]);
@@ -42,8 +43,14 @@ export default function SapLookupModal({
   if (!open) return null;
 
   return (
-    <div className="im-modal-overlay" onClick={onClose}>
-      <div className="im-modal" style={{ width: "min(860px, calc(100vw - 40px))" }} onClick={(event) => event.stopPropagation()}>
+    <div
+      className="im-modal-overlay"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClose();
+      }}
+    >
+      <div className="im-modal" style={{ width }} onClick={(event) => event.stopPropagation()}>
         <div className="im-modal__header">
           <span>{title}</span>
           <button type="button" className="im-modal__close" onClick={onClose}>x</button>
@@ -75,8 +82,14 @@ export default function SapLookupModal({
                   <tr
                     key={row.code || row.CardCode || row.ItemCode || index}
                     className="im-lookup-table__row"
-                    onDoubleClick={() => onSelect(row)}
-                    onClick={() => onSelect(row)}
+                    onDoubleClick={(event) => {
+                      event.stopPropagation();
+                      onSelect(row);
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelect(row);
+                    }}
                   >
                     {columns.map((column) => (
                       <td key={column.key}>{row[column.key] ?? ""}</td>

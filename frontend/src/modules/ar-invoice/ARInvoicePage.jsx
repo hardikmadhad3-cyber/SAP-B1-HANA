@@ -17,6 +17,7 @@ import StateSelectionModal from '../sales-order/components/StateSelectionModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -137,31 +138,6 @@ const fieldNameMatches = (field = {}, names = new Set()) =>
   names.has(normalizeFieldIdentity(field.label)) ||
   names.has(normalizeFieldIdentity(field.aliasId)) ||
   names.has(normalizeFieldIdentity(field.sapField));
-const toOptionValue = (option) => String(
-  typeof option === 'string'
-    ? option
-    : option?.value ?? option?.Value ?? option?.Code ?? option?.code ?? option?.Name ?? option?.name ?? option?.label ?? ''
-);
-const toOptionLabel = (option) => String(
-  typeof option === 'string'
-    ? option
-    : option?.label ?? option?.Label ?? option?.Description ?? option?.description ?? option?.Name ?? option?.name ?? option?.Value ?? option?.value ?? option?.Code ?? option?.code ?? ''
-);
-const normalizeSelectOptions = (options = []) => {
-  const source = Array.isArray(options) ? options : [];
-  const seen = new Set();
-  return source.reduce((acc, option) => {
-    const value = toOptionValue(option).trim();
-    if (!value || seen.has(value.toLowerCase())) return acc;
-    seen.add(value.toLowerCase());
-    acc.push({
-      value,
-      label: toOptionLabel(option).trim() || value,
-      indicator: option?.indicator ?? option?.Indicator ?? '',
-    });
-    return acc;
-  }, []);
-};
 const getTransactionTypeFromUdfs = (definitions = [], values = {}) => {
   const field = definitions.find((definition) => fieldNameMatches(definition, TRANSACTION_TYPE_FIELD_NAMES));
   return field ? String(values?.[field.key] || '').trim() : '';
@@ -194,6 +170,11 @@ const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 const DEFAULT_WAREHOUSE_CODE = '01';
 const TRANSACTION_TYPE_FIELD_NAMES = new Set(['transactiontype', 'transtype', 'documenttype', 'doctype']);
+const DEFAULT_TRANSACTION_TYPES = [
+  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
+  { value: 'Bill of Supply', label: 'Bill of Supply' },
+  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
+];
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
@@ -719,11 +700,8 @@ function ARInvoicePage() {
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
     : FALLBACK_SHIPPING;
   const transactionTypeOptions = useMemo(() => {
-    const transactionTypeUdf = headerUdfDefinitions.find((field) => fieldNameMatches(field, TRANSACTION_TYPE_FIELD_NAMES));
-    const udfOptions = normalizeSelectOptions(transactionTypeUdf?.options || []);
-    const refOptions = normalizeSelectOptions(refData.transaction_types || refData.transactionTypes || []);
-    return udfOptions.length ? udfOptions : refOptions;
-  }, [headerUdfDefinitions, refData.transaction_types, refData.transactionTypes]);
+    return DEFAULT_TRANSACTION_TYPES;
+  }, []);
   useEffect(() => {
     if (currentDocEntry || requestedEditDocEntry || header.transactionType || !transactionTypeOptions.length) return;
     const firstOption = transactionTypeOptions[0];
@@ -2404,6 +2382,14 @@ function ARInvoicePage() {
                       </select>
                     </div>
 
+                    <DocumentCurrencySelect
+                      classPrefix="del"
+                      header={header}
+                      onHeaderChange={handleHeaderChange}
+                      businessPartners={refData.vendors || []}
+                      disabled={!isDocumentEditable || pageState.vendorLoading || !header.vendor || !!currentDocEntry}
+                    />
+
                     {/* Transaction Type */}
                     <div className="del-field">
                       <label className="del-field__label">Transaction Type</label>
@@ -2414,7 +2400,6 @@ function ARInvoicePage() {
                         onChange={handleHeaderChange}
                         disabled={!isDocumentEditable || !transactionTypeOptions.length}
                       >
-                        <option value="">Select</option>
                         {transactionTypeOptions.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}

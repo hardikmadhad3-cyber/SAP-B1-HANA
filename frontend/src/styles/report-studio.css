@@ -15,6 +15,22 @@
   flex-direction: column;
 }
 
+.rs-direct-runner {
+  min-height: 100%;
+  padding: 18px;
+  background: #eef3f8;
+}
+
+.rs-direct-runner__status {
+  color: #163858;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.rs-direct-runner__button {
+  margin-top: 12px;
+}
+
 .rs-window__titlebar {
   padding: 12px 16px;
 }
@@ -101,6 +117,11 @@
   grid-template-columns: minmax(0, 1fr) 44px;
   gap: 8px;
   align-items: center;
+}
+
+.rs-lookup-field input[readonly] {
+  cursor: pointer;
+  background: #ffffff;
 }
 
 .rs-preview-panel {
@@ -409,6 +430,11 @@
   color: #ffffff;
   font-size: 16px;
   font-weight: 700;
+}
+
+.rs-modal__titlebar--draggable {
+  cursor: move;
+  user-select: none;
 }
 
 .rs-modal__close {
