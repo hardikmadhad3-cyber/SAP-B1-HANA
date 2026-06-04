@@ -4,6 +4,7 @@ const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { applyUdfValues } = require('./udfPayloadUtils');
 
 const formatDateForSAP = (value) => {
   if (!value) return null;
@@ -58,20 +59,6 @@ const buildSmartGstValidation = async (header, lines, vendor) => {
       },
     expectedGstType,
   };
-};
-
-const isUdfValuePresent = (value) => {
-  if (value == null) return false;
-  if (typeof value === 'string') return value.trim() !== '';
-  return true;
-};
-
-const applyUdfs = (target, udfValues = {}, allowedKeys = null) => {
-  Object.entries(udfValues || {}).forEach(([key, value]) => {
-    if (String(key || '').startsWith('U_') && isUdfValuePresent(value) && (!allowedKeys || allowedKeys.has(key))) {
-      target[key] = value;
-    }
-  });
 };
 
 const getAllowedUdfKeys = async (tableId) => {
@@ -405,7 +392,7 @@ const submitAPCreditMemo = async (payload) => {
         docLine.DiscountPercent = parseFloat(l.stdDiscount) || 0;
       }
 
-      applyUdfs(docLine, l.udf, allowedLineUdfs);
+      applyUdfValues(docLine, l.udf, allowedLineUdfs);
       documentLines.push(docLine);
     }
 
@@ -430,7 +417,7 @@ const submitAPCreditMemo = async (payload) => {
     if (header.salesEmployee !== '' && header.salesEmployee != null) sapPayload.SalesPersonCode = parseInt(header.salesEmployee, 10);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs);
     console.log('Constructed SAP Payload:', sapPayload);
 
     const response = await sapService.request({
@@ -467,7 +454,7 @@ const updateAPCreditMemo = async (docEntry, payload) => {
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs);
 
     await sapService.request({
       method: 'PATCH',

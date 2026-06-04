@@ -264,6 +264,7 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1 }}
               name="sellerQuality"
+              data-sap-row-index={i}
               value={line.sellerQuality || ''}
               onChange={(e) => onLineChange(i, e)}
             />
@@ -285,6 +286,7 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1 }}
               name="buyerQuality"
+              data-sap-row-index={i}
               value={line.buyerQuality || ''}
               onChange={(e) => onLineChange(i, e)}
             />
@@ -412,44 +414,24 @@ export default function ContentsTab({
       ),
       sellerPrice: () => (
         <td key="sellerPrice">
-          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-            <input
-              className="so-grid__input"
-              style={{ flex: 1 }}
-              name="sellerPrice"
-              value={line.sellerPrice || ''}
-              onChange={(e) => onLineChange(i, e)}
-            />
-            <button
-              type="button"
-              onClick={() => onOpenQualityModal && onOpenQualityModal('sellerPrice', i)}
-              style={pickerButtonStyle}
-              title="Select Seller Price"
-            >
-              ...
-            </button>
-          </div>
+          <input
+            className="so-grid__input"
+            name="sellerPrice"
+            data-sap-row-index={i}
+            value={line.sellerPrice || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
         </td>
       ),
       buyerPrice: () => (
         <td key="buyerPrice">
-          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-            <input
-              className="so-grid__input"
-              style={{ flex: 1 }}
-              name="buyerPrice"
-              value={line.buyerPrice || ''}
-              onChange={(e) => onLineChange(i, e)}
-            />
-            <button
-              type="button"
-              onClick={() => onOpenQualityModal && onOpenQualityModal('buyerPrice', i)}
-              style={pickerButtonStyle}
-              title="Select Buyer Price"
-            >
-              ...
-            </button>
-          </div>
+          <input
+            className="so-grid__input"
+            name="buyerPrice"
+            data-sap-row-index={i}
+            value={line.buyerPrice || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
         </td>
       ),
       sellerDelivery: () => (
@@ -794,6 +776,7 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1 }}
               name="buyerPaymentTerms"
+              data-sap-row-index={i}
               value={line.buyerPaymentTerms || ''}
               onChange={(e) => onLineChange(i, e)}
             />
@@ -815,6 +798,7 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1 }}
               name="sellerPaymentTerms"
+              data-sap-row-index={i}
               value={line.sellerPaymentTerms || ''}
               onChange={(e) => onLineChange(i, e)}
             />

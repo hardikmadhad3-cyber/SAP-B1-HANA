@@ -3,6 +3,7 @@ const grpoDb = require('./grpoDbService');
 const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { applyUdfValues } = require('./udfPayloadUtils');
 
 // ───────── HELPERS ─────────
 
@@ -279,14 +280,7 @@ const submitGRPO = async (payload) => {
     if (header.salesEmployee !== '' && header.salesEmployee != null) sapPayload.SalesPersonCode = parseInt(header.salesEmployee, 10);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    // Add header UDFs if any
-    if (header_udfs && Object.keys(header_udfs).length > 0) {
-      Object.keys(header_udfs).forEach(key => {
-        if (header_udfs[key]) {
-          sapPayload[key] = header_udfs[key];
-        }
-      });
-    }
+    applyUdfValues(sapPayload, header_udfs);
 
    
 
@@ -329,14 +323,7 @@ const updateGRPO = async (docEntry, payload) => {
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    // Add header UDFs if any
-    if (header_udfs && Object.keys(header_udfs).length > 0) {
-      Object.keys(header_udfs).forEach(key => {
-        if (header_udfs[key]) {
-          sapPayload[key] = header_udfs[key];
-        }
-      });
-    }
+    applyUdfValues(sapPayload, header_udfs);
 
     await sapService.request({
       method: 'PATCH',

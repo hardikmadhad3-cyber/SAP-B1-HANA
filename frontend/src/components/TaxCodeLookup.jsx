@@ -143,7 +143,8 @@ export default function TaxCodeLookup({
     optionRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' });
   }, [activeIndex, open]);
 
-  const commit = (code) => {
+  const commit = (code, { moveFocus = false, direction = 1 } = {}) => {
+    const origin = inputRef.current;
     onChange({
       target: {
         name,
@@ -151,6 +152,9 @@ export default function TaxCodeLookup({
       },
     });
     closeMenu();
+    if (moveFocus) {
+      window.setTimeout(() => focusNextSapField(origin, direction), 40);
+    }
   };
 
   const validateAndCommitForTab = (event) => {
@@ -163,14 +167,12 @@ export default function TaxCodeLookup({
 
     const exact = taxCodes.find((tax) => normalize(tax.Code) === normalize(token));
     if (exact) {
-      commit(exact.Code);
-      window.setTimeout(() => focusNextSapField(inputRef.current, 1), 40);
+      commit(exact.Code, { moveFocus: true, direction: event.shiftKey ? -1 : 1 });
       return;
     }
 
     if (options.length === 1) {
-      commit(options[0].Code);
-      window.setTimeout(() => focusNextSapField(inputRef.current, 1), 40);
+      commit(options[0].Code, { moveFocus: true, direction: event.shiftKey ? -1 : 1 });
       return;
     }
 
@@ -211,7 +213,7 @@ export default function TaxCodeLookup({
 
     if (event.key === 'Enter' && open && options[activeIndex]) {
       event.preventDefault();
-      commit(options[activeIndex].Code);
+      commit(options[activeIndex].Code, { moveFocus: true });
       return;
     }
 
@@ -238,7 +240,7 @@ export default function TaxCodeLookup({
           type="button"
           onMouseDown={(event) => {
             event.preventDefault();
-            commit(tax.Code);
+            commit(tax.Code, { moveFocus: true });
           }}
           style={{
             display: 'block',

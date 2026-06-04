@@ -4,6 +4,7 @@ const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { getActiveCompanyConfig } = require('./companyConfigService');
+const { isBlankUdfValue } = require('./udfPayloadUtils');
 
 // ───────── HELPERS ─────────
 
@@ -68,16 +69,15 @@ const toBoolean = (value) => {
   return ['true', '1', 'yes', 'y'].includes(String(value || '').trim().toLowerCase());
 };
 
-const isUdfValuePresent = (value) => {
-  if (value == null) return false;
-  if (typeof value === 'string') return value.trim() !== '';
-  return true;
-};
-
 const applyUdfs = (target, udfValues = {}, allowedKeys = null, fieldMetadata = null) => {
   Object.entries(udfValues || {}).forEach(([key, value]) => {
-    if (!String(key || '').startsWith('U_') || !isUdfValuePresent(value)) return;
+    if (!String(key || '').startsWith('U_')) return;
     if (allowedKeys && !allowedKeys.has(key)) return;
+
+    if (isBlankUdfValue(value)) {
+      target[key] = null;
+      return;
+    }
 
     if (fieldMetadata) {
       setValidatedDeliveryField(target, fieldMetadata, key, value);
@@ -253,6 +253,17 @@ const setValidatedDeliveryField = (target, fieldMetadata, fieldName, value) => {
   }
 };
 
+const setValidatedDeliveryUdf = (target, fieldMetadata, fieldName, value) => {
+  if (!fieldMetadata?.[fieldName]) return;
+
+  if (isBlankUdfValue(value)) {
+    target[fieldName] = null;
+    return;
+  }
+
+  setValidatedDeliveryField(target, fieldMetadata, fieldName, value);
+};
+
 const normalizeLookupToken = (value) => String(value || '').trim().toLowerCase();
 
 const buildDeliveryLookupResolvers = async () => {
@@ -365,7 +376,7 @@ const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLi
       mapping.getValue(line),
       lookupResolvers,
     );
-    setValidatedDeliveryField(documentLine, fieldMetadata, mapping.sapField, value);
+    setValidatedDeliveryUdf(documentLine, fieldMetadata, mapping.sapField, value);
   }
 
   const normalizedLineUdfs = Object.entries(line.udf || {}).reduce((acc, [key, value]) => {

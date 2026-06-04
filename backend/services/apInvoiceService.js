@@ -4,6 +4,7 @@ const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { applyUdfValues, isBlankUdfValue } = require('./udfPayloadUtils');
 
 const formatDateForSAP = (value) => {
   if (!value) return null;
@@ -60,20 +61,6 @@ const buildSmartGstValidation = async (header, lines, vendor) => {
   };
 };
 
-const isUdfValuePresent = (value) => {
-  if (value == null) return false;
-  if (typeof value === 'string') return value.trim() !== '';
-  return true;
-};
-
-const applyUdfs = (target, udfValues = {}, allowedKeys = null) => {
-  Object.entries(udfValues || {}).forEach(([key, value]) => {
-    if (String(key || '').startsWith('U_') && isUdfValuePresent(value) && (!allowedKeys || allowedKeys.has(key))) {
-      target[key] = value;
-    }
-  });
-};
-
 const getAllowedUdfKeys = async (tableId) => {
   const definitions = await getUdfDefinitions(tableId);
   return new Set(definitions.map((field) => field.key));
@@ -105,10 +92,15 @@ const resolveUdfOptionValue = (field, value) => {
 };
 
 const setKnownUdfValue = (target, definitionsByKey, aliases, value) => {
-  if (value === undefined || value === null || String(value).trim() === '') return;
+  if (value === undefined) return;
+
   const normalizedAliases = aliases.map(normalizeUdfAlias);
   const matchedKey = Array.from(definitionsByKey.keys()).find((key) => normalizedAliases.includes(normalizeUdfAlias(key)));
   if (!matchedKey) return;
+  if (isBlankUdfValue(value)) {
+    target[matchedKey] = null;
+    return;
+  }
   target[matchedKey] = resolveUdfOptionValue(definitionsByKey.get(matchedKey), value);
 };
 
@@ -439,7 +431,7 @@ const submitAPInvoice = async (payload) => {
         docLine.DiscountPercent = parseFloat(l.stdDiscount) || 0;
       }
 
-      applyUdfs(docLine, l.udf, allowedLineUdfs);
+      applyUdfValues(docLine, l.udf, allowedLineUdfs);
       documentLines.push(docLine);
     }
 
@@ -464,7 +456,7 @@ const submitAPInvoice = async (payload) => {
     if (header.salesEmployee !== '' && header.salesEmployee != null) sapPayload.SalesPersonCode = parseInt(header.salesEmployee, 10);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
     console.log('Constructed SAP Payload:', sapPayload);
@@ -506,7 +498,7 @@ const updateAPInvoice = async (docEntry, payload) => {
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
 

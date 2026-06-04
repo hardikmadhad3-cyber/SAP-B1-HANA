@@ -3,6 +3,7 @@ const serviceApInvoiceDb = require('./serviceApInvoiceDbService');
 const apInvoiceService = require('./apInvoiceService');
 const hsnCodeDbService = require('./hsnCodeDbService');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { isBlankUdfValue } = require('./udfPayloadUtils');
 
 const parseNum = (value, fallback = 0) => {
   const parsed = Number(String(value ?? '').replace(/,/g, ''));
@@ -82,11 +83,16 @@ const coerceUdfValue = (field, value) => {
 };
 
 const setUdfValue = (target, udfDefinitionsByKey, aliases, value) => {
-  if (value === undefined || value === null || String(value).trim() === '') return;
+  if (value === undefined) return;
 
   const normalizedAliases = aliases.map(normalizeKey);
   const matchedKey = Array.from(udfDefinitionsByKey.keys()).find((key) => normalizedAliases.includes(normalizeKey(key)));
   if (!matchedKey) return;
+
+  if (isBlankUdfValue(value)) {
+    target[matchedKey] = null;
+    return;
+  }
 
   const coercedValue = coerceUdfValue(udfDefinitionsByKey.get(matchedKey), value);
   if (coercedValue !== undefined) target[matchedKey] = coercedValue;
@@ -95,6 +101,10 @@ const setUdfValue = (target, udfDefinitionsByKey, aliases, value) => {
 const applyExplicitUdfs = (target, values = {}, udfDefinitionsByKey) => {
   Object.entries(values || {}).forEach(([key, value]) => {
     if (!udfDefinitionsByKey.has(key)) return;
+    if (isBlankUdfValue(value)) {
+      target[key] = null;
+      return;
+    }
     const coercedValue = coerceUdfValue(udfDefinitionsByKey.get(key), value);
     if (coercedValue !== undefined) target[key] = coercedValue;
   });

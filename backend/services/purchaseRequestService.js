@@ -4,6 +4,7 @@ const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
+const { isSapUdfKey, normalizeUdfValues } = require('./udfPayloadUtils');
 
 const PURCHASE_REQUEST_OBJECT_CODE = '1470000113';
 
@@ -34,6 +35,7 @@ const cleanObject = (value) => {
   if (value && typeof value === 'object') {
     return Object.entries(value).reduce((acc, [key, nestedValue]) => {
       const cleanedValue = cleanObject(nestedValue);
+      const preserveNullUdf = isSapUdfKey(key) && cleanedValue === null;
       const isEmptyObject =
         cleanedValue &&
         typeof cleanedValue === 'object' &&
@@ -42,7 +44,7 @@ const cleanObject = (value) => {
 
       if (
         cleanedValue === undefined ||
-        cleanedValue === null ||
+        (cleanedValue === null && !preserveNullUdf) ||
         cleanedValue === '' ||
         isEmptyObject
       ) {
@@ -594,8 +596,8 @@ const getPurchaseRequestByDocEntry = async (docEntry) => {
 const buildDocumentLines = (lines = []) =>
   lines
     .filter((line) => String(line.itemNo || '').trim())
-    .map((line) =>
-      cleanObject({
+    .map((line) => {
+      const documentLine = cleanObject({
         ItemCode: line.itemNo,
         ItemDescription: line.itemDescription,
         Quantity: toNumberOrUndefined(line.quantity),
@@ -605,12 +607,13 @@ const buildDocumentLines = (lines = []) =>
         TaxCode: line.taxCode,
         WarehouseCode: line.whse,
         UoMCode: line.uomCode,
-        ...(line.udf || {}),
-      })
-    );
+      });
+      Object.assign(documentLine, normalizeUdfValues(line.udf));
+      return documentLine;
+    });
 
-const buildPurchaseRequestPayload = ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) =>
-  cleanObject({
+const buildPurchaseRequestPayload = ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) => {
+  const sapPayload = cleanObject({
     CardCode: header.vendor,
     NumAtCard: header.salesContractNo,
     DocDate: header.postingDate || header.documentDate,
@@ -623,10 +626,13 @@ const buildPurchaseRequestPayload = ({ header = {}, lines = [], header_udfs = {}
     JournalMemo: header.journalRemark,
     Confirmed: header.confirmed ? 'tYES' : 'tNO',
     DiscountPercent: toNumberOrUndefined(header.discount),
-    ...header_udfs,
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
     DocumentLines: buildDocumentLines(lines),
   });
+
+  Object.assign(sapPayload, normalizeUdfValues(header_udfs));
+  return sapPayload;
+};
 
 const validatePurchaseRequestPayload = async ({ lines = [] }) => {
   const itemCodes = Array.from(
