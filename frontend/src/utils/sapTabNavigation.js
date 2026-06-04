@@ -8,6 +8,20 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+const NATIVE_TAB_STOP_SELECTOR = [
+  'a[href]',
+  'area[href]',
+  'button',
+  'input',
+  'select',
+  'textarea',
+  'iframe',
+  'object',
+  'embed',
+  '[contenteditable="true"]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 const normalize = (value) =>
   String(value ?? '')
     .trim()
@@ -42,6 +56,19 @@ export const isEditableTabStop = (element) => {
 
 const getFocusableElements = (root = document) =>
   Array.from(root.querySelectorAll(FOCUSABLE_SELECTOR)).filter(isEditableTabStop);
+
+const isNativeTabStop = (element) => {
+  if (!element || !(element instanceof HTMLElement)) return false;
+  if (!element.matches(NATIVE_TAB_STOP_SELECTOR)) return false;
+  if (element.disabled || element.getAttribute('aria-disabled') === 'true') return false;
+  if (element.tabIndex < 0) return false;
+  if (element.dataset.sapSkipTab === 'true') return false;
+  if (element.tagName === 'INPUT' && element.type === 'hidden') return false;
+  return isElementVisible(element);
+};
+
+const getNativeTabStops = (root = document) =>
+  Array.from(root.querySelectorAll(NATIVE_TAB_STOP_SELECTOR)).filter(isNativeTabStop);
 
 export const focusElement = (element) => {
   if (!element) return false;
@@ -333,6 +360,21 @@ export const focusNextSapField = (fromElement = document.activeElement, directio
   return focusElement(fields[boundedIndex]);
 };
 
+const keepNativeTabInsideDocument = (event, target) => {
+  const tabStops = getNativeTabStops(document);
+  if (!tabStops.length) return false;
+
+  const currentIndex = tabStops.indexOf(target);
+  if (currentIndex < 0) return false;
+
+  const isFirst = currentIndex === 0;
+  const isLast = currentIndex === tabStops.length - 1;
+  if ((!event.shiftKey && !isLast) || (event.shiftKey && !isFirst)) return false;
+
+  event.preventDefault();
+  return focusElement(event.shiftKey ? tabStops[tabStops.length - 1] : tabStops[0]);
+};
+
 const pendingLookupFocus = {
   element: null,
   identity: null,
@@ -343,15 +385,34 @@ export const setPendingLookupFocus = (element) => {
   pendingLookupFocus.identity = getElementIdentity(pendingLookupFocus.element);
 };
 
-export const completePendingLookupFocus = (delay = 80) => {
-  const identity = pendingLookupFocus.identity || getElementIdentity(pendingLookupFocus.element);
+const clearPendingLookupFocus = () => {
   pendingLookupFocus.element = null;
   pendingLookupFocus.identity = null;
+};
+
+export const completePendingLookupFocus = (delay = 80) => {
+  const identity = pendingLookupFocus.identity || getElementIdentity(pendingLookupFocus.element);
+  if (!identity) return false;
+
+  clearPendingLookupFocus();
   window.setTimeout(() => {
     const origin = findElementByIdentity(identity) || document.activeElement;
     markLookupResolved(origin);
     focusNextSapField(origin, 1);
   }, delay);
+  return true;
+};
+
+export const restorePendingLookupFocus = (delay = 80) => {
+  const identity = pendingLookupFocus.identity || getElementIdentity(pendingLookupFocus.element);
+  if (!identity) return false;
+
+  clearPendingLookupFocus();
+  window.setTimeout(() => {
+    const origin = findElementByIdentity(identity);
+    if (origin) focusElement(origin);
+  }, delay);
+  return true;
 };
 
 const focusNewGridRowAfterAdd = (element) => {
@@ -385,6 +446,7 @@ const installWindowApi = () => {
     focusNext: focusNextSapField,
     setPendingLookupFocus,
     completeLookup: completePendingLookupFocus,
+    restoreLookup: restorePendingLookupFocus,
   };
 };
 
@@ -426,6 +488,12 @@ const findLookupButtonForField = (target) => {
   if (sibling?.tagName === 'BUTTON' && isLookupButton(sibling)) return sibling;
 
   return null;
+};
+
+const findLookupFieldForButton = (button) => {
+  const container = button?.closest(LOOKUP_CONTAINER_SELECTOR) || button?.parentElement;
+  if (!container) return null;
+  return getFocusableElements(container).find((element) => element !== button) || null;
 };
 
 const openLookupFromFieldIfNeeded = (event, target) => {
@@ -473,6 +541,14 @@ export const installSapTabNavigation = () => {
     }
   };
 
+  const handlePointerDown = (event) => {
+    const button = event.target?.closest?.('button');
+    if (!isLookupButton(button)) return;
+
+    const field = findLookupFieldForButton(button);
+    if (field) setPendingLookupFocus(field);
+  };
+
   const handleKeyDown = (event) => {
     if (handleLookupDialogKeyDown(event)) return;
 
@@ -480,8 +556,18 @@ export const installSapTabNavigation = () => {
     if (event.defaultPrevented) return;
 
     const target = event.target;
-    if (!isEditableTabStop(target)) return;
-    if (target.dataset.sapNativeTab === 'true') return;
+    if (!isEditableTabStop(target)) {
+      const keptInside = keepNativeTabInsideDocument(event, target);
+      if (!keptInside && (target === document.body || target === document.documentElement)) {
+        event.preventDefault();
+        focusNextSapField(null, event.shiftKey ? -1 : 1);
+      }
+      return;
+    }
+    if (target.dataset.sapNativeTab === 'true') {
+      keepNativeTabInsideDocument(event, target);
+      return;
+    }
     if (openLookupFromFieldIfNeeded(event, target)) return;
 
     event.preventDefault();
@@ -490,11 +576,13 @@ export const installSapTabNavigation = () => {
 
   document.addEventListener('focusin', handleFocusIn);
   document.addEventListener('input', handleInput);
+  document.addEventListener('pointerdown', handlePointerDown, true);
   document.addEventListener('keydown', handleKeyDown);
 
   return () => {
     document.removeEventListener('focusin', handleFocusIn);
     document.removeEventListener('input', handleInput);
+    document.removeEventListener('pointerdown', handlePointerDown, true);
     document.removeEventListener('keydown', handleKeyDown);
     window.__sapB1TabNavigationInstalled = false;
   };

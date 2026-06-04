@@ -3,24 +3,11 @@ const arCreditMemoDb = require('./arCreditMemoDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { applyUdfValues } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
   return normalized === '' ? -1 : Number(normalized);
-};
-
-const isUdfValuePresent = (value) => {
-  if (value == null) return false;
-  if (typeof value === 'string') return value.trim() !== '';
-  return true;
-};
-
-const applyUdfs = (target, udfValues = {}, allowedKeys = null) => {
-  Object.entries(udfValues || {}).forEach(([key, value]) => {
-    if (String(key || '').startsWith('U_') && isUdfValuePresent(value) && (!allowedKeys || allowedKeys.has(key))) {
-      target[key] = value;
-    }
-  });
 };
 
 const getAllowedUdfKeys = async (tableId) => {
@@ -283,14 +270,14 @@ const submitARCreditMemo = async (payload) => {
         }
 
         console.log(`🔍 [ARCreditMemoService] Transformed line ${index}:`, line);
-        applyUdfs(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, l.udf, allowedLineUdfs);
         return line;
       })
     };
 
     console.log("🔥 [ARCreditMemoService] SAP AR CREDIT MEMO PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
-    applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs);
 
     // Use Service Layer for POST operations - Credit Memos endpoint
     const response = await sapService.request({
@@ -375,12 +362,12 @@ const updateARCreditMemo = async (docEntry, payload) => {
           BaseEntry: l.baseEntry ? Number(l.baseEntry) : undefined,
           BaseLine: l.baseLine !== undefined ? Number(l.baseLine) : undefined,
         };
-        applyUdfs(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, l.udf, allowedLineUdfs);
         return line;
       })
     };
 
-    applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs);
 
     // Use Service Layer for PATCH operations
     const response = await sapService.request({

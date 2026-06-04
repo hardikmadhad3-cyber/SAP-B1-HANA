@@ -451,7 +451,6 @@ function SODASalesOrder() {
     const { removeTask, upsertTask } = useSapWindowTaskbarActions();
     const formRef = useRef(null);
     const handledCopyFromRef = useRef('');
-    const lastAutoBillToPartyBuyerRef = useRef('');
     const lastLoadedBillToPartyCodeRef = useRef('');
     const defaultToVendorAppliedRef = useRef('');
     const [isCopyFromClick, setIsCopyFromClick] = useState(false);
@@ -1125,54 +1124,6 @@ function SODASalesOrder() {
         toVendorCodeValue,
         defaultToVendorCode,
         toVendorUdfFields,
-    ]);
-
-    useEffect(() => {
-        if (!billToPartyCodeKey) return;
-
-        const buyerCode = String(header.vendor || '').trim();
-        if (!buyerCode) {
-            lastAutoBillToPartyBuyerRef.current = '';
-            return;
-        }
-
-        const selectedAddress = vendorEffectiveBillToAddresses.find(
-            (address) => String(getBpAddressId(address)) === String(header.billToCode || ''),
-        ) || selectBillToPartyAddress(vendorEffectiveBillToAddresses, { BillToDef: header.billToCode });
-        const patch = buildBillToPartyUdfPatch(billToPartyUdfFields, {
-            code: buyerCode,
-            name: header.name || '',
-            address: selectedAddress,
-        });
-
-        setHeaderUdfs((prev) => {
-                    const currentCode = String(prev[billToPartyCodeKey] || '').trim();
-                    const isNewBuyer = lastAutoBillToPartyBuyerRef.current !== buyerCode;
-                    const shouldCompleteSelectedBuyer =
-                        currentCode === buyerCode &&
-                (
-                    (billToPartyUdfFields.name?.key && !String(prev[billToPartyUdfFields.name.key] || '').trim() && patch[billToPartyUdfFields.name.key]) ||
-                    (selectedAddress && billToPartyUdfFields.addressId?.key && !String(prev[billToPartyUdfFields.addressId.key] || '').trim()) ||
-                    (selectedAddress && billToPartyUdfFields.address?.key && !String(prev[billToPartyUdfFields.address.key] || '').trim())
-                );
-
-                    if (!isNewBuyer && !shouldCompleteSelectedBuyer) {
-                        return prev;
-                    }
-
-                    lastAutoBillToPartyBuyerRef.current = buyerCode;
-                    return applyChangedUdfPatch(prev, {
-                        ...patch,
-                        ...(billToPartyUdfFields.name?.key ? { [billToPartyUdfFields.name.key]: header.name || '' } : {}),
-                    });
-                });
-    }, [
-        billToPartyCodeKey,
-        header.vendor,
-        header.name,
-        header.billToCode,
-        headerUdfDefinitions,
-        vendorEffectiveBillToAddresses,
     ]);
 
     useEffect(() => {
@@ -2786,21 +2737,6 @@ function SODASalesOrder() {
             });
 
             const headerUdfPayload = normalizeUdfState(headerUdfDefinitions, headerUdfs);
-            const buyerAddressForPayload = vendorEffectiveBillToAddresses.find(
-                (address) => String(getBpAddressId(address)) === String(header.billToCode || ''),
-            ) || selectBillToPartyAddress(vendorEffectiveBillToAddresses, { BillToDef: header.billToCode });
-            const buyerUdfPatch = buildBillToPartyUdfPatch(billToPartyUdfFields, {
-                code: header.vendor,
-                name: header.name || '',
-                address: buyerAddressForPayload,
-            });
-
-            Object.entries(buyerUdfPatch).forEach(([key, value]) => {
-                if (!key || value == null) return;
-                if (!String(headerUdfPayload[key] || '').trim() && String(value || '').trim()) {
-                    headerUdfPayload[key] = value;
-                }
-            });
 
             const payload = {
                 company_id: activeCompanyId,

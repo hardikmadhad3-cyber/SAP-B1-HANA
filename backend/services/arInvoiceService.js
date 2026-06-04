@@ -3,6 +3,7 @@ const arInvoiceDb = require('./arInvoiceDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { applyUdfValues, isBlankUdfValue } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
@@ -13,14 +14,6 @@ const isUdfValuePresent = (value) => {
   if (value == null) return false;
   if (typeof value === 'string') return value.trim() !== '';
   return true;
-};
-
-const applyUdfs = (target, udfValues = {}, allowedKeys = null) => {
-  Object.entries(udfValues || {}).forEach(([key, value]) => {
-    if (String(key || '').startsWith('U_') && isUdfValuePresent(value) && (!allowedKeys || allowedKeys.has(key))) {
-      target[key] = value;
-    }
-  });
 };
 
 const addIfPresent = (target, key, value) => {
@@ -93,10 +86,15 @@ const resolveUdfOptionValue = (field, value) => {
 };
 
 const setKnownUdfValue = (target, definitionsByKey, aliases, value) => {
-  if (value === undefined || value === null || String(value).trim() === '') return;
+  if (value === undefined) return;
+
   const normalizedAliases = aliases.map(normalizeUdfAlias);
   const matchedKey = Array.from(definitionsByKey.keys()).find((key) => normalizedAliases.includes(normalizeUdfAlias(key)));
   if (!matchedKey) return;
+  if (isBlankUdfValue(value)) {
+    target[matchedKey] = null;
+    return;
+  }
   target[matchedKey] = resolveUdfOptionValue(definitionsByKey.get(matchedKey), value);
 };
 
@@ -346,7 +344,7 @@ const submitARInvoice = async (payload) => {
         }
 
         console.log(`🔍 [ARInvoiceService] Transformed line ${index}:`, line);
-        applyUdfs(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, l.udf, allowedLineUdfs);
         return line;
       })
     };
@@ -365,7 +363,7 @@ const submitARInvoice = async (payload) => {
 
     console.log("🔥 [ARInvoiceService] SAP AR INVOICE PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
-    applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], payload.header.transactionType);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], payload.header.indicator);
 
@@ -461,7 +459,7 @@ const updateARInvoice = async (docEntry, payload) => {
         if (warehouseCode) {
           line.WarehouseCode = warehouseCode;
         }
-        applyUdfs(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, l.udf, allowedLineUdfs);
         return line;
       })
     };
@@ -478,7 +476,7 @@ const updateARInvoice = async (docEntry, payload) => {
       addIfPresent(sapPayload, 'U_PlaceOfSupply', payload.header.placeOfSupply);
     }
 
-    applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], payload.header.transactionType);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], payload.header.indicator);
 

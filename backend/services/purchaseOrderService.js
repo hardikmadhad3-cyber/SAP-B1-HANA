@@ -2,6 +2,7 @@ const sapService = require('./sapService');
 const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { isSapUdfKey, normalizeUdfValues } = require('./udfPayloadUtils');
 
 // ───────── HELPERS ─────────
 
@@ -212,6 +213,7 @@ const cleanObject = (value) => {
   if (value && typeof value === 'object') {
     return Object.entries(value).reduce((acc, [key, nestedValue]) => {
       const cleanedValue = cleanObject(nestedValue);
+      const preserveNullUdf = isSapUdfKey(key) && cleanedValue === null;
       const isEmptyObject =
         cleanedValue &&
         typeof cleanedValue === 'object' &&
@@ -220,7 +222,7 @@ const cleanObject = (value) => {
 
       if (
         cleanedValue === undefined ||
-        cleanedValue === null ||
+        (cleanedValue === null && !preserveNullUdf) ||
         cleanedValue === '' ||
         isEmptyObject
       ) {
@@ -262,8 +264,8 @@ const buildDocumentLines = async (lines = []) =>
         TaxCode: line.taxCode,
         WarehouseCode: line.whse,
         UoMEntry: resolvedUomEntry,
-        ...(line.udf || {}),
       });
+      Object.assign(documentLine, normalizeUdfValues(line.udf));
 
       const hasBaseLink =
         line.baseEntry != null &&
@@ -282,8 +284,8 @@ const buildDocumentLines = async (lines = []) =>
       return documentLine;
     }));
 
-const buildPurchaseOrderPayload = async ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) =>
-  cleanObject({
+const buildPurchaseOrderPayload = async ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) => {
+  const sapPayload = cleanObject({
     CardCode: header.vendor,
     NumAtCard: header.salesContractNo,
     DocDate: header.postingDate || header.documentDate,
@@ -299,10 +301,13 @@ const buildPurchaseOrderPayload = async ({ header = {}, lines = [], header_udfs 
     JournalMemo: header.journalRemark,
     Confirmed: header.confirmed ? 'tYES' : 'tNO',
     DiscountPercent: toNumberOrUndefined(header.discount),
-    ...header_udfs,
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
     DocumentLines: await buildDocumentLines(lines),
   });
+
+  Object.assign(sapPayload, normalizeUdfValues(header_udfs));
+  return sapPayload;
+};
 
 const validatePurchaseOrderPayload = async ({ header = {}, lines = [] }) => {
   const vendorCode = String(header.vendor || '').trim();

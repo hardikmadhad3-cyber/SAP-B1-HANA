@@ -2,6 +2,7 @@ const sapService = require('./sapService');
 const salesQuotationDb = require('./salesQuotationDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { normalizeUdfValue, normalizeUdfValues } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
@@ -79,26 +80,20 @@ const buildValidatedLineUdfs = (line, udfMetadata) => {
   const udfs = {};
 
   Object.entries(line.udf || {}).forEach(([key, value]) => {
-    if (availableUdfKeys.has(key) && hasValue(value)) {
-      udfs[key] = value;
+    if (availableUdfKeys.has(key)) {
+      udfs[key] = normalizeUdfValue(value);
     }
   });
 
   SALES_QUOTATION_LINE_UDF_MAPPINGS.forEach(({ sapField, getValue }) => {
     if (!availableUdfKeys.has(sapField)) return;
-    const value = getValue(line);
-    if (hasValue(value)) {
-      udfs[sapField] = value;
-    }
+    udfs[sapField] = normalizeUdfValue(getValue(line));
   });
 
   SALES_QUOTATION_LABEL_UDF_MAPPINGS.forEach(({ labels, getValue }) => {
     const sapField = labels.map((label) => udfMetadata.labelToKey?.[compactLabel(label)]).find(Boolean);
     if (!sapField || !availableUdfKeys.has(sapField) || udfs[sapField] !== undefined) return;
-    const value = getValue(line);
-    if (hasValue(value)) {
-      udfs[sapField] = value;
-    }
+    udfs[sapField] = normalizeUdfValue(getValue(line));
   });
 
   return udfs;
@@ -362,7 +357,7 @@ const submitSalesQuotation = async (payload) => {
 
     // Add header UDFs if any
     if (payload.header_udfs && Object.keys(payload.header_udfs).length > 0) {
-      Object.assign(sapPayload, payload.header_udfs);
+      Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs));
     }
 
     console.log('🔥 SAP Quotation Payload:', JSON.stringify(sapPayload, null, 2));
@@ -434,7 +429,7 @@ const updateSalesQuotation = async (docEntry, payload) => {
 
     // Add header UDFs if any
     if (payload.header_udfs && Object.keys(payload.header_udfs).length > 0) {
-      Object.assign(sapPayload, payload.header_udfs);
+      Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs));
     }
 
     await sapService.request({

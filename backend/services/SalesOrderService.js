@@ -3,6 +3,7 @@ const salesOrderDb = require('./salesOrderDbService');
 const hsnCodeDbService = require('./hsnCodeDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getActiveCompanyConfig } = require('./companyConfigService');
+const { isBlankUdfValue, normalizeUdfValues } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
@@ -382,6 +383,17 @@ const setValidatedRdr1Field = (target, fieldMetadata, fieldName, value) => {
   }
 };
 
+const setValidatedRdr1Udf = (target, fieldMetadata, fieldName, value) => {
+  if (!fieldMetadata?.[fieldName]) return;
+
+  if (isBlankUdfValue(value)) {
+    target[fieldName] = null;
+    return;
+  }
+
+  setValidatedRdr1Field(target, fieldMetadata, fieldName, value);
+};
+
 const buildDocumentLinePayload = async (line = {}, context = {}) => {
   const fieldMetadata = context.rdr1FieldMetadata || {};
   const documentLine = {
@@ -439,12 +451,12 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
   }
 
   for (const mapping of SALES_ORDER_LINE_UDF_MAPPINGS) {
-    setValidatedRdr1Field(documentLine, fieldMetadata, mapping.sapField, mapping.getValue(line, context));
+    setValidatedRdr1Udf(documentLine, fieldMetadata, mapping.sapField, mapping.getValue(line, context));
   }
 
   Object.entries(line.udf || {}).forEach(([key, value]) => {
     if (normalizeSapUdfFieldName(key).startsWith('U_') && !shouldSkipGenericLineUdf(key)) {
-      setValidatedRdr1Field(documentLine, fieldMetadata, key, value);
+      setValidatedRdr1Udf(documentLine, fieldMetadata, key, value);
     }
   });
 
@@ -947,7 +959,7 @@ const submitSalesOrder = async (payload) => {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    Object.assign(sapPayload, payload.header_udfs || {});
+    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs));
 
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 SAP PAYLOAD TO BE SENT:");
@@ -1115,7 +1127,7 @@ const updateSalesOrder = async (docEntry, payload) => {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    Object.assign(sapPayload, payload.header_udfs || {});
+    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs));
 
     console.log("🔥 FINAL SAP PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 

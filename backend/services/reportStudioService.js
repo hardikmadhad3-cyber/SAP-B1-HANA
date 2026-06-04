@@ -958,6 +958,7 @@ const isOptionalLookupFilterParameter = (parameter) => {
   return (
     identity.includes('item') ||
     identity.includes('product') ||
+    identity.includes('customer') ||
     identity.includes('buyer') ||
     identity.includes('seller') ||
     identity.includes('enter type') ||
