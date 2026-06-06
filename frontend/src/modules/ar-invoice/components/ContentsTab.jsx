@@ -15,7 +15,7 @@ const SAP_CONTENT_COLUMNS = [
   { key: 'whse', label: 'Whse', minWidth: 90 },
   { key: 'glAccount', label: 'G/L Account', minWidth: 135 },
   { key: 'distRule', label: 'Distr. Rule', minWidth: 105 },
-  { key: 'taxLiable', label: 'Tax Liable', minWidth: 95, type: 'checkbox' },
+  { key: 'taxLiable', label: 'Tax Liable', minWidth: 95, type: 'yesNo' },
   { key: 'weight', label: 'Weight', minWidth: 95, numeric: true },
   { key: 'taxAmount', label: 'Tax Amount (LC)', minWidth: 125, readOnly: true },
   { key: 'uomCode', label: 'UoM Code', minWidth: 105 },
@@ -28,9 +28,6 @@ const SAP_CONTENT_COLUMNS = [
   { key: 'uomGroup', label: 'UoM Group', minWidth: 125, readOnly: true },
   { key: 'blanketAgreementNo', label: 'Blanket Agreement No.', minWidth: 170 },
   { key: 'saudaNodeRef', label: 'Sauda Node Ref', minWidth: 135 },
-  { key: 'apInvDocKey', label: 'AP Inv DocKey', minWidth: 125 },
-  { key: 'apInvDocNum', label: 'AP Inv DocNum', minWidth: 125 },
-  { key: 'apInvLineNum', label: 'AP Inv LineNum', minWidth: 125 },
   { key: 'assessableValue', label: 'Assessable Value', minWidth: 135 },
   { key: 'bedRate', label: 'BED Rate', minWidth: 95 },
   { key: 'bedAmount', label: 'BED Amount', minWidth: 110 },
@@ -70,12 +67,18 @@ const SAP_CONTENT_COLUMNS = [
 
 const INDEX_COL_WIDTH = 42;
 const ACTION_COL_WIDTH = 48;
+const DEFAULT_COLUMN_ORDER = new Map(SAP_CONTENT_COLUMNS.map((column, index) => [column.key, index + 1]));
+const SUPPRESSED_ROW_UDFS = new Set([
+  'APIVDOCKEY',
+  'APIVDOCNUM',
+  'APIVLINENUM',
+  'APINVDOCKEY',
+  'APINVDOCNUM',
+  'APINVLINENUM',
+]);
 const CUSTOM_UDF_COLUMN_KEYS = new Set([
   'blanketAgreementNo',
   'saudaNodeRef',
-  'apInvDocKey',
-  'apInvDocNum',
-  'apInvLineNum',
   'bedRate',
   'bedAmount',
   'rg23dNo',
@@ -151,6 +154,23 @@ const getUdfIdentities = (field = {}) => [
   field.Descr,
 ].map(normalizeIdentity).filter(Boolean);
 
+const normalizeUdfKey = (value) =>
+  String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
+
+const isSuppressedUdf = (field = {}) => [
+  field.key,
+  field.sapField,
+  field.aliasId,
+  field.label,
+].map(normalizeUdfKey).some((key) => SUPPRESSED_ROW_UDFS.has(key));
+
+const isSellerItemField = (field = {}) => [
+  field.key,
+  field.sapField,
+  field.aliasId,
+  field.label,
+].map(normalizeUdfKey).some((key) => key === 'SITEM');
+
 const getBoundUdf = (column, rowUdfFields) => {
   if (!CUSTOM_UDF_COLUMN_KEYS.has(column.key)) return null;
   const identities = [column.key, column.label].map(normalizeIdentity);
@@ -162,6 +182,25 @@ const getBoundUdf = (column, rowUdfFields) => {
       (fieldIdentity.length > 3 && identity.includes(fieldIdentity))
     )));
   });
+};
+
+const getKnownColumnForUdf = (field, standardColumnByKey) => {
+  const fieldIdentities = getUdfIdentities(field);
+
+  return SAP_CONTENT_COLUMNS.find((column) => {
+    if (!CUSTOM_UDF_COLUMN_KEYS.has(column.key)) return false;
+    const columnIdentities = [column.key, column.label].map(normalizeIdentity);
+    return columnIdentities.some((identity) => fieldIdentities.some((fieldIdentity) => (
+      fieldIdentity === identity ||
+      (identity.length > 3 && fieldIdentity.includes(identity)) ||
+      (fieldIdentity.length > 3 && identity.includes(fieldIdentity))
+    )));
+  }) || standardColumnByKey.get(field.key) || null;
+};
+
+const getNumericOrder = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
 const getLineValue = (line, column, boundUdf) => (
@@ -192,25 +231,65 @@ export default function ContentsTab({
   getBranchName,
   valErrors,
   isEditable = true,
+  formSettings = {},
+  matrixFields = [],
   rowUdfFields = [],
   onRowUdfChange,
 }) {
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
-  const boundColumns = SAP_CONTENT_COLUMNS.map((column) => ({
+  const effectiveRowUdfFields = (rowUdfFields || []).filter((field) => !isSuppressedUdf(field));
+  const matrixFieldByKey = new Map((matrixFields || []).map((field) => [field.key, field]));
+  const hasLiveMatrixFields = matrixFieldByKey.size > 0;
+  const standardColumnByKey = new Map(SAP_CONTENT_COLUMNS.map((column) => [column.key, column]));
+  const sourceColumns = hasLiveMatrixFields
+    ? matrixFields
+        .map((field) => ({
+          ...(standardColumnByKey.get(field.key) || {}),
+          ...field,
+        }))
+        .filter((column) => column.key)
+    : SAP_CONTENT_COLUMNS;
+  const boundColumns = sourceColumns.map((column) => ({
     ...column,
-    boundUdf: getBoundUdf(column, rowUdfFields),
-  }));
+    ...(matrixFieldByKey.get(column.key) || {}),
+    boundUdf: getBoundUdf(column, effectiveRowUdfFields),
+  })).filter((column) => {
+    if (CUSTOM_UDF_COLUMN_KEYS.has(column.key)) return Boolean(column.boundUdf);
+    return !hasLiveMatrixFields || matrixFieldByKey.has(column.key);
+  });
   const boundUdfKeys = new Set(boundColumns.map((column) => column.boundUdf?.key).filter(Boolean));
   const extraUdfColumns = rowUdfFields
+    .filter((field) => !isSuppressedUdf(field))
     .filter((field) => !boundUdfKeys.has(field.key))
-    .map((field) => ({
-      key: field.key,
-      label: field.label || field.key,
-      minWidth: field.type === 'textarea' ? 180 : 125,
-      boundUdf: field,
-      isExtraUdf: true,
-    }));
-  const matrixCols = [...boundColumns, ...extraUdfColumns];
+    .map((field, index) => {
+      const knownColumn = getKnownColumnForUdf(field, standardColumnByKey);
+      const fallbackOrder = knownColumn
+        ? DEFAULT_COLUMN_ORDER.get(knownColumn.key)
+        : SAP_CONTENT_COLUMNS.length + index + 1;
+
+      return {
+        ...(knownColumn || {}),
+        key: knownColumn?.key || field.key,
+        label: knownColumn?.label || field.label || field.key,
+        minWidth: field.minWidth || knownColumn?.minWidth || (field.type === 'textarea' ? 180 : 125),
+        order: getNumericOrder(field.order, fallbackOrder),
+        boundUdf: field,
+        isExtraUdf: true,
+      };
+    });
+  const mergedColumns = [...boundColumns, ...extraUdfColumns]
+    .map((column) => ({
+      ...column,
+      order: getNumericOrder(column.order, DEFAULT_COLUMN_ORDER.get(column.key) || 99999),
+    }))
+    .sort((left, right) => left.order - right.order);
+  const matrixCols = mergedColumns.filter((column) => {
+    if (column.boundUdf || column.isExtraUdf) {
+      return formSettings.rowUdfs?.[column.boundUdf?.key]?.visible !== false;
+    }
+
+    return formSettings.matrixColumns?.[column.key]?.visible !== false;
+  });
   const tableMinWidth = INDEX_COL_WIDTH + ACTION_COL_WIDTH + matrixCols.reduce((total, col) => total + col.minWidth, 0);
 
   const getTaxAmountDisplay = (line, lineTotals) => {
@@ -254,8 +333,37 @@ export default function ContentsTab({
     const boundUdf = column.boundUdf;
     const fieldType = boundUdf?.type || column.type;
     const value = getLineValue(line, column, boundUdf);
-    const disabled = !isEditable || column.readOnly || boundUdf?.active === false;
+    const isInactive = boundUdf
+      ? formSettings.rowUdfs?.[boundUdf.key]?.active === false
+      : formSettings.matrixColumns?.[column.key]?.active === false;
+    const disabled = !isEditable || column.readOnly || boundUdf?.readOnly || isInactive;
     const handleChange = getLineChangeHandler(i, column, boundUdf, onLineChange, onRowUdfChange);
+
+    if (boundUdf && isSellerItemField(boundUdf)) {
+      return (
+        <td key={column.key}>
+          <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+            <input
+              className={`del-grid__input${options.error ? ' del-field__input--error' : ''}`}
+              style={{ flex: 1, textAlign: 'left' }}
+              value={value}
+              onChange={handleChange}
+              disabled={disabled}
+              title={String(value || '')}
+            />
+            <button
+              type="button"
+              onClick={() => onOpenLineLookup && onOpenLineLookup('sItem', i, boundUdf)}
+              style={pickerButtonStyle}
+              title="Select S_Item"
+              disabled={disabled}
+            >
+              ...
+            </button>
+          </div>
+        </td>
+      );
+    }
 
     if (fieldType === 'checkbox') {
       return (

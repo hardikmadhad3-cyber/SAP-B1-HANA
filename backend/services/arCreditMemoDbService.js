@@ -666,6 +666,281 @@ const getUomConversionFactor = async (itemCode, uomCode) => {
 
 // ── MAIN REFERENCE DATA FUNCTION ──────────────────────────────────────────────
 
+const AR_CREDIT_MEMO_FORM_ID = '179';
+const AR_CREDIT_MEMO_MATRIX_ITEM_ID = '38';
+const AR_CREDIT_MEMO_SUPPRESSED_ROW_UDFS = new Set([
+  'APIVDOCKEY',
+  'APIVDOCNUM',
+  'APIVLINENUM',
+  'APINVDOCKEY',
+  'APINVDOCNUM',
+  'APINVLINENUM',
+]);
+
+const AR_CREDIT_MEMO_MATRIX_COLUMN_DEFS = [
+  { key: 'itemNo', label: 'Item No.', minWidth: 160, sapField: 'ItemCode', sapColumnIds: ['1', 'ItemCode', 'Item No.', 'ItemNo'] },
+  { key: 'itemDescription', label: 'Item Description', minWidth: 220, sapField: 'Dscription', sapColumnIds: ['3', 'Dscription', 'ItemDescription', 'Item Description'] },
+  { key: 'quantity', label: 'Qty', minWidth: 80, sapField: 'Quantity', sapColumnIds: ['11', 'Quantity', 'Qty'] },
+  { key: 'noOfPackages', label: 'No. of Packages', minWidth: 120, sapField: 'PackQty', alternativeFields: ['Packages', 'NumOfPacks'], sapColumnIds: ['13', 'PackQty', 'Packages', 'No. of Packages', 'NumOfPacks'] },
+  { key: 'unitPrice', label: 'Unit Price', minWidth: 95, sapField: 'Price', alternativeFields: ['PriceBefDi'], sapColumnIds: ['14', 'Price', 'PriceBefDi', 'UnitPrice', 'Unit Price'] },
+  { key: 'stdDiscount', label: 'Disc%', minWidth: 85, sapField: 'DiscPrcnt', sapColumnIds: ['15', 'DiscPrcnt', 'DiscountPercent', 'Discount %', 'Disc%'] },
+  { key: 'taxCode', label: 'Tax Code', minWidth: 115, sapField: 'TaxCode', sapColumnIds: ['234000377', '160', 'TaxCode', 'Tax Code'] },
+  { key: 'wTaxLiable', label: 'WTax Liable', minWidth: 100, sapField: 'WtLiable', type: 'yesNo', sapColumnIds: ['18', 'WTLiable', 'WtLiable', 'WTax Liable'] },
+  { key: 'totalLC', label: 'Total (LC)', minWidth: 110, sapField: 'LineTotal', calculated: true, sapColumnIds: ['160', '17', 'GTotal', 'Total', 'Total (LC)', 'LineTotal'] },
+  { key: 'whse', label: 'Whse', minWidth: 90, sapField: 'WhsCode', sapColumnIds: ['174', 'WhsCode', 'Warehouse', 'Whse'] },
+  { key: 'glAccount', label: 'G/L Account', minWidth: 135, sapField: 'AcctCode', sapColumnIds: ['234001512', 'AcctCode', 'G/L Account', 'GLAccount'] },
+  { key: 'distRule', label: 'Distr. Rule', minWidth: 105, sapField: 'OcrCode', sapColumnIds: ['21', 'OcrCode', 'Distr. Rule', 'DistributionRule'] },
+  { key: 'taxLiable', label: 'Tax Liable', minWidth: 95, sapField: 'TaxOnly', type: 'checkbox', sapColumnIds: ['22', 'TaxOnly', 'Tax Liable'] },
+  { key: 'weight', label: 'Weight', minWidth: 95, sapField: 'Weight1', alternativeFields: ['Weight'], sapColumnIds: ['23', 'Weight1', 'Weight'] },
+  { key: 'taxAmount', label: 'Tax Amount (LC)', minWidth: 125, sapField: 'VatSum', calculated: true, sapColumnIds: ['24', 'VatSum', 'Tax Amount (LC)'] },
+  { key: 'uomCode', label: 'UoM Code', minWidth: 105, sapField: 'UomCode', alternativeFields: ['unitMsr', 'UomEntry'], sapColumnIds: ['1470002149', '1470002145', 'UomCode', 'unitMsr', 'UoM Code', 'UoM'] },
+  { key: 'uomName', label: 'UoM Name', minWidth: 120, sapField: 'unitMsr', alternativeFields: ['UomCode'], sapColumnIds: ['unitMsr', 'UoM Name'] },
+  { key: 'cogsDistRule', label: 'COGS Distr. Rule', minWidth: 135, sapField: 'CogsOcrCod', sapColumnIds: ['29', 'CogsOcrCod', 'COGS Distr. Rule'] },
+  { key: 'countryOfOrigin', label: 'Country/Region of Origin', minWidth: 185, sapField: 'CountryOrg', sapColumnIds: ['10002037', 'CountryOrg', 'Country/Region of Origin'] },
+  { key: 'loc', label: 'Loc.', source: 'branch', sapColumnIds: ['10002047', 'LocCode', 'Location', 'LOC', 'Loc.'], minWidth: 115 },
+  { key: 'branch', label: 'Branch', source: 'branch', sapColumnIds: ['BPLId', 'Branch'], minWidth: 115 },
+  { key: 'enableSettingCost', label: 'Enable Setting Cost', minWidth: 140, sapField: 'EnSetCost', alternativeFields: ['EnableSetCost'], type: 'checkbox', sapColumnIds: ['110000310', 'EnSetCost', 'Enable Setting Cost'] },
+  { key: 'returnCost', label: 'Return Cost (LC)', minWidth: 125, sapField: 'RetCost', alternativeFields: ['ReturnCost'], sapColumnIds: ['1003', 'RetCost', 'Return Cost (LC)'] },
+  { key: 'blanketAgreementNo', label: 'Blanket Agreement No.', minWidth: 170, sapField: 'AgrNo', alternativeFields: ['AgrLineNum'], sapColumnIds: ['1000', 'AgrNo', 'Blanket Agreement No.'] },
+  { key: 'hsnCode', label: 'HSN', minWidth: 115, sapField: 'HsnEntry', sapColumnIds: ['254000391', 'HsnEntry', 'HSN', 'HSN/SAC'] },
+  { key: 'sacCode', label: 'SAC', minWidth: 95, sapField: 'SacEntry', sapColumnIds: ['254000393', 'SacEntry', 'SAC'] },
+];
+
+const truthySapFlag = (value) => ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value ?? '').trim().toUpperCase());
+const falsySapFlag = (value) => ['N', 'NO', 'FALSE', '0', 'TNO'].includes(String(value ?? '').trim().toUpperCase());
+const sapFlagToBoolean = (value, fallback = true) => {
+  if (truthySapFlag(value)) return true;
+  if (falsySapFlag(value)) return false;
+  return fallback;
+};
+const normalizePreferenceKey = (value) => String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
+
+const resolveSapUserSign = async () => {
+  let sapUsername = '';
+  try {
+    const { getActiveCompanyConfig } = require('./companyConfigService');
+    const activeConfig = await getActiveCompanyConfig();
+    sapUsername = String(activeConfig.serviceLayer?.username || '').trim();
+  } catch (_error) {
+    sapUsername = '';
+  }
+  if (!sapUsername) return null;
+
+  const rows = await safe(db.query(`
+    SELECT TOP 1 USERID
+    FROM OUSR
+    WHERE USER_CODE = @sapUsername
+       OR U_NAME = @sapUsername
+    ORDER BY CASE WHEN USER_CODE = @sapUsername THEN 0 ELSE 1 END, USERID
+  `, { sapUsername }));
+
+  const userSign = Number(rows[0]?.USERID);
+  return Number.isFinite(userSign) ? userSign : null;
+};
+
+const getARCreditMemoColumnPreferences = async () => {
+  const tableRows = await safe(db.query(`
+    SELECT TABLE_NAME
+    FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_NAME = 'CPRF'
+  `));
+  if (!tableRows.length) return { byKey: {}, rows: [], userSign: null };
+
+  const cprfColumns = await safe(db.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'CPRF'
+  `));
+  const columnSet = new Set(cprfColumns.map((row) => String(row.COLUMN_NAME || '').trim()));
+  const hasItemUid = columnSet.has('ItemUID');
+  const hasTableName = columnSet.has('TableName');
+  const userSign = await resolveSapUserSign();
+  if (userSign == null) return { byKey: {}, rows: [], userSign: null };
+
+  let rows = await safe(db.query(`
+    SELECT
+      FormID, ItemID, ColID, Width, VisInForm, VisualIndx, EditInForm,
+      VisInExpnd, ExpandIndx, EditInEXP, UserSign, TPLId
+      ${hasTableName ? ', TableName' : ", '' AS TableName"}
+      ${hasItemUid ? ', ItemUID' : ", '' AS ItemUID"}
+    FROM CPRF
+    WHERE FormID = @formId
+      AND (
+        ItemID = @itemId
+        ${hasItemUid ? 'OR ItemUID = @itemId' : ''}
+      )
+      AND UserSign = @userSign
+    ORDER BY CASE WHEN TPLId = 0 THEN 0 ELSE 1 END, VisualIndx, ColID
+  `, {
+    formId: AR_CREDIT_MEMO_FORM_ID,
+    itemId: AR_CREDIT_MEMO_MATRIX_ITEM_ID,
+    tableName: 'RIN1',
+    userSign,
+  }));
+
+  if (!rows.length && hasTableName) {
+    rows = await safe(db.query(`
+      SELECT
+        FormID, ItemID, ColID, Width, VisInForm, VisualIndx, EditInForm,
+        VisInExpnd, ExpandIndx, EditInEXP, UserSign, TPLId,
+        TableName
+        ${hasItemUid ? ', ItemUID' : ", '' AS ItemUID"}
+      FROM CPRF
+      WHERE FormID = @formId
+        AND TableName = @tableName
+        AND UserSign = @userSign
+      ORDER BY CASE WHEN TPLId = 0 THEN 0 ELSE 1 END, VisualIndx, ColID
+    `, {
+      formId: AR_CREDIT_MEMO_FORM_ID,
+      tableName: 'RIN1',
+      userSign,
+    }));
+  }
+
+  const byKey = rows.reduce((acc, row) => {
+    [row.ColID, row.TableName, row.ItemUID].map(normalizePreferenceKey).filter(Boolean).forEach((key) => {
+      if (!acc[key]) acc[key] = row;
+    });
+    return acc;
+  }, {});
+
+  return { byKey, rows, userSign };
+};
+
+const getARCreditMemoLineTableColumns = async () => {
+  const rows = await safe(db.query(`
+    SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION,
+           NUMERIC_SCALE, IS_NULLABLE, ORDINAL_POSITION
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'RIN1'
+    ORDER BY ORDINAL_POSITION
+  `));
+
+  return rows.reduce((acc, row) => {
+    const columnName = String(row.COLUMN_NAME || '').trim();
+    if (!columnName) return acc;
+    acc[columnName.toUpperCase()] = {
+      name: columnName,
+      dataType: String(row.DATA_TYPE || '').trim().toLowerCase(),
+      maxLength: row.CHARACTER_MAXIMUM_LENGTH,
+      precision: row.NUMERIC_PRECISION,
+      scale: row.NUMERIC_SCALE,
+      nullable: String(row.IS_NULLABLE || '').toUpperCase() === 'YES',
+      ordinal: Number(row.ORDINAL_POSITION || 0),
+    };
+    return acc;
+  }, {});
+};
+
+const findColumnPreference = (column, preferences = {}) => {
+  const candidates = [
+    ...(column.sapColumnIds || []),
+    column.sapField,
+    ...(column.alternativeFields || []),
+    column.key,
+  ].map(normalizePreferenceKey).filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (preferences[candidate]) return preferences[candidate];
+  }
+  return null;
+};
+
+const getColumnMetadata = (column, lineColumns = {}) => {
+  const candidates = [column.sapField, ...(column.alternativeFields || [])].filter(Boolean);
+  for (const candidate of candidates) {
+    const metadata = lineColumns[String(candidate).toUpperCase()];
+    if (metadata) return metadata;
+  }
+  return null;
+};
+
+const getARCreditMemoLineFieldMetadata = async () => {
+  const [lineColumns, preferencesResult] = await Promise.all([
+    getARCreditMemoLineTableColumns(),
+    getARCreditMemoColumnPreferences(),
+  ]);
+  const hasPreferences = preferencesResult.rows.length > 0;
+
+  const matrixColumns = AR_CREDIT_MEMO_MATRIX_COLUMN_DEFS
+    .map((column, index) => {
+      const metadata = getColumnMetadata(column, lineColumns);
+      const exists = Boolean(metadata || column.calculated || column.source);
+      if (!exists) return null;
+
+      const preference = findColumnPreference(column, preferencesResult.byKey);
+      if (hasPreferences && !preference) return null;
+      const visible = preference ? sapFlagToBoolean(preference.VisInForm, true) : true;
+      const active = preference ? sapFlagToBoolean(preference.EditInForm, true) : true;
+      const width = Number(preference?.Width);
+
+      return {
+        key: column.key,
+        label: column.label,
+        sapField: column.sapField || '',
+        source: column.source || (column.calculated ? 'calculated' : 'RIN1'),
+        dataType: metadata?.dataType || '',
+        maxLength: metadata?.maxLength || undefined,
+        precision: metadata?.precision || undefined,
+        scale: metadata?.scale || undefined,
+        required: metadata ? !metadata.nullable : false,
+        readOnly: Boolean(column.calculated),
+        visible,
+        active,
+        minWidth: Number.isFinite(width) && width > 0 ? Math.max(width, column.minWidth || 125) : (column.minWidth || 125),
+        order: Number.isFinite(Number(preference?.VisualIndx)) ? Number(preference.VisualIndx) : index + 1,
+        sapColumnId: preference?.ColID || '',
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => (left.order || 0) - (right.order || 0));
+
+  return {
+    matrix_columns: matrixColumns,
+    sap_form: {
+      formId: AR_CREDIT_MEMO_FORM_ID,
+      matrixItemId: AR_CREDIT_MEMO_MATRIX_ITEM_ID,
+      userSign: preferencesResult.userSign,
+      preferenceRows: preferencesResult.rows.length,
+    },
+    _preferencesByKey: preferencesResult.byKey,
+  };
+};
+
+const applyLineColumnPreferencesToUdfs = (udfMetadata = {}, preferences = {}) => {
+  const hasPreferences = Object.keys(preferences || {}).length > 0;
+  const rows = (udfMetadata.rows || []).map((field) => {
+    const normalizedFieldKeys = [
+      field.key,
+      field.sapField,
+      field.aliasId,
+      field.label,
+    ].map(normalizePreferenceKey).filter(Boolean);
+    if (normalizedFieldKeys.some((key) => AR_CREDIT_MEMO_SUPPRESSED_ROW_UDFS.has(key))) {
+      return null;
+    }
+
+    const preference = findColumnPreference({
+      key: field.key,
+      sapField: field.sapField,
+      sapColumnIds: [field.key, field.aliasId, field.label],
+    }, preferences);
+
+    if (!preference) return hasPreferences ? null : field;
+
+    return {
+      ...field,
+      visible: sapFlagToBoolean(preference.VisInForm, true),
+      active: sapFlagToBoolean(preference.EditInForm, true),
+      minWidth: Number(preference.Width) > 0 ? Number(preference.Width) : field.minWidth,
+      order: Number(preference.VisualIndx) || field.order,
+      sapColumnId: preference.ColID || field.sapColumnId,
+    };
+  }).filter(Boolean).sort((left, right) => (left.order || 99999) - (right.order || 99999));
+
+  return { ...udfMetadata, rows };
+};
+
 const getReferenceData = async () => {
   const [
     customers,
@@ -680,7 +955,10 @@ const getReferenceData = async () => {
     uomGroupsRaw,
     decimalRows,
     companyRows,
+    accounts,
+    distributionRules,
     udfMetadata,
+    lineFieldMetadata,
   ] = await Promise.all([
     getCustomers(),
     getItems(),
@@ -694,8 +972,15 @@ const getReferenceData = async () => {
     getUomGroups(),
     getDecimalSettings(),
     getCompanyInfo(),
+    masterDataDbService.searchAccounts('', '', 5000, 0),
+    masterDataDbService.lookupDistributionRules(),
     getMarketingDocumentUdfs({ headerTable: 'ORIN', lineTable: 'RIN1' }),
+    getARCreditMemoLineFieldMetadata(),
   ]);
+  const effectiveUdfMetadata = applyLineColumnPreferencesToUdfs(
+    udfMetadata,
+    lineFieldMetadata._preferencesByKey || {},
+  );
 
   const uomGroupMap = {};
   uomGroupsRaw.forEach(row => {
@@ -768,9 +1053,27 @@ const getReferenceData = async () => {
     })),
     branches,
     states,
+    gl_accounts: accounts
+      .filter((account) => account.ActiveAccount !== 'tNO' && account.IsTitleAccount !== 'tYES')
+      .map((account) => ({
+        code: account.Code,
+        name: account.Name,
+        accountType: account.AccountType,
+        balance: account.Balance ?? 0,
+        inactive: account.ActiveAccount === 'tNO' ? 'Yes' : 'No',
+      })),
+    distribution_rules: distributionRules.map((rule) => ({
+      FactorCode: rule.FactorCode || rule.OcrCode || '',
+      FactorDescription: rule.FactorDescription || rule.OcrName || '',
+    })),
     uom_groups,
     decimal_settings: decimalSettings,
-    udf_metadata: udfMetadata,
+    matrix_columns: lineFieldMetadata.matrix_columns || [],
+    line_field_metadata: {
+      matrix_columns: lineFieldMetadata.matrix_columns || [],
+      sap_form: lineFieldMetadata.sap_form || {},
+    },
+    udf_metadata: effectiveUdfMetadata,
     warnings: [],
   };
 };

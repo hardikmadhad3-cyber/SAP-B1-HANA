@@ -289,7 +289,7 @@ const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
   { sapField: 'U_Seller_Delivery', getValue: (line) => line.sellerDelivery },
   { sapField: 'U_Buyer_Payment_Terms', getValue: (line) => line.buyerPaymentTerms },
-  { sapField: 'U_Seller_Payment_Terms', getValue: (line) => line.sellerPaymentTerms },
+  { sapField: 'U_Seller_Payment_Term', getValue: (line) => line.sellerPaymentTerms },
   { sapField: 'U_Buyer_Quality', getValue: (line) => line.buyerQuality },
   { sapField: 'U_Seller_Quality', getValue: (line) => line.sellerQuality },
   { sapField: 'U_Buyer_Price', getValue: (line) => line.buyerPrice },
@@ -319,6 +319,7 @@ const compactSapUdfFieldName = (value) => normalizeSapUdfFieldName(value).replac
 
 const GENERIC_LINE_UDF_SKIP_KEYS = new Set([
   ...SALES_ORDER_LINE_UDF_MAPPINGS.map((mapping) => normalizeSapUdfFieldName(mapping.sapField)),
+  'U_SELLER_PAYMENT_TERMS',
 ]);
 
 const GENERIC_LINE_UDF_SKIP_FRAGMENTS = [

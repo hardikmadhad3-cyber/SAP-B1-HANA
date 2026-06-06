@@ -34,14 +34,16 @@ const shouldKeepUdfBlankByDefault = (field = {}) => {
     identity.includes('supplyterms');
 };
 
+const asDefinitionArray = (definitions) => (Array.isArray(definitions) ? definitions : []);
+
 const createUdfState = (definitions = [], values = {}) =>
-  definitions.reduce((acc, field) => {
+  asDefinitionArray(definitions).reduce((acc, field) => {
     acc[field.key] = values[field.key] ?? (shouldKeepUdfBlankByDefault(field) ? '' : field.defaultValue ?? '');
     return acc;
   }, {});
 
 const buildVisibilitySettings = (definitions = []) =>
-  definitions.reduce((acc, field) => {
+  asDefinitionArray(definitions).reduce((acc, field) => {
     acc[field.key] = {
       visible: field.visible !== false,
       active: field.active !== false,
@@ -74,10 +76,12 @@ const readSavedFormSettings = (
   matrixColumns = BASE_MATRIX_COLUMNS,
   storageKey = FORM_SETTINGS_STORAGE_KEY,
 ) => {
-  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs, matrixColumns);
+  const effectiveMatrixColumns = Array.isArray(matrixColumns) ? matrixColumns : BASE_MATRIX_COLUMNS;
+  const effectiveStorageKey = typeof matrixColumns === 'string' ? matrixColumns : storageKey;
+  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs, effectiveMatrixColumns);
 
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = localStorage.getItem(effectiveStorageKey);
     if (!raw) return defaults;
     return mergeNestedSettings(defaults, JSON.parse(raw));
   } catch (error) {

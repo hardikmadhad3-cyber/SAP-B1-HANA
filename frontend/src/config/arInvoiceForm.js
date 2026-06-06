@@ -59,7 +59,12 @@ const buildVisibilitySettings = (definitions = []) =>
     return acc;
   }, {});
 
-const createDefaultFormSettings = (headerUdfs = HEADER_UDF_DEFINITIONS, rowUdfs = ROW_UDF_DEFINITIONS) => ({
+const createDefaultFormSettings = (
+  headerUdfs = HEADER_UDF_DEFINITIONS,
+  rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = [],
+) => ({
+  matrixColumns: buildVisibilitySettings(matrixColumns),
   headerUdfs: buildVisibilitySettings(headerUdfs),
   rowUdfs: buildVisibilitySettings(rowUdfs),
 });
@@ -76,9 +81,10 @@ const mergeNestedSettings = (defaults, saved = {}) =>
 const readSavedFormSettings = (
   headerUdfs = HEADER_UDF_DEFINITIONS,
   rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = [],
   storageKey = FORM_SETTINGS_STORAGE_KEY,
 ) => {
-  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs);
+  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs, matrixColumns);
 
   try {
     const raw = localStorage.getItem(storageKey);

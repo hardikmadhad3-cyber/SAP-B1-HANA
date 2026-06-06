@@ -52,6 +52,7 @@ const buildInitialProps = () => {
 
 const EMPTY_FORM = {
   ItemCode: "", ItemCodePrefix: "", ItemCodeNumber: "", BarCode: "", ItemName: "", ForeignName: "",
+  PriceListNum: "", PriceListName: "", Price: "",
   ItemsGroupCode: "", ItemsGroupName: "",
   UoMGroupEntry: "", UoMGroupName: "",
   InventoryItem: "tYES", SalesItem: "tYES", PurchaseItem: "tYES", AssetItem: "tNO",
@@ -373,8 +374,8 @@ export default function ItemMaster() {
   }, [form.ItemCode, form.ItemCodeNumber, form.ItemName, form.ForeignName, form.BarCode, loadItem, showAlert]);
 
   // Smart default value logic based on item properties
-  const applySmartDefaults = useCallback((fieldName, value) => {
-    const newForm = { ...form, [fieldName]: value };
+  const applySmartDefaults = useCallback((sourceForm, fieldName, value) => {
+    const newForm = { ...sourceForm, [fieldName]: value };
     
     // Set defaults based on item type changes
     if (fieldName === 'ItemType') {
@@ -451,19 +452,15 @@ export default function ItemMaster() {
     }
     
     return newForm;
-  }, [form]);
+  }, []);
 
   // Enhanced change handler with smart defaults
   const handleChange = useCallback((e) => {
     const { name, value, type, checked, label } = e.target;
     const finalValue = type === 'checkbox' ? (checked ? 'tYES' : 'tNO') : value;
     
-    // Apply smart defaults first
-    const newForm = applySmartDefaults(name, finalValue);
-    
-    // Handle additional logic that was in the original handleChange
     setForm((prev) => {
-      const updated = { ...newForm };
+      const updated = applySmartDefaults(prev, name, finalValue);
       
       // Handle label for lookups (e.g. ManufacturerName)
       if (label !== undefined) {

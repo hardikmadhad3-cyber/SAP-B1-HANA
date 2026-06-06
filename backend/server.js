@@ -145,7 +145,8 @@ const isAllowedOrigin = (origin) => {
 
   try {
     const { protocol, hostname, port } = new URL(origin);
-    if (protocol !== 'http:' || !['3000', '3001'].includes(port)) {
+    const allowedPorts = new Set(['3000', '3001', String(env.port)]);
+    if (protocol !== 'http:' || !allowedPorts.has(port)) {
       return false;
     }
 

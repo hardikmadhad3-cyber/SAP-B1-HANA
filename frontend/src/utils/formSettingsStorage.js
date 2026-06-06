@@ -51,10 +51,11 @@ export const useCompanyScopedFormSettings = (
 
   useEffect(() => {
     let isCancelled = false;
+    const initialSettings = readSettings(storageKey);
 
     setState({
       storageKey,
-      settings: readSettings(storageKey),
+      settings: initialSettings,
       loaded: false,
       saveVersion: 0,
     });
@@ -76,6 +77,13 @@ export const useCompanyScopedFormSettings = (
         setState((previous) => {
           if (previous.storageKey !== storageKey || previous.saveVersion > 0) {
             return previous;
+          }
+
+          if (!areSettingsEqual(previous.settings, initialSettings)) {
+            return {
+              ...previous,
+              loaded: true,
+            };
           }
 
           return {

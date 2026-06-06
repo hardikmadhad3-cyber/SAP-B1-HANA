@@ -200,7 +200,7 @@ function PurchaseRequest() {
   const [formSettings, setFormSettings] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
-    [HEADER_UDF_DEFINITIONS, ROW_UDF_DEFINITIONS],
+    [HEADER_UDF_DEFINITIONS, ROW_UDF_DEFINITIONS, BASE_MATRIX_COLUMNS],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);

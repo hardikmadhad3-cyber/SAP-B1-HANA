@@ -29,8 +29,8 @@ const SODA_SALES_ORDER_LINE_UDFS = [
   },
   {
     tableName: 'RDR1',
-    name: 'Seller_Payment_Terms',
-    fieldName: 'U_Seller_Payment_Terms',
+    name: 'Seller_Payment_Term',
+    fieldName: 'U_Seller_Payment_Term',
     description: 'Seller - Terms of Payment',
     type: 'db_Alpha',
     size: 100,

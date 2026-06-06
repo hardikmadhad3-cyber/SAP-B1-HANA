@@ -134,6 +134,9 @@ const getReferenceData = async (companyId) => {
         RateDec: 2,
         PercentDec: 2
       },
+      matrix_columns: [],
+      line_field_metadata: { matrix_columns: [], sap_form: {} },
+      udf_metadata: { header: [], rows: [] },
       warnings: [`Failed to load reference data: ${error.message}`],
     };
   }
@@ -503,9 +506,9 @@ const updateARInvoice = async (docEntry, payload) => {
 
 // ───────── DOCUMENT SERIES ─────────
 
-const getDocumentSeries = async (targetDate = null, transactionType = '') => {
+const getDocumentSeries = async (targetDate = null, transactionType = '', branch = '') => {
   try {
-    const result = await arInvoiceDb.getDocumentSeries(targetDate, transactionType);
+    const result = await arInvoiceDb.getDocumentSeries(targetDate, transactionType, branch);
     return { series: result };
   } catch (error) {
     console.error('[AR Invoice Service] Failed to load document series:', error);

@@ -1584,6 +1584,7 @@ const getSalesOrder = async (docEntry) => {
       ? `T1.${quoteSqlIdentifier(columnName)} AS ${quoteSqlIdentifier(alias)}`
       : `${fallback} AS ${quoteSqlIdentifier(alias)}`
   );
+  const hasSellerPaymentTermField = Boolean(lineFieldMetadata?.U_Seller_Payment_Term);
   const hasSellerPaymentTermsField = Boolean(lineFieldMetadata?.U_Seller_Payment_Terms);
   const hasRateField = Boolean(lineFieldMetadata?.U_Rate);
   const sacSql = getSacLookupSqlParts('T1', 'SAC', sacFieldMetadata);
@@ -1670,6 +1671,7 @@ const getSalesOrder = async (docEntry) => {
     ${lineField('U_Buyer_Delivery', 'BuyerDelivery')},
     ${lineField('U_Seller_Delivery', 'SellerDelivery')},
     ${lineField('U_Buyer_Payment_Terms', 'BuyerPaymentTerms')},
+    ${lineField('U_Seller_Payment_Term', 'SellerPaymentTerm')},
     ${lineField('U_Seller_Payment_Terms', 'SellerPaymentTerms')},
     ${lineField('U_Buyer_Quality', 'BuyerQuality')},
     ${lineField('U_Seller_Quality', 'SellerQuality')},
@@ -1872,6 +1874,7 @@ ORDER BY T1.LineNum
         U_Buyer_Delivery,
         U_Seller_Delivery,
         U_Buyer_Payment_Terms,
+        ${hasSellerPaymentTermField ? 'U_Seller_Payment_Term,' : ''}
         ${hasSellerPaymentTermsField ? 'U_Seller_Payment_Terms,' : ''}
         U_Buyer_Quality,
         U_Seller_Quality,
@@ -1912,6 +1915,7 @@ ORDER BY T1.LineNum
           U_Buyer_Delivery: row.U_Buyer_Delivery || '',
           U_Seller_Delivery: row.U_Seller_Delivery || '',
           U_Buyer_Payment_Terms: row.U_Buyer_Payment_Terms || '',
+          U_Seller_Payment_Term: row.U_Seller_Payment_Term || '',
           U_Seller_Payment_Terms: row.U_Seller_Payment_Terms || '',
           U_Buyer_Quality: row.U_Buyer_Quality || '',
           U_Seller_Quality: row.U_Seller_Quality || '',
@@ -2045,7 +2049,7 @@ ORDER BY T1.LineNum
           commission: lineUdf.U_COMPRC != null ? String(lineUdf.U_COMPRC) : (line.Commission != null ? String(line.Commission) : ''),
           sellerBrokeragePerQty: lineUdf.U_S_BrokPerQty != null ? String(lineUdf.U_S_BrokPerQty) : (line.SellerBrokeragePerQty != null ? String(line.SellerBrokeragePerQty) : ''),
           buyerPaymentTerms: lineUdf.U_Buyer_Payment_Terms || line.BuyerPaymentTerms || '',
-          sellerPaymentTerms: lineUdf.U_Seller_Payment_Terms || line.SellerPaymentTerms || '',
+          sellerPaymentTerms: lineUdf.U_Seller_Payment_Term || line.SellerPaymentTerm || '',
           qtySpecialInstruction: lineUdf.U_Seller_SPINS || line.QtySpecialInstruction || line.SellerSpecialInstruction || '',
           deliverySpecialInstruction: lineUdf.U_Buyer_SPINS || line.DeliverySpecialInstruction || line.BuyerSpecialInstruction || '',
           buyerSpecialInstruction: lineUdf.U_Buyer_SPINS || line.BuyerSpecialInstruction || '',
@@ -2092,6 +2096,7 @@ ORDER BY T1.LineNum
             U_Buyer_Delivery: lineUdf.U_Buyer_Delivery || '',
             U_Seller_Delivery: lineUdf.U_Seller_Delivery || '',
             U_Buyer_Payment_Terms: lineUdf.U_Buyer_Payment_Terms || '',
+            U_Seller_Payment_Term: lineUdf.U_Seller_Payment_Term || '',
             U_Seller_Payment_Terms: lineUdf.U_Seller_Payment_Terms || '',
             U_Buyer_Quality: lineUdf.U_Buyer_Quality || '',
             U_Seller_Quality: lineUdf.U_Seller_Quality || '',

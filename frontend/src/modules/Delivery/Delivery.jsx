@@ -3701,6 +3701,7 @@ function Delivery() {
                 header={header}
                 onHeaderChange={handleHeaderChange}
                 payTermOpts={payTermOpts}
+                isEditable={isDocumentEditable}
               />
             )}
 

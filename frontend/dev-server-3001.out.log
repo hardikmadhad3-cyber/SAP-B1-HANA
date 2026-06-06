@@ -1,0 +1,446 @@
+
+> frontend@0.1.0 start
+> craco start
+
+Attempting to bind to HOST environment variable: 0.0.0.0
+If this was unintentional, check that you haven't mistakenly set it in your shell.
+Learn more here: https://cra.link/advanced-config
+
+Starting the development server...
+
+Compiled successfully!
+
+You can now view frontend in the browser.
+
+  Local:            http://localhost:3001
+  On Your Network:  http://192.168.1.5:3001
+
+Note that the development build is not optimized.
+To create a production build, use npm run build.
+
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 205:35:  'setMatrixColumnDefinitions' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 205:35:  'setMatrixColumnDefinitions' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Failed to compile.
+
+Module not found: Error: Can't resolve './components/ContentsTab' in 'D:\Hetal\SAP-B1-WEBClient\sap-b1-web-client\frontend\src\modules\ar-CreditMemo'
+[1m[31mERROR[39m[22m in [1m./src/modules/ar-CreditMemo/ARCreditMemo.jsx[39m[22m [1m[32m10:0-51[39m[22m
+[1mModule [1m[31mnot found[39m[22m[1m: [1m[31mError[39m[22m[1m: Can't resolve './components/ContentsTab' in 'D:\Hetal\SAP-B1-WEBClient\sap-b1-web-client\frontend\src\modules\ar-CreditMemo'[39m[22m
+
+webpack compiled with [1m[31m1 error[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1:51:    'useMemo' is defined but never used                      no-unused-vars
+  Line 19:8:    'LineValueLookupModal' is defined but never used         no-unused-vars
+  Line 245:10:  'lineLookupModal' is assigned a value but never used     no-unused-vars
+  Line 245:27:  'setLineLookupModal' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1:51:    'useMemo' is defined but never used                      no-unused-vars
+  Line 19:8:    'LineValueLookupModal' is defined but never used         no-unused-vars
+  Line 245:10:  'lineLookupModal' is assigned a value but never used     no-unused-vars
+  Line 245:27:  'setLineLookupModal' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1:51:    'useMemo' is defined but never used                      no-unused-vars
+  Line 19:8:    'LineValueLookupModal' is defined but never used         no-unused-vars
+  Line 245:10:  'lineLookupModal' is assigned a value but never used     no-unused-vars
+  Line 245:27:  'setLineLookupModal' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1:51:    'useMemo' is defined but never used                      no-unused-vars
+  Line 19:8:    'LineValueLookupModal' is defined but never used         no-unused-vars
+  Line 245:10:  'lineLookupModal' is assigned a value but never used     no-unused-vars
+  Line 245:27:  'setLineLookupModal' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:    'LineValueLookupModal' is defined but never used                    no-unused-vars
+  Line 245:10:  'lineLookupModal' is assigned a value but never used                no-unused-vars
+  Line 245:27:  'setLineLookupModal' is assigned a value but never used             no-unused-vars
+  Line 806:9:   'accountLookupOptions' is assigned a value but never used           no-unused-vars
+  Line 816:9:   'distributionRuleLookupOptions' is assigned a value but never used  no-unused-vars
+  Line 828:9:   'itemLookupOptions' is assigned a value but never used              no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:    'LineValueLookupModal' is defined but never used                    no-unused-vars
+  Line 245:10:  'lineLookupModal' is assigned a value but never used                no-unused-vars
+  Line 245:27:  'setLineLookupModal' is assigned a value but never used             no-unused-vars
+  Line 806:9:   'accountLookupOptions' is assigned a value but never used           no-unused-vars
+  Line 816:9:   'distributionRuleLookupOptions' is assigned a value but never used  no-unused-vars
+  Line 828:9:   'itemLookupOptions' is assigned a value but never used              no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1134:9:   'openLineLookup' is assigned a value but never used          no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1134:9:   'openLineLookup' is assigned a value but never used          no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1134:9:   'openLineLookup' is assigned a value but never used          no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1134:9:   'openLineLookup' is assigned a value but never used          no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1134:9:   'openLineLookup' is assigned a value but never used          no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1134:9:   'openLineLookup' is assigned a value but never used          no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+src\modules\ar-CreditMemo\components\ContentsTab.jsx
+  Line 139:9:  'renderLookupCell' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+src\modules\ar-CreditMemo\components\ContentsTab.jsx
+  Line 139:9:  'renderLookupCell' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 19:8:     'LineValueLookupModal' is defined but never used             no-unused-vars
+  Line 1138:11:  'isSellerItem' is assigned a value but never used            no-unused-vars
+  Line 1189:9:   'handleLineLookupSelect' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Failed to compile.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1837:16:  'nextLine' is not defined  no-undef
+  Line 1838:24:  'nextLine' is not defined  no-undef
+  Line 1839:23:  'nextLine' is not defined  no-undef
+  Line 1840:27:  'nextLine' is not defined  no-undef
+  Line 1840:48:  'nextLine' is not defined  no-undef
+
+Search for the keywords to learn more about each error.
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+  Line 1836:11:  Unreachable code                                   no-unreachable
+
+[39m[22m
+
+[1m[31mERROR[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1837:16:  'nextLine' is not defined  no-undef
+  Line 1838:24:  'nextLine' is not defined  no-undef
+  Line 1839:23:  'nextLine' is not defined  no-undef
+  Line 1840:27:  'nextLine' is not defined  no-undef
+  Line 1840:48:  'nextLine' is not defined  no-undef
+
+Search for the keywords to learn more about each [1m[31merror[39m[22m[1m.[39m[22m
+
+webpack compiled with [1m[31m1 error[39m[22m and [1m[33m1 warning[39m[22m
+Compiling...
+Compiled with warnings.
+
+[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\modules\ar-CreditMemo\ARCreditMemo.jsx
+  Line 1138:11:  'isSellerItem' is assigned a value but never used  no-unused-vars
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
+Compiling...
+Compiled successfully!
+webpack compiled [1m[32msuccessfully[39m[22m

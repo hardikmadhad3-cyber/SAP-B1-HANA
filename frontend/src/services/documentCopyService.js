@@ -271,6 +271,7 @@ export const copyToDocument = async ({
     sourceDocType,
     sourceLabel,
     sourceDocEntry,
+    sourceDocNo,
     header: sourceSnapshot.header,
     lines: sourceSnapshot.lines,
     headerUdfs: sourceSnapshot.headerUdfs,
