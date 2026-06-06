@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
+export default function AccountingTab({ header, onHeaderChange, payTermOpts, isEditable = true }) {
   return (
     <div className="del-tab-panel">
       <div className="del-field-grid">
@@ -12,6 +12,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
             name="journalRemark"
             value={header.journalRemark}
             onChange={onHeaderChange}
+            disabled={!isEditable}
           />
         </div>
 
@@ -23,6 +24,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
             name="paymentTerms"
             value={header.paymentTerms}
             onChange={onHeaderChange}
+            disabled={!isEditable}
           >
             <option value="">— Select —</option>
             {payTermOpts.map(t => (
@@ -41,6 +43,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
             name="paymentMethod"
             value={header.paymentMethod}
             onChange={onHeaderChange}
+            disabled={!isEditable}
           >
             <option value="">— Select —</option>
             <option>Bank Transfer</option>
@@ -53,7 +56,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
         {/* Central Bank Ind. */}
         <div className="del-field">
           <label className="del-field__label">Central Bank Ind.</label>
-          <select className="del-field__select">
+          <select className="del-field__select" disabled={!isEditable}>
             <option value="">— Select —</option>
           </select>
         </div>
@@ -61,19 +64,19 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
         {/* Business Partner Project */}
         <div className="del-field">
           <label className="del-field__label">Business Partner Project</label>
-          <input className="del-field__input" />
+          <input className="del-field__input" disabled={!isEditable} />
         </div>
 
         {/* Create QR Code From */}
         <div className="del-field">
           <label className="del-field__label">Create QR Code From</label>
-          <input className="del-field__input" />
+          <input className="del-field__input" disabled={!isEditable} />
         </div>
 
         {/* Indicator */}
         <div className="del-field">
           <label className="del-field__label">Indicator</label>
-          <select className="del-field__select">
+          <select className="del-field__select" disabled={!isEditable}>
             <option value="">— Select —</option>
           </select>
         </div>
@@ -81,7 +84,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
         {/* Order Number */}
         <div className="del-field">
           <label className="del-field__label">Order Number</label>
-          <input className="del-field__input" />
+          <input className="del-field__input" disabled={!isEditable} />
         </div>
 
         {/* Owner */}
@@ -92,6 +95,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
             name="owner"
             value={header.owner || ''}
             onChange={onHeaderChange}
+            disabled={!isEditable}
           />
         </div>
 
@@ -105,6 +109,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
             name="otherInstruction"
             value={header.otherInstruction}
             onChange={onHeaderChange}
+            disabled={!isEditable}
           />
         </div>
 
@@ -113,19 +118,19 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
           <div className="del-section-title" style={{ margin: '0 0 8px 0' }}>Manually Recalculate Due Date</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginLeft: '110px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input type="radio" name="dueDateCalc" id="dueDateSelected" />
+              <input type="radio" name="dueDateCalc" id="dueDateSelected" disabled={!isEditable} />
               <label htmlFor="dueDateSelected" style={{ cursor: 'pointer', margin: 0, fontSize: 12 }}>Selected Date</label>
-              <input type="date" className="del-field__input" style={{ flex: '0 0 150px', height: '22px' }} />
+              <input type="date" className="del-field__input" style={{ flex: '0 0 150px', height: '22px' }} disabled={!isEditable} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input type="radio" name="dueDateCalc" id="dueDateMonths" />
+              <input type="radio" name="dueDateCalc" id="dueDateMonths" disabled={!isEditable} />
               <label htmlFor="dueDateMonths" style={{ cursor: 'pointer', margin: 0, fontSize: 12 }}>Months + Days</label>
-              <input type="number" className="del-field__input" placeholder="Months" style={{ flex: '0 0 80px', height: '22px' }} />
-              <input type="number" className="del-field__input" placeholder="Days" style={{ flex: '0 0 80px', height: '22px' }} />
+              <input type="number" className="del-field__input" placeholder="Months" style={{ flex: '0 0 80px', height: '22px' }} disabled={!isEditable} />
+              <input type="number" className="del-field__input" placeholder="Days" style={{ flex: '0 0 80px', height: '22px' }} disabled={!isEditable} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: 12, color: '#444', width: '110px', textAlign: 'right' }}>Cash Discount Date Offset</span>
-              <input type="number" className="del-field__input" style={{ flex: '0 0 80px', height: '22px' }} />
+              <input type="number" className="del-field__input" style={{ flex: '0 0 80px', height: '22px' }} disabled={!isEditable} />
             </div>
           </div>
         </div>
@@ -133,7 +138,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
         {/* Use Shipped Goods Account */}
         <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 0' }}>
           <span style={{ width: '110px' }}></span>
-          <input type="checkbox" id="useShippedGoods" style={{ cursor: 'pointer' }} />
+          <input type="checkbox" id="useShippedGoods" style={{ cursor: 'pointer' }} disabled={!isEditable} />
           <label htmlFor="useShippedGoods" style={{ cursor: 'pointer', margin: 0, fontSize: 12 }}>
             Use Shipped Goods Account
           </label>
@@ -142,7 +147,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
         {/* Consolidation Type */}
         <div className="del-field">
           <label className="del-field__label">Consolidation Type</label>
-          <select className="del-field__select">
+          <select className="del-field__select" disabled={!isEditable}>
             <option value="">— Select —</option>
           </select>
         </div>
@@ -150,7 +155,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
         {/* Consolidating BP */}
         <div className="del-field">
           <label className="del-field__label">Consolidating BP</label>
-          <input className="del-field__input" />
+          <input className="del-field__input" disabled={!isEditable} />
         </div>
       </div>
     </div>

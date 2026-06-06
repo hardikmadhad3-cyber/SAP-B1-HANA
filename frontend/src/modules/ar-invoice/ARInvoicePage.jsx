@@ -168,7 +168,7 @@ const FALLBACK_SHIPPING = [
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
-const DEFAULT_WAREHOUSE_CODE = '01';
+const DEFAULT_WAREHOUSE_CODE = '';
 const TRANSACTION_TYPE_FIELD_NAMES = new Set(['transactiontype', 'transtype', 'documenttype', 'doctype']);
 const DEFAULT_TRANSACTION_TYPES = [
   { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
@@ -229,6 +229,7 @@ function ARInvoicePage() {
   const [header, setHeader] = useState(INIT_HEADER);
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState([]);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
@@ -236,15 +237,18 @@ function ARInvoicePage() {
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
-    [headerUdfDefinitions, rowUdfDefinitions],
+    [headerUdfDefinitions, rowUdfDefinitions, matrixColumnDefinitions],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState({
     company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
     warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [],
+    default_branch: '', default_warehouse: '',
     gl_accounts: [], distribution_rules: [], payment_terms: [], shipping_types: [], branches: [], uom_groups: [],
     decimal_settings: DEC, warnings: [], series: [], states: [], transaction_types: [],
+    matrix_columns: [],
+    line_field_metadata: { matrix_columns: [], sap_form: {} },
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
@@ -261,6 +265,7 @@ function ARInvoicePage() {
     open: false,
     lineIndex: -1,
     field: '',
+    udfKey: '',
     title: '',
     options: [],
     searchPlaceholder: 'Search values',
@@ -342,6 +347,31 @@ function ARInvoicePage() {
 
     if (matchedSeries) return matchedSeries;
 
+    const normalizedTransactionType = normalizeFieldIdentity(header.transactionType);
+    if (normalizedTransactionType) {
+      const transactionTokens = normalizedTransactionType.includes('gsttaxinvoice')
+        ? ['gsttaxinvoice', 'gst', 'taxinvoice', 'retail', 'ret']
+        : normalizedTransactionType.includes('billofsupply')
+          ? ['billofsupply', 'bos', 'supply']
+          : normalizedTransactionType.includes('debit')
+            ? ['debitmemo', 'debit', 'dbn']
+            : [normalizedTransactionType];
+
+      const scoredSeries = seriesList
+        .map((series, index) => {
+          const identity = normalizeFieldIdentity(`${series.SeriesName || ''} ${series.Indicator || ''}`);
+          const score = transactionTokens.reduce((total, token) => (
+            total + (identity.includes(token) ? token.length : 0)
+          ), 0);
+          const genericFyOnly = /^[0-9\s/-]+$/.test(String(series.SeriesName || '').trim());
+          return { series, index, score: score - (genericFyOnly ? 1 : 0) };
+        })
+        .filter((entry) => entry.score > 0)
+        .sort((left, right) => right.score - left.score || left.index - right.index);
+
+      if (scoredSeries[0]?.series) return scoredSeries[0].series;
+    }
+
     const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
     return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
   };
@@ -380,9 +410,17 @@ function ARInvoicePage() {
           const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
           const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
-          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, formSettingsStorageKey);
+          const nextMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+            ? refDataRes.data.line_field_metadata.matrix_columns
+            : (refDataRes.data.matrix_columns || []);
+          const hasSapMatrixPreferences =
+            Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0;
+          const liveDefaultBranch = String(refDataRes.data.default_branch || '').trim();
+          const liveDefaultWarehouse = String(refDataRes.data.default_warehouse || '').trim();
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
+          setMatrixColumnDefinitions(nextMatrixColumns);
           setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
             ...line,
@@ -395,10 +433,21 @@ function ARInvoicePage() {
               ...nextDefaults.headerUdfs,
               ...(prev.headerUdfs || {}),
             },
-            rowUdfs: {
-              ...nextDefaults.rowUdfs,
-              ...(prev.rowUdfs || {}),
-            },
+            rowUdfs: nextRowUdfs.reduce((settings, field) => ({
+              ...settings,
+              [field.key]: hasSapMatrixPreferences && field.sapColumnId
+                ? nextDefaults.rowUdfs[field.key]
+                : {
+                    ...(nextDefaults.rowUdfs[field.key] || {}),
+                    ...((prev.rowUdfs || {})[field.key] || {}),
+                  },
+            }), nextDefaults.rowUdfs),
+            matrixColumns: hasSapMatrixPreferences
+              ? nextDefaults.matrixColumns
+              : {
+                  ...nextDefaults.matrixColumns,
+                  ...(prev.matrixColumns || {}),
+                },
           }));
           setRefData(prev => ({
             ...prev,
@@ -421,10 +470,27 @@ function ARInvoicePage() {
             states: refDataRes.data.states || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
+            matrix_columns: nextMatrixColumns,
+            line_field_metadata: refDataRes.data.line_field_metadata || { matrix_columns: nextMatrixColumns, sap_form: {} },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             warnings: refDataRes.data.warnings || [],
             series: Array.isArray(prev.series) ? prev.series : [],
+            default_branch: liveDefaultBranch,
+            default_warehouse: liveDefaultWarehouse,
           }));
+          if (!currentDocEntry && !requestedEditDocEntry && (liveDefaultBranch || liveDefaultWarehouse)) {
+            setHeader(prev => ({
+              ...prev,
+              branch: prev.branch || liveDefaultBranch,
+              warehouse: prev.warehouse || liveDefaultWarehouse,
+            }));
+            setLines(prev => prev.map((line) => ({
+              ...line,
+              branch: line.branch || liveDefaultBranch,
+              loc: line.loc || liveDefaultBranch,
+              whse: line.whse || liveDefaultWarehouse,
+            })));
+          }
         }
       } catch (e) {
         if (!ignore) setPageState(p => ({ ...p, error: getErrMsg(e, 'Failed to load reference data.') }));
@@ -434,7 +500,7 @@ function ARInvoicePage() {
     };
     load();
     return () => { ignore = true; };
-  }, []);
+  }, [formSettingsStorageKey]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -451,7 +517,7 @@ function ARInvoicePage() {
 
     const loadSeriesForPostingDate = async () => {
       try {
-        const seriesResponse = await fetchDocumentSeries(seriesDate, header.transactionType);
+        const seriesResponse = await fetchDocumentSeries(seriesDate, header.transactionType, header.branch);
         const availableSeries = seriesResponse.data?.series || [];
 
         if (ignore || requestedEditDocEntry) return;
@@ -478,7 +544,7 @@ function ARInvoicePage() {
 
     loadSeriesForPostingDate();
     return () => { ignore = true; };
-  }, [currentDocEntry, requestedEditDocEntry, header.postingDate, header.transactionType]);
+  }, [currentDocEntry, requestedEditDocEntry, header.postingDate, header.transactionType, header.branch]);
 
   useEffect(() => {
     const docEntry = requestedEditDocEntry;
@@ -492,7 +558,7 @@ function ARInvoicePage() {
         let editSeries = [];
         try {
           const seriesDate = so?.header?.postingDate || so?.header?.documentDate || '';
-          const seriesResponse = await fetchDocumentSeries(seriesDate, so?.header?.transactionType || '');
+          const seriesResponse = await fetchDocumentSeries(seriesDate, so?.header?.transactionType || '', so?.header?.branch || '');
           editSeries = seriesResponse.data?.series || [];
         } catch (_seriesError) {
           editSeries = [];
@@ -621,7 +687,7 @@ function ARInvoicePage() {
     const { header: srcHeader = {}, lines: srcLines = [], baseDocument } = copyFrom;
     const normalizedHeader = normaliseDocumentHeader(srcHeader || {});
     const firstSourceLine = Array.isArray(srcLines) && srcLines.length ? srcLines[0] : {};
-    const copiedWarehouse = normalizeWarehouse(firstSourceLine, srcHeader) || DEFAULT_WAREHOUSE_CODE;
+    const copiedWarehouse = normalizeWarehouse(firstSourceLine, srcHeader) || '';
     const copiedBranch = srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || srcHeader.BPLId || firstSourceLine.branch || '';
     const copiedBaseType = baseDocument?.baseType || BASE_TYPE[copyFrom.type] || firstSourceLine.baseType || 15;
     const copiedBaseEntry = baseDocument?.baseEntry || copyFrom.docEntry;
@@ -651,7 +717,7 @@ function ARInvoicePage() {
         return {
           ...createLine(rowUdfDefinitions),
           ...normalizedLine,
-          whse: normalizeWarehouse(normalizedLine, srcHeader) || normalizeWarehouse(l, srcHeader) || copiedWarehouse || DEFAULT_WAREHOUSE_CODE,
+          whse: normalizeWarehouse(normalizedLine, srcHeader) || normalizeWarehouse(l, srcHeader) || copiedWarehouse || '',
           baseEntry: l.baseEntry ?? l.BaseEntry ?? copiedBaseEntry,
           baseType: l.baseType ?? l.BaseType ?? copiedBaseType,
           baseLine: normalizeBaseLine(l, idx),
@@ -673,13 +739,17 @@ function ARInvoicePage() {
   }, [location.pathname, location.state?.copyFrom, navigate, headerUdfDefinitions, rowUdfDefinitions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived / computed ────────────────────────────────────────────────────
-  const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
+  const belongsToCurrentVendor = (row) => {
+    const rowCardCode = String(row?.CardCode || '').trim();
+    return !rowCardCode || rowCardCode === String(header.vendor || '').trim();
+  };
+  const vendorContacts = refData.contacts.filter(belongsToCurrentVendor);
   const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
     ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
     : vendorContacts;
-  const vendorPayToAddresses = refData.pay_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
-  const vendorShipToAddresses = refData.ship_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
-  const vendorBillToAddresses = refData.bill_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
+  const vendorPayToAddresses = refData.pay_to_addresses.filter(belongsToCurrentVendor);
+  const vendorShipToAddresses = refData.ship_to_addresses.filter(belongsToCurrentVendor);
+  const vendorBillToAddresses = refData.bill_to_addresses.filter(belongsToCurrentVendor);
   const vendorEffectiveShipToAddresses = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
   const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
   const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
@@ -771,6 +841,25 @@ function ARInvoicePage() {
       factorDescription: description,
     };
   }).filter((option) => option.value), [refData.distribution_rules]);
+
+  const itemLookupOptions = useMemo(() => (refData.items || []).map((item) => ({
+    value: item.ItemCode || '',
+    description: item.ItemName || '',
+    label: item.ItemName ? `${item.ItemCode} - ${item.ItemName}` : item.ItemCode,
+    itemCode: item.ItemCode || '',
+    itemName: item.ItemName || '',
+    salesUnit: item.SalesUnit || item.InventoryUOM || '',
+  })).filter((option) => option.value), [refData.items]);
+
+  const rowUdfByAlias = useMemo(() => new Map((rowUdfDefinitions || []).map((field) => [
+    normalizeFieldIdentity(field.aliasId || field.key || field.label),
+    field,
+  ])), [rowUdfDefinitions]);
+
+  const itemNameRowUdfKey = useMemo(() => {
+    const candidates = ['itemname', 'itemdescription', 'sitemname', 'selleritemname'];
+    return candidates.map((candidate) => rowUdfByAlias.get(candidate)?.key).find(Boolean) || '';
+  }, [rowUdfByAlias]);
 
   const fmtTaxLabel = (t) => {
     const code = String(t?.Code || '').trim();
@@ -908,7 +997,7 @@ function ARInvoicePage() {
       if (contacts.length > 0) {
         setHeader(prev => ({
           ...prev,
-          contactPerson: prev.contactPerson || contacts[0].CntctCode
+          contactPerson: prev.contactPerson || String(contacts[0].CntctCode || '')
         }));
       }
 
@@ -970,17 +1059,19 @@ function ARInvoicePage() {
   };
 
   // ── handlers ──────────────────────────────────────────────────────────────
-  const openLineLookup = (field, lineIndex) => {
+  const openLineLookup = (field, lineIndex, udfField = null) => {
     if (!isDocumentEditable) return;
     const isAccount = field === 'glAccount';
+    const isSellerItem = field === 'sItem';
     setLineLookupModal({
       open: true,
       lineIndex,
       field,
-      title: isAccount ? 'List of G/L Accounts' : 'List of Distribution Rules',
-      options: isAccount ? accountLookupOptions : distributionRuleLookupOptions,
-      searchPlaceholder: isAccount ? 'Search G/L accounts' : 'Search distribution rules',
-      emptyMessage: isAccount ? 'No G/L accounts found' : 'No distribution rules found',
+      udfKey: udfField?.key || '',
+      title: isAccount ? 'List of G/L Accounts' : isSellerItem ? 'List of Items' : 'List of Distribution Rules',
+      options: isAccount ? accountLookupOptions : isSellerItem ? itemLookupOptions : distributionRuleLookupOptions,
+      searchPlaceholder: isAccount ? 'Search G/L accounts' : isSellerItem ? 'Search items' : 'Search distribution rules',
+      emptyMessage: isAccount ? 'No G/L accounts found' : isSellerItem ? 'No items found' : 'No distribution rules found',
       columns: isAccount
         ? [
             { key: 'accountNumber', label: 'Account Number', width: 150, primary: true },
@@ -988,6 +1079,12 @@ function ARInvoicePage() {
             { key: 'accountBalance', label: 'Account Balance', width: 130, align: 'right' },
             { key: 'inactive', label: 'Inactive', width: 90 },
           ]
+        : isSellerItem
+          ? [
+              { key: 'itemCode', label: 'Item No.', width: 150, primary: true },
+              { key: 'itemName', label: 'Item Description' },
+              { key: 'salesUnit', label: 'UoM', width: 100 },
+            ]
         : [
             { key: 'factorCode', label: 'Distr. Rule', width: 140, primary: true },
             { key: 'factorDescription', label: 'Description' },
@@ -996,7 +1093,7 @@ function ARInvoicePage() {
   };
 
   const closeLineLookup = () => {
-    setLineLookupModal((prev) => ({ ...prev, open: false, lineIndex: -1, field: '' }));
+    setLineLookupModal((prev) => ({ ...prev, open: false, lineIndex: -1, field: '', udfKey: '' }));
   };
 
   const handleLineLookupSelect = (option) => {
@@ -1004,12 +1101,29 @@ function ARInvoicePage() {
     const selectedValue = option?.value || '';
     setLines((prev) => prev.map((line, index) => {
       if (index !== lineLookupModal.lineIndex) return line;
+      if (lineLookupModal.udfKey) {
+        const nextUdf = {
+          ...(line.udf || {}),
+          [lineLookupModal.udfKey]: selectedValue,
+        };
+        if (lineLookupModal.field === 'sItem' && itemNameRowUdfKey) {
+          nextUdf[itemNameRowUdfKey] = option?.itemName || option?.description || '';
+        }
+        return {
+          ...line,
+          sellerItem: lineLookupModal.field === 'sItem' ? selectedValue : line.sellerItem,
+          udf: nextUdf,
+        };
+      }
+
       const next = { ...line, [lineLookupModal.field]: selectedValue };
       if (lineLookupModal.field === 'distRule' && (!line.cogsDistRule || line.cogsDistRule === line.distRule)) {
         next.cogsDistRule = selectedValue;
       }
       return next;
     }));
+    markDirty();
+    closeLineLookup();
   };
 
   const handleHeaderChange = (e) => {
@@ -1042,6 +1156,23 @@ function ARInvoicePage() {
     
     if (name === 'billToCode') {
       handleBillToCodeChange(value);
+      return;
+    }
+
+    if (name === 'branch') {
+      const nextWarehouses = filterWarehousesByBranch(effectiveWarehouses, value);
+      setHeader(prev => {
+        const currentWarehouseAllowed = nextWarehouses.some((warehouse) => (
+          String(warehouse.WhsCode || '') === String(prev.warehouse || '')
+        ));
+        return {
+          ...prev,
+          branch: value,
+          warehouse: currentWarehouseAllowed ? prev.warehouse : (nextWarehouses[0]?.WhsCode || ''),
+          series: '',
+          nextNumber: '',
+        };
+      });
       return;
     }
     
@@ -1400,7 +1531,7 @@ function ARInvoicePage() {
       ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
-      whse: header.warehouse || DEFAULT_WAREHOUSE_CODE
+      whse: header.warehouse || ''
     }]);
   };
 
@@ -1419,7 +1550,24 @@ function ARInvoicePage() {
   const handleRowUdfChange = (i, k, v) => {
     if (!isDocumentEditable) return;
     markDirty();
-    setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
+    const field = rowUdfDefinitions.find((definition) => definition.key === k);
+    const isSellerItem = normalizeFieldIdentity(field?.aliasId || field?.key || field?.label) === 'sitem';
+    const matchedItem = isSellerItem
+      ? refData.items.find((item) => String(item.ItemCode || '') === String(v || ''))
+      : null;
+
+    setLines(p => p.map((l, idx) => {
+      if (idx !== i) return l;
+      const nextUdf = { ...(l.udf || {}), [k]: v };
+      if (isSellerItem && itemNameRowUdfKey) {
+        nextUdf[itemNameRowUdfKey] = matchedItem?.ItemName || '';
+      }
+      return {
+        ...l,
+        sellerItem: isSellerItem ? v : l.sellerItem,
+        udf: nextUdf,
+      };
+    }));
   };
   const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({
     ...p,
@@ -2382,6 +2530,18 @@ function ARInvoicePage() {
                       </select>
                     </div>
 
+                    {/* Buyer PO No */}
+                    <div className="del-field">
+                      <label className="del-field__label">Buyer PO No</label>
+                      <input
+                        name="salesContractNo"
+                        className="del-field__input"
+                        value={header.salesContractNo}
+                        onChange={handleHeaderChange}
+                        disabled={!isDocumentEditable}
+                      />
+                    </div>
+
                     <DocumentCurrencySelect
                       classPrefix="del"
                       header={header}
@@ -2438,28 +2598,6 @@ function ARInvoicePage() {
                           ...
                         </button>
                       </div>
-                    </div>
-
-                    {/* Payment Terms */}
-                    <div className="del-field">
-                      <label className="del-field__label">Payment Terms</label>
-                      <select name="paymentTerms" className="del-field__select" value={header.paymentTerms} onChange={handleHeaderChange} disabled={!isDocumentEditable}>
-                        <option value="">Select</option>
-                        {payTermOpts.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                      </select>
-                    </div>
-
-                    {/* Branch */}
-                    <div className="del-field">
-                      <label className="del-field__label">Branch</label>
-                      <select name="branch" className="del-field__select" value={header.branch} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
-                        <option value="">Select Branch</option>
-                        {refData.branches.map(b => (
-                          <option key={b.BPLId} value={b.BPLId}>
-                            {b.BPLName}
-                          </option>
-                        ))}
-                      </select>
                     </div>
 
                     {/* Warehouse */}
@@ -2523,12 +2661,6 @@ function ARInvoicePage() {
                       />
                     </div>
 
-                    {/* Customer Ref. No. */}
-                    <div className="del-field">
-                      <label className="del-field__label">Customer Ref. No.</label>
-                      <input name="salesContractNo" className="del-field__input" value={header.salesContractNo} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
-                    </div>
-
                     {/* Status */}
                     <div className="del-field">
                       <label className="del-field__label">Status</label>
@@ -2551,6 +2683,28 @@ function ARInvoicePage() {
                     <div className="del-field">
                       <label className="del-field__label">Document Date *</label>
                       <input type="date" name="documentDate" className={`del-field__input${valErrors.header.documentDate ? ' del-field__input--error' : ''}`} value={header.documentDate} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
+                    </div>
+
+                    {/* Payment Terms */}
+                    <div className="del-field">
+                      <label className="del-field__label">Payment Terms</label>
+                      <select name="paymentTerms" className="del-field__select" value={header.paymentTerms} onChange={handleHeaderChange} disabled={!isDocumentEditable}>
+                        <option value="">Select</option>
+                        {payTermOpts.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                      </select>
+                    </div>
+
+                    {/* Branch */}
+                    <div className="del-field">
+                      <label className="del-field__label">Branch</label>
+                      <select name="branch" className="del-field__select" value={header.branch} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
+                        <option value="">Select Branch</option>
+                        {refData.branches.map(b => (
+                          <option key={b.BPLId} value={b.BPLId}>
+                            {b.BPLName}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
                   </div>
@@ -2591,6 +2745,8 @@ function ARInvoicePage() {
                 getBranchName={getBranchName}
                 valErrors={valErrors}
                 isEditable={isDocumentEditable}
+                formSettings={formSettings}
+                matrixFields={matrixColumnDefinitions}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
               />
@@ -2818,7 +2974,7 @@ function ARInvoicePage() {
             className="so-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
-            matrixFields={[]}
+            matrixFields={matrixColumnDefinitions}
             headerUdfFields={headerUdfDefinitions}
             rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}

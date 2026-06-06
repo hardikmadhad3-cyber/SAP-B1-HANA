@@ -75,4 +75,30 @@ module.exports = {
       return webpackConfig;
     },
   },
+  devServer: (devServerConfig) => {
+    const onBeforeSetupMiddleware = devServerConfig.onBeforeSetupMiddleware;
+    const onAfterSetupMiddleware = devServerConfig.onAfterSetupMiddleware;
+    const existingSetupMiddlewares = devServerConfig.setupMiddlewares;
+
+    delete devServerConfig.onBeforeSetupMiddleware;
+    delete devServerConfig.onAfterSetupMiddleware;
+
+    devServerConfig.setupMiddlewares = (middlewares, devServer) => {
+      if (typeof onBeforeSetupMiddleware === "function") {
+        onBeforeSetupMiddleware(devServer);
+      }
+
+      const nextMiddlewares = typeof existingSetupMiddlewares === "function"
+        ? existingSetupMiddlewares(middlewares, devServer)
+        : middlewares;
+
+      if (typeof onAfterSetupMiddleware === "function") {
+        onAfterSetupMiddleware(devServer);
+      }
+
+      return nextMiddlewares;
+    };
+
+    return devServerConfig;
+  },
 };

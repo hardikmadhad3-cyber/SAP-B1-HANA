@@ -4,6 +4,7 @@ const env = require('../config/env');
 const authDbService = require('./authDbService');
 const { syncApplicationSidebarMenus } = require('./applicationMenuSyncService');
 const { appendVirtualMenus } = require('./virtualMenuService');
+const { appendVirtualLayoutManagerMenu } = require('./reportLayoutService');
 
 const createHttpError = (statusCode, message) => {
   const error = new Error(message);
@@ -227,11 +228,11 @@ const buildAuthorizedMenus = async (roleId, roleName = '', companyId = null) => 
     .map((menu) => String(menu.MenuPath || '').trim())
     .filter(Boolean);
 
-  return appendVirtualMenus({
+  return appendVirtualLayoutManagerMenu(appendVirtualMenus({
     menus: menuTree,
     menuPaths,
     includeAdminPanel: isAdminRoleName(roleName),
-  });
+  }));
 };
 
 const login = async (username, password) => {

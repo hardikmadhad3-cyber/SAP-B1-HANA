@@ -1,7 +1,6 @@
 export {
   HEADER_UDF_DEFINITIONS,
   ROW_UDF_DEFINITIONS,
-  createDefaultFormSettings,
   createUdfState,
   normalizeUdfState,
 } from './arInvoiceForm';
@@ -14,7 +13,12 @@ const buildVisibilitySettings = (definitions = []) =>
     return acc;
   }, {});
 
-const createDefaultFormSettingsForCreditMemo = (headerUdfs = [], rowUdfs = []) => ({
+const createDefaultFormSettingsForCreditMemo = (
+  headerUdfs = [],
+  rowUdfs = [],
+  matrixColumns = [],
+) => ({
+  matrixColumns: buildVisibilitySettings(matrixColumns),
   headerUdfs: buildVisibilitySettings(headerUdfs),
   rowUdfs: buildVisibilitySettings(rowUdfs),
 });
@@ -31,9 +35,10 @@ const mergeNestedSettings = (defaults, saved = {}) =>
 export const readSavedFormSettings = (
   headerUdfs = [],
   rowUdfs = [],
+  matrixColumns = [],
   storageKey = FORM_SETTINGS_STORAGE_KEY,
 ) => {
-  const defaults = createDefaultFormSettingsForCreditMemo(headerUdfs, rowUdfs);
+  const defaults = createDefaultFormSettingsForCreditMemo(headerUdfs, rowUdfs, matrixColumns);
 
   try {
     const raw = localStorage.getItem(storageKey);
@@ -43,3 +48,5 @@ export const readSavedFormSettings = (
     return defaults;
   }
 };
+
+export const createDefaultFormSettings = createDefaultFormSettingsForCreditMemo;

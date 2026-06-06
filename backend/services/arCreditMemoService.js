@@ -39,6 +39,8 @@ const getReferenceData = async (companyId) => {
       payment_terms: [],
       shipping_types: [],
       branches: [],
+      gl_accounts: [],
+      distribution_rules: [],
       tax_codes: [],
       uom_groups: [],
       decimal_settings: {
@@ -48,6 +50,9 @@ const getReferenceData = async (companyId) => {
         RateDec: 2,
         PercentDec: 2
       },
+      matrix_columns: [],
+      line_field_metadata: { matrix_columns: [], sap_form: {} },
+      udf_metadata: { header: [], rows: [] },
       warnings: [`Failed to load reference data: ${error.message}`],
     };
   }
