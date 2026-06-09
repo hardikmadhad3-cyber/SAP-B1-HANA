@@ -85,6 +85,8 @@ const mapToForm = (o) => {
     doc_num:      o.DocumentNumber || o.DocNum,
     item_code:    o.ItemNo || '',
     item_name:    o.ProductDescription || '',
+    uom_name:     o.UoMName || o.UoMCode || o.MeasureUnit || '',
+    bom_qty:      o.BaseQuantity ?? 1,
     planned_qty:  o.PlannedQuantity ?? 1,
     completed_qty:o.CompletedQuantity ?? 0,
     rejected_qty: o.RejectedQuantity ?? 0,
@@ -96,6 +98,8 @@ const mapToForm = (o) => {
     type:         o.ProductionOrderType   || 'bopotStandard',
     warehouse:    o.Warehouse || '',
     priority:     o.Priority ?? 100,
+    routing_date_calc: o.RoutingDateCalculation || 'start',
+    procure_items: o.ProcureItems === 'tYES' || o.ProcureItems === true,
     distribution_rule: o.DistributionRule || '',
     project:      o.Project || '',
     journal_remark: o.JournalMemo || '',
@@ -103,6 +107,11 @@ const mapToForm = (o) => {
     series:       o.Series != null ? String(o.Series) : '',
     origin_num:   o.OriginNum != null ? String(o.OriginNum) : '',
     origin:       o.OriginNumber != null ? String(o.OriginNumber) : '',
+    linked_to:    o.OriginType || '',
+    linked_order: o.OriginAbs != null ? String(o.OriginAbs) : '',
+    linked_order_entry: o.OriginAbs != null ? String(o.OriginAbs) : '',
+    user_id:      o.UserSignature != null ? String(o.UserSignature) : (o.UserSign != null ? String(o.UserSign) : ''),
+    user:         o.User || o.UserName || '',
     branch:       o.BPL_IDAssignedToInvoice != null ? String(o.BPL_IDAssignedToInvoice) : (o.BPLId != null ? String(o.BPLId) : ''),
     branch_name:  o.BPLName || '',
     customer_code:o.CustomerCode || '',
@@ -114,15 +123,23 @@ const mapToForm = (o) => {
       item_name:     l.ItemName || l.ItemDescription || l.LineText || '',
       line_text:     l.LineText || '',
       base_qty:      l.BaseQuantity ?? 1,
+      base_ratio:    l.BaseRatio ?? l.BaseQuantity ?? 1,
       planned_qty:   l.PlannedQuantity ?? 1,
       issued_qty:    l.IssuedQuantity ?? 0,
+      available_qty: l.AvailableQuantity ?? 0,
       uom:           l.UoMCode || l.MeasureUnit || '',
+      uom_code:      l.UoMCode || l.MeasureUnit || '',
+      uom_name:      l.UoMName || l.MeasureUnit || l.UoMCode || '',
       warehouse:     l.Warehouse || '',
       issue_method:  l.ProductionOrderIssueType || l.IssueMethod || 'im_Manual',
+      wip_account:   l.WipAccount || l.WIPAccount || '',
       distribution_rule: l.DistributionRule || '',
       project:       l.Project || '',
+      location:      l.Location || '',
       additional_qty:l.AdditionalQuantity ?? 0,
       stage_id:      l.StageID ?? '',
+      route_sequence:l.RouteSequence || l.StageID || '',
+      procurement_method: l.ProcurementMethod || '',
       component_type:l.ItemType || 'pit_Item',
     })),
   };
@@ -609,6 +626,7 @@ function _buildPayload(body, isCreate = false) {
         } else if (opt(l.item_code)) {
           line.ItemNo = l.item_code;
         }
+        if (opt(l.base_qty))           line.BaseQuantity = Number(l.base_qty);
         if (opt(l.warehouse))          line.Warehouse          = l.warehouse;
         if (opt(l.issue_method))       line.ProductionOrderIssueType = l.issue_method;
         if (opt(l.distribution_rule))  line.DistributionRule   = l.distribution_rule;

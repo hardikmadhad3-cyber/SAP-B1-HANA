@@ -171,6 +171,24 @@ const lookupCustomers = async (req, res) => {
   }
 };
 
+const lookupUsers = async (_req, res) => {
+  try {
+    const data = await productionDbService.lookupUsers();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error));
+  }
+};
+
+const lookupLinkedOrders = async (req, res) => {
+  try {
+    const data = await productionDbService.lookupLinkedOrders(req.query.linkedTo || '', req.query.query || '');
+    res.json(data);
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error));
+  }
+};
+
 module.exports = {
   getReferenceData,
   getProductionOrders,
@@ -189,4 +207,6 @@ module.exports = {
   lookupProjects,
   lookupBranches,
   lookupCustomers,
+  lookupUsers,
+  lookupLinkedOrders,
 };

@@ -3,11 +3,17 @@ const salesOrderDb = require('./salesOrderDbService');
 const hsnCodeDbService = require('./hsnCodeDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getActiveCompanyConfig } = require('./companyConfigService');
+const { getUdfDefinitions } = require('./udfMetadataService');
 const { isBlankUdfValue, normalizeUdfValues } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
   return normalized === '' ? -1 : Number(normalized);
+};
+
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
 };
 
 // ───────── HELPERS ─────────
@@ -972,7 +978,8 @@ const submitSalesOrder = async (payload) => {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs));
+    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
+    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
 
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 SAP PAYLOAD TO BE SENT:");
@@ -1140,7 +1147,8 @@ const updateSalesOrder = async (docEntry, payload) => {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs));
+    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
+    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
 
     console.log("🔥 FINAL SAP PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 

@@ -2,6 +2,7 @@ const sapService = require("../services/sapService");
 const masterDataDbService = require("../services/masterDataDbService");
 const authDbService = require("../services/authDbService");
 const businessPartnerDbService = require("../services/businessPartnerDbService");
+const { sanitizeBusinessPartnerForDuplicate } = require("../services/businessPartnerPayloadCleanup");
 
 const parseMetadataEnumMembers = (metadataXml, enumName) => {
   const enumStart = metadataXml.indexOf(`<EnumType Name="${enumName}"`);
@@ -19,6 +20,132 @@ const formatSapEnumLabel = (value) =>
     .replace(/^[a-z](?=[A-Z])/, "")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .trim();
+
+const getRequestDatabaseName = async (req) => {
+  if (!req.auth?.userId || !req.auth?.companyId) return "";
+
+  const assignedCompany = await authDbService.getAssignedCompanyForUser(req.auth.userId, req.auth.companyId);
+  return String(assignedCompany?.DbName || "").trim();
+};
+
+const normalizeLookupToken = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+const normalizeCountryCode = (value) => {
+  const token = normalizeLookupToken(value);
+  if (!token) return "";
+  if (token === "INDIA" || token === "IND") return "IN";
+  return String(value || "").trim().toUpperCase();
+};
+
+const findStateMatch = (states = [], value) => {
+  const token = normalizeLookupToken(value);
+  if (!token) return null;
+
+  return states.find((state) =>
+    [state.code, state.Code, state.name, state.Name].some((candidate) => normalizeLookupToken(candidate) === token)
+  ) || null;
+};
+
+const inferIndianStateName = (address = {}) => {
+  const cityToken = normalizeLookupToken(address.City);
+  const cityStateMap = {
+    LUDHIANA: "Punjab",
+    AMRITSAR: "Punjab",
+    JALANDHAR: "Punjab",
+    PATIALA: "Punjab",
+    CHANDIGARH: "Chandigarh",
+    MUMBAI: "Maharashtra",
+    PUNE: "Maharashtra",
+    NAGPUR: "Maharashtra",
+    AHMEDABAD: "Gujarat",
+    SURAT: "Gujarat",
+    VADODARA: "Gujarat",
+    DELHI: "Delhi",
+    NEWDELHI: "Delhi",
+    BENGALURU: "Karnataka",
+    BANGALORE: "Karnataka",
+    CHENNAI: "Tamil Nadu",
+    HYDERABAD: "Telangana",
+    KOLKATA: "West Bengal",
+    JAIPUR: "Rajasthan",
+    LUCKNOW: "Uttar Pradesh",
+    KANPUR: "Uttar Pradesh",
+    INDORE: "Madhya Pradesh",
+    BHOPAL: "Madhya Pradesh",
+    KOCHI: "Kerala",
+    COCHIN: "Kerala",
+  };
+  if (cityStateMap[cityToken]) return cityStateMap[cityToken];
+
+  const pin = String(address.ZipCode || "").replace(/\D/g, "");
+  if (pin.length < 2) return "";
+  const prefix = pin.slice(0, 2);
+  if (["14", "15"].includes(prefix) || pin.startsWith("160")) return "Punjab";
+  if (["12", "13"].includes(prefix)) return "Haryana";
+  if (prefix === "11") return "Delhi";
+  if (prefix === "17") return "Himachal Pradesh";
+  if (["18", "19"].includes(prefix)) return "Jammu and Kashmir";
+  if (["30", "31", "32", "33", "34"].includes(prefix)) return "Rajasthan";
+  if (["36", "37", "38", "39"].includes(prefix)) return "Gujarat";
+  if (["40", "41", "42", "43", "44"].includes(prefix)) return "Maharashtra";
+  if (["45", "46", "47", "48"].includes(prefix)) return "Madhya Pradesh";
+  if (prefix === "49") return "Chhattisgarh";
+  if (prefix === "50") return "Telangana";
+  if (["51", "52", "53"].includes(prefix)) return "Andhra Pradesh";
+  if (["56", "57", "58", "59"].includes(prefix)) return "Karnataka";
+  if (["60", "61", "62", "63", "64"].includes(prefix)) return "Tamil Nadu";
+  if (["67", "68", "69"].includes(prefix)) return "Kerala";
+  if (["70", "71", "72", "73", "74"].includes(prefix)) return "West Bengal";
+  if (["75", "76", "77"].includes(prefix)) return "Odisha";
+  if (prefix === "78") return "Assam";
+  if (["80", "81", "82", "83", "84", "85"].includes(prefix)) return "Bihar";
+  return "";
+};
+
+const normalizeBusinessPartnerAddressPayload = async (data, req) => {
+  if (!Array.isArray(data.BPAddresses) || data.BPAddresses.length === 0) return;
+
+  const databaseName = await getRequestDatabaseName(req);
+  const stateCache = new Map();
+  const getStates = async (country) => {
+    const countryCode = normalizeCountryCode(country);
+    if (!countryCode) return [];
+    if (!stateCache.has(countryCode)) {
+      stateCache.set(
+        countryCode,
+        masterDataDbService.lookupStates(countryCode, { databaseName: databaseName || undefined }).catch(() => [])
+      );
+    }
+    return stateCache.get(countryCode);
+  };
+
+  data.BPAddresses = await Promise.all(data.BPAddresses.map(async (address) => {
+    const next = { ...address };
+    const countryCode = normalizeCountryCode(next.Country);
+    if (countryCode) next.Country = countryCode;
+
+    const states = await getStates(countryCode);
+    const explicitState = findStateMatch(states, next.State);
+    if (explicitState) {
+      next.State = explicitState.code || explicitState.Code;
+      return next;
+    }
+
+    const inferredStateName = countryCode === "IN" ? inferIndianStateName(next) : "";
+    const inferredState = findStateMatch(states, inferredStateName);
+    if (inferredState) {
+      next.State = inferredState.code || inferredState.Code;
+      return next;
+    }
+
+    if (!String(next.State || "").trim()) delete next.State;
+    return next;
+  }));
+};
 
 const enrichBP = async (bp) => {
   if (!bp || !bp.CardCode) return bp;
@@ -91,12 +218,71 @@ const enrichBP = async (bp) => {
 
 const createBP = async (req, res) => {
   const data = req.body;
-  if (!data.CardName) return res.status(400).json({ message: "CardName is required." });
-  if (!data.CardType) return res.status(400).json({ message: "CardType is required." });
-  const series = String(data.Series ?? "");
-  let isManual = !series || series === "0";
 
   try {
+    const duplicateFromCardCode = String(data._duplicateFromCardCode || "").trim();
+    if (duplicateFromCardCode) {
+      let newCardCode = String(data.CardCode || "").trim();
+      const cardType = data.CardType || "cCustomer";
+      const series = String(data.Series ?? "");
+      let isManual = !series || series === "0";
+      const next = !isManual ? await masterDataDbService.getBPSeriesNextNumber(series, cardType) : null;
+      isManual = isManual || Boolean(next?.isManual);
+
+      if (!newCardCode && isManual) {
+        return res.status(400).json({ message: "CardCode is required for duplicate business partner." });
+      }
+
+      if (!newCardCode && !isManual) {
+        if (!next || next.isManual || !next.formattedCode) {
+          return res.status(400).json({ message: `Could not get next number for series '${series}'.` });
+        }
+        newCardCode = next.formattedCode;
+      }
+
+      const sourceResponse = await sapService.request({
+        method: "GET",
+        url: `/BusinessPartners('${encodeURIComponent(duplicateFromCardCode)}')`,
+      });
+
+      const duplicatePayload = sanitizeBusinessPartnerForDuplicate(sourceResponse.data, {
+        CardCode: newCardCode,
+        ...(Object.prototype.hasOwnProperty.call(data, "CardName") ? { CardName: data.CardName } : {}),
+      });
+
+      const requestOverrides = { ...data };
+      delete requestOverrides._duplicateFromCardCode;
+      delete requestOverrides.CardCode;
+      delete requestOverrides.Series;
+      Object.entries(requestOverrides).forEach(([key, value]) => {
+        if (value !== undefined) duplicatePayload[key] = value;
+      });
+
+      duplicatePayload.CardCode = newCardCode;
+      duplicatePayload.CardType = cardType;
+      if (!isManual) {
+        duplicatePayload.Series = Number(series);
+      } else {
+        delete duplicatePayload.Series;
+      }
+      await normalizeBusinessPartnerAddressPayload(duplicatePayload, req);
+
+      const result = await sapService.request({
+        method: "POST",
+        url: "/BusinessPartners",
+        data: duplicatePayload,
+        preserveEmptyStrings: true,
+      });
+      return res.status(201).json(result.data);
+    }
+
+    if (!data.CardType) return res.status(400).json({ message: "CardType is required." });
+    data.CardName = String(data.CardName ?? "");
+    const series = String(data.Series ?? "");
+    let isManual = !series || series === "0";
+
+    await normalizeBusinessPartnerAddressPayload(data, req);
+
     const next = !isManual ? await masterDataDbService.getBPSeriesNextNumber(series, data.CardType) : null;
     isManual = isManual || Boolean(next?.isManual);
 
@@ -143,6 +329,8 @@ const getBP = async (req, res) => {
 const updateBP = async (req, res) => {
   const { cardCode } = req.params;
   try {
+    await normalizeBusinessPartnerAddressPayload(req.body, req);
+
     await sapService.request({
       method: "PATCH",
       url: `/BusinessPartners('${encodeURIComponent(cardCode)}')`,
@@ -235,7 +423,10 @@ const lookupCurrencies = async (req, res) => {
 
 const lookupCountries = async (req, res) => {
   try {
-    const rows = await masterDataDbService.lookupCountries(req.query.query || "");
+    const databaseName = await getRequestDatabaseName(req);
+    const rows = await masterDataDbService.lookupCountries(req.query.query || "", {
+      databaseName: databaseName || undefined,
+    });
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });

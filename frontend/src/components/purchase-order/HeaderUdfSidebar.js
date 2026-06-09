@@ -442,8 +442,10 @@ const selectBusinessPartnerContactId = (bp = {}) => {
   return getContactDisplayValue(fallbackContact) || '';
 };
 
-function renderField(field, value, disabled, onChange, onLookup) {
-  if (field.type === 'checkbox') {
+function renderField(field = {}, value, disabled, onChange, onLookup) {
+  const fieldType = field?.type || 'text';
+
+  if (fieldType === 'checkbox') {
     const checked = ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase());
     return (
       <input
@@ -456,7 +458,7 @@ function renderField(field, value, disabled, onChange, onLookup) {
     );
   }
 
-  if (field.type === 'select') {
+  if (fieldType === 'select') {
     return (
       <select
         className="form-control form-control-sm"
@@ -479,7 +481,7 @@ function renderField(field, value, disabled, onChange, onLookup) {
     );
   }
 
-  if (field.type === 'textarea') {
+  if (fieldType === 'textarea') {
     return (
       <textarea
         rows={3}
@@ -493,7 +495,7 @@ function renderField(field, value, disabled, onChange, onLookup) {
 
   const input = (
     <input
-      type={field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'}
+      type={fieldType === 'date' ? 'date' : fieldType === 'number' ? 'number' : 'text'}
       className="form-control form-control-sm"
       value={value}
       disabled={disabled}
@@ -843,7 +845,7 @@ function HeaderUdfSidebar({
     );
   }, []);
 
-  const safeFields = Array.isArray(fields) ? fields : [];
+  const safeFields = Array.isArray(fields) ? fields.filter((field) => field && field.key) : [];
   const containerClass = orientation === 'horizontal'
     ? 'po-udf-sidebar-horizontal'
     : 'col-xl-3 col-lg-4 align-self-start';

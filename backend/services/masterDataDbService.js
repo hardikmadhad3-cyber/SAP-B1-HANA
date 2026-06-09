@@ -512,7 +512,7 @@ const searchWarehouses = async (query = "", top = 50, skip = 0) => {
   }));
 };
 
-const lookupCountries = async (query = "") => {
+const lookupCountries = async (query = "", options = {}) => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(`
     SELECT TOP 200 Code, Name
@@ -521,7 +521,7 @@ const lookupCountries = async (query = "") => {
       OR Code LIKE @like
       OR Name LIKE @like
     ORDER BY Code
-  `, { query: trimmed, like: `%${trimmed}%` });
+  `, { query: trimmed, like: `%${trimmed}%` }, options);
 
   return rows.map((row) => ({ code: row.Code, name: row.Name }));
 };
@@ -540,14 +540,14 @@ const getCountryByCode = async (code) => {
   return row ? { code: row.Code, name: row.Name || "" } : null;
 };
 
-const lookupStates = async (country = "") => {
+const lookupStates = async (country = "", options = {}) => {
   const trimmed = String(country || "").trim();
   const rows = await queryRows(`
     SELECT Code, Name, Country
     FROM OCST
     WHERE (@country = '' OR Country = @country)
     ORDER BY Country, Code
-  `, { country: trimmed });
+  `, { country: trimmed }, options);
 
   return rows.map((row) => ({ code: row.Code, name: row.Name, country: row.Country || "" }));
 };
@@ -1017,7 +1017,10 @@ const searchBP = async (query = "", type = "", top = 50, skip = 0, options = {})
     FROM OCRD
       WHERE (@query = ''
         OR CardCode LIKE @like
-        OR CardName LIKE @like)
+        OR CardName LIKE @like
+        OR CardFName LIKE @like
+        OR Phone1 LIKE @like
+        OR E_Mail LIKE @like)
         AND (@cardType = '' OR CardType = @cardType)
       ORDER BY CardName, CardCode
       OFFSET @skip ROWS FETCH NEXT @top ROWS ONLY

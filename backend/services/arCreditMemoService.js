@@ -15,6 +15,11 @@ const getAllowedUdfKeys = async (tableId) => {
   return new Set(definitions.map((field) => field.key));
 };
 
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
+};
+
 // ───────── REFERENCE DATA (USING ODBC) ─────────
 
 const getReferenceData = async (companyId) => {
@@ -211,9 +216,10 @@ const submitARCreditMemo = async (payload) => {
     
     console.log("🔍 [ARCreditMemoService] Using customer code:", customerCode);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const [allowedHeaderUdfs, allowedLineUdfs] = await Promise.all([
+    const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('ORIN'),
       getAllowedUdfKeys('RIN1'),
+      getUdfDefinitionsByKey('ORIN'),
     ]);
 
     // Transform payload to SAP format
@@ -282,7 +288,7 @@ const submitARCreditMemo = async (payload) => {
 
     console.log("🔥 [ARCreditMemoService] SAP AR CREDIT MEMO PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
-    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
 
     // Use Service Layer for POST operations - Credit Memos endpoint
     const response = await sapService.request({
@@ -331,9 +337,10 @@ const updateARCreditMemo = async (docEntry, payload) => {
     // Use vendor or customerCode (frontend sends vendor)
     const customerCode = payload.header.vendor || payload.header.customerCode || payload.header.customer;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const [allowedHeaderUdfs, allowedLineUdfs] = await Promise.all([
+    const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('ORIN'),
       getAllowedUdfKeys('RIN1'),
+      getUdfDefinitionsByKey('ORIN'),
     ]);
 
     // Transform payload to SAP format (similar to submit)
@@ -372,7 +379,7 @@ const updateARCreditMemo = async (docEntry, payload) => {
       })
     };
 
-    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
 
     // Use Service Layer for PATCH operations
     const response = await sapService.request({

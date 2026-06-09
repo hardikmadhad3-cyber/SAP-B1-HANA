@@ -21,16 +21,21 @@ import {
   fetchProdOrderBranches,
   fetchProdOrderCustomers,
   fetchProdOrderResources,
+  fetchProdOrderUsers,
+  fetchProdOrderLinkedOrders,
 } from "../../api/productionOrderApi";
 
 const MODES = { ADD: "add", FIND: "find", UPDATE: "update", LIST: "list" };
-const TABS  = ["Components", "Remarks"];
+const TABS  = ["Components", "Summary", "Attachments"];
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-const EMPTY_HEADER = {
+const createEmptyHeader = (defaultSeries = "") => ({
+  doc_num:           "",
   item_code:         "",
   item_name:         "",
+  uom_name:          "",
+  bom_qty:           1,
   planned_qty:       1,
   completed_qty:     0,
   rejected_qty:      0,
@@ -42,6 +47,8 @@ const EMPTY_HEADER = {
   type:              "bopotStandard",
   warehouse:         "",
   priority:          100,
+  routing_date_calc: "start",
+  procure_items:     false,
   distribution_rule: "",
   project:           "",
   branch:            "",
@@ -49,10 +56,36 @@ const EMPTY_HEADER = {
   customer_code:     "",
   customer_name:     "",
   origin:            "",
+  linked_to:         "",
+  linked_order:      "",
+  linked_order_entry:"",
+  user_id:           "",
+  user:              "",
   journal_remark:    "",
   remarks:           "",
-  series:            "",
+  pick_pack_remarks: "",
+  series:            defaultSeries,
   origin_num:        "",
+});
+
+const EMPTY_HEADER = createEmptyHeader();
+
+const getSeriesCode = (seriesItem) => (
+  seriesItem?.Series != null ? String(seriesItem.Series) : ""
+);
+
+const getDefaultSeriesValue = (seriesList = [], preferredSeries = "") => {
+  const preferred = typeof preferredSeries === "object"
+    ? getSeriesCode(preferredSeries)
+    : String(preferredSeries || "").trim();
+  if (preferred) return preferred;
+
+  const defaultSeries =
+    seriesList.find((s) => s.IsCurrentPeriod || s.isCurrentPeriod) ||
+    seriesList.find((s) => s.IsDefault || s.isDefault) ||
+    seriesList[0];
+
+  return getSeriesCode(defaultSeries);
 };
 
 const EMPTY_LINE = () => ({
@@ -62,15 +95,23 @@ const EMPTY_LINE = () => ({
   item_name:        "",
   line_text:        "",
   base_qty:         1,
+  base_ratio:       1,
   planned_qty:      1,
   issued_qty:       0,
+  available_qty:    0,
   uom:              "",
+  uom_code:         "",
+  uom_name:         "",
   warehouse:        "",
   issue_method:     "im_Manual",
+  wip_account:      "",
   distribution_rule:"",
   project:          "",
+  location:         "",
   additional_qty:   0,
   stage_id:         0,
+  route_sequence:   "",
+  procurement_method:"",
   component_type:   "pit_Item",
 });
 
@@ -102,16 +143,20 @@ export default function ProductionOrderModule() {
   const [distRules,   setDistRules]   = useState([]);
   const [projects,    setProjects]    = useState([]);
   const [series,      setSeries]      = useState([]);
+  const [defaultSeries, setDefaultSeries] = useState("");
   const [branches,    setBranches]    = useState([]);
   const [routeStages, setRouteStages] = useState([]);
   const [prodTypes,   setProdTypes]   = useState([]);
   const [prodStatuses,setProdStatuses]= useState([]);
+  const [users,       setUsers]       = useState([]);
+  const [linkedToOptions, setLinkedToOptions] = useState([]);
 
   // Item search modal: target = "header" | line._id
   const [itemModal, setItemModal] = useState({ open: false, target: null });
   
   // Customer search modal
   const [customerModal, setCustomerModal] = useState(false);
+  const [linkedOrderModal, setLinkedOrderModal] = useState(false);
 
   const alertTimer = useRef(null);
 
@@ -122,11 +167,30 @@ export default function ProductionOrderModule() {
         setWarehouses(d.warehouses || []);
         setDistRules(d.distribution_rules || []);
         setProjects(d.projects || []);
-        setSeries(d.series || []);
+        const loadedSeries = d.series || [];
+        const loadedDefaultSeries = getDefaultSeriesValue(loadedSeries, d.default_series);
+        setSeries(loadedSeries);
+        setDefaultSeries(loadedDefaultSeries);
+        if (loadedDefaultSeries) {
+          setHeader((prev) => (
+            prev.series ? prev : { ...prev, series: loadedDefaultSeries }
+          ));
+        }
         setBranches(d.branches || []);
         setRouteStages(d.route_stages || []);
         setProdTypes(d.production_order_types || []);
         setProdStatuses(d.production_order_statuses || []);
+        setUsers(d.users || []);
+        const loadedLinkedToOptions = d.linked_to_options || [];
+        setLinkedToOptions(loadedLinkedToOptions);
+        const defaultLinkedTo =
+          loadedLinkedToOptions.find((option) => option.value === "sales_order") ||
+          loadedLinkedToOptions[0];
+        if (defaultLinkedTo) {
+          setHeader((prev) => (
+            prev.linked_to ? prev : { ...prev, linked_to: defaultLinkedTo.value }
+          ));
+        }
       })
       .catch(() => {
         // Fallback: load individually
@@ -134,6 +198,7 @@ export default function ProductionOrderModule() {
         fetchProdOrderDistributionRules().then(setDistRules).catch(() => {});
         fetchProdOrderProjects().then(setProjects).catch(() => {});
         fetchProdOrderBranches().then(setBranches).catch(() => {});
+        fetchProdOrderUsers().then(setUsers).catch(() => {});
       });
   }, []);
 
@@ -144,7 +209,7 @@ export default function ProductionOrderModule() {
   }, []);
 
   const resetForm = () => {
-    setHeader(EMPTY_HEADER);
+    setHeader(createEmptyHeader(defaultSeries || getDefaultSeriesValue(series)));
     setLines([EMPTY_LINE()]);
     setTab(0);
     setAlert(null);
@@ -153,8 +218,13 @@ export default function ProductionOrderModule() {
   };
 
   const handleHeaderChange = useCallback((e) => {
-    const { name, value } = e.target;
-    setHeader((prev) => ({ ...prev, [name]: value }));
+    const { name, value, type, checked } = e.target;
+    const nextValue = type === "checkbox" ? checked : value;
+    setHeader((prev) => ({
+      ...prev,
+      [name]: nextValue,
+      ...(name === "linked_to" ? { linked_order: "", linked_order_entry: "" } : {}),
+    }));
     
     // When planned_qty changes, recalculate all component planned quantities
     if (name === 'planned_qty') {
@@ -162,38 +232,21 @@ export default function ProductionOrderModule() {
       setLines((prevLines) =>
         prevLines.map((line) => ({
           ...line,
-          planned_qty: parseFloat(((line.base_qty || 1) * newPlannedQty).toFixed(6)),
+          planned_qty: parseFloat((((line.base_ratio ?? line.base_qty ?? 1) || 1) * newPlannedQty).toFixed(6)),
         }))
       );
     }
   }, []);
 
-  // ── BOM explosion ──────────────────────────────────────────────────────────
-  const handleExplodeBOM = async () => {
-    if (!header.item_code.trim()) {
-      showAlert("error", "Enter a finished goods item code first.");
-      return;
-    }
-    setLoading(true);
-    try {
-      const data = await explodeBOM(header.item_code.trim(), header.planned_qty || 1);
-      setHeader((prev) => ({
-        ...prev,
-        item_name: data.item_name || prev.item_name,
-        warehouse: data.warehouse || prev.warehouse,
-      }));
-      if (data.lines && data.lines.length > 0) {
-        setLines(data.lines);
-        showAlert("success", `BOM exploded — ${data.lines.length} component(s) loaded.`);
-      } else {
-        showAlert("error", "No BOM found for this item.");
-      }
-    } catch (err) {
-      showAlert("error", err.response?.data?.detail || "BOM explosion failed.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const handleUserChange = useCallback((e) => {
+    const userId = e.target.value;
+    const selected = users.find((u) => String(u.UserID) === String(userId));
+    setHeader((prev) => ({
+      ...prev,
+      user_id: userId,
+      user: selected?.UserCode || selected?.UserName || "",
+    }));
+  }, [users]);
 
   // ── Item selected from modal ───────────────────────────────────────────────
   const handleItemSelect = useCallback(async (item) => {
@@ -205,6 +258,8 @@ export default function ProductionOrderModule() {
         ...prev,
         item_code: item.ItemCode,
         item_name: item.ItemName,
+        uom_name: item.UoMName || item.InventoryUOM || prev.uom_name,
+        warehouse: item.DefaultWarehouse || prev.warehouse,
       }));
       
       // Automatically explode BOM for the selected item
@@ -216,7 +271,11 @@ export default function ProductionOrderModule() {
           ...prev,
           item_code: bomData.item_code,
           item_name: bomData.item_name,
-          warehouse: bomData.warehouse || prev.warehouse,
+          uom_name: bomData.uom_name || item.UoMName || item.InventoryUOM || prev.uom_name,
+          bom_qty: bomData.bom_qty ?? prev.bom_qty,
+          warehouse: bomData.warehouse || item.DefaultWarehouse || prev.warehouse,
+          distribution_rule: bomData.distribution_rule || prev.distribution_rule,
+          project: bomData.project || prev.project,
         }));
         
         // Load BOM lines as production order components
@@ -228,15 +287,23 @@ export default function ProductionOrderModule() {
             item_name: line.item_name || '',
             line_text: line.line_text || '',
             base_qty: line.base_qty || 1,
+            base_ratio: line.base_ratio ?? line.base_qty ?? 1,
             planned_qty: line.planned_qty || 1,
             issued_qty: line.issued_qty || 0,
-            uom: line.uom || '',
+            available_qty: line.available_qty || 0,
+            uom: line.uom || line.uom_code || line.uom_name || '',
+            uom_code: line.uom_code || line.uom || '',
+            uom_name: line.uom_name || line.uom || '',
             warehouse: line.warehouse || '',
             issue_method: line.issue_method || 'im_Manual',
+            wip_account: line.wip_account || '',
             distribution_rule: line.distribution_rule || '',
             project: line.project || '',
+            location: line.location || '',
             additional_qty: line.additional_qty || 0,
             stage_id: line.stage_id || '',
+            route_sequence: line.route_sequence || line.stage_id || '',
+            procurement_method: line.procurement_method || '',
             component_type: line.component_type || 'pit_Item',
           })));
           showAlert("success", `BOM exploded: ${bomData.lines.length} components loaded.`);
@@ -256,6 +323,8 @@ export default function ProductionOrderModule() {
                 item_name: isResource ? item.Name : item.ItemName,
                 line_text: isResource ? "" : l.line_text,
                 uom: isResource ? "" : item.InventoryUOM || "",
+                uom_code: isResource ? "" : item.InventoryUOM || "",
+                uom_name: isResource ? "" : item.UoMName || item.InventoryUOM || "",
                 warehouse: item.DefaultWarehouse || l.warehouse,
                 issue_method: isResource
                   ? (item.IssueMethod === "rimBackflush" ? "im_Backflush" : "im_Manual")
@@ -274,6 +343,21 @@ export default function ProductionOrderModule() {
       ...prev,
       customer_code: customer.CardCode,
       customer_name: customer.CardName,
+    }));
+  }, []);
+
+  const handleLinkedOrderSelect = useCallback((order) => {
+    setLinkedOrderModal(false);
+    setHeader((prev) => ({
+      ...prev,
+      linked_order_entry: order.DocEntry != null ? String(order.DocEntry) : "",
+      linked_order: order.DocNum != null ? String(order.DocNum) : "",
+      ...(order.LinkedTo === "sales_order"
+        ? {
+            customer_code: order.CardCode || prev.customer_code,
+            customer_name: order.CardName || prev.customer_name,
+          }
+        : {}),
     }));
   }, []);
 
@@ -320,13 +404,18 @@ export default function ProductionOrderModule() {
     status:            header.status,
     type:              header.type,
     warehouse:         header.warehouse,
+    priority:          Number(header.priority) || 100,
     distribution_rule: header.distribution_rule,
     project:           header.project,
     branch:            header.branch,
     customer_code:     header.customer_code,
+    linked_to:         header.linked_to,
+    linked_order_entry:header.linked_order_entry,
+    user_id:           header.user_id,
     journal_remark:    header.journal_remark,
-    remarks:           header.remarks,
-    series:            header.series,
+      remarks:           header.remarks,
+      pick_pack_remarks: header.pick_pack_remarks,
+      series:            header.series,
     lines: lines
       .filter((l) =>
         l.component_type === "pit_Text"
@@ -387,7 +476,7 @@ export default function ProductionOrderModule() {
   };
 
   const handleFind = async () => {
-    const query = header.origin_num.trim() || header.item_code.trim() || header.item_name.trim();
+    const query = String(header.doc_num || "").trim() || header.item_code.trim() || header.item_name.trim();
     if (!query) { showAlert("error", "Enter a Doc No., Item Code, or Description to search."); return; }
     setListQuery(query);
     setMode(MODES.LIST);
@@ -434,8 +523,11 @@ export default function ProductionOrderModule() {
   // ── Load order from SAP response ───────────────────────────────────────────
   const _loadOrder = (data) => {
     setHeader({
+      doc_num:           data.doc_num           || "",
       item_code:         data.item_code         || "",
       item_name:         data.item_name         || "",
+      uom_name:          data.uom_name          || "",
+      bom_qty:           data.bom_qty           ?? 1,
       planned_qty:       data.planned_qty        ?? 1,
       completed_qty:     data.completed_qty      ?? 0,
       rejected_qty:      data.rejected_qty       ?? 0,
@@ -447,6 +539,8 @@ export default function ProductionOrderModule() {
       type:              data.type               || "bopotStandard",
       warehouse:         data.warehouse          || "",
       priority:          data.priority           ?? 100,
+      routing_date_calc: data.routing_date_calc  || "start",
+      procure_items:     Boolean(data.procure_items),
       distribution_rule: data.distribution_rule  || "",
       project:           data.project            || "",
       branch:            data.branch             || "",
@@ -454,8 +548,14 @@ export default function ProductionOrderModule() {
       customer_code:     data.customer_code      || "",
       customer_name:     data.customer_name      || "",
       origin:            data.origin             || "",
+      linked_to:         data.linked_to          || "",
+      linked_order:      data.linked_order       || "",
+      linked_order_entry:data.linked_order_entry || "",
+      user_id:           data.user_id            || "",
+      user:              data.user               || "",
       journal_remark:    data.journal_remark     || "",
       remarks:           data.remarks            || "",
+      pick_pack_remarks: data.pick_pack_remarks  || "",
       series:            data.series             || "",
       origin_num:        data.origin_num         || "",
     });
@@ -467,15 +567,23 @@ export default function ProductionOrderModule() {
         item_name:        l.item_name        || "",
         line_text:        l.line_text        || "",
         base_qty:         l.base_qty         ?? 1,
+        base_ratio:       l.base_ratio       ?? l.base_qty ?? 1,
         planned_qty:      l.planned_qty      ?? 1,
         issued_qty:       l.issued_qty       ?? 0,
-        uom:              l.uom              || "",
+        available_qty:    l.available_qty    ?? 0,
+        uom:              l.uom              || l.uom_code || l.uom_name || "",
+        uom_code:         l.uom_code         || l.uom || "",
+        uom_name:         l.uom_name         || l.uom || "",
         warehouse:        l.warehouse        || "",
         issue_method:     l.issue_method     || "im_Manual",
+        wip_account:      l.wip_account      || "",
         distribution_rule:l.distribution_rule|| "",
         project:          l.project          || "",
+        location:         l.location         || "",
         additional_qty:   l.additional_qty   ?? 0,
         stage_id:         l.stage_id         ?? "",
+        route_sequence:   l.route_sequence   ?? l.stage_id ?? "",
+        procurement_method:l.procurement_method || "",
         component_type:   l.component_type   || "pit_Item",
       }))
     );
@@ -555,22 +663,6 @@ export default function ProductionOrderModule() {
           {/* Left column */}
           <div className="po-header-left">
             <div className="im-field">
-              <label className="im-field__label po-lbl">No.</label>
-              <input className="im-field__input po-readonly" value={header.origin_num || (mode === MODES.ADD ? "(auto)" : "")} readOnly style={{ width: 100 }} />
-            </div>
-
-            <div className="im-field">
-              <label className="im-field__label po-lbl">Series</label>
-              <select className="im-field__select" name="series" value={header.series}
-                onChange={handleHeaderChange} disabled={isReadOnly} style={{ width: 160 }}>
-                <option value="">--</option>
-                {series.map((s) => (
-                  <option key={s.Series} value={s.Series}>{s.Name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="im-field">
               <label className="im-field__label po-lbl">Type</label>
               <select className="im-field__select" name="type" value={header.type}
                 onChange={handleHeaderChange} disabled={mode === MODES.UPDATE} style={{ width: 160 }}>
@@ -591,7 +683,7 @@ export default function ProductionOrderModule() {
             </div>
 
             <div className="im-field">
-              <label className="im-field__label po-lbl">Finished Goods Item</label>
+              <label className="im-field__label po-lbl">Product No.</label>
               <div className="im-lookup-wrap">
                 <input className="im-field__input" name="item_code" value={header.item_code}
                   onChange={handleHeaderChange} readOnly={mode === MODES.UPDATE}
@@ -613,6 +705,8 @@ export default function ProductionOrderModule() {
               <input className="im-field__input" name="planned_qty" type="number" min="0.001" step="any"
                 value={header.planned_qty} onChange={handleHeaderChange}
                 readOnly={isReadOnly} style={{ width: 100 }} />
+              <label className="im-field__label po-uom-lbl">UoM Name</label>
+              <input className="im-field__input po-readonly" value={header.uom_name} readOnly style={{ width: 120 }} />
             </div>
 
             <div className="im-field">
@@ -643,19 +737,45 @@ export default function ProductionOrderModule() {
                 readOnly={isReadOnly} style={{ width: 100 }} />
             </div>
 
-            {/* BOM Explosion button */}
-            {mode === MODES.ADD && (
-              <div className="im-field">
-                <label className="im-field__label po-lbl"></label>
-                <button className="im-btn" onClick={handleExplodeBOM} disabled={loading}>
-                  {loading ? "…" : "Explode BOM"}
-                </button>
-              </div>
-            )}
+            <div className="im-field">
+              <label className="im-field__label po-lbl">Routing Date Calculation</label>
+              <select className="im-field__select" name="routing_date_calc" value={header.routing_date_calc}
+                onChange={handleHeaderChange} disabled={isReadOnly} style={{ width: 160 }}>
+                <option value="start">On Start Date</option>
+                <option value="due">On Due Date</option>
+              </select>
+            </div>
+
+            <div className="im-field">
+              <label className="im-field__label po-lbl"></label>
+              <label className="po-checkline">
+                <input
+                  type="checkbox"
+                  name="procure_items"
+                  checked={header.procure_items}
+                  onChange={handleHeaderChange}
+                  disabled={isReadOnly}
+                />
+                <span>Procure Items</span>
+              </label>
+            </div>
+
           </div>
 
           {/* Right column */}
           <div className="po-header-right">
+            <div className="im-field">
+              <label className="im-field__label po-lbl-r">No.</label>
+              <select className="im-field__select" name="series" value={header.series}
+                onChange={handleHeaderChange} disabled={isReadOnly} style={{ width: 100 }}>
+                <option value="">--</option>
+                {series.map((s) => (
+                  <option key={s.Series} value={s.Series}>{s.Name}</option>
+                ))}
+              </select>
+              <input className="im-field__input po-readonly" value={header.doc_num || (mode === MODES.ADD ? "(auto)" : "")} readOnly style={{ width: 90, marginLeft: 4 }} />
+            </div>
+
             <div className="im-field">
               <label className="im-field__label po-lbl-r">Order Date</label>
               <input className="im-field__input po-readonly" name="order_date" type="date"
@@ -679,19 +799,44 @@ export default function ProductionOrderModule() {
             <div className="im-field">
               <label className="im-field__label po-lbl-r">Origin</label>
               <input className="im-field__input po-readonly" name="origin" 
-                value={header.origin} readOnly style={{ width: 140 }} />
+                value={header.origin || "Manual"} readOnly style={{ width: 140 }} />
             </div>
 
             <div className="im-field">
               <label className="im-field__label po-lbl-r">Linked To</label>
-              <input className="im-field__input po-readonly" 
-                value="" readOnly style={{ width: 140 }} />
+              <select className="im-field__select" name="linked_to" value={header.linked_to}
+                onChange={handleHeaderChange} disabled={isReadOnly} style={{ width: 160 }}>
+                <option value="">--</option>
+                {linkedToOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
             </div>
 
             <div className="im-field">
               <label className="im-field__label po-lbl-r">Linked Order</label>
-              <input className="im-field__input po-readonly" 
-                value="" readOnly style={{ width: 140 }} />
+              <div className="im-lookup-wrap">
+                <input
+                  className="im-field__input po-readonly"
+                  value={header.linked_order || ""}
+                  readOnly
+                  style={{ width: 140 }}
+                />
+                {!isReadOnly && header.linked_to && (
+                  <button className="im-lookup-btn" onClick={() => setLinkedOrderModal(true)}>…</button>
+                )}
+              </div>
+            </div>
+
+            <div className="im-field">
+              <label className="im-field__label po-lbl-r">User</label>
+              <select className="im-field__select" name="user_id" value={header.user_id}
+                onChange={handleUserChange} disabled={isReadOnly} style={{ width: 160 }}>
+                <option value="">{header.user || "--"}</option>
+                {users.map((u) => (
+                  <option key={u.UserID} value={u.UserID}>{u.UserCode || u.UserName}</option>
+                ))}
+              </select>
             </div>
 
             <div className="im-field">
@@ -779,20 +924,41 @@ export default function ProductionOrderModule() {
           />
         )}
         {tab === 1 && (
-          <div style={{ padding: "12px 16px" }}>
-            <div className="im-field" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-              <label className="im-field__label" style={{ textAlign: "left" }}>Remarks</label>
-              <textarea
-                name="remarks"
-                value={header.remarks}
-                onChange={handleHeaderChange}
-                readOnly={isReadOnly}
-                rows={6}
-                style={{ width: "100%", maxWidth: 600, fontSize: 13, padding: "6px 8px", border: "1px solid #c8d0da", borderRadius: 3, resize: "vertical" }}
-              />
-            </div>
+          <div className="po-summary-panel">
+            <div><span>Planned Qty</span><strong>{Number(header.planned_qty || 0).toFixed(2)}</strong></div>
+            <div><span>Completed</span><strong>{Number(header.completed_qty || 0).toFixed(2)}</strong></div>
+            <div><span>Rejected</span><strong>{Number(header.rejected_qty || 0).toFixed(2)}</strong></div>
+            <div><span>Components</span><strong>{lines.filter((line) => line.item_code || line.line_text).length}</strong></div>
           </div>
         )}
+        {tab === 2 && (
+          <div className="po-attachments-panel">
+            <input className="im-field__input" type="file" multiple disabled={isReadOnly} />
+          </div>
+        )}
+      </div>
+
+      <div className="po-remarks-row">
+        <div className="po-remarks-field">
+          <label className="im-field__label">Remarks</label>
+          <textarea
+            name="remarks"
+            value={header.remarks}
+            onChange={handleHeaderChange}
+            readOnly={isReadOnly}
+            rows={2}
+          />
+        </div>
+        <div className="po-remarks-field">
+          <label className="im-field__label">Pick and Pack Remarks</label>
+          <textarea
+            name="pick_pack_remarks"
+            value={header.pick_pack_remarks}
+            onChange={handleHeaderChange}
+            readOnly={isReadOnly}
+            rows={2}
+          />
+        </div>
       </div>
 
       {/* Item search modal */}
@@ -802,7 +968,7 @@ export default function ProductionOrderModule() {
           onClose={() => setItemModal({ open: false, target: null })}
           title={
             itemModal.target === "header"
-              ? "Finished Goods Search"
+              ? "List of Bill of Materials"
               : lines.find((line) => line._id === itemModal.target)?.component_type === "pit_Resource"
                 ? "Resource Search"
                 : "Component Search"
@@ -814,9 +980,17 @@ export default function ProductionOrderModule() {
                 ? fetchProdOrderResources
                 : fetchProdOrderComponentItems
           }
+          autoSearchOnOpen={itemModal.target !== "header"}
+          emptyMessage={itemModal.target === "header" ? "" : "No items found."}
           columns={
-            itemModal.target !== "header" &&
-            lines.find((line) => line._id === itemModal.target)?.component_type === "pit_Resource"
+            itemModal.target === "header"
+              ? [
+                  { key: "ItemCode", label: "Item No." },
+                  { key: "ItemName", label: "Item Description" },
+                  { key: "InStock", label: "In Stock", render: (value) => Number(value || 0).toFixed(2) },
+                ]
+              : itemModal.target !== "header" &&
+                lines.find((line) => line._id === itemModal.target)?.component_type === "pit_Resource"
               ? [
                   { key: "Code", label: "Resource Code" },
                   { key: "Name", label: "Resource Name" },
@@ -824,6 +998,32 @@ export default function ProductionOrderModule() {
                   { key: "IssueMethod", label: "Issue Method" },
                 ]
               : undefined
+          }
+        />
+      )}
+
+      {linkedOrderModal && (
+        <ItemSearchModal
+          onSelect={handleLinkedOrderSelect}
+          onClose={() => setLinkedOrderModal(false)}
+          title={`List of ${linkedToOptions.find((option) => option.value === header.linked_to)?.label || "Linked Orders"}`}
+          fetchItems={(query) => fetchProdOrderLinkedOrders(header.linked_to, query)}
+          autoSearchOnOpen={false}
+          emptyMessage=""
+          columns={
+            header.linked_to === "sales_order"
+              ? [
+                  { key: "DocNum", label: "Document No." },
+                  { key: "CardCode", label: "Customer Code" },
+                  { key: "CardName", label: "Customer Name" },
+                  { key: "DueDate", label: "Due Date" },
+                ]
+              : [
+                  { key: "DocNum", label: "Document No." },
+                  { key: "ItemNo", label: "Product No." },
+                  { key: "ProductDescription", label: "Product Description" },
+                  { key: "Status", label: "Status" },
+                ]
           }
         />
       )}
