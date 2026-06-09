@@ -8,6 +8,7 @@ const toInt = (value, fallback = 0) => {
 
 const formatDate = (value) => (value ? String(value).split("T")[0] : "");
 const yesNo = (value) => (String(value || "").toUpperCase() === "Y" ? "tYES" : "tNO");
+const toBool = (value) => value === true || Number(value) === 1 || String(value || "").toUpperCase() === "Y";
 
 const PRODUCTION_STATUS_TO_SL = {
   P: "boposPlanned",
@@ -48,10 +49,55 @@ const queryOne = async (sql, params = {}) => {
   return rows[0] || null;
 };
 
+const tableColumnCache = new Map();
+
+const getTableColumns = async (tableName) => {
+  const key = String(tableName || "").toUpperCase();
+  if (!tableColumnCache.has(key)) {
+    tableColumnCache.set(
+      key,
+      queryRows(
+        `
+          SELECT COLUMN_NAME
+          FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_NAME = @tableName
+        `,
+        { tableName: key }
+      ).then((rows) => new Set(rows.map((row) => String(row.COLUMN_NAME || "").toUpperCase())))
+    );
+  }
+  return tableColumnCache.get(key);
+};
+
+const selectOptionalColumn = (columns, tableAlias, columnName, aliasName, fallback = "''") =>
+  columns.has(String(columnName).toUpperCase())
+    ? `${tableAlias}.${columnName} AS ${aliasName}`
+    : `${fallback} AS ${aliasName}`;
+
+const tableExists = async (tableName) => {
+  const rows = await queryRows(
+    `
+      SELECT 1 AS ExistsFlag
+      FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_NAME = @tableName
+    `,
+    { tableName: String(tableName || "").toUpperCase() }
+  );
+  return rows.length > 0;
+};
+
 const toProductionStatus = (value) => PRODUCTION_STATUS_TO_SL[String(value || "").toUpperCase()] || "boposPlanned";
 const toProductionType = (value) => PRODUCTION_TYPE_TO_SL[String(value || "").toUpperCase()] || "bopotStandard";
 const toIssueMethod = (value) => ISSUE_METHOD_TO_SL[String(value || "").toUpperCase()] || "im_Manual";
 const toItemType = (value) => ITEM_TYPE_TO_SL[Number(value)] || "pit_Item";
+
+const toLinkedToValue = (value) => {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return "";
+  if (raw === "17" || raw === "S" || raw.includes("SALES")) return "sales_order";
+  if (raw === "202" || raw === "P" || raw.includes("PRODUCTION")) return "production_order";
+  return String(value || "").trim();
+};
 
 const pagingParams = (top, skip) => ({
   top: Math.max(1, toInt(top, 50)),
@@ -60,6 +106,7 @@ const pagingParams = (top, skip) => ({
 
 const mapSeriesRow = (row) => ({
   Series: row.Series,
+  SeriesName: row.SeriesName || `Series ${row.Series}`,
   Name: row.SeriesName || `Series ${row.Series}`,
   Indicator: row.Indicator || "",
   NextNumber: row.NextNumber ?? row.InitialNum ?? null,
@@ -67,22 +114,75 @@ const mapSeriesRow = (row) => ({
   EndStr: row.EndStr || "",
   Locked: yesNo(row.Locked),
   IsManual: yesNo(row.IsManual),
+  IsDefault: toBool(row.IsDefault),
+  isDefault: toBool(row.IsDefault),
+  IsCurrentPeriod: toBool(row.IsCurrentPeriod),
 });
 
+const getDefaultSeriesColumn = async () => {
+  try {
+    const rows = await queryRows(
+      `
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'ONNM'
+          AND COLUMN_NAME IN ('DfltSeries', 'DfltSerie')
+      `
+    );
+    const columns = new Set(rows.map((row) => String(row.COLUMN_NAME || "").toUpperCase()));
+    if (columns.has("DFLTSERIES")) return "DfltSeries";
+    if (columns.has("DFLTSERIE")) return "DfltSerie";
+  } catch (_) {
+    return "";
+  }
+  return "";
+};
+
 const lookupSeries = async (objectCode) => {
+  const defaultSeriesColumn = await getDefaultSeriesColumn();
+  const defaultSeriesJoin = defaultSeriesColumn
+    ? `LEFT JOIN ONNM T2 ON T2.ObjectCode = T0.ObjectCode AND T2.${defaultSeriesColumn} = T0.Series`
+    : "";
+  const defaultSeriesSelect = defaultSeriesColumn ? `CASE WHEN T2.${defaultSeriesColumn} IS NOT NULL THEN 1 ELSE 0 END` : "0";
+
   const rows = await queryRows(
     `
-      SELECT Series, SeriesName, Indicator, NextNumber, InitialNum, BeginStr, EndStr, Locked, IsManual
-      FROM NNM1
-      WHERE ObjectCode = @objectCode
-        AND Locked <> 'Y'
-      ORDER BY Series
+      SELECT
+        T0.Series,
+        T0.SeriesName,
+        T0.Indicator,
+        T0.NextNumber,
+        T0.InitialNum,
+        T0.BeginStr,
+        T0.EndStr,
+        T0.Locked,
+        T0.IsManual,
+        ${defaultSeriesSelect} AS IsDefault,
+        CASE WHEN T1.AbsEntry IS NOT NULL THEN 1 ELSE 0 END AS IsCurrentPeriod
+      FROM NNM1 T0
+      LEFT JOIN OFPR T1
+        ON T1.Indicator = T0.Indicator
+        AND CONVERT(date, GETDATE()) BETWEEN T1.F_RefDate AND T1.T_RefDate
+      ${defaultSeriesJoin}
+      WHERE T0.ObjectCode = @objectCode
+        AND T0.Locked <> 'Y'
+      ORDER BY
+        IsCurrentPeriod DESC,
+        IsDefault DESC,
+        CASE WHEN ISNULL(T0.Indicator, '') <> '' THEN 0 ELSE 1 END,
+        T0.Series
     `,
     { objectCode: String(objectCode) }
   );
 
   return rows.map(mapSeriesRow);
 };
+
+const pickDefaultSeries = (seriesRows = []) =>
+  seriesRows.find((row) => row.IsCurrentPeriod) ||
+  seriesRows.find((row) => row.IsDefault) ||
+  seriesRows[0] ||
+  null;
 
 const lookupProdWarehouses = async () => {
   const rows = await queryRows(`
@@ -175,18 +275,121 @@ const lookupCustomers = async (query = "") => {
   }));
 };
 
+const lookupUsers = async () => {
+  const userColumns = await getTableColumns("OUSR");
+  const lockedFilter = userColumns.has("LOCKED") ? "WHERE ISNULL(Locked, 'N') <> 'Y'" : "";
+  const rows = await queryRows(`
+    SELECT USERID, USER_CODE, U_NAME
+    FROM OUSR
+    ${lockedFilter}
+    ORDER BY USER_CODE
+  `);
+
+  return rows.map((row) => ({
+    UserID: row.USERID,
+    UserCode: row.USER_CODE || "",
+    UserName: row.U_NAME || row.USER_CODE || "",
+  }));
+};
+
+const lookupLinkedToOptions = async () => {
+  const [hasSalesOrders, hasProductionOrders] = await Promise.all([
+    tableExists("ORDR"),
+    tableExists("OWOR"),
+  ]);
+  const options = [];
+  if (hasProductionOrders) {
+    options.push({ value: "production_order", label: "Production Order", object_type: 202 });
+  }
+  if (hasSalesOrders) {
+    options.push({ value: "sales_order", label: "Sales Order", object_type: 17 });
+  }
+  return options;
+};
+
+const lookupLinkedOrders = async (linkedTo = "", query = "") => {
+  const type = toLinkedToValue(linkedTo);
+  const trimmed = String(query || "").trim();
+  const params = { query: trimmed, like: `%${trimmed}%` };
+
+  if (type === "sales_order") {
+    const rows = await queryRows(
+      `
+        SELECT TOP 50 T0.DocEntry, T0.DocNum, T0.CardCode, T0.CardName, T0.DocDate, T0.DocDueDate
+        FROM ORDR T0
+        WHERE ISNULL(T0.CANCELED, 'N') = 'N'
+          AND ISNULL(T0.DocStatus, 'O') = 'O'
+          AND (
+            @query = ''
+            OR CAST(T0.DocNum AS NVARCHAR(50)) LIKE @like
+            OR ISNULL(T0.CardCode, '') LIKE @like
+            OR ISNULL(T0.CardName, '') LIKE @like
+          )
+        ORDER BY T0.DocEntry DESC
+      `,
+      params
+    );
+
+    return rows.map((row) => ({
+      DocEntry: row.DocEntry,
+      DocNum: row.DocNum,
+      CardCode: row.CardCode || "",
+      CardName: row.CardName || "",
+      DocDate: formatDate(row.DocDate),
+      DueDate: formatDate(row.DocDueDate),
+      LinkedTo: "sales_order",
+    }));
+  }
+
+  if (type === "production_order") {
+    const rows = await queryRows(
+      `
+        SELECT TOP 50 DocEntry, DocNum, ItemCode, ProdName, PlannedQty, Status, DueDate
+        FROM OWOR
+        WHERE Status IN ('P', 'R')
+          AND (
+            @query = ''
+            OR CAST(DocNum AS NVARCHAR(50)) LIKE @like
+            OR ISNULL(ItemCode, '') LIKE @like
+            OR ISNULL(ProdName, '') LIKE @like
+          )
+        ORDER BY DocEntry DESC
+      `,
+      params
+    );
+
+    return rows.map((row) => ({
+      DocEntry: row.DocEntry,
+      DocNum: row.DocNum,
+      ItemNo: row.ItemCode || "",
+      ProductDescription: row.ProdName || "",
+      PlannedQuantity: row.PlannedQty ?? 0,
+      Status: toProductionStatus(row.Status),
+      DueDate: formatDate(row.DueDate),
+      LinkedTo: "production_order",
+    }));
+  }
+
+  return [];
+};
+
 const lookupProductionOrderItems = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(
     `
-      SELECT TOP 50 I.ItemCode, I.ItemName, I.InvntryUom, I.DfltWH AS DefaultWarehouse
+      SELECT TOP 50 I.ItemCode, I.ItemName, I.InvntryUom, I.DfltWH AS DefaultWarehouse,
+             CAST(ISNULL(I.OnHand, 0) AS DECIMAL(19, 6)) AS QuantityOnStock
+            ,I.PrcrmntMtd AS ProcurementMethod
       FROM OITM I
       INNER JOIN OITT T ON T.Code = I.ItemCode
+        AND T.TreeType = 'P'
       WHERE (
         @query = ''
         OR I.ItemCode LIKE @like
         OR I.ItemName LIKE @like
       )
+        AND ISNULL(I.validFor, 'Y') = 'Y'
+        AND ISNULL(I.frozenFor, 'N') = 'N'
       ORDER BY I.ItemCode
     `,
     { query: trimmed, like: `%${trimmed}%` }
@@ -196,7 +399,11 @@ const lookupProductionOrderItems = async (query = "") => {
     ItemCode: row.ItemCode,
     ItemName: row.ItemName || "",
     InventoryUOM: row.InvntryUom || "",
+    UoMName: row.InvntryUom || "",
     DefaultWarehouse: row.DefaultWarehouse || "",
+    QuantityOnStock: row.QuantityOnStock ?? 0,
+    InStock: row.QuantityOnStock ?? 0,
+    ProcurementMethod: row.ProcurementMethod || "",
   }));
 };
 
@@ -311,14 +518,25 @@ const getProductionOrders = async ({ query = "", top = 50, skip = 0, status = ""
 
 const getProductionOrderByDocEntry = async (docEntry) => {
   const entry = toInt(docEntry, 0);
+  const [oworColumns, wor1Columns] = await Promise.all([
+    getTableColumns("OWOR"),
+    getTableColumns("WOR1"),
+  ]);
+
   const row = await queryOne(
     `
       SELECT T0.DocEntry, T0.DocNum, T0.ItemCode, T0.ProdName, T0.PlannedQty, T0.CmpltQty, T0.RjctQty,
              T0.DueDate, T0.PostDate, T0.StartDate, T0.Status, T0.Type, T0.Warehouse, T0.OcrCode,
              T0.Project, T0.JrnlMemo, T0.Comments, T0.Series, T0.OriginNum, T0.CardCode,
-             BP.CardName
+             BP.CardName, I.InvntryUom AS UoMName, USR.USERID AS UserID, USR.USER_CODE AS UserCode, USR.U_NAME AS UserName,
+             ${selectOptionalColumn(oworColumns, "T0", "Priority", "Priority", "100")},
+             ${selectOptionalColumn(oworColumns, "T0", "OriginType", "OriginType", "''")},
+             ${selectOptionalColumn(oworColumns, "T0", "OriginAbs", "OriginAbs", "NULL")},
+             ${selectOptionalColumn(oworColumns, "T0", "BPLId", "BPLId", "NULL")}
       FROM OWOR T0
       LEFT JOIN OCRD BP ON BP.CardCode = T0.CardCode
+      LEFT JOIN OITM I ON I.ItemCode = T0.ItemCode
+      LEFT JOIN OUSR USR ON USR.USERID = T0.UserSign
       WHERE T0.DocEntry = @docEntry
     `,
     { docEntry: entry }
@@ -330,8 +548,13 @@ const getProductionOrderByDocEntry = async (docEntry) => {
     `
       SELECT T1.DocEntry, T1.LineNum, T1.ItemCode, T1.ItemName, T1.LineText, T1.BaseQty, T1.PlannedQty,
              T1.IssuedQty, T1.UomCode, T1.wareHouse, T1.IssueType, T1.OcrCode, T1.Project,
-             T1.AdditQty, T1.StageId, T1.ItemType, T1.VisOrder
+             T1.AdditQty, T1.StageId, T1.ItemType, T1.VisOrder,
+             I.InvntryUom AS UoMName, I.PrcrmntMtd AS ProcurementMethod,
+             CAST(ISNULL(W.OnHand, I.OnHand) - ISNULL(W.IsCommited, I.IsCommited) AS DECIMAL(19, 6)) AS AvailableQty,
+             ${selectOptionalColumn(wor1Columns, "T1", "WipActCode", "WipAccount", "''")}
       FROM WOR1 T1
+      LEFT JOIN OITM I ON I.ItemCode = T1.ItemCode
+      LEFT JOIN OITW W ON W.ItemCode = T1.ItemCode AND W.WhsCode = T1.wareHouse
       WHERE T1.DocEntry = @docEntry
       ORDER BY T1.LineNum
     `,
@@ -344,6 +567,7 @@ const getProductionOrderByDocEntry = async (docEntry) => {
       doc_num: row.DocNum,
       item_code: row.ItemCode || "",
       item_name: row.ProdName || "",
+      uom_name: row.UoMName || "",
       planned_qty: row.PlannedQty ?? 1,
       completed_qty: row.CmpltQty ?? 0,
       rejected_qty: row.RjctQty ?? 0,
@@ -354,15 +578,21 @@ const getProductionOrderByDocEntry = async (docEntry) => {
       status: toProductionStatus(row.Status),
       type: toProductionType(row.Type),
       warehouse: row.Warehouse || "",
-      priority: 100,
+      priority: row.Priority ?? 100,
+      routing_date_calc: "start",
+      procure_items: false,
       distribution_rule: row.OcrCode || "",
       project: row.Project || "",
       journal_remark: row.JrnlMemo || "",
       remarks: row.Comments || "",
       series: row.Series != null ? String(row.Series) : "",
       origin_num: row.OriginNum != null ? String(row.OriginNum) : "",
-      origin: "",
-      branch: "",
+      origin: row.OriginType || "Manual",
+      linked_to: toLinkedToValue(row.OriginType),
+      linked_order: row.OriginAbs != null ? String(row.OriginAbs) : "",
+      user_id: row.UserID != null ? String(row.UserID) : "",
+      user: row.UserCode || row.UserName || "",
+      branch: row.BPLId != null ? String(row.BPLId) : "",
       branch_name: "",
       customer_code: row.CardCode || "",
       customer_name: row.CardName || "",
@@ -373,15 +603,23 @@ const getProductionOrderByDocEntry = async (docEntry) => {
         item_name: line.ItemName || line.LineText || "",
         line_text: line.LineText || "",
         base_qty: line.BaseQty ?? 1,
+        base_ratio: row.PlannedQty ? Number(((line.BaseQty ?? 1) / row.PlannedQty).toFixed(6)) : (line.BaseQty ?? 1),
         planned_qty: line.PlannedQty ?? 1,
         issued_qty: line.IssuedQty ?? 0,
-        uom: line.UomCode || "",
+        available_qty: line.AvailableQty ?? 0,
+        uom: line.UomCode || line.UoMName || "",
+        uom_code: line.UomCode || line.UoMName || "",
+        uom_name: line.UoMName || line.UomCode || "",
         warehouse: line.wareHouse || "",
         issue_method: toIssueMethod(line.IssueType),
+        wip_account: line.WipAccount || "",
         distribution_rule: line.OcrCode || "",
         project: line.Project || "",
+        location: "",
         additional_qty: line.AdditQty ?? 0,
         stage_id: line.StageId ?? "",
+        route_sequence: line.StageId ?? "",
+        procurement_method: line.ProcurementMethod || "",
         component_type: toItemType(line.ItemType),
       })),
     },
@@ -396,54 +634,106 @@ const explodeBOM = async (itemCode, qty = 1) => {
     throw error;
   }
 
+  const stockRows = await queryRows(
+    `
+      SELECT L.ChildNum, L.Code, L.Warehouse,
+             CAST(ISNULL(W.OnHand, I.OnHand) - ISNULL(W.IsCommited, I.IsCommited) AS DECIMAL(19, 6)) AS AvailableQty,
+             I.InvntryUom AS UoMName,
+             I.PrcrmntMtd AS ProcurementMethod
+      FROM ITT1 L
+      LEFT JOIN OITM I ON I.ItemCode = L.Code
+      LEFT JOIN OITW W
+        ON W.ItemCode = L.Code
+       AND W.WhsCode = COALESCE(NULLIF(L.Warehouse, ''), NULLIF(@warehouse, ''))
+      WHERE L.Father = @itemCode
+    `,
+    { itemCode, warehouse: bom.Warehouse || "" }
+  );
+  const detailByChild = new Map(
+    stockRows.map((row) => [`${row.ChildNum ?? ""}:${row.Code || ""}`, row])
+  );
+
   const factor = Number(qty) / (bom.Quantity || 1);
   return {
     item_code: bom.TreeCode,
     item_name: bom.ProductDescription || "",
     bom_qty: bom.Quantity ?? 1,
     warehouse: bom.Warehouse || "",
-    lines: (bom.ProductTreeLines || []).map((line, idx) => ({
-      _id: Date.now() + idx + Math.random(),
-      line_num: idx,
-      item_code: line.ItemCode || "",
-      item_name: line.ItemName || "",
-      line_text: line.Comment || "",
-      base_qty: line.Quantity ?? 1,
-      planned_qty: parseFloat((((line.Quantity ?? 1) * factor)).toFixed(6)),
-      issued_qty: 0,
-      uom: line.InventoryUOM || "",
-      warehouse: line.Warehouse || bom.Warehouse || "",
-      issue_method: line.IssueMethod || "im_Manual",
-      distribution_rule: line.DistributionRule || "",
-      project: line.Project || "",
-      additional_qty: 0,
-      stage_id: line.StageID ?? "",
-      component_type: line.ItemType || "pit_Item",
-    })),
+    uom_name: bom.InventoryUOM || "",
+    distribution_rule: bom.DistributionRule || "",
+    project: bom.Project || "",
+    lines: (bom.ProductTreeLines || []).map((line, idx) => {
+      const detail = detailByChild.get(`${line.ChildNum ?? ""}:${line.ItemCode || ""}`) || {};
+      const baseQty = line.Quantity ?? 1;
+      const uom = line.InventoryUOM || detail.UoMName || "";
+      return {
+        _id: Date.now() + idx + Math.random(),
+        line_num: idx,
+        item_code: line.ItemCode || "",
+        item_name: line.ItemName || "",
+        line_text: line.Comment || "",
+        base_qty: baseQty,
+        base_ratio: Number((baseQty / (bom.Quantity || 1)).toFixed(6)),
+        planned_qty: parseFloat((baseQty * factor).toFixed(6)),
+        issued_qty: 0,
+        available_qty: detail.AvailableQty ?? 0,
+        uom,
+        uom_code: uom,
+        uom_name: detail.UoMName || uom,
+        warehouse: line.Warehouse || bom.Warehouse || "",
+        issue_method: line.IssueMethod || "im_Manual",
+        wip_account: line.WipAccount || "",
+        distribution_rule: line.DistributionRule || bom.DistributionRule || "",
+        project: line.Project || bom.Project || "",
+        location: "",
+        additional_qty: 0,
+        stage_id: line.StageID ?? "",
+        route_sequence: line.StageID ?? "",
+        procurement_method: detail.ProcurementMethod || "",
+        component_type: line.ItemType || "pit_Item",
+      };
+    }),
   };
 };
 
-const getProductionOrderReferenceData = async () => ({
-  warehouses: await lookupProdWarehouses(),
-  distribution_rules: await lookupDistributionRules(),
-  projects: await lookupProjects(),
-  series: await lookupSeries("202"),
-  branches: await lookupBranches(),
-  route_stages: await lookupRouteStages(""),
-  production_order_statuses: [
-    { value: "boposPlanned", label: "Planned" },
-    { value: "boposReleased", label: "Released" },
-    { value: "boposClosed", label: "Closed" },
-    { value: "boposCancelled", label: "Cancelled" },
-  ],
-  production_order_types: [
-    { value: "bopotStandard", label: "Standard" },
-    { value: "bopotSpecial", label: "Special" },
-    { value: "bopotDisassemble", label: "Disassemble" },
-  ],
-  production_order_priorities: PRODUCTION_PRIORITY_OPTIONS,
-  warnings: [],
-});
+const getProductionOrderReferenceData = async () => {
+  const [warehouses, distributionRules, projects, productionSeries, branches, routeStages, users, linkedToOptions] = await Promise.all([
+    lookupProdWarehouses(),
+    lookupDistributionRules(),
+    lookupProjects(),
+    lookupSeries("202"),
+    lookupBranches(),
+    lookupRouteStages(""),
+    lookupUsers(),
+    lookupLinkedToOptions(),
+  ]);
+  const defaultSeries = pickDefaultSeries(productionSeries);
+
+  return {
+    warehouses,
+    distribution_rules: distributionRules,
+    projects,
+    series: productionSeries,
+    default_series: defaultSeries?.Series != null ? String(defaultSeries.Series) : "",
+    branches,
+    route_stages: routeStages,
+    users,
+    linked_to_options: linkedToOptions,
+    production_order_statuses: [
+      { value: "boposPlanned", label: "Planned" },
+      { value: "boposReleased", label: "Released" },
+      { value: "boposClosed", label: "Closed" },
+      { value: "boposCancelled", label: "Cancelled" },
+    ],
+    production_order_types: [
+      { value: "bopotStandard", label: "Standard" },
+      { value: "bopotSpecial", label: "Special" },
+      { value: "bopotDisassemble", label: "Disassemble" },
+    ],
+    production_order_priorities: PRODUCTION_PRIORITY_OPTIONS,
+    warnings: [],
+  };
+};
 
 const lookupOpenProductionOrders = async (query = "", releasedOnly = false) => {
   const trimmed = String(query || "").trim();
@@ -895,6 +1185,9 @@ module.exports = {
   lookupProjects,
   lookupBranches,
   lookupCustomers,
+  lookupUsers,
+  lookupLinkedToOptions,
+  lookupLinkedOrders,
   lookupOpenProductionOrders,
   getProductionOrderForIssue,
   getIssueList,

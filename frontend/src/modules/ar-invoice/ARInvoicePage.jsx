@@ -408,11 +408,13 @@ function ARInvoicePage() {
         
         if (!ignore) {
           const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
-          const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
-          const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
-          const nextMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
-            ? refDataRes.data.line_field_metadata.matrix_columns
-            : (refDataRes.data.matrix_columns || []);
+          const nextHeaderUdfs = (refDataRes.data.udf_metadata?.header || []).filter((field) => field && field.key);
+          const nextRowUdfs = (refDataRes.data.udf_metadata?.rows || []).filter((field) => field && field.key);
+          const nextMatrixColumns = (
+            refDataRes.data.line_field_metadata?.matrix_columns?.length
+              ? refDataRes.data.line_field_metadata.matrix_columns
+              : (refDataRes.data.matrix_columns || [])
+          ).filter((field) => field && field.key);
           const hasSapMatrixPreferences =
             Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0;
           const liveDefaultBranch = String(refDataRes.data.default_branch || '').trim();

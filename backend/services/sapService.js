@@ -454,7 +454,7 @@ const request = async (config, retryOnAuth = true, retryOnTransientRead = true) 
   const normalizedMethod = String(config.method || 'get').trim().toUpperCase();
   const stampedRequestData = await withAuthenticatedUserStamp(config, companyDb);
   const requestData = WRITE_METHODS.has(normalizedMethod)
-    ? normalizeSapWritePayload(stampedRequestData)
+    ? (config.preserveEmptyStrings ? stampedRequestData : normalizeSapWritePayload(stampedRequestData))
     : stampedRequestData;
   const useKeepAlive = !WRITE_METHODS.has(normalizedMethod);
 

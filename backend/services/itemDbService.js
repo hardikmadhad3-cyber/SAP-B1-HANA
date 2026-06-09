@@ -113,6 +113,17 @@ const mapItemClass = (value) => {
   return map[value] || value || '';
 };
 
+const mapTreeType = (value) => {
+  const map = {
+    N: 'iNotATree',
+    A: 'iAssemblyTree',
+    P: 'iProductionTree',
+    S: 'iSalesTree',
+    T: 'iTemplateTree',
+  };
+  return map[value] || value || '';
+};
+
 const mapIssuePrimarilyBy = (value) => {
   const map = {
     0: 'ipbSerialAndBatchNumbers',
@@ -218,7 +229,7 @@ const mapHeaderRow = (row) => {
     CommissionPercent: toNumberOrBlank(row.CommisPcnt),
     CommissionSum: toNumberOrBlank(row.CommisSum),
     CommissionGroup: toIntOrDefault(row.CommisGrp),
-    TreeType: row.TreeType || '',
+    TreeType: mapTreeType(row.TreeType),
     AssetItem: toSapBool(row.AssetItem),
     DataExportCode: row.ExportCode || '',
     Manufacturer: toIntOrDefault(row.FirmCode),
@@ -258,7 +269,7 @@ const mapHeaderRow = (row) => {
     ManageStockByWarehouse: toSapBool(row.ByWh),
     WTLiable: toSapBool(row.WTLiable),
     CostAccountingMethod: mapCostAccountingMethod(row.EvalSystem),
-    WarrantyTemplate: toIntOrDefault(row.WarrntTmpl),
+    WarrantyTemplate: row.WarrntTmpl || '',
     IndirectTax: toSapBool(row.IndirctTax),
     ArTaxCode: row.TaxCodeAR || '',
     ApTaxCode: row.TaxCodeAP || '',
@@ -523,18 +534,21 @@ const getPreferredVendors = async (itemCode) => {
     db.query(
       `
         SELECT
-          VendorCode
-        FROM ITM2
-        WHERE ItemCode = @itemCode
-        ORDER BY VendorCode
+          T0.VendorCode,
+          T1.CardName AS VendorName
+        FROM ITM2 T0
+        LEFT JOIN OCRD T1
+          ON T1.CardCode = T0.VendorCode
+        WHERE T0.ItemCode = @itemCode
+        ORDER BY T0.VendorCode
       `,
       { itemCode }
     )
   );
 
-  return rows.map((row, index) => ({
+  return rows.map((row) => ({
     VendorCode: row.VendorCode || '',
-    Priority: index + 1,
+    VendorName: row.VendorName || '',
   }));
 };
 

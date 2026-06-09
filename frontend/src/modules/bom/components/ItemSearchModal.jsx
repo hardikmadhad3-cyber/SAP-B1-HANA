@@ -8,6 +8,8 @@ export default function ItemSearchModal({
   title,
   allowNew = false,
   onNew,
+  autoSearchOnOpen = true,
+  emptyMessage = "No items found.",
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -40,8 +42,8 @@ export default function ItemSearchModal({
 
   useEffect(() => {
     inputRef.current?.focus();
-    search("");
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (autoSearchOnOpen) search("");
+  }, [autoSearchOnOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleKey = (e) => {
     if (e.key === "Enter") {
@@ -96,7 +98,7 @@ export default function ItemSearchModal({
         </div>
 
         <div className="im-modal__body">
-          {results.length === 0 && !loading && <div className="im-modal__empty">No items found.</div>}
+          {results.length === 0 && !loading && emptyMessage && <div className="im-modal__empty">{emptyMessage}</div>}
           <table className="im-lookup-table">
             <thead>
               <tr>

@@ -75,6 +75,11 @@ const getSalesQuotationLineUdfMetadata = async () => {
   };
 };
 
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
+};
+
 const buildValidatedLineUdfs = (line, udfMetadata) => {
   const availableUdfKeys = udfMetadata.keys || new Set();
   const udfs = {};
@@ -357,7 +362,8 @@ const submitSalesQuotation = async (payload) => {
 
     // Add header UDFs if any
     if (payload.header_udfs && Object.keys(payload.header_udfs).length > 0) {
-      Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs));
+      const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OQUT');
+      Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
     }
 
     console.log('🔥 SAP Quotation Payload:', JSON.stringify(sapPayload, null, 2));
@@ -429,7 +435,8 @@ const updateSalesQuotation = async (docEntry, payload) => {
 
     // Add header UDFs if any
     if (payload.header_udfs && Object.keys(payload.header_udfs).length > 0) {
-      Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs));
+      const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OQUT');
+      Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
     }
 
     await sapService.request({
