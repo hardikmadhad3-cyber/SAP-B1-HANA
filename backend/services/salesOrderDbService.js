@@ -522,12 +522,39 @@ const getCountries = () => safe(db.query(`
   ORDER  BY Name
 `));
 
-const getDistributionRules = () => safe(db.query(`
-  SELECT TOP 200 OcrCode AS FactorCode, OcrName AS FactorDescription
-  FROM   OOCR
-  WHERE  Active <> 'N'
-  ORDER  BY OcrCode
-`));
+const getDistributionRules = async () => {
+  const [ruleMetadata, dimensionMetadata] = await Promise.all([
+    getTableFieldMetadata('OOCR'),
+    getTableFieldMetadata('ODIM'),
+  ]);
+
+  const hasDimensionCode = Boolean(ruleMetadata?.DimCode);
+  const dimensionCodeExpression = hasDimensionCode ? 'T0.DimCode' : '1';
+  const dimensionNameColumn = ['DimDesc', 'DimName', 'Name']
+    .find((columnName) => dimensionMetadata?.[columnName]);
+  const dimensionJoin = dimensionMetadata?.DimCode
+    ? `LEFT JOIN ODIM T1 ON T1.DimCode = ${dimensionCodeExpression}`
+    : '';
+  const dimensionNameExpression = dimensionNameColumn
+    ? `COALESCE(T1.${quoteSqlIdentifier(dimensionNameColumn)}, 'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10)))`
+    : `'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10))`;
+  const activeDimensionFilter = dimensionMetadata?.Active
+    ? "AND (T1.Active IS NULL OR T1.Active <> 'N')"
+    : '';
+
+  return safe(db.query(`
+    SELECT TOP 500
+      T0.OcrCode AS FactorCode,
+      T0.OcrName AS FactorDescription,
+      ${dimensionCodeExpression} AS DimensionCode,
+      ${dimensionNameExpression} AS DimensionName
+    FROM   OOCR T0
+    ${dimensionJoin}
+    WHERE  T0.Active <> 'N'
+      ${activeDimensionFilter}
+    ORDER  BY ${dimensionCodeExpression}, T0.OcrCode
+  `));
+};
 const getTaxCodes = () => masterDataDbService.searchDocumentTaxCodes('', 'sales', 500, 0);
 
 const getTaxCodeDiagnostics = async (taxCodes = []) => {
@@ -1151,6 +1178,18 @@ const getReferenceData = async () => {
     }
   }
   const uom_groups = Object.values(uomMap);
+  const distributionDimensionMap = new Map();
+  distributionRules.forEach((rule) => {
+    const dimensionCode = String(rule.DimensionCode || '1').trim() || '1';
+    if (!distributionDimensionMap.has(dimensionCode)) {
+      distributionDimensionMap.set(dimensionCode, {
+        DimensionCode: dimensionCode,
+        DimensionName: rule.DimensionName || `Dimension ${dimensionCode}`,
+      });
+    }
+  });
+  const distributionDimensions = [...distributionDimensionMap.values()]
+    .sort((a, b) => Number(a.DimensionCode) - Number(b.DimensionCode));
 
   const mappedCustomers = customers.map(c => ({
     CardCode:        c.CardCode,
@@ -1197,7 +1236,10 @@ const getReferenceData = async () => {
     distribution_rules: distributionRules.map(rule => ({
       FactorCode: rule.FactorCode || '',
       FactorDescription: rule.FactorDescription || '',
+      DimensionCode: rule.DimensionCode != null ? String(rule.DimensionCode) : '1',
+      DimensionName: rule.DimensionName || '',
     })),
+    distribution_dimensions: distributionDimensions,
     tax_codes:      taxCodes.map(t => ({ Code: t.Code, Name: t.Name, Rate: t.Rate, GSTType: t.GSTType })),
     sac_codes:      sacCodes.map(s => ({
       absEntry: s.absEntry ?? s.AbsEntry ?? null,
@@ -1651,6 +1693,10 @@ const getSalesOrder = async (docEntry) => {
     T1.unitMsr AS UomCode,
     T1.unitMsr AS UomName,
     T1.OcrCode AS DistributionRule,
+    ${lineField('OcrCode2', 'DistributionRule2')},
+    ${lineField('OcrCode3', 'DistributionRule3')},
+    ${lineField('OcrCode4', 'DistributionRule4')},
+    ${lineField('OcrCode5', 'DistributionRule5')},
     ${lineField('SACEntry', 'SACEntry', 'NULL')},
     ${sacSql.displayExpression} AS SACCode,
     ${sacSql.serviceNameColumn} AS SACServiceName,
@@ -2072,6 +2118,10 @@ ORDER BY T1.LineNum
           taxAmount: String(line.LineTaxAmount || 0),
           whse: line.WhsCode || '',
           distRule: line.DistributionRule || '',
+          distRule2: line.DistributionRule2 || '',
+          distRule3: line.DistributionRule3 || '',
+          distRule4: line.DistributionRule4 || '',
+          distRule5: line.DistributionRule5 || '',
           freeText: line.FreeText || '',
           countryOfOrigin: line.CountryOfOrigin || '',
           openQty: line.OpenQuantity != null ? String(line.OpenQuantity) : '',
@@ -2203,6 +2253,10 @@ const getSalesOrderForCopy = async (docEntry) => {
       T0.WhsCode AS WarehouseCode,
       T0.TaxCode, T0.unitMsr AS UomCode, T0.unitMsr AS UomName,
       T0.OcrCode AS DistributionRule,
+      ${lineField('OcrCode2', 'DistributionRule2')},
+      ${lineField('OcrCode3', 'DistributionRule3')},
+      ${lineField('OcrCode4', 'DistributionRule4')},
+      ${lineField('OcrCode5', 'DistributionRule5')},
       ${lineField('SACEntry', 'SACEntry', 'NULL')},
       ${sacSql.displayExpression} AS SACCode,
       ${sacSql.serviceNameColumn} AS SACServiceName,

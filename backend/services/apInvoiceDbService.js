@@ -100,6 +100,8 @@ const getStates = () => safe(db.query(`
 
 const getTaxCodes = () => masterDataDbService.searchDocumentTaxCodes('', 'purchase', 500, 0);
 
+const getWithholdingTaxCodes = () => masterDataDbService.lookupWithholdingTaxCodes('');
+
 const getUomGroups = () => safe(db.query(`
   SELECT g.UgpEntry AS AbsEntry,
          g.UgpCode  AS Name,
@@ -180,6 +182,45 @@ const getVendorGSTProfile = async (cardCode) => {
   return rows[0] || { GSTIN: '', State: '' };
 };
 
+const getVendorWithholdingTaxDetails = async (vendorCode) => {
+  const [ocrdRows, allowedRows, allCodes] = await Promise.all([
+    safe(db.query(`
+      SELECT TOP 1
+        T0.CardCode,
+        T0.WTCode
+      FROM OCRD T0
+      WHERE T0.CardCode = @vendorCode
+    `, { vendorCode })),
+    safe(db.query(`
+      SELECT DISTINCT
+        T0.WTCode
+      FROM CRD4 T0
+      WHERE T0.CardCode = @vendorCode
+        AND ISNULL(T0.WTCode, '') <> ''
+      ORDER BY T0.WTCode
+    `, { vendorCode })),
+    getWithholdingTaxCodes(),
+  ]);
+
+  const defaultCode = String(ocrdRows[0]?.WTCode || '').trim();
+  const allowedCodeSet = new Set(
+    [
+      ...allowedRows.map((row) => String(row.WTCode || '').trim()),
+      defaultCode,
+    ].filter(Boolean)
+  );
+  const allowedCodes = allCodes.filter((row) => allowedCodeSet.has(String(row.code || '').trim()));
+  const fallbackAllowedCodes = allowedCodeSet.size
+    ? Array.from(allowedCodeSet).map((code) => ({ code, name: code, rate: 0, taxCategory: '' }))
+    : [];
+
+  return {
+    subject: allowedCodeSet.size > 0,
+    defaultCode,
+    allowedCodes: allowedCodes.length ? allowedCodes : fallbackAllowedCodes,
+  };
+};
+
 const getOpenGRPO = async (vendorCode = null) => {
   const query = vendorCode
     ? `
@@ -257,6 +298,7 @@ const getGRPOForCopy = async (docEntry) => {
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
+      T0.WTLiable,
       T0.LineTotal,
       T0.WhsCode AS Warehouse,
       T0.unitMsr AS UoMCode
@@ -531,6 +573,7 @@ const getAPInvoice = async (docEntry) => {
           unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
           stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
           taxCode: l.TaxCode || '',
+          wtaxLiable: String(l.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
           total: l.LineTotal != null ? String(l.LineTotal) : '',
           whse: l.Warehouse || '',
           uomCode: l.UoMCode || '',
@@ -602,6 +645,7 @@ const getReferenceData = async () => {
     decimalRows,
     companyRows,
     udfMetadata,
+    withholdingTaxCodes,
   ] = await Promise.all([
     getVendors(),
     getItems(),
@@ -616,6 +660,7 @@ const getReferenceData = async () => {
     getDecimalSettings(),
     getCompanyInfo(),
     getMarketingDocumentUdfs({ headerTable: 'OPCH', lineTable: 'PCH1' }),
+    getWithholdingTaxCodes(),
   ]);
 
   const uomGroupMap = {};
@@ -665,6 +710,7 @@ const getReferenceData = async () => {
     warehouse_addresses: warehouses,
     company_address: { State: companyInfo.state },
     tax_codes: taxCodes,
+    withholding_tax_codes: withholdingTaxCodes,
     payment_terms: paymentTerms,
     sales_employees: salesEmployees.map((e) => ({ SlpCode: e.SlpCode, SlpName: e.SlpName, Memo: e.Memo, Commission: e.Commission, Active: e.Active })),
     shipping_types: shippingTypes,
@@ -679,12 +725,25 @@ const getReferenceData = async () => {
 
 const getVendorDetails = async (vendorCode) => {
   if (!vendorCode) {
-    return { contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], gstin: '', vendorState: '' };
+    return {
+      contacts: [],
+      pay_to_addresses: [],
+      ship_to_addresses: [],
+      bill_to_addresses: [],
+      gstin: '',
+      vendorState: '',
+      withholding_tax: {
+        subject: false,
+        defaultCode: '',
+        allowedCodes: [],
+      },
+    };
   }
 
-  const [contacts, addresses] = await Promise.all([
+  const [contacts, addresses, withholdingTax] = await Promise.all([
     getContactsByVendor(vendorCode),
     getAddressesByVendor(vendorCode),
+    getVendorWithholdingTaxDetails(vendorCode),
   ]);
   const gstProfile = await getVendorGSTProfile(vendorCode);
   const payToAddresses = addresses.filter((a) => a.AdresType === 'B' || a.AdresType === 'bo_BillTo');
@@ -697,6 +756,7 @@ const getVendorDetails = async (vendorCode) => {
     bill_to_addresses: payToAddresses,
     gstin: gstProfile.GSTIN || '',
     vendorState: gstProfile.State || '',
+    withholding_tax: withholdingTax,
   };
 };
 

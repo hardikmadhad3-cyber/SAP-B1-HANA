@@ -1,1 +1,5323 @@
-[dotenv@17.3.1] injecting env (16) from .env -- tip: 🔐 encrypt with Dotenvx: https://dotenvx.com
+[dotenv@17.3.1] injecting env (22) from .env -- tip: ⚙️  suppress all logs with { quiet: true }
+[dotenv@17.3.1] injecting env (0) from .env -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+[Server] Running on http://0.0.0.0:5001 (accessible on LAN)
+[AUTH_DB] SQL Server pool connected to henny_master
+[DB] SQL Server pool connected to DESKTOP-ICFN0OJ/SQLEXPRESS01/NCPL_110126
+[PUT] /api/form-settings/sapb1.salesOrder.formSettings.v2
+Request body: {
+  "settings": {
+    "headerUdfs": {
+      "U_SCharge": {
+        "visible": true,
+        "active": true
+      },
+      "U_TRNS": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDT": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_VEHNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_DOCTHR": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRY": {
+        "visible": true,
+        "active": true
+      },
+      "U_RSLN": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRYST": {
+        "visible": true,
+        "active": true
+      },
+      "U_UOM": {
+        "visible": true,
+        "active": true
+      },
+      "U_Price": {
+        "visible": true,
+        "active": true
+      },
+      "U_SAmount": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_FromDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_ToDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_AddressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Scontactperson": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyer_addressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_VC_LRNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_IRN": {
+        "visible": true,
+        "active": true
+      },
+      "U_Canceled": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfId": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfName": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVehi": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfDist": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfMode": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVType": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_CanDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_QrCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_SigInv": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbVliDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EWayBCan": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVeh": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVehPosted": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSuply": {
+        "visible": true,
+        "active": true
+      },
+      "U_DocType": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSRemk": {
+        "visible": true,
+        "active": true
+      },
+      "U_TraType": {
+        "visible": true,
+        "active": true
+      },
+      "U_DelRemarks": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSER": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSERCODE": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "matrixColumns": {
+      "itemNo": {
+        "visible": true,
+        "active": true
+      },
+      "itemDescription": {
+        "visible": true,
+        "active": true
+      },
+      "sellerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "buyerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "quantity": {
+        "visible": true,
+        "active": true
+      },
+      "unitPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "buyerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerageAmtPer": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePercent": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "qtySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "deliverySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "deliveredQty": {
+        "visible": true,
+        "active": true
+      },
+      "stdDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "stcode": {
+        "visible": true,
+        "active": true
+      },
+      "taxCode": {
+        "visible": true,
+        "active": true
+      },
+      "taxAmount": {
+        "visible": true,
+        "active": true
+      },
+      "totalLC": {
+        "visible": true,
+        "active": true
+      },
+      "whse": {
+        "visible": true,
+        "active": true
+      },
+      "distRule": {
+        "visible": true,
+        "active": true
+      },
+      "openQty": {
+        "visible": true,
+        "active": true
+      },
+      "countryOfOrigin": {
+        "visible": true,
+        "active": true
+      },
+      "freeText": {
+        "visible": true,
+        "active": true
+      },
+      "uomCode": {
+        "visible": true,
+        "active": true
+      },
+      "uomName": {
+        "visible": true,
+        "active": true
+      },
+      "loc": {
+        "visible": true,
+        "active": true
+      },
+      "specialRebate": {
+        "visible": true,
+        "active": true
+      },
+      "commission": {
+        "visible": true,
+        "active": true
+      },
+      "hsnCode": {
+        "visible": true,
+        "active": true
+      },
+      "sacCode": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "freightPurchase": {
+        "visible": true,
+        "active": true
+      },
+      "freightSales": {
+        "visible": true,
+        "active": true
+      },
+      "freightProvider": {
+        "visible": true,
+        "active": true
+      },
+      "freightProviderName": {
+        "visible": true,
+        "active": true
+      },
+      "documentCreated": {
+        "visible": true,
+        "active": true
+      },
+      "brokerageNumber": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "rowUdfs": {
+      "U_Loc": {
+        "visible": true,
+        "active": true
+      },
+      "U_Branch": {
+        "visible": true,
+        "active": true
+      },
+      "U_QcStatus": {
+        "visible": true,
+        "active": true
+      }
+    }
+  }
+}
+  - salesEmployee (SlpCode): -1
+  - purchaser (SlpName): -No Sales Employee / Buyer-
+  - owner (OwnerName): 
+  - freight: 
+  - remarks: 
+  - otherInstruction: 
+  - salesEmployee (SlpCode): -1
+  - purchaser (SlpName): -No Sales Employee / Buyer-
+  - owner (OwnerName): 
+  - freight: 
+  - remarks: 
+  - otherInstruction: 
+[PUT] /api/form-settings/sapb1.salesOrder.formSettings.v2
+Request body: {
+  "settings": {
+    "headerUdfs": {
+      "U_SCharge": {
+        "visible": true,
+        "active": true
+      },
+      "U_TRNS": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDT": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_VEHNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_DOCTHR": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRY": {
+        "visible": true,
+        "active": true
+      },
+      "U_RSLN": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRYST": {
+        "visible": true,
+        "active": true
+      },
+      "U_UOM": {
+        "visible": true,
+        "active": true
+      },
+      "U_Price": {
+        "visible": true,
+        "active": true
+      },
+      "U_SAmount": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_FromDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_ToDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_AddressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Scontactperson": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyer_addressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_VC_LRNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_IRN": {
+        "visible": true,
+        "active": true
+      },
+      "U_Canceled": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfId": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfName": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVehi": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfDist": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfMode": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVType": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_CanDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_QrCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_SigInv": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbVliDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EWayBCan": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVeh": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVehPosted": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSuply": {
+        "visible": true,
+        "active": true
+      },
+      "U_DocType": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSRemk": {
+        "visible": true,
+        "active": true
+      },
+      "U_TraType": {
+        "visible": true,
+        "active": true
+      },
+      "U_DelRemarks": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSER": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSERCODE": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "matrixColumns": {
+      "itemNo": {
+        "visible": true,
+        "active": true
+      },
+      "itemDescription": {
+        "visible": true,
+        "active": true
+      },
+      "sellerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "buyerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "quantity": {
+        "visible": true,
+        "active": true
+      },
+      "unitPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "buyerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerageAmtPer": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePercent": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "qtySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "deliverySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "deliveredQty": {
+        "visible": true,
+        "active": true
+      },
+      "stdDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "stcode": {
+        "visible": true,
+        "active": true
+      },
+      "taxCode": {
+        "visible": true,
+        "active": true
+      },
+      "taxAmount": {
+        "visible": true,
+        "active": true
+      },
+      "totalLC": {
+        "visible": true,
+        "active": true
+      },
+      "whse": {
+        "visible": true,
+        "active": true
+      },
+      "distRule": {
+        "visible": true,
+        "active": true
+      },
+      "openQty": {
+        "visible": true,
+        "active": true
+      },
+      "countryOfOrigin": {
+        "visible": true,
+        "active": true
+      },
+      "freeText": {
+        "visible": true,
+        "active": true
+      },
+      "uomCode": {
+        "visible": true,
+        "active": true
+      },
+      "uomName": {
+        "visible": true,
+        "active": true
+      },
+      "loc": {
+        "visible": true,
+        "active": true
+      },
+      "specialRebate": {
+        "visible": true,
+        "active": true
+      },
+      "commission": {
+        "visible": true,
+        "active": true
+      },
+      "hsnCode": {
+        "visible": true,
+        "active": true
+      },
+      "sacCode": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "freightPurchase": {
+        "visible": true,
+        "active": true
+      },
+      "freightSales": {
+        "visible": true,
+        "active": true
+      },
+      "freightProvider": {
+        "visible": true,
+        "active": true
+      },
+      "freightProviderName": {
+        "visible": true,
+        "active": true
+      },
+      "documentCreated": {
+        "visible": true,
+        "active": true
+      },
+      "brokerageNumber": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "rowUdfs": {
+      "U_Loc": {
+        "visible": true,
+        "active": true
+      },
+      "U_Branch": {
+        "visible": true,
+        "active": true
+      },
+      "U_QcStatus": {
+        "visible": true,
+        "active": true
+      }
+    }
+  }
+}
+  - salesEmployee (SlpCode): -1
+  - purchaser (SlpName): -No Sales Employee / Buyer-
+  - owner (OwnerName): 
+  - freight: 
+  - remarks: 
+  - otherInstruction: 
+  - salesEmployee (SlpCode): -1
+  - purchaser (SlpName): -No Sales Employee / Buyer-
+  - owner (OwnerName): 
+  - freight: 
+  - remarks: 
+  - otherInstruction: 
+[PUT] /api/form-settings/sapb1.salesOrder.formSettings.v2
+Request body: {
+  "settings": {
+    "headerUdfs": {
+      "U_SCharge": {
+        "visible": true,
+        "active": true
+      },
+      "U_TRNS": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDT": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_VEHNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_DOCTHR": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRY": {
+        "visible": true,
+        "active": true
+      },
+      "U_RSLN": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRYST": {
+        "visible": true,
+        "active": true
+      },
+      "U_UOM": {
+        "visible": true,
+        "active": true
+      },
+      "U_Price": {
+        "visible": true,
+        "active": true
+      },
+      "U_SAmount": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_FromDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_ToDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_AddressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Scontactperson": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyer_addressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_VC_LRNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_IRN": {
+        "visible": true,
+        "active": true
+      },
+      "U_Canceled": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfId": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfName": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVehi": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfDist": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfMode": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVType": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_CanDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_QrCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_SigInv": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbVliDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EWayBCan": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVeh": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVehPosted": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSuply": {
+        "visible": true,
+        "active": true
+      },
+      "U_DocType": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSRemk": {
+        "visible": true,
+        "active": true
+      },
+      "U_TraType": {
+        "visible": true,
+        "active": true
+      },
+      "U_DelRemarks": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSER": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSERCODE": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "matrixColumns": {
+      "itemNo": {
+        "visible": true,
+        "active": true
+      },
+      "itemDescription": {
+        "visible": true,
+        "active": true
+      },
+      "sellerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "buyerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "quantity": {
+        "visible": true,
+        "active": true
+      },
+      "unitPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "buyerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerageAmtPer": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePercent": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "qtySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "deliverySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "deliveredQty": {
+        "visible": true,
+        "active": true
+      },
+      "stdDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "stcode": {
+        "visible": true,
+        "active": true
+      },
+      "taxCode": {
+        "visible": true,
+        "active": true
+      },
+      "taxAmount": {
+        "visible": true,
+        "active": true
+      },
+      "totalLC": {
+        "visible": true,
+        "active": true
+      },
+      "whse": {
+        "visible": true,
+        "active": true
+      },
+      "distRule": {
+        "visible": true,
+        "active": true
+      },
+      "openQty": {
+        "visible": true,
+        "active": true
+      },
+      "countryOfOrigin": {
+        "visible": true,
+        "active": true
+      },
+      "freeText": {
+        "visible": true,
+        "active": true
+      },
+      "uomCode": {
+        "visible": true,
+        "active": true
+      },
+      "uomName": {
+        "visible": true,
+        "active": true
+      },
+      "loc": {
+        "visible": true,
+        "active": true
+      },
+      "specialRebate": {
+        "visible": true,
+        "active": true
+      },
+      "commission": {
+        "visible": true,
+        "active": true
+      },
+      "hsnCode": {
+        "visible": true,
+        "active": true
+      },
+      "sacCode": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "freightPurchase": {
+        "visible": true,
+        "active": true
+      },
+      "freightSales": {
+        "visible": true,
+        "active": true
+      },
+      "freightProvider": {
+        "visible": true,
+        "active": true
+      },
+      "freightProviderName": {
+        "visible": true,
+        "active": true
+      },
+      "documentCreated": {
+        "visible": true,
+        "active": true
+      },
+      "brokerageNumber": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "rowUdfs": {
+      "U_Loc": {
+        "visible": true,
+        "active": true
+      },
+      "U_Branch": {
+        "visible": true,
+        "active": true
+      },
+      "U_QcStatus": {
+        "visible": true,
+        "active": true
+      }
+    }
+  }
+}
+  - salesEmployee (SlpCode): -1
+  - purchaser (SlpName): -No Sales Employee / Buyer-
+  - owner (OwnerName): 
+  - freight: 
+  - remarks: 
+  - otherInstruction: 
+  - salesEmployee (SlpCode): -1
+  - purchaser (SlpName): -No Sales Employee / Buyer-
+  - owner (OwnerName): 
+  - freight: 
+  - remarks: 
+  - otherInstruction: 
+[PUT] /api/form-settings/sapb1.salesOrder.formSettings.v2
+Request body: {
+  "settings": {
+    "headerUdfs": {
+      "U_SCharge": {
+        "visible": true,
+        "active": true
+      },
+      "U_TRNS": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDT": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_VEHNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_DOCTHR": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRY": {
+        "visible": true,
+        "active": true
+      },
+      "U_RSLN": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRYST": {
+        "visible": true,
+        "active": true
+      },
+      "U_UOM": {
+        "visible": true,
+        "active": true
+      },
+      "U_Price": {
+        "visible": true,
+        "active": true
+      },
+      "U_SAmount": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_FromDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_ToDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_AddressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Scontactperson": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyer_addressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_VC_LRNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_IRN": {
+        "visible": true,
+        "active": true
+      },
+      "U_Canceled": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfId": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfName": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVehi": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfDist": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfMode": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVType": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_CanDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_QrCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_SigInv": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbVliDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EWayBCan": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVeh": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVehPosted": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSuply": {
+        "visible": true,
+        "active": true
+      },
+      "U_DocType": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSRemk": {
+        "visible": true,
+        "active": true
+      },
+      "U_TraType": {
+        "visible": true,
+        "active": true
+      },
+      "U_DelRemarks": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSER": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSERCODE": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "matrixColumns": {
+      "itemNo": {
+        "visible": true,
+        "active": true
+      },
+      "itemDescription": {
+        "visible": true,
+        "active": true
+      },
+      "sellerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "buyerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "quantity": {
+        "visible": true,
+        "active": true
+      },
+      "unitPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "buyerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerageAmtPer": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePercent": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "qtySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "deliverySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "deliveredQty": {
+        "visible": true,
+        "active": true
+      },
+      "stdDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "stcode": {
+        "visible": true,
+        "active": true
+      },
+      "taxCode": {
+        "visible": true,
+        "active": true
+      },
+      "taxAmount": {
+        "visible": true,
+        "active": true
+      },
+      "totalLC": {
+        "visible": true,
+        "active": true
+      },
+      "whse": {
+        "visible": true,
+        "active": true
+      },
+      "distRule": {
+        "visible": true,
+        "active": true
+      },
+      "openQty": {
+        "visible": true,
+        "active": true
+      },
+      "countryOfOrigin": {
+        "visible": true,
+        "active": true
+      },
+      "freeText": {
+        "visible": true,
+        "active": true
+      },
+      "uomCode": {
+        "visible": true,
+        "active": true
+      },
+      "uomName": {
+        "visible": true,
+        "active": true
+      },
+      "loc": {
+        "visible": true,
+        "active": true
+      },
+      "specialRebate": {
+        "visible": true,
+        "active": true
+      },
+      "commission": {
+        "visible": true,
+        "active": true
+      },
+      "hsnCode": {
+        "visible": true,
+        "active": true
+      },
+      "sacCode": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "freightPurchase": {
+        "visible": true,
+        "active": true
+      },
+      "freightSales": {
+        "visible": true,
+        "active": true
+      },
+      "freightProvider": {
+        "visible": true,
+        "active": true
+      },
+      "freightProviderName": {
+        "visible": true,
+        "active": true
+      },
+      "documentCreated": {
+        "visible": true,
+        "active": true
+      },
+      "brokerageNumber": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "rowUdfs": {
+      "U_Loc": {
+        "visible": true,
+        "active": true
+      },
+      "U_Branch": {
+        "visible": true,
+        "active": true
+      },
+      "U_QcStatus": {
+        "visible": true,
+        "active": true
+      }
+    }
+  }
+}
+[PUT] /api/form-settings/sapb1.dcSalesOrder.formSettings.v2
+Request body: {
+  "settings": {
+    "headerUdfs": {
+      "U_SCharge": {
+        "visible": true,
+        "active": true
+      },
+      "U_TRNS": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDT": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_VEHNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_DOCTHR": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRY": {
+        "visible": true,
+        "active": true
+      },
+      "U_RSLN": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRYST": {
+        "visible": true,
+        "active": true
+      },
+      "U_UOM": {
+        "visible": true,
+        "active": true
+      },
+      "U_Price": {
+        "visible": true,
+        "active": true
+      },
+      "U_SAmount": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_FromDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_ToDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_AddressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Scontactperson": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyer_addressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_VC_LRNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_IRN": {
+        "visible": true,
+        "active": true
+      },
+      "U_Canceled": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfId": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfName": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVehi": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfDist": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfMode": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVType": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_CanDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_QrCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_SigInv": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbVliDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EWayBCan": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVeh": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVehPosted": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSuply": {
+        "visible": true,
+        "active": true
+      },
+      "U_DocType": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSRemk": {
+        "visible": true,
+        "active": true
+      },
+      "U_TraType": {
+        "visible": true,
+        "active": true
+      },
+      "U_DelRemarks": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSER": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSERCODE": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "matrixColumns": {
+      "itemNo": {
+        "visible": true,
+        "active": true
+      },
+      "itemDescription": {
+        "visible": true,
+        "active": true
+      },
+      "unit": {
+        "visible": true,
+        "active": true
+      },
+      "quantity": {
+        "visible": true,
+        "active": true
+      },
+      "unitPrice": {
+        "visible": true,
+        "active": true
+      },
+      "discountAmount": {
+        "visible": true,
+        "active": true
+      },
+      "amount": {
+        "visible": true,
+        "active": true
+      },
+      "netRate": {
+        "visible": true,
+        "active": true
+      },
+      "taxableAmount": {
+        "visible": true,
+        "active": true
+      },
+      "totalLC": {
+        "visible": true,
+        "active": true
+      },
+      "taxCode": {
+        "visible": true,
+        "active": true
+      },
+      "taxAmount": {
+        "visible": true,
+        "active": true
+      },
+      "stdDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "commissionAmountPerTon": {
+        "visible": true,
+        "active": true
+      },
+      "commissionPercent": {
+        "visible": true,
+        "active": true
+      },
+      "commissionAmount": {
+        "visible": true,
+        "active": true
+      },
+      "openQty": {
+        "visible": true,
+        "active": true
+      },
+      "countryOfOrigin": {
+        "visible": true,
+        "active": true
+      },
+      "loc": {
+        "visible": true,
+        "active": true
+      },
+      "hsnCode": {
+        "visible": true,
+        "active": true
+      },
+      "sacCode": {
+        "visible": true,
+        "active": true
+      },
+      "sellerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "buyerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "buyerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerageAmtPer": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePercent": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "qtySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "deliverySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "deliveredQty": {
+        "visible": true,
+        "active": true
+      },
+      "stcode": {
+        "visible": true,
+        "active": true
+      },
+      "whse": {
+        "visible": true,
+        "active": true
+      },
+      "distRule": {
+        "visible": true,
+        "active": true
+      },
+      "freeText": {
+        "visible": true,
+        "active": true
+      },
+      "uomCode": {
+        "visible": true,
+        "active": true
+      },
+      "uomName": {
+        "visible": true,
+        "active": true
+      },
+      "specialRebate": {
+        "visible": true,
+        "active": true
+      },
+      "commission": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePerQty": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "freightPurchase": {
+        "visible": true,
+        "active": true
+      },
+      "freightSales": {
+        "visible": true,
+        "active": true
+      },
+      "freightProvider": {
+        "visible": true,
+        "active": true
+      },
+      "freightProviderName": {
+        "visible": true,
+        "active": true
+      },
+      "documentCreated": {
+        "visible": true,
+        "active": true
+      },
+      "brokerageNumber": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "rowUdfs": {
+      "U_Loc": {
+        "visible": true,
+        "active": true
+      },
+      "U_Branch": {
+        "visible": true,
+        "active": true
+      },
+      "U_QcStatus": {
+        "visible": true,
+        "active": true
+      }
+    }
+  }
+}
+  - salesEmployee (SlpCode): -1
+  - purchaser (SlpName): -No Sales Employee / Buyer-
+  - owner (OwnerName): 
+  - freight: 
+  - remarks: 
+  - otherInstruction: 
+  - salesEmployee (SlpCode): -1
+  - purchaser (SlpName): -No Sales Employee / Buyer-
+  - owner (OwnerName): 
+  - freight: 
+  - remarks: 
+  - otherInstruction: 
+[PUT] /api/form-settings/sapb1.dcSalesOrder.formSettings.v2
+Request body: {
+  "settings": {
+    "headerUdfs": {
+      "U_SCharge": {
+        "visible": true,
+        "active": true
+      },
+      "U_TRNS": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDT": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_VEHNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_DOCTHR": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRY": {
+        "visible": true,
+        "active": true
+      },
+      "U_RSLN": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRYST": {
+        "visible": true,
+        "active": true
+      },
+      "U_UOM": {
+        "visible": true,
+        "active": true
+      },
+      "U_Price": {
+        "visible": true,
+        "active": true
+      },
+      "U_SAmount": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_FromDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_ToDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_AddressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Scontactperson": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyer_addressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_VC_LRNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_IRN": {
+        "visible": true,
+        "active": true
+      },
+      "U_Canceled": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfId": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfName": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVehi": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfDist": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfMode": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVType": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_CanDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_QrCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_SigInv": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbVliDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EWayBCan": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVeh": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVehPosted": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSuply": {
+        "visible": true,
+        "active": true
+      },
+      "U_DocType": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSRemk": {
+        "visible": true,
+        "active": true
+      },
+      "U_TraType": {
+        "visible": true,
+        "active": true
+      },
+      "U_DelRemarks": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSER": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSERCODE": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "matrixColumns": {
+      "itemNo": {
+        "visible": true,
+        "active": true
+      },
+      "itemDescription": {
+        "visible": true,
+        "active": true
+      },
+      "unit": {
+        "visible": true,
+        "active": true
+      },
+      "quantity": {
+        "visible": true,
+        "active": true
+      },
+      "unitPrice": {
+        "visible": true,
+        "active": true
+      },
+      "discountAmount": {
+        "visible": true,
+        "active": true
+      },
+      "amount": {
+        "visible": true,
+        "active": true
+      },
+      "netRate": {
+        "visible": true,
+        "active": true
+      },
+      "taxableAmount": {
+        "visible": true,
+        "active": true
+      },
+      "totalLC": {
+        "visible": true,
+        "active": true
+      },
+      "taxCode": {
+        "visible": true,
+        "active": true
+      },
+      "taxAmount": {
+        "visible": true,
+        "active": true
+      },
+      "stdDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "commissionAmountPerTon": {
+        "visible": true,
+        "active": true
+      },
+      "commissionPercent": {
+        "visible": true,
+        "active": true
+      },
+      "commissionAmount": {
+        "visible": true,
+        "active": true
+      },
+      "openQty": {
+        "visible": true,
+        "active": true
+      },
+      "countryOfOrigin": {
+        "visible": true,
+        "active": true
+      },
+      "loc": {
+        "visible": true,
+        "active": true
+      },
+      "hsnCode": {
+        "visible": true,
+        "active": true
+      },
+      "sacCode": {
+        "visible": true,
+        "active": true
+      },
+      "sellerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "buyerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "buyerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerageAmtPer": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePercent": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "qtySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "deliverySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "deliveredQty": {
+        "visible": true,
+        "active": true
+      },
+      "stcode": {
+        "visible": true,
+        "active": true
+      },
+      "whse": {
+        "visible": true,
+        "active": true
+      },
+      "distRule": {
+        "visible": true,
+        "active": true
+      },
+      "freeText": {
+        "visible": true,
+        "active": true
+      },
+      "uomCode": {
+        "visible": true,
+        "active": true
+      },
+      "uomName": {
+        "visible": true,
+        "active": true
+      },
+      "specialRebate": {
+        "visible": true,
+        "active": true
+      },
+      "commission": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePerQty": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "freightPurchase": {
+        "visible": true,
+        "active": true
+      },
+      "freightSales": {
+        "visible": true,
+        "active": true
+      },
+      "freightProvider": {
+        "visible": true,
+        "active": true
+      },
+      "freightProviderName": {
+        "visible": true,
+        "active": true
+      },
+      "documentCreated": {
+        "visible": true,
+        "active": true
+      },
+      "brokerageNumber": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "rowUdfs": {
+      "U_Loc": {
+        "visible": true,
+        "active": true
+      },
+      "U_Branch": {
+        "visible": true,
+        "active": true
+      },
+      "U_QcStatus": {
+        "visible": true,
+        "active": true
+      }
+    }
+  }
+}
+[PUT] /api/form-settings/sapb1.dcSalesOrder.formSettings.v2
+Request body: {
+  "settings": {
+    "headerUdfs": {
+      "U_SCharge": {
+        "visible": true,
+        "active": true
+      },
+      "U_TRNS": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDT": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_VEHNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_DOCTHR": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRY": {
+        "visible": true,
+        "active": true
+      },
+      "U_RSLN": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRYST": {
+        "visible": true,
+        "active": true
+      },
+      "U_UOM": {
+        "visible": true,
+        "active": true
+      },
+      "U_Price": {
+        "visible": true,
+        "active": true
+      },
+      "U_SAmount": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_FromDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_ToDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_AddressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Scontactperson": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyer_addressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_VC_LRNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_IRN": {
+        "visible": true,
+        "active": true
+      },
+      "U_Canceled": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfId": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfName": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVehi": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfDist": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfMode": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVType": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_CanDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_QrCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_SigInv": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbVliDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EWayBCan": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVeh": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVehPosted": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSuply": {
+        "visible": true,
+        "active": true
+      },
+      "U_DocType": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSRemk": {
+        "visible": true,
+        "active": true
+      },
+      "U_TraType": {
+        "visible": true,
+        "active": true
+      },
+      "U_DelRemarks": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSER": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSERCODE": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "matrixColumns": {
+      "itemNo": {
+        "visible": true,
+        "active": true
+      },
+      "itemDescription": {
+        "visible": true,
+        "active": true
+      },
+      "unit": {
+        "visible": true,
+        "active": true
+      },
+      "quantity": {
+        "visible": true,
+        "active": true
+      },
+      "unitPrice": {
+        "visible": true,
+        "active": true
+      },
+      "discountAmount": {
+        "visible": true,
+        "active": true
+      },
+      "amount": {
+        "visible": true,
+        "active": true
+      },
+      "netRate": {
+        "visible": true,
+        "active": true
+      },
+      "taxableAmount": {
+        "visible": true,
+        "active": true
+      },
+      "totalLC": {
+        "visible": true,
+        "active": true
+      },
+      "taxCode": {
+        "visible": true,
+        "active": true
+      },
+      "taxAmount": {
+        "visible": true,
+        "active": true
+      },
+      "stdDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "commissionAmountPerTon": {
+        "visible": true,
+        "active": true
+      },
+      "commissionPercent": {
+        "visible": true,
+        "active": true
+      },
+      "commissionAmount": {
+        "visible": true,
+        "active": true
+      },
+      "openQty": {
+        "visible": true,
+        "active": true
+      },
+      "countryOfOrigin": {
+        "visible": true,
+        "active": true
+      },
+      "loc": {
+        "visible": true,
+        "active": true
+      },
+      "hsnCode": {
+        "visible": true,
+        "active": true
+      },
+      "sacCode": {
+        "visible": true,
+        "active": true
+      },
+      "sellerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "buyerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "sellerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "buyerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerageAmtPer": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePercent": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "qtySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "deliverySpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "deliveredQty": {
+        "visible": true,
+        "active": true
+      },
+      "stcode": {
+        "visible": true,
+        "active": true
+      },
+      "whse": {
+        "visible": true,
+        "active": true
+      },
+      "distRule": {
+        "visible": true,
+        "active": true
+      },
+      "freeText": {
+        "visible": true,
+        "active": true
+      },
+      "uomCode": {
+        "visible": true,
+        "active": true
+      },
+      "uomName": {
+        "visible": true,
+        "active": true
+      },
+      "specialRebate": {
+        "visible": true,
+        "active": true
+      },
+      "commission": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePerQty": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "freightPurchase": {
+        "visible": true,
+        "active": true
+      },
+      "freightSales": {
+        "visible": true,
+        "active": true
+      },
+      "freightProvider": {
+        "visible": true,
+        "active": true
+      },
+      "freightProviderName": {
+        "visible": true,
+        "active": true
+      },
+      "documentCreated": {
+        "visible": true,
+        "active": true
+      },
+      "brokerageNumber": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "rowUdfs": {
+      "U_Loc": {
+        "visible": true,
+        "active": true
+      },
+      "U_Branch": {
+        "visible": true,
+        "active": true
+      },
+      "U_QcStatus": {
+        "visible": true,
+        "active": true
+      }
+    }
+  }
+}
+[PUT] /api/form-settings/sapb1.dcDelivery.formSettings.v4
+Request body: {
+  "settings": {
+    "headerUdfs": {
+      "U_SCharge": {
+        "visible": true,
+        "active": true
+      },
+      "U_TRNS": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDT": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_DSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTN": {
+        "visible": true,
+        "active": true
+      },
+      "U_FDSTNADD": {
+        "visible": true,
+        "active": true
+      },
+      "U_VEHNO": {
+        "visible": true,
+        "active": true
+      },
+      "U_DOCTHR": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRY": {
+        "visible": true,
+        "active": true
+      },
+      "U_RSLN": {
+        "visible": true,
+        "active": true
+      },
+      "U_QRYST": {
+        "visible": true,
+        "active": true
+      },
+      "U_UOM": {
+        "visible": true,
+        "active": true
+      },
+      "U_Price": {
+        "visible": true,
+        "active": true
+      },
+      "U_SAmount": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_FromDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_B_ToDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_AddressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Seller_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Invoice_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_No": {
+        "visible": true,
+        "active": true
+      },
+      "U_Old_Soda_Nodh_Date": {
+        "visible": true,
+        "active": true
+      },
+      "U_Scontactperson": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_Code": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_2_name": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyer_addressId": {
+        "visible": true,
+        "active": true
+      },
+      "U_Buyers_Address": {
+        "visible": true,
+        "active": true
+      },
+      "U_LRDate": {
+        "visible": true,
+        "active": true
+      },
+      "U_VC_LRNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_IRN": {
+        "visible": true,
+        "active": true
+      },
+      "U_Canceled": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfId": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfName": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVehi": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfDist": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfMode": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfVType": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckNo": {
+        "visible": true,
+        "active": true
+      },
+      "U_AckDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_CanDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_QrCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_SigInv": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EwbVliDt": {
+        "visible": true,
+        "active": true
+      },
+      "U_EWayBCan": {
+        "visible": true,
+        "active": true
+      },
+      "U_TrfCode": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVeh": {
+        "visible": true,
+        "active": true
+      },
+      "U_MultiVehPosted": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSuply": {
+        "visible": true,
+        "active": true
+      },
+      "U_DocType": {
+        "visible": true,
+        "active": true
+      },
+      "U_SubSRemk": {
+        "visible": true,
+        "active": true
+      },
+      "U_TraType": {
+        "visible": true,
+        "active": true
+      },
+      "U_DelRemarks": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSER": {
+        "visible": true,
+        "active": true
+      },
+      "U_WEBUSERCODE": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "matrixColumns": {
+      "itemNo": {
+        "visible": true,
+        "active": true
+      },
+      "itemDescription": {
+        "visible": true,
+        "active": true
+      },
+      "unit": {
+        "visible": true,
+        "active": true
+      },
+      "openQty": {
+        "visible": true,
+        "active": true
+      },
+      "quantity": {
+        "visible": true,
+        "active": true
+      },
+      "balQty": {
+        "visible": true,
+        "active": true
+      },
+      "unitPrice": {
+        "visible": true,
+        "active": true
+      },
+      "discountAmount": {
+        "visible": true,
+        "active": true
+      },
+      "amount": {
+        "visible": true,
+        "active": true
+      },
+      "netRate": {
+        "visible": true,
+        "active": true
+      },
+      "taxableAmount": {
+        "visible": true,
+        "active": true
+      },
+      "totalLC": {
+        "visible": true,
+        "active": true
+      },
+      "taxCode": {
+        "visible": true,
+        "active": true
+      },
+      "taxAmount": {
+        "visible": true,
+        "active": true
+      },
+      "rate": {
+        "visible": true,
+        "active": true
+      },
+      "commissionPercent": {
+        "visible": true,
+        "active": true
+      },
+      "commissionAmount": {
+        "visible": true,
+        "active": true
+      },
+      "stdDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "countryOfOrigin": {
+        "visible": true,
+        "active": true
+      },
+      "loc": {
+        "visible": true,
+        "active": true
+      },
+      "commissionAmountPerTon": {
+        "visible": true,
+        "active": true
+      },
+      "hsnCode": {
+        "visible": true,
+        "active": true
+      },
+      "sacCode": {
+        "visible": true,
+        "active": true
+      },
+      "commissionBy": {
+        "visible": true,
+        "active": true
+      },
+      "sellerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "buyerQuality": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPrice": {
+        "visible": true,
+        "active": true
+      },
+      "buyerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "sellerDelivery": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBrokerage": {
+        "visible": true,
+        "active": true
+      },
+      "sellerSpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "buyerSpecialInstruction": {
+        "visible": true,
+        "active": true
+      },
+      "deliveredQty": {
+        "visible": true,
+        "active": true
+      },
+      "whse": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokerageAmtPer": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePercent": {
+        "visible": true,
+        "active": true
+      },
+      "buyerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBillDiscount": {
+        "visible": true,
+        "active": true
+      },
+      "stcode": {
+        "visible": true,
+        "active": true
+      },
+      "buyerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "sellerPaymentTerms": {
+        "visible": true,
+        "active": true
+      },
+      "freightPurchase": {
+        "visible": true,
+        "active": true
+      },
+      "freightSales": {
+        "visible": true,
+        "active": true
+      },
+      "freightProvider": {
+        "visible": true,
+        "active": true
+      },
+      "freightProviderName": {
+        "visible": true,
+        "active": true
+      },
+      "documentCreated": {
+        "visible": true,
+        "active": true
+      },
+      "brokerageNumber": {
+        "visible": true,
+        "active": true
+      },
+      "uomCode": {
+        "visible": true,
+        "active": true
+      },
+      "distRule": {
+        "visible": true,
+        "active": true
+      },
+      "branch": {
+        "visible": true,
+        "active": true
+      },
+      "unitPriceRepeat": {
+        "visible": true,
+        "active": true
+      },
+      "specialRebate": {
+        "visible": true,
+        "active": true
+      },
+      "commission": {
+        "visible": true,
+        "active": true
+      },
+      "sellerBrokeragePerQty": {
+        "visible": true,
+        "active": true
+      },
+      "sellerItem": {
+        "visible": true,
+        "active": true
+      },
+      "sellerQty": {
+        "visible": true,
+        "active": true
+      },
+      "batch": {
+        "visible": true,
+        "active": true
+      }
+    },
+    "rowUdfs": {
+      "U_Loc": {
+        "visible": false,
+        "active": true
+      },
+      "U_Branch": {
+        "visible": false,
+        "active": true
+      },
+      "U_PackingStatus": {
+        "visible": false,
+        "active": true
+      }
+    }
+  }
+}
+[DB] getDelivery - requested identifier: 36729, resolved DocEntry: 36729, Line rows found: 1
+[DB] getDelivery - First line: {
+  LineNum: 0,
+  ItemCode: 'Cyclopentanone',
+  ItemDescription: 'Cyclopentanone',
+  Quantity: 10,
+  UnitPrice: 1233,
+  DiscountPercent: 0,
+  LineTotal: 12330,
+  Warehouse: '01',
+  OpenQuantity: 10,
+  TaxCode: 'CGST 0.1',
+  LineTaxAmount: 12.33,
+  UomFactor: 1,
+  UoMEntry: -1,
+  UoMCode: 'Manual',
+  DistributionRule: '',
+  FreeText: null,
+  CountryOfOrigin: null,
+  BaseEntry: null,
+  BaseType: -1,
+  BaseLine: null,
+  DiscountAmount: null,
+  HSNCode: '2914.29.90',
+  BatchManaged: 'N',
+  Branch: '',
+  Loc: ''
+}
+[DB] getDelivery - requested identifier: 36729, resolved DocEntry: 36729, Line rows found: 1
+[DB] getDelivery - First line: {
+  LineNum: 0,
+  ItemCode: 'Cyclopentanone',
+  ItemDescription: 'Cyclopentanone',
+  Quantity: 10,
+  UnitPrice: 1233,
+  DiscountPercent: 0,
+  LineTotal: 12330,
+  Warehouse: '01',
+  OpenQuantity: 10,
+  TaxCode: 'CGST 0.1',
+  LineTaxAmount: 12.33,
+  UomFactor: 1,
+  UoMEntry: -1,
+  UoMCode: 'Manual',
+  DistributionRule: '',
+  FreeText: null,
+  CountryOfOrigin: null,
+  BaseEntry: null,
+  BaseType: -1,
+  BaseLine: null,
+  DiscountAmount: null,
+  HSNCode: '2914.29.90',
+  BatchManaged: 'N',
+  Branch: '',
+  Loc: ''
+}
+[DB] getDelivery - requested identifier: 36729, resolved DocEntry: 36729, Line rows found: 1
+[DB] getDelivery - First line: {
+  LineNum: 0,
+  ItemCode: 'Cyclopentanone',
+  ItemDescription: 'Cyclopentanone',
+  Quantity: 10,
+  UnitPrice: 1233,
+  DiscountPercent: 0,
+  LineTotal: 12330,
+  Warehouse: '01',
+  OpenQuantity: 10,
+  TaxCode: 'CGST 0.1',
+  LineTaxAmount: 12.33,
+  UomFactor: 1,
+  UoMEntry: -1,
+  UoMCode: 'Manual',
+  DistributionRule: '',
+  FreeText: null,
+  CountryOfOrigin: null,
+  BaseEntry: null,
+  BaseType: -1,
+  BaseLine: null,
+  DiscountAmount: null,
+  HSNCode: '2914.29.90',
+  BatchManaged: 'N',
+  Branch: '',
+  Loc: ''
+}
+[DB] getDelivery - requested identifier: 36729, resolved DocEntry: 36729, Line rows found: 1
+[DB] getDelivery - First line: {
+  LineNum: 0,
+  ItemCode: 'Cyclopentanone',
+  ItemDescription: 'Cyclopentanone',
+  Quantity: 10,
+  UnitPrice: 1233,
+  DiscountPercent: 0,
+  LineTotal: 12330,
+  Warehouse: '01',
+  OpenQuantity: 10,
+  TaxCode: 'CGST 0.1',
+  LineTaxAmount: 12.33,
+  UomFactor: 1,
+  UoMEntry: -1,
+  UoMCode: 'Manual',
+  DistributionRule: '',
+  FreeText: null,
+  CountryOfOrigin: null,
+  BaseEntry: null,
+  BaseType: -1,
+  BaseLine: null,
+  DiscountAmount: null,
+  HSNCode: '2914.29.90',
+  BatchManaged: 'N',
+  Branch: '',
+  Loc: ''
+}
+[DB] getDelivery - requested identifier: 36729, resolved DocEntry: 36729, Line rows found: 1
+[DB] getDelivery - First line: {
+  LineNum: 0,
+  ItemCode: 'Cyclopentanone',
+  ItemDescription: 'Cyclopentanone',
+  Quantity: 10,
+  UnitPrice: 1233,
+  DiscountPercent: 0,
+  LineTotal: 12330,
+  Warehouse: '01',
+  OpenQuantity: 10,
+  TaxCode: 'CGST 0.1',
+  LineTaxAmount: 12.33,
+  UomFactor: 1,
+  UoMEntry: -1,
+  UoMCode: 'Manual',
+  DistributionRule: '',
+  FreeText: null,
+  CountryOfOrigin: null,
+  BaseEntry: null,
+  BaseType: -1,
+  BaseLine: null,
+  DiscountAmount: null,
+  HSNCode: '2914.29.90',
+  BatchManaged: 'N',
+  Branch: '',
+  Loc: ''
+}
+[DB] getDelivery - requested identifier: 36729, resolved DocEntry: 36729, Line rows found: 1
+[DB] getDelivery - First line: {
+  LineNum: 0,
+  ItemCode: 'Cyclopentanone',
+  ItemDescription: 'Cyclopentanone',
+  Quantity: 10,
+  UnitPrice: 1233,
+  DiscountPercent: 0,
+  LineTotal: 12330,
+  Warehouse: '01',
+  OpenQuantity: 10,
+  TaxCode: 'CGST 0.1',
+  LineTaxAmount: 12.33,
+  UomFactor: 1,
+  UoMEntry: -1,
+  UoMCode: 'Manual',
+  DistributionRule: '',
+  FreeText: null,
+  CountryOfOrigin: null,
+  BaseEntry: null,
+  BaseType: -1,
+  BaseLine: null,
+  DiscountAmount: null,
+  HSNCode: '2914.29.90',
+  BatchManaged: 'N',
+  Branch: '',
+  Loc: ''
+}
+[POST] /api/ar-invoice
+Request body: {
+  "company_id": "1",
+  "header": {
+    "vendor": "CUS01074",
+    "name": "A PATRA ENTERPRISE",
+    "contactPerson": "3219",
+    "salesContractNo": "",
+    "branch": "-1",
+    "warehouse": "01",
+    "docNo": "",
+    "status": "Open",
+    "series": 423,
+    "nextNumber": "8",
+    "postingDate": "2026-06-07",
+    "deliveryDate": "2026-06-07",
+    "documentDate": "2026-06-07",
+    "contractDate": "",
+    "branchRegNo": "",
+    "shipTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "shipToCode": "A PATRA ENTERPRISE",
+    "payTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "payToCode": "A PATRA ENTERPRISE",
+    "transactionType": "GST Tax Invoice",
+    "indicator": "",
+    "shippingType": "",
+    "confirmed": false,
+    "journalRemark": "",
+    "paymentTerms": "3",
+    "paymentMethod": "",
+    "otherInstruction": "Based on DC Delivery 19.",
+    "discount": "",
+    "freight": "",
+    "tax": "",
+    "totalPaymentDue": "",
+    "rounding": false,
+    "owner": "",
+    "purchaser": "",
+    "salesEmployee": "",
+    "placeOfSupply": "GJ",
+    "currency": "INR",
+    "useBillToForTax": false,
+    "billToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "billToCode": "A PATRA ENTERPRISE",
+    "shipToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "ownerCode": "",
+    "language": "",
+    "trackingNo": "",
+    "stampNo": "",
+    "pickPackRemarks": "",
+    "bpChannelName": "",
+    "bpChannelContact": ""
+  },
+  "lines": [
+    {
+      "itemNo": "Cyclopentanone",
+      "itemDescription": "Cyclopentanone",
+      "hsnCode": "2914.29.90",
+      "quantity": "10",
+      "unitPrice": "1233",
+      "openQty": "10",
+      "uomCode": "Manual",
+      "stdDiscount": "0",
+      "taxCode": "CGST 0.1",
+      "total": "12330",
+      "whse": "01",
+      "loc": "-1",
+      "branch": "-1",
+      "wTaxLiable": "N",
+      "glAccount": "",
+      "distRule": "",
+      "taxLiable": "Y",
+      "weight": "",
+      "taxAmount": "12.33",
+      "uomName": "Manual",
+      "cogsDistRule": "",
+      "countryOfOrigin": "",
+      "qtyInventoryUom": "",
+      "inventoryUOM": "",
+      "changeQtyInvUomIndependently": "N",
+      "uomGroup": "",
+      "blanketAgreementNo": "",
+      "saudaNodeRef": "",
+      "apInvDocKey": "",
+      "apInvDocNum": "",
+      "apInvLineNum": "",
+      "assessableValue": "",
+      "bedRate": "",
+      "bedAmount": "",
+      "rg23dNo": "",
+      "specialRebate": "0",
+      "commission": "0",
+      "sellerBrokeragePerQty": "0",
+      "sellerItem": "Cyclopentanone",
+      "sellerUnitPrice": "",
+      "sellerQty": "0",
+      "sellerBrokerage": "",
+      "buyerBrokerage": "0",
+      "buyerDelivery": "",
+      "sellerDelivery": "",
+      "buyerQuality": "",
+      "sellerQuality": "",
+      "buyerPrice": "",
+      "sellerPrice": "",
+      "buyerSpecialInstruction": "",
+      "sellerSpecialInstruction": "",
+      "sellerBrokerageAmtPer": "Amount",
+      "sellerBrokeragePercent": "0",
+      "buyerBillDiscount": "0",
+      "sellerBillDiscount": "0",
+      "sacCode": "",
+      "stcode": "CGST 0.1",
+      "buyerPaymentTerms": "",
+      "sellerPaymentTerms": "",
+      "freightPurchase": "0",
+      "freightSales": "0",
+      "freightProvider": "",
+      "freightProviderName": "",
+      "documentCreated": "2026-05-28",
+      "brokerageNumber": "",
+      "udf": {
+        "U_Sel_Brok_AP": "Amount",
+        "U_IsCreated": "N"
+      },
+      "itemServiceType": "Item",
+      "discountAmount": "",
+      "unitPriceUdf": "0",
+      "qtySpecialInstruction": "",
+      "deliverySpecialInstruction": "",
+      "freeText": "",
+      "deliveredQty": "0",
+      "baseEntry": 36729,
+      "baseType": 15,
+      "baseLine": 0,
+      "commissionAmountPerTon": "",
+      "commissionBy": ""
+    }
+  ],
+  "freightCharges": [],
+  "withholdingTaxRows": [],
+  "header_udfs": {
+    "U_SCharge": "",
+    "U_TRNS": "",
+    "U_LRNO": "",
+    "U_LRDT": "",
+    "U_DSTN": "",
+    "U_DSTNADD": "",
+    "U_FDSTN": "",
+    "U_FDSTNADD": "",
+    "U_VEHNO": "",
+    "U_DOCTHR": "",
+    "U_QRY": "",
+    "U_RSLN": "",
+    "U_QRYST": "",
+    "U_UOM": "",
+    "U_Price": "0",
+    "U_SAmount": "0",
+    "U_B_FromDate": "",
+    "U_B_ToDate": "",
+    "U_Seller_Code": "",
+    "U_Seller_Name": "",
+    "U_Seller_AddressId": "",
+    "U_Seller_Address": "",
+    "U_Invoice_No": "",
+    "U_Invoice_Date": "",
+    "U_Old_Soda_Nodh_No": "",
+    "U_Old_Soda_Nodh_Date": "",
+    "U_Scontactperson": "",
+    "U_Buyers_2_Code": "",
+    "U_Buyers_2_name": "",
+    "U_Buyer_addressId": "",
+    "U_Buyers_Address": "",
+    "U_LRDate": "",
+    "U_VC_LRNo": "",
+    "U_EwbNo": "",
+    "U_IRN": "",
+    "U_Canceled": "N",
+    "U_TrfId": "",
+    "U_TrfName": "",
+    "U_TrfVehi": "",
+    "U_TrfDist": "",
+    "U_TrfMode": "1",
+    "U_TrfVType": "R",
+    "U_AckNo": "",
+    "U_AckDt": "",
+    "U_CanDt": "",
+    "U_QrCode": "",
+    "U_SigInv": "",
+    "U_EwbDt": "",
+    "U_EwbVliDt": "",
+    "U_EWayBCan": "No",
+    "U_TrfCode": "",
+    "U_MultiVeh": "No",
+    "U_MultiVehPosted": "No",
+    "U_SubSuply": "1",
+    "U_DocType": "INV",
+    "U_SubSRemk": "",
+    "U_TraType": "1",
+    "U_DelRemarks": "",
+    "U_WEBUSER": "Admin User",
+    "U_WEBUSERCODE": "1"
+  }
+}
+[SAP] Session established for NCPL_110126
+[POST] /api/ar-invoice
+Request body: {
+  "company_id": "1",
+  "header": {
+    "vendor": "CUS01074",
+    "name": "A PATRA ENTERPRISE",
+    "contactPerson": "3219",
+    "salesContractNo": "",
+    "branch": "-1",
+    "warehouse": "01",
+    "docNo": "",
+    "status": "Open",
+    "series": 423,
+    "nextNumber": "8",
+    "postingDate": "2026-06-07",
+    "deliveryDate": "2026-06-07",
+    "documentDate": "2026-06-07",
+    "contractDate": "",
+    "branchRegNo": "",
+    "shipTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "shipToCode": "A PATRA ENTERPRISE",
+    "payTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "payToCode": "A PATRA ENTERPRISE",
+    "transactionType": "GST Tax Invoice",
+    "indicator": "",
+    "shippingType": "",
+    "confirmed": false,
+    "journalRemark": "",
+    "paymentTerms": "3",
+    "paymentMethod": "",
+    "otherInstruction": "Based on DC Delivery 19.",
+    "discount": "",
+    "freight": "",
+    "tax": "",
+    "totalPaymentDue": "",
+    "rounding": false,
+    "owner": "",
+    "purchaser": "",
+    "salesEmployee": "",
+    "placeOfSupply": "GJ",
+    "currency": "INR",
+    "useBillToForTax": false,
+    "billToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "billToCode": "A PATRA ENTERPRISE",
+    "shipToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "ownerCode": "",
+    "language": "",
+    "trackingNo": "",
+    "stampNo": "",
+    "pickPackRemarks": "",
+    "bpChannelName": "",
+    "bpChannelContact": ""
+  },
+  "lines": [
+    {
+      "itemNo": "Cyclopentanone",
+      "itemDescription": "Cyclopentanone",
+      "hsnCode": "2914.29.90",
+      "quantity": "10",
+      "unitPrice": "1233",
+      "openQty": "10",
+      "uomCode": "Manual",
+      "stdDiscount": "0",
+      "taxCode": "CGST 0.1",
+      "total": "12330",
+      "whse": "01",
+      "loc": "-1",
+      "branch": "-1",
+      "wTaxLiable": "N",
+      "glAccount": "",
+      "distRule": "",
+      "taxLiable": "Y",
+      "weight": "",
+      "taxAmount": "12.33",
+      "uomName": "Manual",
+      "cogsDistRule": "",
+      "countryOfOrigin": "",
+      "qtyInventoryUom": "",
+      "inventoryUOM": "",
+      "changeQtyInvUomIndependently": "N",
+      "uomGroup": "",
+      "blanketAgreementNo": "",
+      "saudaNodeRef": "",
+      "apInvDocKey": "",
+      "apInvDocNum": "",
+      "apInvLineNum": "",
+      "assessableValue": "",
+      "bedRate": "",
+      "bedAmount": "",
+      "rg23dNo": "",
+      "specialRebate": "0",
+      "commission": "0",
+      "sellerBrokeragePerQty": "0",
+      "sellerItem": "Cyclopentanone",
+      "sellerUnitPrice": "",
+      "sellerQty": "0",
+      "sellerBrokerage": "",
+      "buyerBrokerage": "0",
+      "buyerDelivery": "",
+      "sellerDelivery": "",
+      "buyerQuality": "",
+      "sellerQuality": "",
+      "buyerPrice": "",
+      "sellerPrice": "",
+      "buyerSpecialInstruction": "",
+      "sellerSpecialInstruction": "",
+      "sellerBrokerageAmtPer": "Amount",
+      "sellerBrokeragePercent": "0",
+      "buyerBillDiscount": "0",
+      "sellerBillDiscount": "0",
+      "sacCode": "",
+      "stcode": "CGST 0.1",
+      "buyerPaymentTerms": "",
+      "sellerPaymentTerms": "",
+      "freightPurchase": "0",
+      "freightSales": "0",
+      "freightProvider": "",
+      "freightProviderName": "",
+      "documentCreated": "2026-05-28",
+      "brokerageNumber": "",
+      "udf": {
+        "U_Sel_Brok_AP": "Amount",
+        "U_IsCreated": "N"
+      },
+      "itemServiceType": "Item",
+      "discountAmount": "",
+      "unitPriceUdf": "0",
+      "qtySpecialInstruction": "",
+      "deliverySpecialInstruction": "",
+      "freeText": "",
+      "deliveredQty": "0",
+      "baseEntry": 36729,
+      "baseType": 15,
+      "baseLine": 0,
+      "commissionAmountPerTon": "",
+      "commissionBy": ""
+    }
+  ],
+  "freightCharges": [],
+  "withholdingTaxRows": [],
+  "header_udfs": {
+    "U_SCharge": "",
+    "U_TRNS": "",
+    "U_LRNO": "",
+    "U_LRDT": "",
+    "U_DSTN": "",
+    "U_DSTNADD": "",
+    "U_FDSTN": "",
+    "U_FDSTNADD": "",
+    "U_VEHNO": "",
+    "U_DOCTHR": "",
+    "U_QRY": "",
+    "U_RSLN": "",
+    "U_QRYST": "",
+    "U_UOM": "",
+    "U_Price": "0",
+    "U_SAmount": "0",
+    "U_B_FromDate": "",
+    "U_B_ToDate": "",
+    "U_Seller_Code": "",
+    "U_Seller_Name": "",
+    "U_Seller_AddressId": "",
+    "U_Seller_Address": "",
+    "U_Invoice_No": "",
+    "U_Invoice_Date": "",
+    "U_Old_Soda_Nodh_No": "",
+    "U_Old_Soda_Nodh_Date": "",
+    "U_Scontactperson": "",
+    "U_Buyers_2_Code": "",
+    "U_Buyers_2_name": "",
+    "U_Buyer_addressId": "",
+    "U_Buyers_Address": "",
+    "U_LRDate": "",
+    "U_VC_LRNo": "",
+    "U_EwbNo": "",
+    "U_IRN": "",
+    "U_Canceled": "N",
+    "U_TrfId": "",
+    "U_TrfName": "",
+    "U_TrfVehi": "",
+    "U_TrfDist": "",
+    "U_TrfMode": "1",
+    "U_TrfVType": "R",
+    "U_AckNo": "",
+    "U_AckDt": "",
+    "U_CanDt": "",
+    "U_QrCode": "",
+    "U_SigInv": "",
+    "U_EwbDt": "",
+    "U_EwbVliDt": "",
+    "U_EWayBCan": "No",
+    "U_TrfCode": "",
+    "U_MultiVeh": "No",
+    "U_MultiVehPosted": "No",
+    "U_SubSuply": "1",
+    "U_DocType": "INV",
+    "U_SubSRemk": "",
+    "U_TraType": "1",
+    "U_DelRemarks": "",
+    "U_WEBUSER": "Admin User",
+    "U_WEBUSERCODE": "1"
+  }
+}
+[POST] /api/ar-invoice
+Request body: {
+  "company_id": "1",
+  "header": {
+    "vendor": "CUS01074",
+    "name": "A PATRA ENTERPRISE",
+    "contactPerson": "3219",
+    "salesContractNo": "",
+    "branch": "-1",
+    "warehouse": "01",
+    "docNo": "",
+    "status": "Open",
+    "series": 423,
+    "nextNumber": "8",
+    "postingDate": "2026-06-07",
+    "deliveryDate": "2026-06-07",
+    "documentDate": "2026-06-07",
+    "contractDate": "",
+    "branchRegNo": "",
+    "shipTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "shipToCode": "A PATRA ENTERPRISE",
+    "payTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "payToCode": "A PATRA ENTERPRISE",
+    "transactionType": "GST Tax Invoice",
+    "indicator": "",
+    "shippingType": "",
+    "confirmed": false,
+    "journalRemark": "",
+    "paymentTerms": "3",
+    "paymentMethod": "",
+    "otherInstruction": "Based on DC Delivery 19.",
+    "discount": "",
+    "freight": "",
+    "tax": "",
+    "totalPaymentDue": "",
+    "rounding": false,
+    "owner": "",
+    "purchaser": "",
+    "salesEmployee": "",
+    "placeOfSupply": "GJ",
+    "currency": "INR",
+    "useBillToForTax": false,
+    "billToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "billToCode": "A PATRA ENTERPRISE",
+    "shipToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "ownerCode": "",
+    "language": "",
+    "trackingNo": "",
+    "stampNo": "",
+    "pickPackRemarks": "",
+    "bpChannelName": "",
+    "bpChannelContact": ""
+  },
+  "lines": [
+    {
+      "itemNo": "Cyclopentanone",
+      "itemDescription": "Cyclopentanone",
+      "hsnCode": "2914.29.90",
+      "quantity": "10",
+      "unitPrice": "1233",
+      "openQty": "10",
+      "uomCode": "Manual",
+      "stdDiscount": "0",
+      "taxCode": "CGST 0.1",
+      "total": "12330",
+      "whse": "01",
+      "loc": "-1",
+      "branch": "-1",
+      "wTaxLiable": "N",
+      "glAccount": "",
+      "distRule": "",
+      "taxLiable": "Y",
+      "weight": "",
+      "taxAmount": "12.33",
+      "uomName": "Manual",
+      "cogsDistRule": "",
+      "countryOfOrigin": "",
+      "qtyInventoryUom": "",
+      "inventoryUOM": "",
+      "changeQtyInvUomIndependently": "N",
+      "uomGroup": "",
+      "blanketAgreementNo": "",
+      "saudaNodeRef": "",
+      "apInvDocKey": "",
+      "apInvDocNum": "",
+      "apInvLineNum": "",
+      "assessableValue": "",
+      "bedRate": "",
+      "bedAmount": "",
+      "rg23dNo": "",
+      "specialRebate": "0",
+      "commission": "0",
+      "sellerBrokeragePerQty": "0",
+      "sellerItem": "Cyclopentanone",
+      "sellerUnitPrice": "",
+      "sellerQty": "0",
+      "sellerBrokerage": "",
+      "buyerBrokerage": "0",
+      "buyerDelivery": "",
+      "sellerDelivery": "",
+      "buyerQuality": "",
+      "sellerQuality": "",
+      "buyerPrice": "",
+      "sellerPrice": "",
+      "buyerSpecialInstruction": "",
+      "sellerSpecialInstruction": "",
+      "sellerBrokerageAmtPer": "Amount",
+      "sellerBrokeragePercent": "0",
+      "buyerBillDiscount": "0",
+      "sellerBillDiscount": "0",
+      "sacCode": "",
+      "stcode": "CGST 0.1",
+      "buyerPaymentTerms": "",
+      "sellerPaymentTerms": "",
+      "freightPurchase": "0",
+      "freightSales": "0",
+      "freightProvider": "",
+      "freightProviderName": "",
+      "documentCreated": "2026-05-28",
+      "brokerageNumber": "",
+      "udf": {
+        "U_Sel_Brok_AP": "Amount",
+        "U_IsCreated": "N"
+      },
+      "itemServiceType": "Item",
+      "discountAmount": "",
+      "unitPriceUdf": "0",
+      "qtySpecialInstruction": "",
+      "deliverySpecialInstruction": "",
+      "freeText": "",
+      "deliveredQty": "0",
+      "baseEntry": 36729,
+      "baseType": 15,
+      "baseLine": 0,
+      "commissionAmountPerTon": "",
+      "commissionBy": ""
+    }
+  ],
+  "freightCharges": [],
+  "withholdingTaxRows": [],
+  "header_udfs": {
+    "U_SCharge": "",
+    "U_TRNS": "",
+    "U_LRNO": "",
+    "U_LRDT": "",
+    "U_DSTN": "",
+    "U_DSTNADD": "",
+    "U_FDSTN": "",
+    "U_FDSTNADD": "",
+    "U_VEHNO": "",
+    "U_DOCTHR": "",
+    "U_QRY": "",
+    "U_RSLN": "",
+    "U_QRYST": "",
+    "U_UOM": "",
+    "U_Price": "0",
+    "U_SAmount": "0",
+    "U_B_FromDate": "",
+    "U_B_ToDate": "",
+    "U_Seller_Code": "",
+    "U_Seller_Name": "",
+    "U_Seller_AddressId": "",
+    "U_Seller_Address": "",
+    "U_Invoice_No": "",
+    "U_Invoice_Date": "",
+    "U_Old_Soda_Nodh_No": "",
+    "U_Old_Soda_Nodh_Date": "",
+    "U_Scontactperson": "",
+    "U_Buyers_2_Code": "",
+    "U_Buyers_2_name": "",
+    "U_Buyer_addressId": "",
+    "U_Buyers_Address": "",
+    "U_LRDate": "",
+    "U_VC_LRNo": "",
+    "U_EwbNo": "",
+    "U_IRN": "",
+    "U_Canceled": "N",
+    "U_TrfId": "",
+    "U_TrfName": "",
+    "U_TrfVehi": "",
+    "U_TrfDist": "",
+    "U_TrfMode": "1",
+    "U_TrfVType": "R",
+    "U_AckNo": "",
+    "U_AckDt": "",
+    "U_CanDt": "",
+    "U_QrCode": "",
+    "U_SigInv": "",
+    "U_EwbDt": "",
+    "U_EwbVliDt": "",
+    "U_EWayBCan": "No",
+    "U_TrfCode": "",
+    "U_MultiVeh": "No",
+    "U_MultiVehPosted": "No",
+    "U_SubSuply": "1",
+    "U_DocType": "INV",
+    "U_SubSRemk": "",
+    "U_TraType": "1",
+    "U_DelRemarks": "",
+    "U_WEBUSER": "Admin User",
+    "U_WEBUSERCODE": "1"
+  }
+}
+[POST] /api/ar-invoice
+Request body: {
+  "company_id": "1",
+  "header": {
+    "vendor": "CUS01074",
+    "name": "A PATRA ENTERPRISE",
+    "contactPerson": "3219",
+    "salesContractNo": "",
+    "branch": "-1",
+    "warehouse": "01",
+    "docNo": "",
+    "status": "Open",
+    "series": 423,
+    "nextNumber": "8",
+    "postingDate": "2026-06-07",
+    "deliveryDate": "2026-06-07",
+    "documentDate": "2026-06-07",
+    "contractDate": "",
+    "branchRegNo": "",
+    "shipTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "shipToCode": "A PATRA ENTERPRISE",
+    "payTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "payToCode": "A PATRA ENTERPRISE",
+    "transactionType": "GST Tax Invoice",
+    "indicator": "",
+    "shippingType": "",
+    "confirmed": false,
+    "journalRemark": "",
+    "paymentTerms": "3",
+    "paymentMethod": "",
+    "otherInstruction": "Based on DC Delivery 19.",
+    "discount": "",
+    "freight": "",
+    "tax": "",
+    "totalPaymentDue": "",
+    "rounding": false,
+    "owner": "",
+    "purchaser": "",
+    "salesEmployee": "",
+    "placeOfSupply": "GJ",
+    "currency": "INR",
+    "useBillToForTax": false,
+    "billToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "billToCode": "A PATRA ENTERPRISE",
+    "shipToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "ownerCode": "",
+    "language": "",
+    "trackingNo": "",
+    "stampNo": "",
+    "pickPackRemarks": "",
+    "bpChannelName": "",
+    "bpChannelContact": ""
+  },
+  "lines": [
+    {
+      "itemNo": "Cyclopentanone",
+      "itemDescription": "Cyclopentanone",
+      "hsnCode": "2914.29.90",
+      "quantity": "10",
+      "unitPrice": "1233",
+      "openQty": "10",
+      "uomCode": "Manual",
+      "stdDiscount": "0",
+      "taxCode": "CGST 0.1",
+      "total": "12330",
+      "whse": "01",
+      "loc": "-1",
+      "branch": "-1",
+      "wTaxLiable": "N",
+      "glAccount": "",
+      "distRule": "",
+      "taxLiable": "Y",
+      "weight": "",
+      "taxAmount": "12.33",
+      "uomName": "Manual",
+      "cogsDistRule": "",
+      "countryOfOrigin": "",
+      "qtyInventoryUom": "",
+      "inventoryUOM": "",
+      "changeQtyInvUomIndependently": "N",
+      "uomGroup": "",
+      "blanketAgreementNo": "",
+      "saudaNodeRef": "",
+      "apInvDocKey": "",
+      "apInvDocNum": "",
+      "apInvLineNum": "",
+      "assessableValue": "",
+      "bedRate": "",
+      "bedAmount": "",
+      "rg23dNo": "",
+      "specialRebate": "0",
+      "commission": "0",
+      "sellerBrokeragePerQty": "0",
+      "sellerItem": "Cyclopentanone",
+      "sellerUnitPrice": "",
+      "sellerQty": "0",
+      "sellerBrokerage": "",
+      "buyerBrokerage": "0",
+      "buyerDelivery": "",
+      "sellerDelivery": "",
+      "buyerQuality": "",
+      "sellerQuality": "",
+      "buyerPrice": "",
+      "sellerPrice": "",
+      "buyerSpecialInstruction": "",
+      "sellerSpecialInstruction": "",
+      "sellerBrokerageAmtPer": "Amount",
+      "sellerBrokeragePercent": "0",
+      "buyerBillDiscount": "0",
+      "sellerBillDiscount": "0",
+      "sacCode": "",
+      "stcode": "CGST 0.1",
+      "buyerPaymentTerms": "",
+      "sellerPaymentTerms": "",
+      "freightPurchase": "0",
+      "freightSales": "0",
+      "freightProvider": "",
+      "freightProviderName": "",
+      "documentCreated": "2026-05-28",
+      "brokerageNumber": "",
+      "udf": {
+        "U_Sel_Brok_AP": "Amount",
+        "U_IsCreated": "N"
+      },
+      "itemServiceType": "Item",
+      "discountAmount": "",
+      "unitPriceUdf": "0",
+      "qtySpecialInstruction": "",
+      "deliverySpecialInstruction": "",
+      "freeText": "",
+      "deliveredQty": "0",
+      "baseEntry": 36729,
+      "baseType": 15,
+      "baseLine": 0,
+      "commissionAmountPerTon": "",
+      "commissionBy": ""
+    }
+  ],
+  "freightCharges": [],
+  "withholdingTaxRows": [],
+  "header_udfs": {
+    "U_SCharge": "",
+    "U_TRNS": "",
+    "U_LRNO": "",
+    "U_LRDT": "",
+    "U_DSTN": "",
+    "U_DSTNADD": "",
+    "U_FDSTN": "",
+    "U_FDSTNADD": "",
+    "U_VEHNO": "",
+    "U_DOCTHR": "",
+    "U_QRY": "",
+    "U_RSLN": "",
+    "U_QRYST": "",
+    "U_UOM": "",
+    "U_Price": "0",
+    "U_SAmount": "0",
+    "U_B_FromDate": "",
+    "U_B_ToDate": "",
+    "U_Seller_Code": "",
+    "U_Seller_Name": "",
+    "U_Seller_AddressId": "",
+    "U_Seller_Address": "",
+    "U_Invoice_No": "",
+    "U_Invoice_Date": "",
+    "U_Old_Soda_Nodh_No": "",
+    "U_Old_Soda_Nodh_Date": "",
+    "U_Scontactperson": "",
+    "U_Buyers_2_Code": "",
+    "U_Buyers_2_name": "",
+    "U_Buyer_addressId": "",
+    "U_Buyers_Address": "",
+    "U_LRDate": "",
+    "U_VC_LRNo": "",
+    "U_EwbNo": "",
+    "U_IRN": "",
+    "U_Canceled": "N",
+    "U_TrfId": "",
+    "U_TrfName": "",
+    "U_TrfVehi": "",
+    "U_TrfDist": "",
+    "U_TrfMode": "1",
+    "U_TrfVType": "R",
+    "U_AckNo": "",
+    "U_AckDt": "",
+    "U_CanDt": "",
+    "U_QrCode": "",
+    "U_SigInv": "",
+    "U_EwbDt": "",
+    "U_EwbVliDt": "",
+    "U_EWayBCan": "No",
+    "U_TrfCode": "",
+    "U_MultiVeh": "No",
+    "U_MultiVehPosted": "No",
+    "U_SubSuply": "1",
+    "U_DocType": "INV",
+    "U_SubSRemk": "",
+    "U_TraType": "1",
+    "U_DelRemarks": "",
+    "U_WEBUSER": "Admin User",
+    "U_WEBUSERCODE": "1"
+  }
+}
+[POST] /api/ar-invoice
+Request body: {
+  "company_id": "1",
+  "header": {
+    "vendor": "CUS01074",
+    "name": "A PATRA ENTERPRISE",
+    "contactPerson": "3219",
+    "salesContractNo": "",
+    "branch": "-1",
+    "warehouse": "01",
+    "docNo": "",
+    "status": "Open",
+    "series": 423,
+    "nextNumber": "8",
+    "postingDate": "2026-06-07",
+    "deliveryDate": "2026-06-07",
+    "documentDate": "2026-06-07",
+    "contractDate": "",
+    "branchRegNo": "",
+    "shipTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "shipToCode": "A PATRA ENTERPRISE",
+    "payTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "payToCode": "A PATRA ENTERPRISE",
+    "transactionType": "GST Tax Invoice",
+    "indicator": "",
+    "shippingType": "",
+    "confirmed": false,
+    "journalRemark": "",
+    "paymentTerms": "3",
+    "paymentMethod": "",
+    "otherInstruction": "Based on DC Delivery 19.",
+    "discount": "",
+    "freight": "",
+    "tax": "",
+    "totalPaymentDue": "",
+    "rounding": false,
+    "owner": "",
+    "purchaser": "",
+    "salesEmployee": "",
+    "placeOfSupply": "GJ",
+    "currency": "INR",
+    "useBillToForTax": false,
+    "billToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "billToCode": "A PATRA ENTERPRISE",
+    "shipToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "ownerCode": "",
+    "language": "",
+    "trackingNo": "",
+    "stampNo": "",
+    "pickPackRemarks": "",
+    "bpChannelName": "",
+    "bpChannelContact": ""
+  },
+  "lines": [
+    {
+      "itemNo": "Cyclopentanone",
+      "itemDescription": "Cyclopentanone",
+      "hsnCode": "2914.29.90",
+      "quantity": "10",
+      "unitPrice": "1233",
+      "openQty": "10",
+      "uomCode": "Manual",
+      "stdDiscount": "0",
+      "taxCode": "CGST 0.1",
+      "total": "12330",
+      "whse": "01",
+      "loc": "-1",
+      "branch": "-1",
+      "wTaxLiable": "N",
+      "glAccount": "",
+      "distRule": "",
+      "taxLiable": "Y",
+      "weight": "",
+      "taxAmount": "12.33",
+      "uomName": "Manual",
+      "cogsDistRule": "",
+      "countryOfOrigin": "",
+      "qtyInventoryUom": "",
+      "inventoryUOM": "",
+      "changeQtyInvUomIndependently": "N",
+      "uomGroup": "",
+      "blanketAgreementNo": "",
+      "saudaNodeRef": "",
+      "apInvDocKey": "",
+      "apInvDocNum": "",
+      "apInvLineNum": "",
+      "assessableValue": "",
+      "bedRate": "",
+      "bedAmount": "",
+      "rg23dNo": "",
+      "specialRebate": "0",
+      "commission": "0",
+      "sellerBrokeragePerQty": "0",
+      "sellerItem": "Cyclopentanone",
+      "sellerUnitPrice": "",
+      "sellerQty": "0",
+      "sellerBrokerage": "",
+      "buyerBrokerage": "0",
+      "buyerDelivery": "",
+      "sellerDelivery": "",
+      "buyerQuality": "",
+      "sellerQuality": "",
+      "buyerPrice": "",
+      "sellerPrice": "",
+      "buyerSpecialInstruction": "",
+      "sellerSpecialInstruction": "",
+      "sellerBrokerageAmtPer": "Amount",
+      "sellerBrokeragePercent": "0",
+      "buyerBillDiscount": "0",
+      "sellerBillDiscount": "0",
+      "sacCode": "",
+      "stcode": "CGST 0.1",
+      "buyerPaymentTerms": "",
+      "sellerPaymentTerms": "",
+      "freightPurchase": "0",
+      "freightSales": "0",
+      "freightProvider": "",
+      "freightProviderName": "",
+      "documentCreated": "2026-05-28",
+      "brokerageNumber": "",
+      "udf": {
+        "U_Sel_Brok_AP": "Amount",
+        "U_IsCreated": "N"
+      },
+      "itemServiceType": "Item",
+      "discountAmount": "",
+      "unitPriceUdf": "0",
+      "qtySpecialInstruction": "",
+      "deliverySpecialInstruction": "",
+      "freeText": "",
+      "deliveredQty": "0",
+      "baseEntry": 36729,
+      "baseType": 15,
+      "baseLine": 0,
+      "commissionAmountPerTon": "",
+      "commissionBy": ""
+    }
+  ],
+  "freightCharges": [],
+  "withholdingTaxRows": [],
+  "header_udfs": {
+    "U_SCharge": "",
+    "U_TRNS": "",
+    "U_LRNO": "",
+    "U_LRDT": "",
+    "U_DSTN": "",
+    "U_DSTNADD": "",
+    "U_FDSTN": "",
+    "U_FDSTNADD": "",
+    "U_VEHNO": "",
+    "U_DOCTHR": "",
+    "U_QRY": "",
+    "U_RSLN": "",
+    "U_QRYST": "",
+    "U_UOM": "",
+    "U_Price": "0",
+    "U_SAmount": "0",
+    "U_B_FromDate": "",
+    "U_B_ToDate": "",
+    "U_Seller_Code": "",
+    "U_Seller_Name": "",
+    "U_Seller_AddressId": "",
+    "U_Seller_Address": "",
+    "U_Invoice_No": "",
+    "U_Invoice_Date": "",
+    "U_Old_Soda_Nodh_No": "",
+    "U_Old_Soda_Nodh_Date": "",
+    "U_Scontactperson": "",
+    "U_Buyers_2_Code": "",
+    "U_Buyers_2_name": "",
+    "U_Buyer_addressId": "",
+    "U_Buyers_Address": "",
+    "U_LRDate": "",
+    "U_VC_LRNo": "",
+    "U_EwbNo": "",
+    "U_IRN": "",
+    "U_Canceled": "N",
+    "U_TrfId": "",
+    "U_TrfName": "",
+    "U_TrfVehi": "",
+    "U_TrfDist": "",
+    "U_TrfMode": "1",
+    "U_TrfVType": "R",
+    "U_AckNo": "",
+    "U_AckDt": "",
+    "U_CanDt": "",
+    "U_QrCode": "",
+    "U_SigInv": "",
+    "U_EwbDt": "",
+    "U_EwbVliDt": "",
+    "U_EWayBCan": "No",
+    "U_TrfCode": "",
+    "U_MultiVeh": "No",
+    "U_MultiVehPosted": "No",
+    "U_SubSuply": "1",
+    "U_DocType": "INV",
+    "U_SubSRemk": "",
+    "U_TraType": "1",
+    "U_DelRemarks": "",
+    "U_WEBUSER": "Admin User",
+    "U_WEBUSERCODE": "1"
+  }
+}
+[POST] /api/ar-invoice
+Request body: {
+  "company_id": "1",
+  "header": {
+    "vendor": "CUS01074",
+    "name": "A PATRA ENTERPRISE",
+    "contactPerson": "3219",
+    "salesContractNo": "",
+    "branch": "-1",
+    "warehouse": "01",
+    "docNo": "",
+    "status": "Open",
+    "series": 423,
+    "nextNumber": "8",
+    "postingDate": "2026-06-07",
+    "deliveryDate": "2026-06-07",
+    "documentDate": "2026-06-07",
+    "contractDate": "",
+    "branchRegNo": "",
+    "shipTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "shipToCode": "A PATRA ENTERPRISE",
+    "payTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "payToCode": "A PATRA ENTERPRISE",
+    "transactionType": "GST Tax Invoice",
+    "indicator": "",
+    "shippingType": "",
+    "confirmed": false,
+    "journalRemark": "",
+    "paymentTerms": "3",
+    "paymentMethod": "",
+    "otherInstruction": "Based on DC Delivery 19.",
+    "discount": "",
+    "freight": "",
+    "tax": "",
+    "totalPaymentDue": "",
+    "rounding": false,
+    "owner": "",
+    "purchaser": "",
+    "salesEmployee": "",
+    "placeOfSupply": "GJ",
+    "currency": "INR",
+    "useBillToForTax": false,
+    "billToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "billToCode": "A PATRA ENTERPRISE",
+    "shipToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "ownerCode": "",
+    "language": "",
+    "trackingNo": "",
+    "stampNo": "",
+    "pickPackRemarks": "",
+    "bpChannelName": "",
+    "bpChannelContact": ""
+  },
+  "lines": [
+    {
+      "itemNo": "Cyclopentanone",
+      "itemDescription": "Cyclopentanone",
+      "hsnCode": "2914.29.90",
+      "quantity": "10",
+      "unitPrice": "1233",
+      "openQty": "10",
+      "uomCode": "Manual",
+      "stdDiscount": "0",
+      "taxCode": "CGST 0.1",
+      "total": "12330",
+      "whse": "01",
+      "loc": "-1",
+      "branch": "-1",
+      "wTaxLiable": "N",
+      "glAccount": "",
+      "distRule": "",
+      "taxLiable": "Y",
+      "weight": "",
+      "taxAmount": "12.33",
+      "uomName": "Manual",
+      "cogsDistRule": "",
+      "countryOfOrigin": "",
+      "qtyInventoryUom": "",
+      "inventoryUOM": "",
+      "changeQtyInvUomIndependently": "N",
+      "uomGroup": "",
+      "blanketAgreementNo": "",
+      "saudaNodeRef": "",
+      "apInvDocKey": "",
+      "apInvDocNum": "",
+      "apInvLineNum": "",
+      "assessableValue": "",
+      "bedRate": "",
+      "bedAmount": "",
+      "rg23dNo": "",
+      "specialRebate": "0",
+      "commission": "0",
+      "sellerBrokeragePerQty": "0",
+      "sellerItem": "Cyclopentanone",
+      "sellerUnitPrice": "",
+      "sellerQty": "0",
+      "sellerBrokerage": "",
+      "buyerBrokerage": "0",
+      "buyerDelivery": "",
+      "sellerDelivery": "",
+      "buyerQuality": "",
+      "sellerQuality": "",
+      "buyerPrice": "",
+      "sellerPrice": "",
+      "buyerSpecialInstruction": "",
+      "sellerSpecialInstruction": "",
+      "sellerBrokerageAmtPer": "Amount",
+      "sellerBrokeragePercent": "0",
+      "buyerBillDiscount": "0",
+      "sellerBillDiscount": "0",
+      "sacCode": "",
+      "stcode": "CGST 0.1",
+      "buyerPaymentTerms": "",
+      "sellerPaymentTerms": "",
+      "freightPurchase": "0",
+      "freightSales": "0",
+      "freightProvider": "",
+      "freightProviderName": "",
+      "documentCreated": "2026-05-28",
+      "brokerageNumber": "",
+      "udf": {
+        "U_Sel_Brok_AP": "Amount",
+        "U_IsCreated": "N"
+      },
+      "itemServiceType": "Item",
+      "discountAmount": "",
+      "unitPriceUdf": "0",
+      "qtySpecialInstruction": "",
+      "deliverySpecialInstruction": "",
+      "freeText": "",
+      "deliveredQty": "0",
+      "baseEntry": 36729,
+      "baseType": 15,
+      "baseLine": 0,
+      "commissionAmountPerTon": "",
+      "commissionBy": ""
+    }
+  ],
+  "freightCharges": [],
+  "withholdingTaxRows": [],
+  "header_udfs": {
+    "U_SCharge": "",
+    "U_TRNS": "",
+    "U_LRNO": "",
+    "U_LRDT": "",
+    "U_DSTN": "",
+    "U_DSTNADD": "",
+    "U_FDSTN": "",
+    "U_FDSTNADD": "",
+    "U_VEHNO": "",
+    "U_DOCTHR": "",
+    "U_QRY": "",
+    "U_RSLN": "",
+    "U_QRYST": "",
+    "U_UOM": "",
+    "U_Price": "0",
+    "U_SAmount": "0",
+    "U_B_FromDate": "",
+    "U_B_ToDate": "",
+    "U_Seller_Code": "",
+    "U_Seller_Name": "",
+    "U_Seller_AddressId": "",
+    "U_Seller_Address": "",
+    "U_Invoice_No": "",
+    "U_Invoice_Date": "",
+    "U_Old_Soda_Nodh_No": "",
+    "U_Old_Soda_Nodh_Date": "",
+    "U_Scontactperson": "",
+    "U_Buyers_2_Code": "",
+    "U_Buyers_2_name": "",
+    "U_Buyer_addressId": "",
+    "U_Buyers_Address": "",
+    "U_LRDate": "",
+    "U_VC_LRNo": "",
+    "U_EwbNo": "",
+    "U_IRN": "",
+    "U_Canceled": "N",
+    "U_TrfId": "",
+    "U_TrfName": "",
+    "U_TrfVehi": "",
+    "U_TrfDist": "",
+    "U_TrfMode": "1",
+    "U_TrfVType": "R",
+    "U_AckNo": "",
+    "U_AckDt": "",
+    "U_CanDt": "",
+    "U_QrCode": "",
+    "U_SigInv": "",
+    "U_EwbDt": "",
+    "U_EwbVliDt": "",
+    "U_EWayBCan": "No",
+    "U_TrfCode": "",
+    "U_MultiVeh": "No",
+    "U_MultiVehPosted": "No",
+    "U_SubSuply": "1",
+    "U_DocType": "INV",
+    "U_SubSRemk": "",
+    "U_TraType": "1",
+    "U_DelRemarks": "",
+    "U_WEBUSER": "Admin User",
+    "U_WEBUSERCODE": "1"
+  }
+}
+[POST] /api/ar-invoice
+Request body: {
+  "company_id": "1",
+  "header": {
+    "vendor": "CUS01074",
+    "name": "A PATRA ENTERPRISE",
+    "contactPerson": "3219",
+    "salesContractNo": "",
+    "branch": "-1",
+    "warehouse": "01",
+    "docNo": "",
+    "status": "Open",
+    "series": 423,
+    "nextNumber": "8",
+    "postingDate": "2026-06-07",
+    "deliveryDate": "2026-06-07",
+    "documentDate": "2026-06-07",
+    "contractDate": "",
+    "branchRegNo": "",
+    "shipTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "shipToCode": "A PATRA ENTERPRISE",
+    "payTo": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "payToCode": "A PATRA ENTERPRISE",
+    "transactionType": "GST Tax Invoice",
+    "indicator": "",
+    "shippingType": "",
+    "confirmed": false,
+    "journalRemark": "",
+    "paymentTerms": "3",
+    "paymentMethod": "",
+    "otherInstruction": "Based on DC Delivery 19.",
+    "discount": "",
+    "freight": "",
+    "tax": "",
+    "totalPaymentDue": "",
+    "rounding": false,
+    "owner": "",
+    "purchaser": "",
+    "salesEmployee": "",
+    "placeOfSupply": "GJ",
+    "currency": "INR",
+    "useBillToForTax": false,
+    "billToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "billToCode": "A PATRA ENTERPRISE",
+    "shipToAddress": "NEARBY SARVODAYA HOTEL CHANGODAR, NEARBY SARVODAYA HOTEL CHANGODAR\nMORIYA GAM ROAD\nAHMEDABAD, GJ, 382213\nIN",
+    "ownerCode": "",
+    "language": "",
+    "trackingNo": "",
+    "stampNo": "",
+    "pickPackRemarks": "",
+    "bpChannelName": "",
+    "bpChannelContact": ""
+  },
+  "lines": [
+    {
+      "itemNo": "Cyclopentanone",
+      "itemDescription": "Cyclopentanone",
+      "hsnCode": "2914.29.90",
+      "quantity": "10",
+      "unitPrice": "1233",
+      "openQty": "10",
+      "uomCode": "Manual",
+      "stdDiscount": "0",
+      "taxCode": "CGST 0.1",
+      "total": "12330",
+      "whse": "01",
+      "loc": "-1",
+      "branch": "-1",
+      "wTaxLiable": "N",
+      "glAccount": "",
+      "distRule": "",
+      "taxLiable": "Y",
+      "weight": "",
+      "taxAmount": "12.33",
+      "uomName": "Manual",
+      "cogsDistRule": "",
+      "countryOfOrigin": "",
+      "qtyInventoryUom": "",
+      "inventoryUOM": "",
+      "changeQtyInvUomIndependently": "N",
+      "uomGroup": "",
+      "blanketAgreementNo": "",
+      "saudaNodeRef": "",
+      "apInvDocKey": "",
+      "apInvDocNum": "",
+      "apInvLineNum": "",
+      "assessableValue": "",
+      "bedRate": "",
+      "bedAmount": "",
+      "rg23dNo": "",
+      "specialRebate": "0",
+      "commission": "0",
+      "sellerBrokeragePerQty": "0",
+      "sellerItem": "Cyclopentanone",
+      "sellerUnitPrice": "",
+      "sellerQty": "0",
+      "sellerBrokerage": "",
+      "buyerBrokerage": "0",
+      "buyerDelivery": "",
+      "sellerDelivery": "",
+      "buyerQuality": "",
+      "sellerQuality": "",
+      "buyerPrice": "",
+      "sellerPrice": "",
+      "buyerSpecialInstruction": "",
+      "sellerSpecialInstruction": "",
+      "sellerBrokerageAmtPer": "Amount",
+      "sellerBrokeragePercent": "0",
+      "buyerBillDiscount": "0",
+      "sellerBillDiscount": "0",
+      "sacCode": "",
+      "stcode": "CGST 0.1",
+      "buyerPaymentTerms": "",
+      "sellerPaymentTerms": "",
+      "freightPurchase": "0",
+      "freightSales": "0",
+      "freightProvider": "",
+      "freightProviderName": "",
+      "documentCreated": "2026-05-28",
+      "brokerageNumber": "",
+      "udf": {
+        "U_Sel_Brok_AP": "Amount",
+        "U_IsCreated": "N"
+      },
+      "itemServiceType": "Item",
+      "discountAmount": "",
+      "unitPriceUdf": "0",
+      "qtySpecialInstruction": "",
+      "deliverySpecialInstruction": "",
+      "freeText": "",
+      "deliveredQty": "0",
+      "baseEntry": 36729,
+      "baseType": 15,
+      "baseLine": 0,
+      "commissionAmountPerTon": "",
+      "commissionBy": ""
+    }
+  ],
+  "freightCharges": [],
+  "withholdingTaxRows": [],
+  "header_udfs": {
+    "U_SCharge": "",
+    "U_TRNS": "",
+    "U_LRNO": "",
+    "U_LRDT": "",
+    "U_DSTN": "",
+    "U_DSTNADD": "",
+    "U_FDSTN": "",
+    "U_FDSTNADD": "",
+    "U_VEHNO": "",
+    "U_DOCTHR": "",
+    "U_QRY": "",
+    "U_RSLN": "",
+    "U_QRYST": "",
+    "U_UOM": "",
+    "U_Price": "0",
+    "U_SAmount": "0",
+    "U_B_FromDate": "",
+    "U_B_ToDate": "",
+    "U_Seller_Code": "",
+    "U_Seller_Name": "",
+    "U_Seller_AddressId": "",
+    "U_Seller_Address": "",
+    "U_Invoice_No": "",
+    "U_Invoice_Date": "",
+    "U_Old_Soda_Nodh_No": "",
+    "U_Old_Soda_Nodh_Date": "",
+    "U_Scontactperson": "",
+    "U_Buyers_2_Code": "",
+    "U_Buyers_2_name": "",
+    "U_Buyer_addressId": "",
+    "U_Buyers_Address": "",
+    "U_LRDate": "",
+    "U_VC_LRNo": "",
+    "U_EwbNo": "",
+    "U_IRN": "",
+    "U_Canceled": "N",
+    "U_TrfId": "",
+    "U_TrfName": "",
+    "U_TrfVehi": "",
+    "U_TrfDist": "",
+    "U_TrfMode": "1",
+    "U_TrfVType": "R",
+    "U_AckNo": "",
+    "U_AckDt": "",
+    "U_CanDt": "",
+    "U_QrCode": "",
+    "U_SigInv": "",
+    "U_EwbDt": "",
+    "U_EwbVliDt": "",
+    "U_EWayBCan": "No",
+    "U_TrfCode": "",
+    "U_MultiVeh": "No",
+    "U_MultiVehPosted": "No",
+    "U_SubSuply": "1",
+    "U_DocType": "INV",
+    "U_SubSRemk": "",
+    "U_TraType": "1",
+    "U_DelRemarks": "",
+    "U_WEBUSER": "Admin User",
+    "U_WEBUSERCODE": "1"
+  }
+}

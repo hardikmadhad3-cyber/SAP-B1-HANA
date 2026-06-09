@@ -7,6 +7,7 @@ router.get('/metadata', goodsReceiptController.getMetadata);
 router.get('/items', goodsReceiptController.getItems);
 router.get('/batches', goodsReceiptController.getBatchesByItem);
 router.get('/warehouses', goodsReceiptController.getWarehouses);
+router.get('/distribution-rules', goodsReceiptController.getDistributionRules);
 router.get('/series', goodsReceiptController.getSeries);
 router.get('/purchase-orders', goodsReceiptController.getPurchaseOrders);
 router.get('/purchase-invoices', goodsReceiptController.getPurchaseInvoices);

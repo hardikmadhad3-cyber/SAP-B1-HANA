@@ -9,6 +9,7 @@ const DASHBOARD_PATH = "/dashboard";
 const WINDOW_FRAME_EXCLUDED_PATHS = new Set([
   "/dashboard",
   "/reports/sales/analysis",
+  "/reports/item-list",
   "/reports/purchasing/analysis",
   "/reports/purchase-analysis",
   "/reports/purchase/analysis",

@@ -1,13 +1,17 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import '../purchase-order/styles/purchaseOrder.css';
 import './styles/goodsReceipt.css';
 import ContentsTab from './components/ContentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
+import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
+import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import CopyFromModal from './components/CopyFromModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import ReferenceInformationModal from './components/ReferenceInformationModal';
 import BatchAllocationModal from '../../components/BatchAllocationModal';
+import DistributionRuleAssignmentModal from '../../components/DistributionRuleAssignmentModal';
+import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import {
   BATCH_QTY_TOLERANCE,
   getRequiredBatchQty,
@@ -17,6 +21,7 @@ import {
   fetchGoodsReceiptBatchesByItem,
   fetchGoodsReceiptByDocEntry,
   fetchGoodsReceiptCopySource,
+  fetchGoodsReceiptDistributionRules,
   fetchGoodsReceiptGoodsIssues,
   fetchGoodsReceiptItems,
   fetchGoodsReceiptMetadata,
@@ -25,12 +30,26 @@ import {
   submitGoodsReceipt,
   updateGoodsReceipt,
 } from '../../api/goodsReceiptApi';
+import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
+import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
+import {
+  GOODS_RECEIPT_FORM_SETTINGS_STORAGE_KEY,
+  GOODS_RECEIPT_MATRIX_COLUMNS,
+  normalizeUdfState,
+  readSavedFormSettings,
+} from '../../config/inventoryDocumentForm';
 
 const TAB_NAMES = ['Contents', 'Attachments'];
 const today = () => new Date().toISOString().split('T')[0];
 
-const createLine = () => ({
+const createUdfState = (definitions = [], values = {}) =>
+  definitions.reduce((acc, field) => {
+    acc[field.key] = values[field.key] ?? field.defaultValue ?? '';
+    return acc;
+  }, {});
+
+const createLine = (rowUdfFields = []) => ({
   itemCode: '',
   itemDescription: '',
   quantity: '',
@@ -42,6 +61,10 @@ const createLine = () => ({
   uomCode: '',
   uomName: '',
   distributionRule: '',
+  distributionRule2: '',
+  distributionRule3: '',
+  distributionRule4: '',
+  distributionRule5: '',
   location: '',
   branch: '',
   batchManaged: false,
@@ -53,6 +76,7 @@ const createLine = () => ({
   baseLine: null,
   baseType: null,
   lockedByCopy: false,
+  udf: createUdfState(rowUdfFields),
 });
 
 const createHeader = () => ({
@@ -81,6 +105,22 @@ const getItemFlags = (item) => ({
     item?.inventoryUOM || item?.InventoryUOM || item?.uomName || item?.uomCode || '',
 });
 
+const buildDistributionDimensions = (rules = []) => {
+  const dimensions = new Map();
+
+  (rules || []).forEach((rule) => {
+    const dimensionCode = String(rule.DimensionCode || rule.DimCode || rule.dimensionCode || '1').trim() || '1';
+    if (!dimensions.has(dimensionCode)) {
+      dimensions.set(dimensionCode, {
+        DimensionCode: dimensionCode,
+        DimensionName: rule.DimensionName || rule.DimName || `Dimension ${dimensionCode}`,
+      });
+    }
+  });
+
+  return [...dimensions.values()].sort((a, b) => Number(a.DimensionCode) - Number(b.DimensionCode));
+};
+
 function GoodsReceipt() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -98,6 +138,22 @@ function GoodsReceipt() {
   const [seriesOptions, setSeriesOptions] = useState([]);
   const [priceLists, setPriceLists] = useState([]);
   const [branches, setBranches] = useState([]);
+  const [headerUdfFields, setHeaderUdfFields] = useState([]);
+  const [headerUdfs, setHeaderUdfs] = useState({});
+  const [rowUdfFields, setRowUdfFields] = useState([]);
+  const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
+    GOODS_RECEIPT_FORM_SETTINGS_STORAGE_KEY,
+    readSavedFormSettings,
+    [headerUdfFields, rowUdfFields, GOODS_RECEIPT_MATRIX_COLUMNS]
+  );
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [formSettingsOpen, setFormSettingsOpen] = useState(false);
+  const [distributionRules, setDistributionRules] = useState([]);
+  const [distributionDimensions, setDistributionDimensions] = useState([]);
+  const [locations, setLocations] = useState([]);
+  const [businessPartners, setBusinessPartners] = useState([]);
+  const [accounts, setAccounts] = useState([]);
+  const [paymentTerms, setPaymentTerms] = useState([]);
   const [goodsIssues, setGoodsIssues] = useState([]);
   const [pageState, setPageState] = useState({
     loading: false,
@@ -125,6 +181,19 @@ function GoodsReceipt() {
   const [itemModal, setItemModal] = useState({
     open: false,
     lineIndex: -1,
+  });
+  const [distributionRuleModal, setDistributionRuleModal] = useState({
+    open: false,
+    lineIndex: -1,
+  });
+  const [lineLookupModal, setLineLookupModal] = useState({
+    open: false,
+    lineIndex: -1,
+    field: '',
+    udfKey: '',
+    title: '',
+    options: [],
+    columns: null,
   });
   const currentSeriesOption =
     seriesOptions.find((seriesOption) => seriesOption.series === String(header.series)) ||
@@ -186,6 +255,10 @@ function GoodsReceipt() {
     : warehouses;
 
   const getItem = (itemCode) => items.find((item) => item.itemCode === itemCode);
+  const getWarehouseLocationCode = (warehouseCode) => {
+    const warehouse = warehouses.find((entry) => entry.whsCode === warehouseCode);
+    return warehouse?.locationCode != null ? String(warehouse.locationCode) : '';
+  };
 
   const getItemPrice = (item, priceList) => {
     if (!item) return 0;
@@ -247,13 +320,14 @@ function GoodsReceipt() {
     const item = getItem(itemCode);
     if (!item) {
       return normalizeLine({
-        ...createLine(),
-        location: headerBranchName,
+        ...createLine(rowUdfFields),
+        location: line.location || '',
         branch: header.branch || '',
       });
     }
 
     const itemFlags = getItemFlags(item);
+    const warehouseCode = line.warehouse || item.defaultWarehouse || '';
     return normalizeLine({
       ...line,
       itemCode: item.itemCode,
@@ -262,12 +336,12 @@ function GoodsReceipt() {
         line.baseEntry != null || line.lockedByCopy
           ? line.unitPrice
           : String(getItemPrice(item, priceList)),
-      warehouse: line.warehouse || item.defaultWarehouse || '',
+      warehouse: warehouseCode,
       accountCode: line.accountCode || item.accountCode || '',
       itemCost: item.itemCost != null ? String(item.itemCost) : '',
       uomCode: item.uomCode || '',
       uomName: item.uomName || '',
-      location: headerBranchName,
+      location: getWarehouseLocationCode(warehouseCode),
       branch: line.branch || header.branch || '',
       batchManaged: itemFlags.batchManaged,
       serialManaged: itemFlags.serialManaged,
@@ -279,20 +353,12 @@ function GoodsReceipt() {
 
   useEffect(() => {
     setLines((current) =>
-      current.map((line) => {
-        const nextLocation = headerBranchName || '';
-        const nextBranch = line.branch || header.branch || '';
-        if (line.location === nextLocation && line.branch === nextBranch) {
-          return line;
-        }
-        return {
-          ...line,
-          location: nextLocation,
-          branch: nextBranch,
-        };
-      })
+      current.map((line) => ({
+        ...line,
+        branch: line.branch || header.branch || '',
+      }))
     );
-  }, [header.branch, headerBranchName]);
+  }, [header.branch]);
 
   useEffect(() => {
     let ignore = false;
@@ -319,16 +385,55 @@ function GoodsReceipt() {
 
         const metadata = metadataResponse.data || {};
         const loadedItems = itemsResponse.data || [];
+        const loadedWarehouses = warehousesResponse.data || [];
+        const getLoadedWarehouseLocationCode = (warehouseCode) => {
+          const warehouse = loadedWarehouses.find((entry) => entry.whsCode === warehouseCode);
+          return warehouse?.locationCode != null ? String(warehouse.locationCode) : '';
+        };
         const loadedSeries = seriesResponse.data || [];
         const defaultSeries = loadedSeries[0] || null;
         const nextDefaultPriceList = metadata.priceLists?.[0] || null;
         const nextDefaultBranch = metadata.branches?.[0] || null;
 
         setItems(loadedItems);
-        setWarehouses(warehousesResponse.data || []);
+        setWarehouses(loadedWarehouses);
         setSeriesOptions(loadedSeries);
         setPriceLists(metadata.priceLists || []);
         setBranches(metadata.branches || []);
+        const nextHeaderUdfs = metadata.udfMetadata?.header || [];
+        const nextRowUdfs = metadata.udfMetadata?.rows || [];
+
+        setHeaderUdfFields(nextHeaderUdfs);
+        setHeaderUdfs((current) => normalizeUdfState(nextHeaderUdfs, current));
+        setRowUdfFields(nextRowUdfs);
+        setFormSettings((current) => {
+          const nextDefaults = readSavedFormSettings(
+            nextHeaderUdfs,
+            nextRowUdfs,
+            GOODS_RECEIPT_MATRIX_COLUMNS,
+            formSettingsStorageKey
+          );
+          return {
+            headerUdfs: {
+              ...nextDefaults.headerUdfs,
+              ...(current.headerUdfs || {}),
+            },
+            matrixColumns: {
+              ...nextDefaults.matrixColumns,
+              ...(current.matrixColumns || {}),
+            },
+            rowUdfs: {
+              ...nextDefaults.rowUdfs,
+              ...(current.rowUdfs || {}),
+            },
+          };
+        });
+        setDistributionRules(metadata.distributionRules || []);
+        setDistributionDimensions(metadata.distributionDimensions || []);
+        setLocations(metadata.locations || []);
+        setBusinessPartners(metadata.businessPartners || []);
+        setAccounts(metadata.accounts || []);
+        setPaymentTerms(metadata.paymentTerms || []);
         setGoodsIssues(goodsIssuesResponse.data || []);
         setHeader((current) => ({
           ...current,
@@ -343,15 +448,17 @@ function GoodsReceipt() {
               ? hydrateLineMetadata(
                   {
                     ...line,
+                    udf: createUdfState(metadata.udfMetadata?.rows || [], line.udf || {}),
                     itemCode: line.itemCode,
-                    location: getBranchName(line.branch || header.branch || nextDefaultBranch?.id || ''),
+                    location: line.location || getLoadedWarehouseLocationCode(line.warehouse),
                     branch: line.branch || header.branch || nextDefaultBranch?.id || '',
                   },
                   loadedItems
                 )
               : {
                   ...line,
-                  location: getBranchName(line.branch || header.branch || nextDefaultBranch?.id || ''),
+                  udf: createUdfState(metadata.udfMetadata?.rows || [], line.udf || {}),
+                  location: line.location || getLoadedWarehouseLocationCode(line.warehouse),
                   branch: line.branch || header.branch || nextDefaultBranch?.id || '',
                 }
           )
@@ -404,10 +511,11 @@ function GoodsReceipt() {
           ...createHeader(),
           ...document.header,
         }));
+        setHeaderUdfs(document.headerUdfs || {});
         setLines(
           Array.isArray(document.lines) && document.lines.length
-            ? document.lines.map((line) => hydrateLineMetadata({ ...createLine(), ...line }))
-            : [{ ...createLine(), location: getBranchName(document.header?.branch || ''), branch: document.header?.branch || '' }]
+            ? document.lines.map((line) => hydrateLineMetadata({ ...createLine(rowUdfFields), ...line, udf: createUdfState(rowUdfFields, line.udf || {}) }))
+            : [{ ...createLine(rowUdfFields), location: '', branch: document.header?.branch || '' }]
         );
         setAttachments([]);
         setSelectedAttachmentId(null);
@@ -471,7 +579,6 @@ function GoodsReceipt() {
       setLines((current) =>
         current.map((line) => ({
           ...line,
-          location: getBranchName(value),
           branch: line.baseEntry != null ? line.branch : value,
         }))
       );
@@ -508,27 +615,226 @@ function GoodsReceipt() {
     setLines((current) =>
       current.map((line, index) => {
         if (index !== rowIndex) return line;
+        const warehouseChanged = field === 'warehouse' && line.warehouse !== value;
 
         return normalizeLine({
           ...line,
           [field]: value,
-          batches: field === 'warehouse' && line.warehouse !== value ? [] : line.batches || [],
+          location: warehouseChanged ? getWarehouseLocationCode(value) : line.location,
+          batches: warehouseChanged ? [] : line.batches || [],
         });
       })
     );
   };
 
+  const handleRowUdfChange = (rowIndex, fieldKey, value) => {
+    setLines((current) =>
+      current.map((line, index) =>
+        index === rowIndex
+          ? { ...line, udf: { ...(line.udf || {}), [fieldKey]: value } }
+          : line
+      )
+    );
+  };
+
+  const handleHeaderUdfChange = (fieldKey, value) => {
+    setHeaderUdfs((current) => ({
+      ...current,
+      [fieldKey]: value,
+    }));
+  };
+
+  const updateFormSetting = (groupKey, fieldKey, settingKey, value) => {
+    setFormSettings((current) => ({
+      ...current,
+      [groupKey]: {
+        ...(current[groupKey] || {}),
+        [fieldKey]: {
+          ...(current[groupKey]?.[fieldKey] || {}),
+          [settingKey]: value,
+        },
+      },
+    }));
+  };
+
+  const lookupOptions = useMemo(() => ({
+    distRule: (distributionRules || []).map((rule) => ({
+      value: rule.FactorCode || rule.OcrCode || rule.code || '',
+      description: rule.FactorDescription || rule.OcrName || rule.name || '',
+      code: rule.FactorCode || rule.OcrCode || rule.code || '',
+      name: rule.FactorDescription || rule.OcrName || rule.name || '',
+    })).filter((option) => option.value),
+    location: (locations || []).map((entry) => ({
+      value: String(entry.code ?? entry.Code ?? ''),
+      description: entry.name || entry.Location || entry.Name || '',
+      code: String(entry.code ?? entry.Code ?? ''),
+      name: entry.name || entry.Location || entry.Name || '',
+    })).filter((option) => option.value),
+    item: (items || []).map((item) => ({
+      value: item.itemCode || '',
+      description: item.itemName || '',
+      code: item.itemCode || '',
+      name: item.itemName || '',
+    })).filter((option) => option.value),
+    businessPartner: (businessPartners || []).map((partner) => ({
+      value: partner.CardCode || partner.code || '',
+      description: partner.CardName || partner.name || '',
+      code: partner.CardCode || partner.code || '',
+      name: partner.CardName || partner.name || '',
+    })).filter((option) => option.value),
+    account: (accounts || []).map((account) => ({
+      value: account.code || account.Code || '',
+      description: account.name || account.Name || '',
+      code: account.code || account.Code || '',
+      name: account.name || account.Name || '',
+    })).filter((option) => option.value),
+    paymentTerm: (paymentTerms || []).map((term) => ({
+      value: term.name || term.PymntGroup || String(term.code ?? term.GroupNum ?? ''),
+      description: term.code != null || term.GroupNum != null ? `Code: ${term.code ?? term.GroupNum}` : '',
+      code: String(term.code ?? term.GroupNum ?? ''),
+      name: term.name || term.PymntGroup || '',
+    })).filter((option) => option.value),
+  }), [accounts, businessPartners, distributionRules, items, locations, paymentTerms]);
+
+  const openLineLookup = async (column, lineIndex, udfField = null) => {
+    if (column.lookup === 'distRule') {
+      setDistributionRuleModal({ open: true, lineIndex });
+      try {
+        const response = await fetchGoodsReceiptDistributionRules();
+        const liveRules = Array.isArray(response.data) ? response.data : [];
+        setDistributionRules(liveRules);
+        setDistributionDimensions(buildDistributionDimensions(liveRules));
+      } catch (error) {
+        setPageState((current) => ({
+          ...current,
+          error: error.response?.data?.message || error.message || 'Failed to load distribution rules.',
+        }));
+      }
+      return;
+    }
+
+    const options = lookupOptions[column.lookup] || [];
+    setLineLookupModal({
+      open: true,
+      lineIndex,
+      field: column.key,
+      udfKey: udfField?.key || '',
+      title: `List of ${column.label}`,
+      options,
+      columns: [
+        { key: 'code', label: 'Code', width: 140, primary: true },
+        { key: 'name', label: 'Description' },
+      ],
+    });
+
+    if (column.lookup !== 'distRule') return;
+
+    try {
+      const response = await fetchGoodsReceiptDistributionRules();
+      const liveRules = Array.isArray(response.data) ? response.data : [];
+      const liveOptions = liveRules.map((rule) => ({
+        value: rule.FactorCode || rule.OcrCode || rule.code || '',
+        description: rule.FactorDescription || rule.OcrName || rule.name || '',
+        code: rule.FactorCode || rule.OcrCode || rule.code || '',
+        name: rule.FactorDescription || rule.OcrName || rule.name || '',
+      })).filter((option) => option.value);
+
+      setDistributionRules(liveRules);
+      setLineLookupModal((current) => (
+        current.open && current.lineIndex === lineIndex && current.field === column.key
+          ? { ...current, options: liveOptions }
+          : current
+      ));
+    } catch (error) {
+      setPageState((current) => ({
+        ...current,
+        error: error.response?.data?.message || error.message || 'Failed to load distribution rules.',
+      }));
+    }
+  };
+
+  const closeDistributionRuleModal = () => {
+    setDistributionRuleModal({ open: false, lineIndex: -1 });
+  };
+
+  const handleDistributionRuleApply = (valuesByDimension = {}) => {
+    const fieldByDimension = {
+      1: 'distributionRule',
+      2: 'distributionRule2',
+      3: 'distributionRule3',
+      4: 'distributionRule4',
+      5: 'distributionRule5',
+    };
+    const lineIndex = distributionRuleModal.lineIndex;
+
+    if (lineIndex < 0) {
+      closeDistributionRuleModal();
+      return;
+    }
+
+    setLines((current) => current.map((line, index) => {
+      if (index !== lineIndex) return line;
+      const next = { ...line };
+      Object.entries(valuesByDimension).forEach(([dimensionCode, ruleCode]) => {
+        const fieldName = fieldByDimension[Number(dimensionCode)];
+        if (fieldName) next[fieldName] = ruleCode || '';
+      });
+      return normalizeLine(next);
+    }));
+    setValErrors((current) => ({
+      ...current,
+      lines: {
+        ...current.lines,
+        [lineIndex]: {
+          ...(current.lines[lineIndex] || {}),
+          distributionRule: '',
+        },
+      },
+      form: '',
+    }));
+    closeDistributionRuleModal();
+  };
+
+  const closeLineLookup = () => {
+    setLineLookupModal((current) => ({ ...current, open: false, lineIndex: -1, field: '', udfKey: '' }));
+  };
+
+  const handleLineLookupSelect = (option) => {
+    const { lineIndex, field, udfKey } = lineLookupModal;
+    if (lineIndex < 0 || !field) return;
+    const value = option?.value || '';
+    const providerNameField = rowUdfFields.find((fieldDefinition) => {
+      const identity = [fieldDefinition.key, fieldDefinition.sapField, fieldDefinition.aliasId, fieldDefinition.label]
+        .join(' ')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '');
+      return identity.includes('freightprovidername') || identity.includes('frtransname');
+    });
+    setLines((current) => current.map((line, index) => {
+      if (index !== lineIndex) return line;
+      if (udfKey) {
+        const nextUdf = { ...(line.udf || {}), [udfKey]: value };
+        if (field === 'freightProvider' && providerNameField) {
+          nextUdf[providerNameField.key] = option?.description || option?.name || '';
+        }
+        return { ...line, udf: nextUdf };
+      }
+      return normalizeLine({ ...line, [field]: value });
+    }));
+    closeLineLookup();
+  };
+
   const addLine = () => {
     setLines((current) => [
       ...current,
-      { ...createLine(), location: headerBranchName, branch: header.branch || '' },
+      { ...createLine(rowUdfFields), location: '', branch: header.branch || '' },
     ]);
   };
 
   const removeLine = (rowIndex) => {
     setLines((current) => {
       if (current.length === 1) {
-        return [{ ...createLine(), location: headerBranchName, branch: header.branch || '' }];
+        return [{ ...createLine(rowUdfFields), location: '', branch: header.branch || '' }];
       }
       return current.filter((_, index) => index !== rowIndex);
     });
@@ -594,7 +900,8 @@ function GoodsReceipt() {
       priceList: header.priceList || defaultPriceList?.id || '',
       branch: nextBranch,
     }));
-    setLines([{ ...createLine(), location: getBranchName(nextBranch), branch: nextBranch }]);
+    setHeaderUdfs(normalizeUdfState(headerUdfFields));
+    setLines([{ ...createLine(rowUdfFields), location: '', branch: nextBranch }]);
     attachmentsRef.current.forEach((attachment) => {
       if (attachment.previewUrl) {
         URL.revokeObjectURL(attachment.previewUrl);
@@ -818,8 +1125,8 @@ function GoodsReceipt() {
       setCurrentDocEntry(null);
       setLines(
         Array.isArray(payload.lines) && payload.lines.length
-          ? payload.lines.map((line) => hydrateLineMetadata({ ...createLine(), ...line }))
-          : [{ ...createLine(), location: getBranchName(payload.header?.branch || header.branch || ''), branch: payload.header?.branch || header.branch || '' }]
+          ? payload.lines.map((line) => hydrateLineMetadata({ ...createLine(rowUdfFields), ...line }))
+          : [{ ...createLine(rowUdfFields), location: '', branch: payload.header?.branch || header.branch || '' }]
       );
       setValErrors({ lines: {}, form: '' });
       setCopyFromModal(false);
@@ -835,6 +1142,36 @@ function GoodsReceipt() {
     } finally {
       setCopyLoading(false);
     }
+  };
+
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: createHeader(),
+      lines,
+      createLine,
+      rowUdfDefinitions: rowUdfFields,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setIsDirty,
+      navigate,
+      location,
+      successMessage: 'Goods Receipt duplicated. Review and add it as a new entry.',
+    });
+
+    if (!duplicated) return;
+
+    setHeaderUdfs(normalizeUdfState(headerUdfFields, headerUdfs));
+    setHeader((current) => ({
+      ...current,
+      series: current.series || currentSeriesOption?.series || '',
+      number: currentSeriesOption?.nextNumber || 'Auto',
+    }));
   };
 
   const handleSubmit = async (event) => {
@@ -855,6 +1192,7 @@ function GoodsReceipt() {
     try {
       const payload = {
         header,
+        header_udfs: normalizeUdfState(headerUdfFields, headerUdfs),
         lines: lines
           .filter((line) => line.itemCode || line.baseEntry != null)
           .map((line) => ({
@@ -869,6 +1207,10 @@ function GoodsReceipt() {
             uomCode: line.uomCode,
             uomName: line.uomName,
             distributionRule: line.distributionRule,
+            distributionRule2: line.distributionRule2,
+            distributionRule3: line.distributionRule3,
+            distributionRule4: line.distributionRule4,
+            distributionRule5: line.distributionRule5,
             location: line.location,
             branch: line.branch,
             batchManaged: line.batchManaged,
@@ -877,6 +1219,7 @@ function GoodsReceipt() {
             baseEntry: line.baseEntry,
             baseLine: line.baseLine,
             baseType: line.baseType,
+            udf: line.udf || {},
           })),
         attachments: attachments.map((attachment) => ({
           targetPath: attachment.targetPath,
@@ -939,9 +1282,12 @@ function GoodsReceipt() {
           whse: lines[batchModal.lineIndex]?.warehouse,
         }
       : null;
+  const visibleHeaderUdfFields = headerUdfFields.filter(
+    (field) => formSettings.headerUdfs?.[field.key]?.visible !== false
+  );
 
   return (
-    <form className="po-page gr-goods-receipt__page" onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form className={`po-page gr-goods-receipt__page inventory-document-page${sidebarOpen || formSettingsOpen ? ' inventory-document-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
       <div className="po-toolbar">
         <div className="po-toolbar__title">
           Goods Receipt{currentDocEntry ? ` - #${header.number || currentDocEntry}` : ''}
@@ -965,6 +1311,30 @@ function GoodsReceipt() {
         </button>
         <button type="button" className="po-btn" onClick={resetForm}>
           New
+        </button>
+        <button
+          type="button"
+          className="po-btn sap-document-toolbar__duplicate"
+          onClick={handleDuplicate}
+          disabled={!currentDocEntry}
+        >
+          Duplicate
+        </button>
+        <button type="button" className="po-btn" onClick={() => {
+          setFormSettingsOpen(false);
+          setSidebarOpen((open) => !open);
+        }}>
+          {sidebarOpen ? 'Hide UDFs' : 'Show UDFs'}
+        </button>
+        <button
+          type="button"
+          className="po-btn"
+          onClick={() => {
+            setSidebarOpen(false);
+            setFormSettingsOpen((open) => !open);
+          }}
+        >
+          Form Settings
         </button>
         <div className="po-dropdown">
           <button
@@ -1143,6 +1513,10 @@ function GoodsReceipt() {
             onItemCommit={handleItemCommit}
             onOpenItemModal={openItemModal}
             onFieldChange={handleLineChange}
+            onRowUdfChange={handleRowUdfChange}
+            rowUdfFields={rowUdfFields}
+            formSettings={formSettings}
+            onOpenLineLookup={openLineLookup}
             onOpenBatchModal={openBatchModal}
             onAddLine={addLine}
             onRemoveLine={removeLine}
@@ -1229,6 +1603,25 @@ function GoodsReceipt() {
         loading={pageState.loading}
       />
 
+      <LineValueLookupModal
+        isOpen={lineLookupModal.open}
+        onClose={closeLineLookup}
+        onSelect={handleLineLookupSelect}
+        options={lineLookupModal.options}
+        title={lineLookupModal.title}
+        allowCreate={false}
+        columns={lineLookupModal.columns}
+      />
+
+      <DistributionRuleAssignmentModal
+        isOpen={distributionRuleModal.open}
+        line={distributionRuleModal.lineIndex >= 0 ? lines[distributionRuleModal.lineIndex] : null}
+        rules={distributionRules}
+        dimensions={distributionDimensions}
+        onClose={closeDistributionRuleModal}
+        onApply={handleDistributionRuleApply}
+      />
+
       <BatchAllocationModal
         isOpen={batchModal.open}
         mode="receipt"
@@ -1238,6 +1631,29 @@ function GoodsReceipt() {
         error={batchModal.error}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
+      />
+
+      <HeaderUdfSidebar
+        className="inventory-document-sidebar"
+        isOpen={sidebarOpen}
+        fields={visibleHeaderUdfFields}
+        formSettings={formSettings}
+        values={headerUdfs}
+        disabled={pageState.posting}
+        onFieldChange={handleHeaderUdfChange}
+        onClose={() => setSidebarOpen(false)}
+      />
+
+      <FormSettingsPanel
+        variant="sidebar"
+        className="inventory-document-sidebar"
+        isOpen={formSettingsOpen}
+        onClose={() => setFormSettingsOpen(false)}
+        matrixFields={GOODS_RECEIPT_MATRIX_COLUMNS}
+        headerUdfFields={headerUdfFields}
+        rowUdfFields={rowUdfFields}
+        formSettings={formSettings}
+        onSettingChange={updateFormSetting}
       />
 
       <input

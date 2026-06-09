@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import "../../modules/item-master/styles/itemMaster.css";
 import "./bom.css";
 import FindResultsModal from "../../components/FindResultsModal";
@@ -85,6 +86,8 @@ export const EMPTY_LINE = () => ({
 });
 
 export default function BOMModule() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [mode, setMode] = useState(MODES.ADD);
   const [tab, setTab] = useState(0);
   const [header, setHeader] = useState(EMPTY_HEADER);
@@ -429,6 +432,45 @@ export default function BOMModule() {
     },
     [header.TreeCode, header.ProductDescription, loadExistingBOM, showAlert]
   );
+
+  useEffect(() => {
+    const stateTreeCode = location.state?.bomTreeCode || location.state?.treeCode;
+    const queryTreeCode = new URLSearchParams(location.search).get("treeCode");
+    const treeCodeToLoad = String(stateTreeCode || queryTreeCode || "").trim();
+
+    if (!treeCodeToLoad) return;
+
+    let ignore = false;
+    setLoading(true);
+    loadExistingBOM(treeCodeToLoad)
+      .then((data) => {
+        if (!ignore) {
+          showAlert("success", `BOM "${data.TreeCode || treeCodeToLoad}" loaded.`);
+          if (stateTreeCode) {
+            navigate(location.pathname, {
+              replace: true,
+              state: {
+                ...(location.state || {}),
+                bomTreeCode: undefined,
+                treeCode: undefined,
+              },
+            });
+          }
+        }
+      })
+      .catch((err) => {
+        if (!ignore) {
+          showAlert("error", err.response?.data?.message || err.message || `Could not load BOM "${treeCodeToLoad}".`);
+        }
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [loadExistingBOM, location.pathname, location.search, location.state, navigate, showAlert]);
 
   const handleFindResultSelect = useCallback(
     async (row) => {

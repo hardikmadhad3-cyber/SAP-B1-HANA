@@ -1,5 +1,8 @@
 const sapService = require('./sapService');
 const inventoryTransferRequestDb = require('./inventoryTransferRequestDbService');
+const masterDataDbService = require('./masterDataDbService');
+const { getMarketingDocumentUdfs, getUdfDefinitions } = require('./udfMetadataService');
+const { applyUdfValues } = require('./udfPayloadUtils');
 
 const toIsoDate = (value) => {
   if (!value) return null;
@@ -19,11 +22,24 @@ const extractSapError = (error, fallback) =>
   fallback;
 
 const getMetadata = async () => {
-  const [priceLists, branches, businessPartners, salesEmployees] = await Promise.all([
+  const [
+    priceLists,
+    branches,
+    businessPartners,
+    salesEmployees,
+    distributionRules,
+    locations,
+    paymentTerms,
+    udfMetadata,
+  ] = await Promise.all([
     inventoryTransferRequestDb.getPriceLists(),
     inventoryTransferRequestDb.getBranches(),
     inventoryTransferRequestDb.getBusinessPartners(),
     inventoryTransferRequestDb.getSalesEmployees(),
+    masterDataDbService.lookupDistributionRules(),
+    masterDataDbService.lookupWarehouseLocations(),
+    masterDataDbService.lookupPaymentTerms(''),
+    getMarketingDocumentUdfs({ headerTable: 'OWTQ', lineTable: 'WTQ1' }),
   ]);
 
   return {
@@ -31,6 +47,10 @@ const getMetadata = async () => {
     branches,
     businessPartners,
     salesEmployees,
+    distributionRules,
+    locations,
+    paymentTerms,
+    udfMetadata,
   };
 };
 
@@ -86,6 +106,12 @@ const createInventoryTransferRequest = async (payload) => {
   validatePayload(payload);
 
   const { header, lines = [] } = payload;
+  const [headerUdfDefinitions, lineUdfDefinitions] = await Promise.all([
+    getUdfDefinitions('OWTQ'),
+    getUdfDefinitions('WTQ1'),
+  ]);
+  const allowedHeaderUdfs = new Set(headerUdfDefinitions.map((field) => field.key));
+  const allowedLineUdfs = new Set(lineUdfDefinitions.map((field) => field.key));
   const activeLines = lines.filter((line) => line.itemCode);
   const firstLine = activeLines[0] || {};
   const documentFromWarehouse = header.fromWarehouse || firstLine.fromWarehouse || '';
@@ -115,6 +141,10 @@ const createInventoryTransferRequest = async (payload) => {
         if (line.distributionRule) {
           documentLine.CostingCode = line.distributionRule;
         }
+        if (line.location !== '' && line.location != null && Number.isFinite(Number(line.location))) {
+          documentLine.LocationCode = Number(line.location);
+        }
+        applyUdfValues(documentLine, line.udf, allowedLineUdfs);
 
         return documentLine;
       }),
@@ -131,6 +161,7 @@ const createInventoryTransferRequest = async (payload) => {
   if (header.referencedDocument) {
     sapPayload.Reference2 = header.referencedDocument;
   }
+  applyUdfValues(sapPayload, payload.header_udfs || payload.headerUdfs, allowedHeaderUdfs);
 
   console.debug(
     '[InventoryTransferRequest] Posting payload:',
@@ -164,6 +195,8 @@ const updateInventoryTransferRequest = async (docEntry, payload) => {
   validatePayload(payload);
 
   const { header } = payload;
+  const headerUdfDefinitions = await getUdfDefinitions('OWTQ');
+  const allowedHeaderUdfs = new Set(headerUdfDefinitions.map((field) => field.key));
   const sapPayload = {
     Comments: header.remarks || '',
     JournalMemo: header.journalRemark || 'Inventory Transfer Request',
@@ -172,6 +205,7 @@ const updateInventoryTransferRequest = async (docEntry, payload) => {
   if (header.referencedDocument) {
     sapPayload.Reference2 = header.referencedDocument;
   }
+  applyUdfValues(sapPayload, payload.header_udfs || payload.headerUdfs, allowedHeaderUdfs);
 
   try {
     await sapService.request({

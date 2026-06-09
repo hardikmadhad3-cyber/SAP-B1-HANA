@@ -541,6 +541,8 @@ const getStates = () => safe(db.query(`
 
 const getTaxCodes = () => masterDataDbService.searchDocumentTaxCodes('', 'sales', 500, 0);
 
+const getWithholdingTaxCodes = () => masterDataDbService.lookupWithholdingTaxCodes('');
+
 const getUomGroups = () => safe(db.query(`
   SELECT g.UgpEntry AS AbsEntry,
          g.UgpCode  AS Name,
@@ -862,6 +864,7 @@ const getReferenceData = async () => {
     accounts,
     distributionRules,
     companyRows,
+    withholdingTaxCodes,
   ] = await Promise.all([
     getCustomers(),
     getItems(),
@@ -881,6 +884,7 @@ const getReferenceData = async () => {
     masterDataDbService.searchAccounts('', '', 5000, 0),
     masterDataDbService.lookupDistributionRules(),
     getCompanyInfo(),
+    getWithholdingTaxCodes(),
   ]);
   const effectiveUdfMetadata = applyLineColumnPreferencesToUdfs(
     udfMetadata,
@@ -930,6 +934,7 @@ const getReferenceData = async () => {
     branches,
     states,
     tax_codes: taxCodes,
+    withholding_tax_codes: withholdingTaxCodes,
     gl_accounts: accounts
       .filter((account) => account.ActiveAccount !== 'tNO' && account.IsTitleAccount !== 'tYES')
       .map((account) => ({
@@ -987,11 +992,51 @@ const getCustomerGSTProfile = async (cardCode) => {
   return rows[0] || { GSTIN: '', State: '' };
 };
 
+const getCustomerWithholdingTaxDetails = async (customerCode) => {
+  const [ocrdRows, allowedRows, allCodes] = await Promise.all([
+    safe(db.query(`
+      SELECT TOP 1
+        T0.CardCode,
+        T0.WTCode
+      FROM OCRD T0
+      WHERE T0.CardCode = @customerCode
+    `, { customerCode })),
+    safe(db.query(`
+      SELECT DISTINCT
+        T0.WTCode
+      FROM CRD4 T0
+      WHERE T0.CardCode = @customerCode
+        AND ISNULL(T0.WTCode, '') <> ''
+      ORDER BY T0.WTCode
+    `, { customerCode })),
+    getWithholdingTaxCodes(),
+  ]);
+
+  const defaultCode = String(ocrdRows[0]?.WTCode || '').trim();
+  const allowedCodeSet = new Set(
+    [
+      ...allowedRows.map((row) => String(row.WTCode || '').trim()),
+      defaultCode,
+    ].filter(Boolean)
+  );
+  const allowedCodes = allCodes.filter((row) => allowedCodeSet.has(String(row.code || '').trim()));
+  const fallbackAllowedCodes = allowedCodeSet.size
+    ? Array.from(allowedCodeSet).map((code) => ({ code, name: code, rate: 0, taxCategory: '' }))
+    : [];
+
+  return {
+    subject: allowedCodeSet.size > 0,
+    defaultCode,
+    allowedCodes: allowedCodes.length ? allowedCodes : fallbackAllowedCodes,
+  };
+};
+
 const getCustomerDetails = async (customerCode) => {
-  const [contacts, billToAddresses, shipToAddresses] = await Promise.all([
+  const [contacts, billToAddresses, shipToAddresses, withholdingTax] = await Promise.all([
     getContactsByCustomer(customerCode),
     getBillToAddressesByCustomer(customerCode),
     getShipToAddressesByCustomer(customerCode),
+    getCustomerWithholdingTaxDetails(customerCode),
   ]);
 
   // Get customer basic info
@@ -1013,6 +1058,7 @@ const getCustomerDetails = async (customerCode) => {
     ship_to_addresses: shipToAddresses,
     gstin: gstProfile.GSTIN || '',
     customerState: gstProfile.State || '',
+    withholding_tax: withholdingTax,
   };
 };
 

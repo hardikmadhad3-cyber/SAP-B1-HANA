@@ -298,14 +298,12 @@ export default function ItemMaster() {
   useEffect(() => {
     const stateItemCode = location.state?.itemMasterItemCode || location.state?.itemCode;
     const queryItemCode = new URLSearchParams(location.search).get("itemCode");
-    const itemCodeToLoad = String(stateItemCode || queryItemCode || "").trim();
+    const validStateItemCode = stateItemCode && isRouteStateForActiveCompany(location.state)
+      ? stateItemCode
+      : "";
+    const itemCodeToLoad = String(validStateItemCode || queryItemCode || "").trim();
 
     if (!itemCodeToLoad) return;
-
-    if (stateItemCode && !isRouteStateForActiveCompany(location.state)) {
-      replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
-      return;
-    }
 
     let ignore = false;
     setLoading(true);
@@ -313,7 +311,7 @@ export default function ItemMaster() {
       .then(() => {
         if (!ignore) {
           showAlert("success", `Item "${itemCodeToLoad}" loaded.`);
-          if (stateItemCode) {
+          if (validStateItemCode) {
             replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
           }
         }

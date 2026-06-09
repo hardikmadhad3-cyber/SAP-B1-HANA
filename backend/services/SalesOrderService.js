@@ -430,6 +430,18 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
   if (hasValue(line.distRule)) {
     documentLine.CostingCode = String(line.distRule).trim();
   }
+  if (hasValue(line.distRule2)) {
+    documentLine.CostingCode2 = String(line.distRule2).trim();
+  }
+  if (hasValue(line.distRule3)) {
+    documentLine.CostingCode3 = String(line.distRule3).trim();
+  }
+  if (hasValue(line.distRule4)) {
+    documentLine.CostingCode4 = String(line.distRule4).trim();
+  }
+  if (hasValue(line.distRule5)) {
+    documentLine.CostingCode5 = String(line.distRule5).trim();
+  }
 
   if (hasValue(line.freeText)) {
     documentLine.FreeText = String(line.freeText).trim();

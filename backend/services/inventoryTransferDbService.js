@@ -1,4 +1,5 @@
 const db = require('../db/odbc');
+const { getHeaderUdfValues, getLineUdfValues } = require('./udfMetadataService');
 
 const safe = async (promise) => {
   try {
@@ -14,6 +15,20 @@ const buildAddressText = (row) =>
   [row.Street, row.Block, row.City, row.ZipCode, row.State, row.Country]
     .filter(Boolean)
     .join(', ');
+
+const getTableColumns = async (tableName) => {
+  const rows = await safe(
+    db.query(
+      `
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = @tableName
+      `,
+      { tableName }
+    )
+  );
+  return new Set(rows.map((row) => row.COLUMN_NAME));
+};
 
 const getItems = async () => {
   const [itemRows, priceRows] = await Promise.all([
@@ -70,14 +85,18 @@ const getItems = async () => {
   }));
 };
 
-const getWarehouses = async () =>
-  safe(
+const getWarehouses = async () => {
+  const warehouseColumns = await getTableColumns('OWHS');
+  const locationExpression = warehouseColumns.has('Location') ? '[Location]' : 'NULL';
+
+  return safe(
     db.query(`
       SELECT
         WhsCode,
         WhsName,
         City,
-        BPLId AS BranchId
+        BPLId AS BranchId,
+        ${locationExpression} AS LocationCode
       FROM OWHS
       WHERE ISNULL(Inactive, 'N') <> 'Y'
       ORDER BY WhsCode
@@ -88,8 +107,10 @@ const getWarehouses = async () =>
       whsName: row.WhsName,
       city: row.City || '',
       branchId: row.BranchId != null ? String(row.BranchId) : '',
+      locationCode: row.LocationCode != null ? String(row.LocationCode) : '',
     }))
   );
+};
 
 const getSeries = async () =>
   safe(
@@ -334,6 +355,10 @@ const getInventoryTransfer = async (docEntry) => {
           ISNULL(T0.WhsCode, T1.ToWhsCode) AS ToWarehouseCode,
           T0.LocCode AS LocationCode,
           T0.OcrCode AS DistributionRule,
+          T0.OcrCode2 AS DistributionRule2,
+          T0.OcrCode3 AS DistributionRule3,
+          T0.OcrCode4 AS DistributionRule4,
+          T0.OcrCode5 AS DistributionRule5,
           T0.unitMsr AS UoMCode,
           CAST(ISNULL(T0.StockValue, 0) AS DECIMAL(19, 6)) AS AssessableValue
         FROM WTR1 T0
@@ -345,6 +370,10 @@ const getInventoryTransfer = async (docEntry) => {
       { docEntry }
     )
   );
+  const [headerUdfs, lineUdfsByLineNum] = await Promise.all([
+    getHeaderUdfValues({ tableId: 'OWTR', keyValue: docEntry }),
+    getLineUdfValues({ tableId: 'WTR1', keyValue: docEntry }),
+  ]);
 
   const itemCodes = [...new Set(lineRows.map((row) => row.ItemCode).filter(Boolean))];
   let itemMap = {};
@@ -360,7 +389,8 @@ const getInventoryTransfer = async (docEntry) => {
         `
           SELECT
             T0.ItemCode,
-            T0.InvntryUom AS UoMName
+            T0.InvntryUom AS UoMName,
+            CAST(ISNULL(T0.AvgPrice, 0) AS DECIMAL(19, 6)) AS ItemCost
           FROM OITM T0
           WHERE T0.ItemCode IN (${itemCodes.map((_, index) => `@item${index}`).join(', ')})
         `,
@@ -371,6 +401,7 @@ const getInventoryTransfer = async (docEntry) => {
     itemMap = itemRows.reduce((acc, row) => {
       acc[row.ItemCode] = {
         uomName: row.UoMName || '',
+        itemCost: Number(row.ItemCost || 0),
       };
       return acc;
     }, {});
@@ -381,6 +412,7 @@ const getInventoryTransfer = async (docEntry) => {
   return {
     docEntry: header.DocEntry,
     docNum: header.DocNum,
+    headerUdfs: headerUdfs || {},
     header: {
       number: header.DocNum != null ? String(header.DocNum) : 'Auto',
       series: header.Series != null ? String(header.Series) : '',
@@ -416,11 +448,17 @@ const getInventoryTransfer = async (docEntry) => {
         toWarehouse: row.ToWarehouseCode || '',
         location: row.LocationCode != null ? String(row.LocationCode) : '',
         quantity: String(Number(row.Quantity || 0)),
+        itemCost: itemInfo.itemCost != null ? String(itemInfo.itemCost) : '',
         distributionRule: row.DistributionRule || '',
+        distributionRule2: row.DistributionRule2 || '',
+        distributionRule3: row.DistributionRule3 || '',
+        distributionRule4: row.DistributionRule4 || '',
+        distributionRule5: row.DistributionRule5 || '',
         uomCode: row.UoMCode || '',
         uomName: itemInfo.uomName || '',
         branch: header.BranchId != null ? String(header.BranchId) : '',
         assessableValue: Number(row.AssessableValue || 0).toFixed(2),
+        udf: lineUdfsByLineNum[row.LineNum] || {},
       };
     }),
   };

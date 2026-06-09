@@ -6,6 +6,7 @@ const router = express.Router();
 router.get('/metadata', inventoryTransferController.getMetadata);
 router.get('/items', inventoryTransferController.getItems);
 router.get('/warehouses', inventoryTransferController.getWarehouses);
+router.get('/distribution-rules', inventoryTransferController.getDistributionRules);
 router.get('/series', inventoryTransferController.getSeries);
 router.get(
   '/business-partners/:cardCode',

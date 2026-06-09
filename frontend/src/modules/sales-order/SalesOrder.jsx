@@ -157,7 +157,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
     freightPurchase: '', freightSales: '', freightProvider: '', freightProviderName: '',
     brokerageNumber: '',
     uomCode: '', uomName: '', stdDiscount: '', stcode: '', taxCode: '', total: '', whse: '',
-    distRule: '', freeText: '', countryOfOrigin: '', sacCode: '',
+    distRule: '', distRule2: '', distRule3: '', distRule4: '', distRule5: '', freeText: '', countryOfOrigin: '', sacCode: '',
     openQty: '', deliveredQty: '', taxAmount: '', documentCreated: '',
     loc: '', branch: '', lineNum: undefined, baseEntry: null, baseType: null, baseLine: null,
     udf: createUdfState(rowUdfDefinitions),
@@ -217,7 +217,7 @@ function SalesOrder() {
         company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
         warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
         payment_terms: [], shipping_types: [], branches: [], uom_groups: [], sales_employees: [], owners: [],
-        countries: [], distribution_rules: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
+        countries: [], distribution_rules: [], distribution_dimensions: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
         decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
     });
     const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
@@ -448,6 +448,7 @@ function SalesOrder() {
                         owners: refDataRes.data.owners || [],
                         countries: refDataRes.data.countries || [],
                         distribution_rules: refDataRes.data.distribution_rules || [],
+                        distribution_dimensions: refDataRes.data.distribution_dimensions || [],
                         quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
                         price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
                         decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
@@ -1344,6 +1345,29 @@ function SalesOrder() {
         }
     };
 
+    const handleDistributionRuleChange = (lineIndex, valuesByDimension = {}) => {
+        const fieldByDimension = {
+            1: 'distRule',
+            2: 'distRule2',
+            3: 'distRule3',
+            4: 'distRule4',
+            5: 'distRule5',
+        };
+
+        markDirty();
+        setValErrors(p => ({ ...p, lines: { ...p.lines, [lineIndex]: { ...(p.lines[lineIndex] || {}), distRule: '' } }, form: '' }));
+        setPageState(p => ({ ...p, error: '', success: '' }));
+        setLines(prev => prev.map((line, idx) => {
+            if (idx !== lineIndex) return line;
+            const next = { ...line };
+            Object.entries(valuesByDimension).forEach(([dimensionCode, ruleCode]) => {
+                const fieldName = fieldByDimension[Number(dimensionCode)];
+                if (fieldName) next[fieldName] = ruleCode || '';
+            });
+            return next;
+        }));
+    };
+
     const handleNumBlur = (field, target = 'line', i = null) => {
         const d = numDec[field];
         if (d === undefined) return;
@@ -2182,6 +2206,10 @@ function SalesOrder() {
                 total: line.total,
                 whse: line.whse,
                 distRule: line.distRule,
+                distRule2: line.distRule2,
+                distRule3: line.distRule3,
+                distRule4: line.distRule4,
+                distRule5: line.distRule5,
                 freeText: line.freeText,
                 countryOfOrigin: line.countryOfOrigin,
                 sacCode: line.sacCode,
@@ -2725,6 +2753,8 @@ function SalesOrder() {
                                 valErrors={valErrors}
                                 branches={refData.branches}
                                 distributionRules={refData.distribution_rules || []}
+                                distributionDimensions={refData.distribution_dimensions || []}
+                                onDistributionRuleChange={handleDistributionRuleChange}
                                 countries={refData.countries || []}
                                 onOpenHSNModal={openHSNModal}
                                 onOpenItemModal={openItemModalSafe}

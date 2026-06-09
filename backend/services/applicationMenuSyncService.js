@@ -81,8 +81,9 @@ const APP_MENU_DEFINITIONS = [
 
   { key: 'reports', menuName: 'Reports', icon: 'reports', sortOrder: 8 },
   { key: 'sales-analysis', parentKey: 'reports', menuName: 'Sales Analysis', menuPath: '/reports/sales/analysis', icon: 'report', sortOrder: 1 },
-  { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 2 },
-  { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 3 },
+  { key: 'item-list-report', parentKey: 'reports', menuName: 'Item List', menuPath: '/reports/item-list', icon: 'report', sortOrder: 2 },
+  { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 3 },
+  { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 4 },
 ];
 
 const normalizeText = (value) => String(value || '').trim();
@@ -347,6 +348,11 @@ const syncApplicationSidebarMenus = async (db) => {
     db,
     menuByKey.get('delivery')?.MenuId,
     menuByKey.get('soda-delivery')?.MenuId,
+  );
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
+    menuByKey.get('sales-analysis')?.MenuId,
+    menuByKey.get('item-list-report')?.MenuId,
   );
   syncCount += await deleteDeprecatedReportLayoutManagerMenu(db);
 

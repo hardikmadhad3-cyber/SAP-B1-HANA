@@ -7,6 +7,7 @@ router.get('/metadata', goodsIssueController.getMetadata);
 router.get('/items', goodsIssueController.getItems);
 router.get('/batches', goodsIssueController.getBatchesByItem);
 router.get('/warehouses', goodsIssueController.getWarehouses);
+router.get('/distribution-rules', goodsIssueController.getDistributionRules);
 router.get('/series', goodsIssueController.getSeries);
 router.get('/list', goodsIssueController.getGoodsIssues);
 router.get('/:docEntry', goodsIssueController.getGoodsIssue);

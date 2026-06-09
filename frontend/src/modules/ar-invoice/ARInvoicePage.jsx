@@ -16,6 +16,7 @@ import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal
 import StateSelectionModal from '../sales-order/components/StateSelectionModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
+import WithholdingTaxTableModal from '../APInvoice/components/WithholdingTaxTableModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
@@ -128,6 +129,7 @@ const isCheckedValue = (value) =>
   ['Y', 'YES', 'TRUE', '1', 'TYES', true].includes(
     typeof value === 'string' ? value.trim().toUpperCase() : value
   );
+const isYesValue = (value) => ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase());
 const normalizeFieldIdentity = (value) =>
   String(value || '')
     .replace(/^U_/i, '')
@@ -175,6 +177,15 @@ const DEFAULT_TRANSACTION_TYPES = [
   { value: 'Bill of Supply', label: 'Bill of Supply' },
   { value: 'GST Debit Memo', label: 'GST Debit Memo' },
 ];
+const DOCUMENT_TYPE_CODE_BY_TRANSACTION_TYPE = {
+  gsttaxinvoice: 'INV',
+  taxinvoice: 'INV',
+  billofsupply: 'BIL',
+  gstdebitmemo: 'DBN',
+  debitmemo: 'DBN',
+};
+const getDocumentTypeCodeForTransaction = (value) =>
+  DOCUMENT_TYPE_CODE_BY_TRANSACTION_TYPE[normalizeFieldIdentity(value)] || value;
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
@@ -244,6 +255,7 @@ function ARInvoicePage() {
   const [refData, setRefData] = useState({
     company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
     warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [],
+    withholding_tax_codes: [],
     default_branch: '', default_warehouse: '',
     gl_accounts: [], distribution_rules: [], payment_terms: [], shipping_types: [], branches: [], uom_groups: [],
     decimal_settings: DEC, warnings: [], series: [], states: [], transaction_types: [],
@@ -273,6 +285,13 @@ function ARInvoicePage() {
     columns: null,
   });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
+  const [withholdingTax, setWithholdingTax] = useState({
+    open: false,
+    customerSubject: false,
+    defaultCode: '',
+    allowedCodes: [],
+    rows: [],
+  });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyFromDocType, setCopyFromDocType] = useState('salesOrder');
   const [addressForm, setAddressForm] = useState({
@@ -460,6 +479,7 @@ function ARInvoicePage() {
             warehouse_addresses: refDataRes.data.warehouse_addresses || [],
             company_address: refDataRes.data.company_address || {},
             tax_codes: refDataRes.data.tax_codes || [],
+            withholding_tax_codes: refDataRes.data.withholding_tax_codes || [],
             gl_accounts: refDataRes.data.gl_accounts || [],
             distribution_rules: refDataRes.data.distribution_rules || [],
             payment_terms: refDataRes.data.payment_terms || [],
@@ -931,6 +951,59 @@ function ARInvoicePage() {
   };
 
   const totals = calcTotals();
+  const hasWTaxLiableLines = lines.some((line) => isYesValue(line.wTaxLiable || line.wtaxLiable));
+  const wtaxBaseAmount = totals.total;
+  const recalcWithholdingRows = useCallback((rows = withholdingTax.rows, baseAmount = wtaxBaseAmount) => (
+    (rows || []).map((row) => {
+      const rate = parseNum(row.rate);
+      return {
+        ...row,
+        baseAmount: roundTo(baseAmount, numDec.total),
+        taxableAmount: roundTo(baseAmount, numDec.total),
+        wtaxAmount: roundTo(baseAmount * rate / 100, numDec.tax),
+        category: row.category || 'Invoice',
+        baseType: row.baseType || 'Net',
+        criteria: row.criteria || 'Cash',
+        tdsType: row.tdsType || 'eTDS',
+      };
+    })
+  ), [numDec.tax, numDec.total, withholdingTax.rows, wtaxBaseAmount]);
+  const createDefaultWithholdingRows = useCallback((baseAmount = wtaxBaseAmount) => {
+    const allowedCodes = withholdingTax.allowedCodes || [];
+    const defaultCode = withholdingTax.defaultCode || allowedCodes[0]?.code || '';
+    const codeRow = allowedCodes.find((row) => String(row.code || '') === String(defaultCode || '')) || allowedCodes[0];
+    if (!codeRow) return [];
+
+    const rate = parseNum(codeRow.rate);
+    return [{
+      code: codeRow.code || '',
+      name: codeRow.name || '',
+      rate,
+      baseAmount: roundTo(baseAmount, numDec.total),
+      taxableAmount: roundTo(baseAmount, numDec.total),
+      wtaxAmount: roundTo(baseAmount * rate / 100, numDec.tax),
+      category: codeRow.taxCategory || 'Invoice',
+      baseType: 'Net',
+      criteria: 'Cash',
+      tdsType: 'eTDS',
+      tdsAccount: '',
+      surchargeAccount: '',
+      cessAccount: '',
+      hscAccount: '',
+      igstAccount: '',
+      cgstAccount: '',
+      sgstAccount: '',
+      utgstAccount: '',
+    }];
+  }, [numDec.tax, numDec.total, withholdingTax.allowedCodes, withholdingTax.defaultCode, wtaxBaseAmount]);
+  const wtaxRowsForTotals = hasWTaxLiableLines
+    ? recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows())
+    : [];
+  const withholdingModalRows = withholdingTax.open
+    ? recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows())
+    : wtaxRowsForTotals;
+  const wtaxAmount = roundTo(wtaxRowsForTotals.reduce((sum, row) => sum + parseNum(row.wtaxAmount), 0), numDec.tax);
+  const totalPaymentDueAfterWTax = roundTo(totals.total - wtaxAmount, numDec.totalPaymentDue);
 
   // Continue in next part...
 
@@ -967,6 +1040,7 @@ function ARInvoicePage() {
   const loadVendorDetails = async (code) => {
     if (!code) {
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
+      setWithholdingTax({ open: false, customerSubject: false, defaultCode: '', allowedCodes: [], rows: [] });
       setHeader(prev => ({ 
         ...prev, 
         placeOfSupply: '',
@@ -985,6 +1059,7 @@ function ARInvoicePage() {
       const contacts = r.data.contacts || [];
       const payToAddresses = r.data.pay_to_addresses || [];
       const shipToAddresses = r.data.ship_to_addresses || [];
+      const customerWithholdingTax = r.data.withholding_tax || {};
       
       setRefData(p => ({
         ...p,
@@ -993,6 +1068,13 @@ function ARInvoicePage() {
         ship_to_addresses: shipToAddresses,
         bill_to_addresses: payToAddresses
       }));
+      setWithholdingTax({
+        open: false,
+        customerSubject: Boolean(customerWithholdingTax.subject),
+        defaultCode: customerWithholdingTax.defaultCode || '',
+        allowedCodes: customerWithholdingTax.allowedCodes || [],
+        rows: [],
+      });
 
       if (contacts.length > 0) {
         setHeader(prev => ({
@@ -1045,6 +1127,7 @@ function ARInvoicePage() {
     } catch (err) {
       console.error('Error loading customer details:', err);
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
+      setWithholdingTax({ open: false, customerSubject: false, defaultCode: '', allowedCodes: [], rows: [] });
     } finally {
       setPageState(p => ({ ...p, vendorLoading: false }));
     }
@@ -1406,6 +1489,14 @@ function ARInvoicePage() {
       }
       return next;
     }));
+
+    if ((name === 'wTaxLiable' || name === 'wtaxLiable') && isYesValue(value) && withholdingTax.customerSubject) {
+      setWithholdingTax((prev) => ({
+        ...prev,
+        open: true,
+        rows: prev.rows.length ? recalcWithholdingRows(prev.rows) : createDefaultWithholdingRows(),
+      }));
+    }
   };
 
   const handleNumBlur = (field, target = 'line', i = null) => {
@@ -1417,6 +1508,31 @@ function ARInvoicePage() {
   };
 
   // ── Freight Selection Modal handlers ──────────────────────────────────────
+  const openWithholdingTaxTable = useCallback(() => {
+    if (!isDocumentEditable) return;
+    if (!header.vendor) {
+      setPageState((prev) => ({ ...prev, error: 'Select a customer before opening withholding tax table.', success: '' }));
+      return;
+    }
+
+    if (!withholdingTax.customerSubject) {
+      setPageState((prev) => ({ ...prev, error: 'Selected customer does not have withholding tax setup.', success: '' }));
+      return;
+    }
+
+    setPageState((prev) => ({ ...prev, error: '', success: '' }));
+    setWithholdingTax((prev) => ({
+      ...prev,
+      open: true,
+      rows: prev.rows.length ? recalcWithholdingRows(prev.rows) : createDefaultWithholdingRows(),
+    }));
+  }, [createDefaultWithholdingRows, header.vendor, isDocumentEditable, recalcWithholdingRows, withholdingTax.customerSubject]);
+
+  const handleDocumentContextMenu = (event) => {
+    event.preventDefault();
+    openWithholdingTaxTable();
+  };
+
   const openFreightModal = async () => {
     if (!isDocumentEditable) return;
     console.log('🚚 Opening freight modal, docEntry:', currentDocEntry);
@@ -2109,6 +2225,18 @@ function ARInvoicePage() {
         return e;
       }
 
+      if (hasWTaxLiableLines) {
+        if (!withholdingTax.customerSubject) {
+          e.form = 'Selected customer does not have withholding tax setup.';
+          return e;
+        }
+
+        if (!wtaxRowsForTotals.some((row) => String(row.code || '').trim())) {
+          e.form = 'Select withholding tax code in the withholding tax table.';
+          return e;
+        }
+      }
+
       console.log('✅ Validation passed!');
       return e;
       
@@ -2297,6 +2425,13 @@ function ARInvoicePage() {
     if (e.form || Object.values(e.header).some(Boolean) || Object.values(e.lines).some(le => Object.values(le || {}).some(Boolean))) {
       setValErrors(e);
       setPageState(p => ({ ...p, error: e.form || 'Please correct the highlighted fields.', success: '' }));
+      if (hasWTaxLiableLines && withholdingTax.customerSubject) {
+        setWithholdingTax((prev) => ({
+          ...prev,
+          open: true,
+          rows: prev.rows.length ? recalcWithholdingRows(prev.rows) : createDefaultWithholdingRows(),
+        }));
+      }
       return;
     }
     setValErrors({ header: {}, lines: {}, form: '' });
@@ -2304,6 +2439,7 @@ function ARInvoicePage() {
     try {
       const prep = { 
         ...header, 
+        transactionType: getDocumentTypeCodeForTransaction(header.transactionType),
         deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
         placeOfSupply: header.placeOfSupply,
         branch: header.branch,
@@ -2326,6 +2462,7 @@ function ARInvoicePage() {
           udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
         })),
         freightCharges: freightModal.freightCharges,
+        withholdingTaxRows: wtaxRowsForTotals,
         header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
       };
       const r = currentDocEntry ? await updateARInvoice(currentDocEntry, payload) : await submitARInvoice(payload);
@@ -2335,6 +2472,7 @@ function ARInvoicePage() {
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
       setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
+      setWithholdingTax({ open: false, customerSubject: false, defaultCode: '', allowedCodes: [], rows: [] });
       setValErrors({ header: {}, lines: {}, form: '' });
       
       if (Array.isArray(refData.series) && refData.series.length > 0) {
@@ -2357,6 +2495,7 @@ function ARInvoicePage() {
     setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
+    setWithholdingTax({ open: false, customerSubject: false, defaultCode: '', allowedCodes: [], rows: [] });
   };
 
   const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
@@ -2367,7 +2506,12 @@ function ARInvoicePage() {
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <form className={`del-page sap-document-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form
+      className={`del-page sap-document-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`}
+      onSubmit={handleSubmit}
+      onChangeCapture={markDirty}
+      onContextMenu={handleDocumentContextMenu}
+    >
 
       {/* toolbar */}
       <div className="del-toolbar sap-document-toolbar">
@@ -2880,9 +3024,34 @@ function ARInvoicePage() {
                           <td>Tax</td>
                           <td className="del-grid__cell--num"><input className="del-grid__input" value={fmtDec(totals.taxAmt, numDec.tax)} readOnly /></td>
                         </tr>
+                        {hasWTaxLiableLines && (
+                          <tr>
+                            <td>WTax Amount</td>
+                            <td className="del-grid__cell--num" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <input className="del-grid__input" value={fmtDec(wtaxAmount, numDec.tax)} readOnly style={{ flex: 1 }} />
+                              <button
+                                type="button"
+                                onClick={openWithholdingTaxTable}
+                                style={{
+                                  padding: '2px 8px',
+                                  fontSize: '11px',
+                                  border: '1px solid #d0d7de',
+                                  borderRadius: '3px',
+                                  background: 'linear-gradient(180deg, #f6f8fa 0%, #e9ecef 100%)',
+                                  cursor: 'pointer',
+                                  minWidth: '24px'
+                                }}
+                                title="Open Withholding Tax Table"
+                                disabled={!isDocumentEditable}
+                              >
+                                ...
+                              </button>
+                            </td>
+                          </tr>
+                        )}
                         <tr style={{ borderTop: '2px solid #a0aab4' }}>
-                          <td style={{ fontWeight: 700, color: '#003366' }}>Total</td>
-                          <td className="del-grid__cell--num" style={{ fontWeight: 700, color: '#003366' }}><input className="del-grid__input" style={{ fontWeight: 700, color: '#003366' }} value={fmtDec(totals.total, numDec.totalPaymentDue)} readOnly /></td>
+                          <td style={{ fontWeight: 700, color: '#003366' }}>Total Payment Due</td>
+                          <td className="del-grid__cell--num" style={{ fontWeight: 700, color: '#003366' }}><input className="del-grid__input" style={{ fontWeight: 700, color: '#003366' }} value={fmtDec(totalPaymentDueAfterWTax, numDec.totalPaymentDue)} readOnly /></td>
                         </tr>
                       </tbody>
                     </table>
@@ -3052,6 +3221,18 @@ function ARInvoicePage() {
         onClose={closeSalesEmployeeSetup}
         onSave={saveSalesEmployeeSetup}
         onUpdateRow={updateSalesEmployeeSetupRow}
+      />
+
+      <WithholdingTaxTableModal
+        isOpen={withholdingTax.open}
+        onClose={() => setWithholdingTax((prev) => ({ ...prev, open: false }))}
+        rows={withholdingModalRows}
+        allowedCodes={withholdingTax.allowedCodes.length ? withholdingTax.allowedCodes : refData.withholding_tax_codes}
+        baseAmount={wtaxBaseAmount}
+        onRowsChange={(rows) => setWithholdingTax((prev) => ({
+          ...prev,
+          rows: recalcWithholdingRows(rows),
+        }))}
       />
 
       {/* Freight Selection Modal */}
