@@ -66,6 +66,11 @@ const getAllowedUdfKeys = async (tableId) => {
   return new Set(definitions.map((field) => field.key));
 };
 
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
+};
+
 const calculateExpectedTotal = (header, lines) => {
   const subtotal = lines
     .filter((l) => l.itemNo && String(l.itemNo).trim())
@@ -354,9 +359,10 @@ const submitAPCreditMemo = async (payload) => {
     const header = validatedPayload.header;
     const lines = validatedPayload.lines;
     const { header_udfs } = payload;
-    const [allowedHeaderUdfs, allowedLineUdfs] = await Promise.all([
+    const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('ORPC'),
       getAllowedUdfKeys('RPC1'),
+      getUdfDefinitionsByKey('ORPC'),
     ]);
     console.log('Validated Payload:', { header, lines, header_udfs });
     if (!String(header.gstin || '').trim()) {
@@ -417,7 +423,7 @@ const submitAPCreditMemo = async (payload) => {
     if (header.salesEmployee !== '' && header.salesEmployee != null) sapPayload.SalesPersonCode = parseInt(header.salesEmployee, 10);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
     console.log('Constructed SAP Payload:', sapPayload);
 
     const response = await sapService.request({
@@ -443,7 +449,10 @@ const updateAPCreditMemo = async (docEntry, payload) => {
     const validatedPayload = await validateAPCreditMemoPayload(payload, docEntry);
     const header = validatedPayload.header;
     const { header_udfs } = payload;
-    const allowedHeaderUdfs = await getAllowedUdfKeys('ORPC');
+    const [allowedHeaderUdfs, headerUdfDefinitionsByKey] = await Promise.all([
+      getAllowedUdfKeys('ORPC'),
+      getUdfDefinitionsByKey('ORPC'),
+    ]);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const sapPayload = {
       Comments: header.otherInstruction || '',
@@ -454,7 +463,7 @@ const updateAPCreditMemo = async (docEntry, payload) => {
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
 
     await sapService.request({
       method: 'PATCH',

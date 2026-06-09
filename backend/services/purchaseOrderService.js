@@ -2,6 +2,7 @@ const sapService = require('./sapService');
 const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { getUdfDefinitions } = require('./udfMetadataService');
 const { isSapUdfKey, normalizeUdfValues } = require('./udfPayloadUtils');
 
 // ───────── HELPERS ─────────
@@ -17,6 +18,11 @@ const formatDocumentStatus = (value) => {
   if (normalized === 'bost_Close') return 'Closed';
   if (normalized === 'bost_Paid') return 'Paid';
   return normalized;
+};
+
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
 };
 
 // ───────── REFERENCE DATA (USING ODBC) ─────────
@@ -305,7 +311,8 @@ const buildPurchaseOrderPayload = async ({ header = {}, lines = [], header_udfs 
     DocumentLines: await buildDocumentLines(lines),
   });
 
-  Object.assign(sapPayload, normalizeUdfValues(header_udfs));
+  const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OPOR');
+  Object.assign(sapPayload, normalizeUdfValues(header_udfs, null, headerUdfDefinitionsByKey));
   return sapPayload;
 };
 

@@ -16,8 +16,18 @@
 
 .po-lbl   { flex: 0 0 150px !important; text-align: right; }
 .po-lbl-r { flex: 0 0 130px !important; text-align: right; }
+.po-uom-lbl { flex: 0 0 auto !important; margin-left: 8px; text-align: right; }
 
 .po-readonly { background: #f0f2f5 !important; color: #555; }
+
+.po-checkline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  font-size: 12px;
+  color: #1f2d3d;
+}
 
 /* ── Tab panel ── */
 .po-tab-panel {
@@ -25,6 +35,65 @@
   min-height: 380px;
   display: flex;
   flex-direction: column;
+}
+
+.po-summary-panel,
+.po-attachments-panel {
+  padding: 12px 16px;
+  font-size: 12px;
+}
+
+.po-summary-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.po-summary-panel div {
+  border: 1px solid #d8e0e8;
+  border-radius: 3px;
+  padding: 8px;
+  background: #f8fafc;
+}
+
+.po-summary-panel span,
+.po-summary-panel strong {
+  display: block;
+}
+
+.po-summary-panel span {
+  color: #52606d;
+  margin-bottom: 4px;
+}
+
+.po-remarks-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 10px 0 0;
+}
+
+.po-remarks-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.po-remarks-field label {
+  flex: 0 0 120px;
+  text-align: right;
+  padding-top: 4px;
+}
+
+.po-remarks-field textarea {
+  width: 100%;
+  min-height: 42px;
+  font-size: 12px;
+  padding: 5px 6px;
+  border: 1px solid #c8d0da;
+  border-radius: 3px;
+  resize: vertical;
+  box-sizing: border-box;
 }
 
 /* ── Lines wrap ── */
@@ -65,19 +134,26 @@
   text-overflow: ellipsis;
 }
 
-.po-th--type    { width: 60px;  }
+.po-th--rownum  { width: 38px;  }
+.po-th--type    { width: 70px;  }
 .po-th--no      { width: 120px; }
 .po-th--desc    { width: 160px; }
 .po-th--baseqty { width: 80px;  }
+.po-th--baseratio { width: 80px; }
 .po-th--planqty { width: 80px;  }
 .po-th--issued  { width: 80px;  }
-.po-th--uom     { width: 60px;  }
+.po-th--available { width: 80px; }
+.po-th--uom     { width: 80px;  }
+.po-th--uomname { width: 100px; }
 .po-th--wh      { width: 90px;  }
 .po-th--issue   { width: 90px;  }
+.po-th--wip     { width: 120px; }
 .po-th--dr      { width: 100px; }
+.po-th--location { width: 90px; }
 .po-th--proj    { width: 90px;  }
 .po-th--addqty  { width: 80px;  }
-.po-th--stage   { width: 60px;  }
+.po-th--route   { width: 120px; }
+.po-th--procure { width: 110px; }
 
 .po-grid__row:hover { background: #f5f8fc; }
 .po-grid__row:nth-child(even) { background: #fafbfc; }

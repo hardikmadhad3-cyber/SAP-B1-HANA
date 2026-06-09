@@ -28,8 +28,77 @@ const normalizeGSTChapterID = async (data) => {
   return { ok: true };
 };
 
+const omitUnsetCreateReferences = (data) => {
+  if (Number(data.CustomsGroupCode) === -1) {
+    delete data.CustomsGroupCode;
+  }
+};
+
+const getDuplicateSourceItemCode = (data = {}) =>
+  String(
+    data._duplicateFromItemCode
+      || data.duplicateFromItemCode
+      || data.DuplicateFromItemCode
+      || ""
+  ).trim();
+
+const validateItemCodeFormatValue = (itemCode) => {
+  if (!/^[a-zA-Z0-9\-_]+$/.test(itemCode)) {
+    return "Item Code can only contain letters, numbers, hyphens, and underscores.";
+  }
+  if (itemCode.length < 3) {
+    return "Item Code must be at least 3 characters long.";
+  }
+  if (itemCode.length > 50) {
+    return "Item Code cannot exceed 50 characters.";
+  }
+  return "";
+};
+
+const sendCreateItemError = (res, err) => {
+  const sapError = err.response?.data?.error?.message?.value
+    || err.response?.data?.error?.message
+    || err.message;
+  const isHangUp = err.code === "ECONNRESET" || err.code === "EPIPE" || err.message?.includes("socket hang up");
+  console.error("[SAP createItem error]", {
+    message: sapError,
+    code: err.code,
+    status: err.response?.status,
+    response: err.response?.data,
+    causeMessage: err.cause?.message,
+    causeCode: err.cause?.code,
+  });
+  res.status(err.response?.status || (isHangUp ? 502 : 500)).json({
+    message: isHangUp
+      ? "SAP server closed the connection. The payload may contain an invalid field value. Check server logs."
+      : sapError,
+  });
+};
+
 const createItem = async (req, res) => {
   const data = req.body;
+  const duplicateSourceItemCode = getDuplicateSourceItemCode(data);
+
+  if (duplicateSourceItemCode) {
+    const itemCode = String(data.ItemCode || "").trim();
+    if (!itemCode) {
+      return res.status(400).json({ message: "ItemCode is required." });
+    }
+
+    const itemCodeFormatMessage = validateItemCodeFormatValue(itemCode);
+    if (itemCodeFormatMessage) {
+      return res.status(400).json({ message: itemCodeFormatMessage });
+    }
+
+    try {
+      const result = await itemService.createItem(data);
+      return res.status(201).json(result);
+    } catch (err) {
+      return sendCreateItemError(res, err);
+    }
+  }
+
+  omitUnsetCreateReferences(data);
 
   const hsnNormalization = await normalizeGSTChapterID(data);
   if (!hsnNormalization.ok) {
@@ -62,13 +131,6 @@ const createItem = async (req, res) => {
     // Preferred vendor is recommended but not mandatory
     if (data.Mainsupplier && data.Mainsupplier.trim() === "") {
       data.Mainsupplier = ""; // Clear empty values
-    }
-  }
-  
-  // Inventory Item validations
-  if (data.InventoryItem === 'tYES') {
-    if (!data.DefaultWarehouse || data.DefaultWarehouse === "") {
-      return res.status(400).json({ message: "Default Warehouse is required for inventory items." });
     }
   }
   
@@ -170,18 +232,9 @@ const createItem = async (req, res) => {
     const itemCode = data.ItemCode.trim();
     
     // Check for valid characters (alphanumeric, hyphens, underscores)
-    if (!/^[a-zA-Z0-9\-_]+$/.test(itemCode)) {
-      return res.status(400).json({ message: "Item Code can only contain letters, numbers, hyphens, and underscores." });
-    }
-    
-    // Check minimum length
-    if (itemCode.length < 3) {
-      return res.status(400).json({ message: "Item Code must be at least 3 characters long." });
-    }
-    
-    // Check maximum length
-    if (itemCode.length > 50) {
-      return res.status(400).json({ message: "Item Code cannot exceed 50 characters." });
+    const itemCodeFormatMessage = validateItemCodeFormatValue(itemCode);
+    if (itemCodeFormatMessage) {
+      return res.status(400).json({ message: itemCodeFormatMessage });
     }
   };
   validateItemCodeFormat();
@@ -190,23 +243,7 @@ const createItem = async (req, res) => {
     const result = await itemService.createItem(data);
     res.status(201).json(result);
   } catch (err) {
-    const sapError = err.response?.data?.error?.message?.value
-      || err.response?.data?.error?.message
-      || err.message;
-    const isHangUp = err.code === "ECONNRESET" || err.code === "EPIPE" || err.message?.includes("socket hang up");
-    console.error("[SAP createItem error]", {
-      message: sapError,
-      code: err.code,
-      status: err.response?.status,
-      response: err.response?.data,
-      causeMessage: err.cause?.message,
-      causeCode: err.cause?.code,
-    });
-    res.status(err.response?.status || (isHangUp ? 502 : 500)).json({
-      message: isHangUp
-        ? "SAP server closed the connection. The payload may contain an invalid field value. Check server logs."
-        : sapError,
-    });
+    sendCreateItemError(res, err);
   }
 };
 
@@ -271,13 +308,6 @@ const updateItem = async (req, res) => {
   
   // Sales Item validations - ItemPrices collection is used instead of a single PriceListNum field
   // The UI Price List selection is handled via ItemPrices collection
-  
-  // Inventory Item validations
-  if (data.InventoryItem === 'tYES') {
-    if (data.DefaultWarehouse !== undefined && data.DefaultWarehouse === "") {
-      return res.status(400).json({ message: "Default Warehouse is required for inventory items." });
-    }
-  }
   
   // Asset Item validations
   if (data.AssetItem === 'tYES') {
@@ -539,6 +569,17 @@ const lookupUoMGroups = async (req, res) => {
   }
 };
 
+const lookupCustomsGroups = async (req, res) => {
+  try {
+    res.json(await itemService.getCustomsGroups(req.query.query || ""));
+  } catch (err) {
+    const msg = err.response?.data?.error?.message?.value
+      || err.response?.data?.error?.message
+      || err.message;
+    res.status(err.response?.status || 500).json({ message: msg || "Failed to load customs groups." });
+  }
+};
+
 const lookupItemProperties = async (req, res) => {
   try {
     res.json(await itemService.getItemProperties());
@@ -607,6 +648,6 @@ module.exports = {
   getItemPrices, getItemStock,
   lookupItemGroups, createItemGroup, lookupManufacturers, createManufacturer, lookupPriceLists, lookupVendors, lookupWarehouses, lookupGLAccounts,
   lookupHSNCodes,
-  lookupUoMGroups, lookupItemProperties, lookupItemCodePrefixes,
+  lookupUoMGroups, lookupCustomsGroups, lookupItemProperties, lookupItemCodePrefixes,
   getAttachments, uploadAttachment, deleteAttachment, serveAttachment,
 };

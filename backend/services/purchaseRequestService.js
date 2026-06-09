@@ -4,6 +4,7 @@ const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
+const { getUdfDefinitions } = require('./udfMetadataService');
 const { isSapUdfKey, normalizeUdfValues } = require('./udfPayloadUtils');
 
 const PURCHASE_REQUEST_OBJECT_CODE = '1470000113';
@@ -19,6 +20,11 @@ const formatDocumentStatus = (value) => {
   if (normalized === 'bost_Close' || normalized === 'C') return 'Closed';
   if (normalized === 'bost_Paid') return 'Paid';
   return normalized;
+};
+
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
 };
 
 const toNumberOrUndefined = (value) => {
@@ -612,7 +618,7 @@ const buildDocumentLines = (lines = []) =>
       return documentLine;
     });
 
-const buildPurchaseRequestPayload = ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) => {
+const buildPurchaseRequestPayload = async ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) => {
   const sapPayload = cleanObject({
     CardCode: header.vendor,
     NumAtCard: header.salesContractNo,
@@ -630,7 +636,8 @@ const buildPurchaseRequestPayload = ({ header = {}, lines = [], header_udfs = {}
     DocumentLines: buildDocumentLines(lines),
   });
 
-  Object.assign(sapPayload, normalizeUdfValues(header_udfs));
+  const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OPRQ');
+  Object.assign(sapPayload, normalizeUdfValues(header_udfs, null, headerUdfDefinitionsByKey));
   return sapPayload;
 };
 
@@ -646,7 +653,7 @@ const validatePurchaseRequestPayload = async ({ lines = [] }) => {
 
 const submitPurchaseRequest = async (payload) => {
   await validatePurchaseRequestPayload(payload);
-  const purchaseRequestPayload = buildPurchaseRequestPayload(payload);
+  const purchaseRequestPayload = await buildPurchaseRequestPayload(payload);
 
   const response = await sapService.request({
     method: 'post',
@@ -664,7 +671,7 @@ const submitPurchaseRequest = async (payload) => {
 
 const updatePurchaseRequest = async (docEntry, payload) => {
   await validatePurchaseRequestPayload(payload);
-  const purchaseRequestPayload = buildPurchaseRequestPayload(payload);
+  const purchaseRequestPayload = await buildPurchaseRequestPayload(payload);
 
   const response = await sapService.request({
     method: 'patch',

@@ -64,6 +64,9 @@ export const fetchWarehouses = (query = "") =>
 export const fetchUoMGroups = (query = "") =>
   apiClient.get("/items/lookup/uom-groups", { params: { query } }).then((r) => r.data);
 
+export const fetchCustomsGroups = (query = "") =>
+  apiClient.get("/items/lookup/customs-groups", { params: { query } }).then((r) => r.data);
+
 export const fetchItemProperties = () =>
   apiClient.get("/items/lookup/item-properties").then((r) => r.data);
 

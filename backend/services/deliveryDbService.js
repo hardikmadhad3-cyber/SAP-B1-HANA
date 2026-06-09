@@ -53,6 +53,12 @@ const resolveColumnName = (fieldMetadata = {}, candidateColumnName) => {
   );
 };
 
+const hasTableField = (metadata, columnName) => {
+  const normalizedColumnName = String(columnName || '').trim().toLowerCase();
+  if (!metadata || !normalizedColumnName) return false;
+  return Object.keys(metadata).some((fieldName) => fieldName.toLowerCase() === normalizedColumnName);
+};
+
 const buildDeliverySellerExpression = (columnNames, fallbackExpression) => {
   const udfExpressions = unique(columnNames).map((columnName) => (
     buildNullableTrimmedTextExpression(`T0.${quoteSqlIdentifier(columnName)}`)
@@ -653,10 +659,15 @@ const getOpenSalesOrders = async (customerCode = null) => {
 const getSalesOrderForCopy = async (docEntry) => salesOrderDb.getSalesOrderForCopy(docEntry);
 
 const getDeliveryForCopy = async (docEntry) => {
+  const headerFieldMetadata = await getTableFieldMetadata('ODLN');
+  const branchAssignedExpression = hasTableField(headerFieldMetadata, 'BPL_IDAssignedToInvoice')
+    ? 'T0.BPL_IDAssignedToInvoice'
+    : 'T0.BPLId';
+
   const h = await db.query(`
     SELECT T0.DocEntry, T0.DocNum, T0.DocDate, T0.DocDueDate, T0.TaxDate,
       T0.CardCode, T0.CardName, T0.CntctCode, T0.NumAtCard, T0.Comments,
-      T0.BPLId, T0.BPL_IDAssignedToInvoice, T0.GroupNum, T0.SlpCode,
+      T0.BPLId, ${branchAssignedExpression} AS BPL_IDAssignedToInvoice, T0.GroupNum, T0.SlpCode,
       T0.DiscPrcnt, T0.TotalExpns AS Freight
     FROM ODLN T0 WHERE T0.DocEntry = @DocEntry
   `, { DocEntry: docEntry });

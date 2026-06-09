@@ -4,7 +4,7 @@ const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { getActiveCompanyConfig } = require('./companyConfigService');
-const { isBlankUdfValue } = require('./udfPayloadUtils');
+const { isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
 
 // ───────── HELPERS ─────────
 
@@ -69,7 +69,7 @@ const toBoolean = (value) => {
   return ['true', '1', 'yes', 'y'].includes(String(value || '').trim().toLowerCase());
 };
 
-const applyUdfs = (target, udfValues = {}, allowedKeys = null, fieldMetadata = null) => {
+const applyUdfs = (target, udfValues = {}, allowedKeys = null, fieldMetadata = null, udfDefinitionsByKey = null) => {
   Object.entries(udfValues || {}).forEach(([key, value]) => {
     if (!String(key || '').startsWith('U_')) return;
     if (allowedKeys && !allowedKeys.has(key)) return;
@@ -79,18 +79,26 @@ const applyUdfs = (target, udfValues = {}, allowedKeys = null, fieldMetadata = n
       return;
     }
 
+    const normalizedValue = normalizeUdfValue(value, udfDefinitionsByKey?.get(key), key);
+    if (normalizedValue === undefined) return;
+
     if (fieldMetadata) {
-      setValidatedDeliveryField(target, fieldMetadata, key, value);
+      setValidatedDeliveryField(target, fieldMetadata, key, normalizedValue);
       return;
     }
 
-    target[key] = value;
+    target[key] = normalizedValue;
   });
 };
 
 const getAllowedUdfKeys = async (tableId) => {
   const definitions = await getUdfDefinitions(tableId);
   return new Set(definitions.map((field) => field.key));
+};
+
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
 };
 
 const resolveSalesEmployeeCode = (input, salesEmployees = []) => {
@@ -735,10 +743,11 @@ const submitDelivery = async (payload) => {
       ).trim();
 console.log("Payload:", payload );
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const [documentLines, allowedHeaderUdfs] = await Promise.all([
+    const [documentLines, headerUdfDefinitionsByKey] = await Promise.all([
       buildDocumentLinesPayload(lines),
-      getAllowedUdfKeys('ODLN'),
+      getUdfDefinitionsByKey('ODLN'),
     ]);
+    const allowedHeaderUdfs = new Set(headerUdfDefinitionsByKey.keys());
     const salesEmployees = await deliveryDb.getSalesEmployees();
     const salesPersonCode = resolveSalesEmployeeCode(
       header.salesEmployee ?? header.purchaser,
@@ -769,7 +778,7 @@ console.log("SAP Payload:", sapPayload);
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
     if (salesPersonCode !== undefined) sapPayload.SalesPersonCode = salesPersonCode;
 
-    applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs);
+    applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs, null, headerUdfDefinitionsByKey);
 
     console.log('[Delivery] Submit payload:', JSON.stringify(sapPayload, null, 2));
 
@@ -848,10 +857,11 @@ const updateDelivery = async (docEntry, payload) => {
     const { lines, header_udfs } = payload;
     const header = normalizeHeaderBranch(payload.header);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const [documentLines, allowedHeaderUdfs] = await Promise.all([
+    const [documentLines, headerUdfDefinitionsByKey] = await Promise.all([
       buildDocumentLinesPayload(lines, true),
-      getAllowedUdfKeys('ODLN'),
+      getUdfDefinitionsByKey('ODLN'),
     ]);
+    const allowedHeaderUdfs = new Set(headerUdfDefinitionsByKey.keys());
     const salesEmployees = await deliveryDb.getSalesEmployees();
     const salesPersonCode = resolveSalesEmployeeCode(
       header.salesEmployee ?? header.purchaser,
@@ -870,7 +880,7 @@ const updateDelivery = async (docEntry, payload) => {
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
     if (salesPersonCode !== undefined) sapPayload.SalesPersonCode = salesPersonCode;
 
-    applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs);
+    applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs, null, headerUdfDefinitionsByKey);
 
     await sapService.request({
       method: 'PATCH',

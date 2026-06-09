@@ -82,13 +82,6 @@ export const validateItemBusinessRules = (form) => {
   // Sales Item validations - ItemPrices collection is used instead of a single PriceListNum field
   // The UI Price List selection is handled via ItemPrices collection
   
-  // Inventory Item validations
-  if (form.InventoryItem === 'tYES') {
-    if (!form.DefaultWarehouse || form.DefaultWarehouse === "") {
-      errors.push("Default Warehouse is required for inventory items.");
-    }
-  }
-  
   // Asset Item validations
   if (form.AssetItem === 'tYES') {
     if (!form.IncomeAccount || form.IncomeAccount === "") {

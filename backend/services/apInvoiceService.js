@@ -4,7 +4,7 @@ const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
-const { applyUdfValues, isBlankUdfValue } = require('./udfPayloadUtils');
+const { applyUdfValues, isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
 
 const formatDateForSAP = (value) => {
   if (!value) return null;
@@ -101,7 +101,8 @@ const setKnownUdfValue = (target, definitionsByKey, aliases, value) => {
     target[matchedKey] = null;
     return;
   }
-  target[matchedKey] = resolveUdfOptionValue(definitionsByKey.get(matchedKey), value);
+  const normalizedValue = normalizeUdfValue(value, definitionsByKey.get(matchedKey), matchedKey);
+  if (normalizedValue !== undefined) target[matchedKey] = normalizedValue;
 };
 
 const calculateExpectedTotal = (header, lines) => {
@@ -456,7 +457,7 @@ const submitAPInvoice = async (payload) => {
     if (header.salesEmployee !== '' && header.salesEmployee != null) sapPayload.SalesPersonCode = parseInt(header.salesEmployee, 10);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
     console.log('Constructed SAP Payload:', sapPayload);
@@ -498,7 +499,7 @@ const updateAPInvoice = async (docEntry, payload) => {
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
 

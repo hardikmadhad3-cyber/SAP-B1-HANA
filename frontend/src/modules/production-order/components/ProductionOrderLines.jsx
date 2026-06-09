@@ -23,28 +23,37 @@ export default function ProductionOrderLines({
         <table className="po-grid">
           <thead>
             <tr>
+              <th className="po-th po-th--rownum">#</th>
               <th className="po-th po-th--type">Type</th>
-              <th className="po-th po-th--no">Code</th>
+              <th className="po-th po-th--no">No.</th>
               <th className="po-th po-th--desc">Description</th>
               <th className="po-th po-th--baseqty">Base Qty</th>
+              <th className="po-th po-th--baseratio">Base Ratio</th>
               <th className="po-th po-th--planqty">Planned Qty</th>
-              <th className="po-th po-th--issued">Issued Qty</th>
-              <th className="po-th po-th--uom">UoM</th>
+              <th className="po-th po-th--issued">Issued</th>
+              <th className="po-th po-th--available">Available</th>
+              <th className="po-th po-th--uom">UoM Code</th>
+              <th className="po-th po-th--uomname">UoM Name</th>
               <th className="po-th po-th--wh">Warehouse</th>
               <th className="po-th po-th--issue">Issue Method</th>
+              <th className="po-th po-th--wip">WIP Account</th>
               <th className="po-th po-th--dr">Distr. Rule</th>
+              <th className="po-th po-th--location">Location</th>
               <th className="po-th po-th--proj">Project</th>
               <th className="po-th po-th--addqty">Add. Qty</th>
-              <th className="po-th po-th--stage">Route Stage</th>
+              <th className="po-th po-th--route">Route Sequence</th>
+              <th className="po-th po-th--procure">Procurement</th>
             </tr>
           </thead>
           <tbody>
-            {lines.map((line) => {
+            {lines.map((line, idx) => {
               const isText = line.component_type === "pit_Text";
               const isResource = line.component_type === "pit_Resource";
 
               return (
                 <tr key={line._id} className="po-grid__row">
+                  <td className="po-grid__cell po-grid__cell--readonly po-grid__cell--num">{idx + 1}</td>
+
                   <td className="po-grid__cell">
                     <select
                       className="po-cell-select"
@@ -112,6 +121,18 @@ export default function ProductionOrderLines({
                       type="number"
                       min="0"
                       step="any"
+                      value={line.base_ratio ?? line.base_qty ?? 1}
+                      readOnly={readOnly}
+                      onChange={(e) => onChange(line._id, "base_ratio", e.target.value)}
+                    />
+                  </td>
+
+                  <td className="po-grid__cell">
+                    <input
+                      className="po-cell-input po-cell-input--num"
+                      type="number"
+                      min="0"
+                      step="any"
                       value={line.planned_qty}
                       readOnly={readOnly}
                       onChange={(e) => onChange(line._id, "planned_qty", e.target.value)}
@@ -122,12 +143,28 @@ export default function ProductionOrderLines({
                     {Number(line.issued_qty || 0).toFixed(2)}
                   </td>
 
+                  <td className="po-grid__cell po-grid__cell--readonly po-grid__cell--num">
+                    {Number(line.available_qty || 0).toFixed(2)}
+                  </td>
+
                   <td className="po-grid__cell">
                     <input
                       className="po-cell-input"
-                      value={line.uom}
+                      value={line.uom_code || line.uom || ""}
                       readOnly={readOnly || isText}
-                      onChange={(e) => onChange(line._id, "uom", e.target.value)}
+                      onChange={(e) => {
+                        onChange(line._id, "uom_code", e.target.value);
+                        onChange(line._id, "uom", e.target.value);
+                      }}
+                    />
+                  </td>
+
+                  <td className="po-grid__cell">
+                    <input
+                      className="po-cell-input"
+                      value={line.uom_name || line.uom || ""}
+                      readOnly={readOnly || isText}
+                      onChange={(e) => onChange(line._id, "uom_name", e.target.value)}
                     />
                   </td>
 
@@ -146,6 +183,15 @@ export default function ProductionOrderLines({
                   </td>
 
                   <td className="po-grid__cell">
+                    <input
+                      className="po-cell-input"
+                      value={line.wip_account || ""}
+                      readOnly={readOnly || isText}
+                      onChange={(e) => onChange(line._id, "wip_account", e.target.value)}
+                    />
+                  </td>
+
+                  <td className="po-grid__cell">
                     <select
                       className="po-cell-select"
                       value={line.issue_method}
@@ -156,6 +202,15 @@ export default function ProductionOrderLines({
                         <option key={m.value} value={m.value}>{m.label}</option>
                       ))}
                     </select>
+                  </td>
+
+                  <td className="po-grid__cell">
+                    <input
+                      className="po-cell-input"
+                      value={line.location || ""}
+                      readOnly={readOnly || isText}
+                      onChange={(e) => onChange(line._id, "location", e.target.value)}
+                    />
                   </td>
 
                   <td className="po-grid__cell">
@@ -201,9 +256,12 @@ export default function ProductionOrderLines({
                   <td className="po-grid__cell">
                     <select
                       className="po-cell-select"
-                      value={line.stage_id ?? ""}
+                      value={line.route_sequence || line.stage_id || ""}
                       disabled={readOnly}
-                      onChange={(e) => onChange(line._id, "stage_id", e.target.value)}
+                      onChange={(e) => {
+                        onChange(line._id, "route_sequence", e.target.value);
+                        onChange(line._id, "stage_id", e.target.value);
+                      }}
                     >
                       <option value="">--</option>
                       {routeStages.map((stage) => (
@@ -213,13 +271,22 @@ export default function ProductionOrderLines({
                       ))}
                     </select>
                   </td>
+
+                  <td className="po-grid__cell">
+                    <input
+                      className="po-cell-input"
+                      value={line.procurement_method || ""}
+                      readOnly={readOnly || isText}
+                      onChange={(e) => onChange(line._id, "procurement_method", e.target.value)}
+                    />
+                  </td>
                 </tr>
               );
             })}
 
             {lines.length < EMPTY_ROWS && Array.from({ length: EMPTY_ROWS - lines.length }).map((_, i) => (
               <tr key={`e-${i}`} className="po-grid__row po-grid__row--empty">
-                {Array.from({ length: 13 }).map((__, j) => (
+                {Array.from({ length: 20 }).map((__, j) => (
                   <td key={j} className="po-grid__cell po-grid__cell--empty" />
                 ))}
               </tr>

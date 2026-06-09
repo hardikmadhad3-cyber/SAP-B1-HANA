@@ -315,6 +315,7 @@ const getARInvoiceLineFieldMetadata = async () => {
   ]);
 
   const matrixColumns = AR_INVOICE_MATRIX_COLUMN_DEFS
+    .filter(Boolean)
     .map((column, index) => {
       const metadata = getColumnMetadata(column, lineColumns);
       const exists = Boolean(metadata || column.calculated || column.source);
@@ -1045,6 +1046,7 @@ const getARInvoiceList = async ({
     postingDateFrom,
     postingDateTo,
   }, { includeSellerFields: true });
+  whereClauses.push("T0.DocType = 'I'");
 
   const countRows = await safe(db.query(`
     SELECT COUNT(*) AS total_count
@@ -1192,6 +1194,7 @@ const getARInvoice = async (docEntry) => {
     ) C
     LEFT JOIN OCST ST ON ST.Code = C.State AND ST.Country = C.Country
     WHERE T0.DocEntry = @docEntry
+      AND T0.DocType = 'I'
   `, { docEntry }));
 
   if (!headerRows.length) {
@@ -1457,10 +1460,15 @@ const getOpenSalesQuotations = (customerCode = null) => {
 const getSalesQuotationForCopy = async (docEntry) => salesQuotationDb.getSalesQuotationForCopy(docEntry);
 
 const getARInvoiceForCopy = async (docEntry) => {
+  const headerFieldMetadata = await getTableFieldMetadata('OINV');
+  const branchAssignedExpression = hasTableField(headerFieldMetadata, 'BPL_IDAssignedToInvoice')
+    ? 'T0.BPL_IDAssignedToInvoice'
+    : 'T0.BPLId';
+
   const h = await db.query(`
     SELECT T0.DocEntry, T0.DocNum, T0.DocDate, T0.DocDueDate, T0.TaxDate,
       T0.CardCode, T0.CardName, T0.CntctCode, T0.NumAtCard, T0.Comments,
-      T0.BPLId, T0.BPL_IDAssignedToInvoice, T0.GroupNum, T0.SlpCode,
+      T0.BPLId, ${branchAssignedExpression} AS BPL_IDAssignedToInvoice, T0.GroupNum, T0.SlpCode,
       T0.DiscPrcnt, T0.TotalExpns AS Freight
     FROM OINV T0 WHERE T0.DocEntry = @DocEntry
   `, { DocEntry: docEntry });

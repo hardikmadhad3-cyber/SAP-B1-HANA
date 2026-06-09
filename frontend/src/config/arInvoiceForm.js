@@ -35,14 +35,17 @@ const getDefaultUdfValue = (field = {}) => {
   return field.defaultValue ?? '';
 };
 
+const getValidDefinitions = (definitions = []) =>
+  (definitions || []).filter((field) => field && field.key);
+
 const createUdfState = (definitions = []) =>
-  definitions.reduce((acc, field) => {
+  getValidDefinitions(definitions).reduce((acc, field) => {
     acc[field.key] = getDefaultUdfValue(field);
     return acc;
   }, {});
 
 const normalizeUdfState = (definitions = [], values = {}) =>
-  definitions.reduce((acc, field) => {
+  getValidDefinitions(definitions).reduce((acc, field) => {
     const currentValue = values[field.key];
     const shouldApplyDefault =
       currentValue === undefined ||
@@ -54,7 +57,7 @@ const normalizeUdfState = (definitions = [], values = {}) =>
   }, {});
 
 const buildVisibilitySettings = (definitions = []) =>
-  definitions.reduce((acc, field) => {
+  getValidDefinitions(definitions).reduce((acc, field) => {
     acc[field.key] = { visible: field.visible !== undefined ? field.visible : true, active: true };
     return acc;
   }, {});
