@@ -39,6 +39,14 @@ const getWarehouses = async (_req, res) => {
   }
 };
 
+const getDistributionRules = async (_req, res) => {
+  try {
+    res.json(await goodsReceiptService.getDistributionRules());
+  } catch (error) {
+    res.status(500).json(errorPayload(error, 'Failed to load distribution rules.'));
+  }
+};
+
 const getSeries = async (_req, res) => {
   try {
     res.json(await goodsReceiptService.getSeries());
@@ -121,6 +129,7 @@ module.exports = {
   getItems,
   getBatchesByItem,
   getWarehouses,
+  getDistributionRules,
   getSeries,
   getPurchaseOrders,
   getPurchaseInvoices,

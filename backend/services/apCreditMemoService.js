@@ -16,6 +16,19 @@ const parseNum = (value) => {
   return Number.isFinite(num) ? num : 0;
 };
 
+const optionalNumber = (value) => {
+  if (value === '' || value === null || value === undefined) return undefined;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+};
+
+const yesNo = (value) => {
+  const text = String(value ?? '').trim().toUpperCase();
+  if (['Y', 'YES', 'TRUE', '1', 'TYES'].includes(text)) return 'tYES';
+  if (['N', 'NO', 'FALSE', '0', 'TNO'].includes(text)) return 'tNO';
+  return undefined;
+};
+
 const normalizeState = (value) =>
   String(value || '')
     .trim()
@@ -380,6 +393,24 @@ const submitAPCreditMemo = async (payload) => {
         Quantity: parseFloat(l.quantity) || 0,
         WarehouseCode: l.whse || '',
       };
+      const lineWtaxLiable = yesNo(l.wtaxLiable ?? l.wTaxLiable);
+      if (lineWtaxLiable) {
+        docLine.WTLiable = lineWtaxLiable;
+      }
+      if (String(l.distRule || '').trim()) {
+        docLine.CostingCode = String(l.distRule).trim();
+      }
+      if (String(l.countryOfOrigin || '').trim()) {
+        docLine.CountryOrg = String(l.countryOfOrigin).trim();
+      }
+      const locationCode = optionalNumber(l.loc);
+      if (locationCode !== undefined) {
+        docLine.LocationCode = locationCode;
+      }
+      const agreementNo = optionalNumber(l.blanketAgreementNo);
+      if (agreementNo !== undefined) {
+        docLine.AgreementNo = agreementNo;
+      }
 
       if (hasBaseDoc) {
         docLine.BaseEntry = parseInt(l.baseEntry, 10);

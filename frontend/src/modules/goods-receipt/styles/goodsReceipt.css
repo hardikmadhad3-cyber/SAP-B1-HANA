@@ -37,6 +37,22 @@
   background: #fff5f5 !important;
 }
 
+.gr-goods-receipt__lookup-btn {
+  min-width: 24px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fff 0%, #e8ecf0 100%);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.gr-goods-receipt__grid th {
+  white-space: normal;
+  line-height: 1.15;
+}
+
 .gr-goods-receipt__header-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -169,6 +185,109 @@
   max-height: 420px;
 }
 
+.inventory-document-page {
+  position: relative;
+  transition: padding-right 0.18s ease;
+}
+
+.inventory-document-page--sidebar-open {
+  padding-right: 332px;
+}
+
+.inventory-document-sidebar {
+  position: fixed !important;
+  top: 156px;
+  right: 38px;
+  bottom: auto;
+  width: 320px;
+  max-width: calc(100vw - 76px);
+  z-index: 1040;
+  min-width: 0 !important;
+  flex: none !important;
+}
+
+.inventory-document-sidebar .po-udf-sidebar-card {
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  max-height: min(680px, calc(100vh - 156px));
+  min-height: 0;
+  border: 1px solid #c8d6e4;
+  border-radius: 8px;
+  box-shadow: none;
+  background: #fff;
+  overflow: hidden;
+}
+
+.inventory-document-sidebar .po-udf-sidebar-header {
+  flex: 0 0 auto;
+  min-height: 76px;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid #e3e9f0;
+}
+
+.inventory-document-sidebar .po-udf-sidebar-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.inventory-document-sidebar .po-udf-sidebar-field {
+  display: grid;
+  grid-template-columns: minmax(120px, 145px) minmax(0, 1fr);
+  column-gap: 14px;
+  row-gap: 0;
+  align-items: center;
+}
+
+.inventory-document-sidebar .po-udf-sidebar-field .form-label {
+  margin: 0;
+  color: #003366;
+  font-size: 11px;
+  font-weight: 600;
+  word-wrap: break-word;
+}
+
+.inventory-document-sidebar .form-control,
+.inventory-document-sidebar .form-select,
+.inventory-document-sidebar select,
+.inventory-document-sidebar input,
+.inventory-document-sidebar textarea {
+  min-height: 32px;
+  font-size: 11px;
+}
+
+.inventory-document-sidebar .po-udf-sidebar-close {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 1px solid #b9c7d6;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #fff 0%, #eef3f8 100%);
+}
+
+.inventory-document-sidebar .po-udf-sidebar-close::before {
+  content: "x";
+  color: #0c2744;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.inventory-document-sidebar .d-flex.justify-content-between.align-items-center.mb-2 {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 86px;
+  gap: 10px;
+  align-items: center !important;
+  padding: 4px 0;
+}
+
+.inventory-document-sidebar .d-flex.gap-2 {
+  justify-content: flex-end;
+}
+
 @media (max-width: 1100px) {
   .gr-goods-receipt__header-grid,
   .gr-goods-receipt__footer {
@@ -182,5 +301,25 @@
   .gr-goods-receipt__action-left,
   .gr-goods-receipt__action-right {
     width: 100%;
+  }
+
+  .inventory-document-page--sidebar-open {
+    padding-right: 0;
+  }
+
+  .inventory-document-sidebar {
+    position: static !important;
+    width: 100%;
+    max-width: none;
+    margin-top: 12px;
+  }
+
+  .inventory-document-sidebar .po-udf-sidebar-card {
+    max-height: none;
+  }
+
+  .inventory-document-sidebar .po-udf-sidebar-field {
+    grid-template-columns: 1fr;
+    row-gap: 6px;
   }
 }

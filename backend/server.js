@@ -95,6 +95,7 @@ const inventoryTransferRequestRoutes = require('./routes/inventoryTransferReques
 const inventoryTransferRoutes    = require('./routes/inventoryTransfer');
 const purchaseAnalysisRoutes     = require('./routes/reports/purchaseAnalysis.routes');
 const purchaseRequestReportRoutes = require('./routes/reports/purchaseRequestReport.routes');
+const itemListReportRoutes       = require('./routes/reports/itemListReport.routes');
 const reportStudioRoutes         = require('./routes/reportStudioRoutes');
 const reportLookupsRoutes        = require('./routes/reportLookups');
 const adminPanelRoutes           = require('./routes/adminPanelRoutes');
@@ -296,6 +297,7 @@ app.use('/api/inventory-transfer-request', inventoryTransferRequestRoutes);
 app.use('/api/inventory-transfer', inventoryTransferRoutes);
 app.use('/api/reports',            purchaseAnalysisRoutes);
 app.use('/api/reports',            purchaseRequestReportRoutes);
+app.use('/api/reports',            itemListReportRoutes);
 app.use('/api/lookups',            reportLookupsRoutes);
 app.use('/api/admin-panel',        adminPanelRoutes);
 app.use('/api/performance',        performanceRoutes);

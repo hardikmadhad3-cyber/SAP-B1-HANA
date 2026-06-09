@@ -1,5 +1,8 @@
 const sapService = require('./sapService');
 const goodsReceiptDb = require('./goodsReceiptDbService');
+const masterDataDbService = require('./masterDataDbService');
+const { getMarketingDocumentUdfs, getUdfDefinitions } = require('./udfMetadataService');
+const { applyUdfValues } = require('./udfPayloadUtils');
 
 const toIsoDate = (value) => {
   if (!value) return null;
@@ -18,15 +21,44 @@ const extractSapError = (error, fallback) =>
   error.message ||
   fallback;
 
+const buildDistributionDimensions = (rules = []) => {
+  const dimensions = new Map();
+
+  (rules || []).forEach((rule) => {
+    const dimensionCode = String(rule.DimensionCode || rule.DimCode || '1').trim() || '1';
+    if (!dimensions.has(dimensionCode)) {
+      dimensions.set(dimensionCode, {
+        DimensionCode: dimensionCode,
+        DimensionName: rule.DimensionName || rule.DimName || `Dimension ${dimensionCode}`,
+      });
+    }
+  });
+
+  return [...dimensions.values()].sort((a, b) => Number(a.DimensionCode) - Number(b.DimensionCode));
+};
+
 const getMetadata = async () => {
-  const [priceLists, branches] = await Promise.all([
+  const [priceLists, branches, udfMetadata, distributionRules, locations, businessPartners, accounts, paymentTerms] = await Promise.all([
     goodsReceiptDb.getPriceLists(),
     goodsReceiptDb.getBranches(),
+    getMarketingDocumentUdfs({ headerTable: 'OIGN', lineTable: 'IGN1' }),
+    goodsReceiptDb.getDistributionRules(),
+    masterDataDbService.lookupWarehouseLocations(),
+    masterDataDbService.searchBP('', '', 5000, 0),
+    masterDataDbService.lookupGLAccounts('', 5000),
+    masterDataDbService.lookupPaymentTerms(''),
   ]);
 
   return {
     priceLists,
     branches,
+    udfMetadata,
+    distributionRules,
+    distributionDimensions: buildDistributionDimensions(distributionRules),
+    locations,
+    businessPartners,
+    accounts,
+    paymentTerms,
   };
 };
 
@@ -34,6 +66,7 @@ const getItems = async () => goodsReceiptDb.getItems();
 const getBatchesByItem = async (itemCode, whsCode) =>
   goodsReceiptDb.getBatchesByItem(itemCode, whsCode);
 const getWarehouses = async () => goodsReceiptDb.getWarehouses();
+const getDistributionRules = async () => goodsReceiptDb.getDistributionRules();
 const getSeries = async () => goodsReceiptDb.getSeries();
 const getPurchaseOrders = async () => goodsReceiptDb.getPurchaseOrders();
 const getPurchaseInvoices = async () => goodsReceiptDb.getPurchaseInvoices();
@@ -95,6 +128,12 @@ const createGoodsReceipt = async (payload) => {
   validatePayload(payload);
 
   const { header, lines = [] } = payload;
+  const [headerUdfDefinitions, lineUdfDefinitions] = await Promise.all([
+    getUdfDefinitions('OIGN'),
+    getUdfDefinitions('IGN1'),
+  ]);
+  const allowedHeaderUdfs = new Set(headerUdfDefinitions.map((field) => field.key));
+  const allowedLineUdfs = new Set(lineUdfDefinitions.map((field) => field.key));
 
   const sapPayload = {
     DocDate: toIsoDate(header.postingDate),
@@ -124,6 +163,25 @@ const createGoodsReceipt = async (payload) => {
         if (line.distributionRule) {
           documentLine.CostingCode = line.distributionRule;
         }
+        if (line.distributionRule2) {
+          documentLine.CostingCode2 = line.distributionRule2;
+        }
+        if (line.distributionRule3) {
+          documentLine.CostingCode3 = line.distributionRule3;
+        }
+        if (line.distributionRule4) {
+          documentLine.CostingCode4 = line.distributionRule4;
+        }
+        if (line.distributionRule5) {
+          documentLine.CostingCode5 = line.distributionRule5;
+        }
+        if (line.accountCode) {
+          documentLine.AccountCode = line.accountCode;
+        }
+        if (line.location !== '' && line.location != null && Number.isFinite(Number(line.location))) {
+          documentLine.LocationCode = Number(line.location);
+        }
+        applyUdfValues(documentLine, line.udf, allowedLineUdfs);
 
         if (line.batchManaged && Array.isArray(line.batches) && line.batches.length > 0) {
           documentLine.BatchNumbers = line.batches.map((batch) => {
@@ -155,6 +213,7 @@ const createGoodsReceipt = async (payload) => {
   if (header.branch) {
     sapPayload.BPL_IDAssignedToInvoice = Number(header.branch);
   }
+  applyUdfValues(sapPayload, payload.header_udfs || payload.headerUdfs, allowedHeaderUdfs);
 
   console.debug('[GoodsReceipt] Posting payload:', JSON.stringify(sapPayload, null, 2));
 
@@ -182,6 +241,8 @@ const updateGoodsReceipt = async (docEntry, payload) => {
   validatePayload(payload);
 
   const { header } = payload;
+  const headerUdfDefinitions = await getUdfDefinitions('OIGN');
+  const allowedHeaderUdfs = new Set(headerUdfDefinitions.map((field) => field.key));
   const sapPayload = {
     Comments: header.remarks || '',
     JournalMemo: header.journalRemark || 'Goods Receipt',
@@ -190,6 +251,7 @@ const updateGoodsReceipt = async (docEntry, payload) => {
   if (header.ref2) {
     sapPayload.Reference2 = header.ref2;
   }
+  applyUdfValues(sapPayload, payload.header_udfs || payload.headerUdfs, allowedHeaderUdfs);
 
   try {
     await sapService.request({
@@ -216,6 +278,7 @@ module.exports = {
   getItems,
   getBatchesByItem,
   getWarehouses,
+  getDistributionRules,
   getSeries,
   getPurchaseOrders,
   getPurchaseInvoices,

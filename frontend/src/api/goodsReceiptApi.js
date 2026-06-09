@@ -3,6 +3,8 @@ import apiClient from './client';
 export const fetchGoodsReceiptMetadata = () => apiClient.get('/goods-receipt/metadata');
 export const fetchGoodsReceiptItems = () => apiClient.get('/goods-receipt/items');
 export const fetchGoodsReceiptWarehouses = () => apiClient.get('/goods-receipt/warehouses');
+export const fetchGoodsReceiptDistributionRules = () =>
+  apiClient.get('/goods-receipt/distribution-rules', { params: { _: Date.now() } });
 export const fetchGoodsReceiptSeries = () => apiClient.get('/goods-receipt/series');
 export const fetchGoodsReceiptGoodsIssues = () => apiClient.get('/goods-receipt/goods-issues');
 export const fetchGoodsReceiptBatchesByItem = (itemCode, whsCode) =>

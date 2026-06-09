@@ -121,6 +121,7 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
+const DEFAULT_WAREHOUSE = '01';
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
@@ -132,7 +133,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   stdDiscount: '',
   taxCode: '',
   total: '',
-  whse: '',
+  whse: DEFAULT_WAREHOUSE,
   loc: '',
   branch: '',
   baseEntry: null,
@@ -148,7 +149,7 @@ const INIT_HEADER = {
   contactPerson: '',
   salesContractNo: '',
   branch: '',
-  warehouse: '',
+  warehouse: DEFAULT_WAREHOUSE,
   docNo: '',
   status: 'Open',
   series: '',
@@ -1142,7 +1143,7 @@ function PurchaseOrder() {
       ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
-      whse: header.warehouse || ''
+      whse: header.warehouse || DEFAULT_WAREHOUSE
     }]);
   };
 
@@ -1923,6 +1924,9 @@ function PurchaseOrder() {
                             {w.WhsCode} - {w.WhsName}
                           </option>
                         ))}
+                        {header.warehouse && !branchFilteredWarehouses.some(w => String(w.WhsCode) === String(header.warehouse)) && (
+                          <option value={header.warehouse}>{header.warehouse}</option>
+                        )}
                       </select>
                       {valErrors.header.warehouse && (
                         <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.header.warehouse}</div>

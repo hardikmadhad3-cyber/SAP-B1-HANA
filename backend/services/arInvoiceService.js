@@ -37,6 +37,16 @@ const yesNo = (value) => {
   return ['y', 'yes', 'true', '1', 'tyes'].includes(normalized) ? 'tYES' : 'tNO';
 };
 
+const buildWithholdingTaxData = (rows = []) =>
+  (Array.isArray(rows) ? rows : [])
+    .filter((row) => String(row?.code || row?.WTCode || '').trim())
+    .map((row) => ({
+      WTCode: String(row.code || row.WTCode || '').trim(),
+      TaxableAmount: parseLineNumber(row.taxableAmount, 0),
+      WTAmount: parseLineNumber(row.wtaxAmount || row.WTAmount, 0),
+      Category: 'I',
+    }));
+
 const getLineTotal = (line = {}) => {
   const total = normalizeOptionalNumber(line.total ?? line.totalLC ?? line.LineTotal);
   return total !== undefined && total > 0 ? total : undefined;
@@ -85,6 +95,19 @@ const resolveUdfOptionValue = (field, value) => {
   return text;
 };
 
+const DOCUMENT_TYPE_CODE_BY_LABEL = {
+  gsttaxinvoice: 'INV',
+  taxinvoice: 'INV',
+  billofsupply: 'BIL',
+  gstdebitmemo: 'DBN',
+  debitmemo: 'DBN',
+};
+
+const resolveDocumentTypeCode = (value) => {
+  const text = String(value ?? '').trim();
+  return DOCUMENT_TYPE_CODE_BY_LABEL[normalizeUdfAlias(text)] || text;
+};
+
 const setKnownUdfValue = (target, definitionsByKey, aliases, value) => {
   if (value === undefined) return;
 
@@ -95,8 +118,15 @@ const setKnownUdfValue = (target, definitionsByKey, aliases, value) => {
     target[matchedKey] = null;
     return;
   }
+
+  const resolvedValue = resolveUdfOptionValue(definitionsByKey.get(matchedKey), value);
+  target[matchedKey] = normalizeUdfAlias(matchedKey) === 'doctype'
+    ? resolveDocumentTypeCode(resolvedValue)
+    : resolvedValue;
+
   const normalizedValue = normalizeUdfValue(value, definitionsByKey.get(matchedKey), matchedKey);
   if (normalizedValue !== undefined) target[matchedKey] = normalizedValue;
+
 };
 
 // ───────── REFERENCE DATA (USING ODBC) ─────────
@@ -127,6 +157,7 @@ const getReferenceData = async (companyId) => {
       shipping_types: [],
       branches: [],
       tax_codes: [],
+      withholding_tax_codes: [],
       uom_groups: [],
       decimal_settings: {
         QtyDec: 2,
@@ -157,6 +188,7 @@ const getCustomerDetails = async (customerCode) => {
       contacts: [],
       pay_to_addresses: [],
       ship_to_addresses: [],
+      withholding_tax: { subject: false, defaultCode: '', allowedCodes: [] },
     };
   }
 };
@@ -364,6 +396,10 @@ const submitARInvoice = async (payload) => {
     if (allowedHeaderUdfs.has('U_PlaceOfSupply')) {
       addIfPresent(sapPayload, 'U_PlaceOfSupply', payload.header.placeOfSupply);
     }
+    const withholdingTaxData = buildWithholdingTaxData(payload.withholdingTaxRows);
+    if (withholdingTaxData.length) {
+      sapPayload.WithholdingTaxDataWTXCollection = withholdingTaxData;
+    }
 
     console.log("🔥 [ARInvoiceService] SAP AR INVOICE PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
@@ -478,6 +514,10 @@ const updateARInvoice = async (docEntry, payload) => {
     }
     if (allowedHeaderUdfs.has('U_PlaceOfSupply')) {
       addIfPresent(sapPayload, 'U_PlaceOfSupply', payload.header.placeOfSupply);
+    }
+    const withholdingTaxData = buildWithholdingTaxData(payload.withholdingTaxRows);
+    if (withholdingTaxData.length) {
+      sapPayload.WithholdingTaxDataWTXCollection = withholdingTaxData;
     }
 
     applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);

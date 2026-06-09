@@ -106,6 +106,63 @@
 }
 .po-btn--primary:hover { background: linear-gradient(180deg, #0080d0 0%, #0060aa 100%); }
 .po-btn--danger { color: #c00; }
+.po-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.po-dropdown {
+  position: relative;
+  display: inline-flex;
+  overflow: visible;
+}
+
+.po-dropdown.active {
+  z-index: 9998;
+}
+
+.po-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  bottom: auto;
+  width: max-content;
+  min-width: 180px;
+  max-width: min(320px, calc(100vw - 32px));
+  display: none;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #c8d0da;
+  border-radius: 3px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+  z-index: 9999;
+}
+
+.po-dropdown.active .po-dropdown-menu {
+  display: flex;
+}
+
+.po-dropdown-menu button {
+  min-width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid #e6ebf0;
+  background: #fff;
+  text-align: left;
+  font-size: 12px;
+  color: #1a1a1a;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.po-dropdown-menu button:last-child {
+  border-bottom: 0;
+}
+
+.po-dropdown-menu button:hover {
+  background: #f5f8fc;
+}
 
 /* ── Mode badge ── */
 .po-mode-badge {

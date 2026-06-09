@@ -16,6 +16,13 @@ const parseNum = (value) => {
   return Number.isFinite(num) ? num : 0;
 };
 
+const yesNo = (value) => {
+  const text = String(value ?? '').trim().toUpperCase();
+  if (['Y', 'YES', 'TRUE', '1', 'TYES'].includes(text)) return 'tYES';
+  if (['N', 'NO', 'FALSE', '0', 'TNO'].includes(text)) return 'tNO';
+  return undefined;
+};
+
 const normalizeState = (value) =>
   String(value || '')
     .trim()
@@ -121,6 +128,16 @@ const calculateExpectedTotal = (header, lines) => {
   const discounted = subtotal - (subtotal * headerDiscount / 100);
   return Number((discounted + freight + tax).toFixed(2));
 };
+
+const buildWithholdingTaxData = (rows = []) =>
+  (Array.isArray(rows) ? rows : [])
+    .filter((row) => String(row?.code || row?.WTCode || '').trim())
+    .map((row) => ({
+      WTCode: String(row.code || row.WTCode || '').trim(),
+      TaxableAmount: parseNum(row.taxableAmount),
+      WTAmount: parseNum(row.wtaxAmount || row.WTAmount),
+      Category: 'I',
+    }));
 
 const validateAPInvoicePayload = async (payload, docEntry = null) => {
   const { header = {}, lines = [] } = payload || {};
@@ -414,6 +431,10 @@ const submitAPInvoice = async (payload) => {
         Quantity: parseFloat(l.quantity) || 0,
         WarehouseCode: l.whse || '',
       };
+      const lineWtaxLiable = yesNo(l.wtaxLiable ?? l.wTaxLiable);
+      if (lineWtaxLiable) {
+        docLine.WTLiable = lineWtaxLiable;
+      }
 
       if (hasBaseDoc) {
         docLine.BaseEntry = parseInt(l.baseEntry, 10);
@@ -437,6 +458,7 @@ const submitAPInvoice = async (payload) => {
     }
 
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
+    const withholdingTaxData = buildWithholdingTaxData(payload.withholdingTaxRows);
 
     const sapPayload = {
       CardCode: String(header.vendor || '').trim(),
@@ -450,6 +472,9 @@ const submitAPInvoice = async (payload) => {
       DocumentAdditionalExpenses: documentAdditionalExpenses,
       DocumentLines: documentLines,
     };
+    if (withholdingTaxData.length) {
+      sapPayload.WithholdingTaxDataWTXCollection = withholdingTaxData;
+    }
 
     //if (header.series) sapPayload.Series = parseInt(header.series, 10);
     if (header.branch) sapPayload.BPLId = parseInt(header.branch, 10);
