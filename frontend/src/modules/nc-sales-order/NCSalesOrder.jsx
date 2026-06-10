@@ -29,6 +29,7 @@ import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../..
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
@@ -431,8 +432,10 @@ const INIT_HEADER = {
     billToAddress: '', billToCode: '', shipToAddress: '',
 };
 
-const createInitialHeader = () => ({
+const createInitialHeader = (settings = readGeneralSettings()) => ({
     ...INIT_HEADER,
+    warehouse: settings.ncSalesWarehouse || DEFAULT_WAREHOUSE_CODE,
+    series: settings.ncSalesSeries || '',
     postingDate: today(),
     deliveryDate: today(),
     documentDate: today(),
@@ -457,12 +460,13 @@ function NCSalesOrder() {
     const { removeTask, upsertTask } = useSapWindowTaskbarActions();
     const formRef = useRef(null);
     const handledCopyFromRef = useRef('');
+    const generalSettingsRef = useRef(readGeneralSettings());
     const lastAutoBillToPartyBuyerRef = useRef('');
     const lastLoadedBillToPartyCodeRef = useRef('');
     const defaultToVendorAppliedRef = useRef('');
     const [isCopyFromClick, setIsCopyFromClick] = useState(false);
     const [currentDocEntry, setCurrentDocEntry] = useState(null);
-    const [header, setHeader] = useState(() => createInitialHeader());
+    const [header, setHeader] = useState(() => createInitialHeader(generalSettingsRef.current));
     const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
     const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
     const [lines, setLines] = useState([createLine()]);
@@ -549,6 +553,13 @@ function NCSalesOrder() {
             : null;
 
         if (matchedSeries) return matchedSeries;
+
+        const preferredSeries = String(generalSettingsRef.current.ncSalesSeries || '').trim();
+        const settingsSeries = preferredSeries
+            ? seriesList.find((series) => String(series.Series) === preferredSeries)
+            : null;
+
+        if (settingsSeries) return settingsSeries;
 
         const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
         return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
@@ -2538,7 +2549,7 @@ function NCSalesOrder() {
         const duplicated = duplicateDocumentInPlace({
             currentDocEntry,
             header,
-            initialHeader: createInitialHeader(),
+            initialHeader: createInitialHeader(generalSettingsRef.current),
             lines,
             createLine,
             rowUdfDefinitions,
@@ -2829,7 +2840,7 @@ function NCSalesOrder() {
 
             const r = currentDocEntry ? await updateSalesOrder(currentDocEntry, payload) : await submitSalesOrder(payload);
             const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-            const resetHeader = createInitialHeader();
+            const resetHeader = createInitialHeader(generalSettingsRef.current);
             setSnapshotPending(false);
             setIsDirty(false);
             setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
@@ -2855,7 +2866,7 @@ function NCSalesOrder() {
     };
 
     const resetForm = () => {
-        const resetHeader = createInitialHeader();
+        const resetHeader = createInitialHeader(generalSettingsRef.current);
         setSnapshotPending(false);
         setIsDirty(false);
         setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);

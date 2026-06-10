@@ -15,6 +15,15 @@ const STATIC_DASHBOARD_MENU = {
   sortOrder: -1,
   children: [],
 };
+const STATIC_GENERAL_SETTINGS_MENU = {
+  menuId: 'general-settings-static',
+  menuName: 'General Settings',
+  menuPath: '/general-settings',
+  parentId: null,
+  icon: 'settings',
+  sortOrder: 99,
+  children: [],
+};
 const SIDEBAR_COLLAPSED_KEY = 'sap-b1-sidebar-collapsed';
 
 const TOP_LEVEL_MENU_PRIORITY = new Map([
@@ -33,7 +42,9 @@ const TOP_LEVEL_MENU_PRIORITY = new Map([
   ['reports', 8],
   ['report layout manager', 9],
   ['reportlayoutmanager', 9],
-  ['admin panel', 10],
+  ['settings', 10],
+  ['general settings', 10],
+  ['admin panel', 11],
 ]);
 
 const REPORT_STUDIO_NAMES = new Set(['report studio', 'report layout manager', 'reportlayoutmanager']);
@@ -103,6 +114,7 @@ const ICON_PATHS = {
   banking: ['M3 9l9-5 9 5z', 'M5 9v9', 'M9 9v9', 'M15 9v9', 'M19 9v9', 'M4 18h16'],
   reports: ['M5 19V5h14v14z', 'M8 15v-4', 'M12 15V8', 'M16 15v-2'],
   admin: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M12 2v3', 'M12 19v3', 'M4.9 4.9 7 7', 'M19.1 19.1l-2.1-2.1', 'M22 12h-3', 'M5 12H2'],
+  settings: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M12 2v3', 'M12 19v3', 'M4.9 4.9l2.1 2.1', 'M17 17l2.1 2.1', 'M22 12h-3', 'M5 12H2'],
   invoice: ['M7 3h9l3 3v15H7z', 'M16 3v4h4', 'M9 11h7', 'M9 15h7', 'M9 19h4'],
   document: ['M7 3h8l4 4v14H7z', 'M15 3v5h5', 'M9 12h6', 'M9 16h6'],
   delivery: ['M3 7h11v8H3z', 'M14 10h4l3 3v2h-7z', 'M7 18a2 2 0 1 0 0-.01', 'M17 18a2 2 0 1 0 0-.01'],
@@ -141,6 +153,7 @@ const inferIconKey = (menu) => {
   if (lookup.includes('inventory')) return 'inventory';
   if (lookup.includes('bank')) return 'banking';
   if (lookup.includes('report') || lookup.includes('analysis')) return 'reports';
+  if (lookup.includes('setting')) return 'settings';
   if (lookup.includes('admin')) return 'admin';
   if (lookup.includes('invoice') || lookup.includes('credit memo')) return 'invoice';
   if (lookup.includes('quotation') || lookup.includes('order') || lookup.includes('request')) return 'document';
@@ -288,6 +301,12 @@ const normalizeReportSidebarTree = (menus = []) =>
     };
   });
 
+const hasMenuPath = (menus = [], targetPath = '') =>
+  menus.some((menu) => {
+    const menuPath = menu.menuPath ? normalizePath(menu.menuPath) : '';
+    return menuPath === targetPath || hasMenuPath(menu.children || [], targetPath);
+  });
+
 const buildSidebarMenus = (menus = []) => {
   const { dashboardMenu, remainingMenus } = extractDashboardMenu(menus);
 
@@ -318,9 +337,13 @@ const buildSidebarMenus = (menus = []) => {
     }, []);
 
   const visibleMenus = sortSalesMenuChildren(normalizeReportSidebarTree(removeHiddenSidebarItems(remainingMenus)));
+  const generalSettingsMenus = hasMenuPath(visibleMenus, STATIC_GENERAL_SETTINGS_MENU.menuPath)
+    ? []
+    : [STATIC_GENERAL_SETTINGS_MENU];
 
   return [
     dashboardMenu,
+    ...generalSettingsMenus,
     ...sortTopLevelMenus(visibleMenus),
   ];
 };

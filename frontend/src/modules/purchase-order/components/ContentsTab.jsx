@@ -370,7 +370,7 @@ export default function ContentsTab({
                       style={{ padding: '2px 8px', fontSize: 14 }}
                       onClick={() => onRemoveLine(i)}
                     >
-                      ×
+                      x
                     </button>
                   </td>
                 </tr>

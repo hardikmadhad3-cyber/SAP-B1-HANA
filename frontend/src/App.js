@@ -28,6 +28,7 @@ const ItemMasterList = lazyWithRetry(() => import("./pages/ItemMasterList"));
 const BusinessPartner = lazyWithRetry(() => import("./pages/BusinessPartner"));
 const BusinessPartnerList = lazyWithRetry(() => import("./pages/BusinessPartnerList"));
 const Warehouse = lazyWithRetry(() => import("./pages/Warehouse"));
+const GeneralSettings = lazyWithRetry(() => import("./pages/GeneralSettings"));
 const PriceList = lazyWithRetry(() => import("./pages/PriceList"));
 const Delivery = lazyWithRetry(() => import("./pages/Delivery"));
 const DeliveryList = lazyWithRetry(() => import("./pages/DeliveryList"));
@@ -85,11 +86,13 @@ const ARCreditMemo = lazyWithRetry(() => import("./pages/ARCreditMemo"));
 const ARCreditMemoList = lazyWithRetry(() => import("./pages/ARCreditMemoList"));
 const IncomingPayments = lazyWithRetry(() => import("./pages/IncomingPayments"));
 const OutgoingPayments = lazyWithRetry(() => import("./pages/OutgoingPayments"));
+const JournalEntry = lazyWithRetry(() => import("./pages/JournalEntry"));
 const SalesQuotation = lazyWithRetry(() => import("./pages/SalesQuotation"));
 const SalesQuotationList = lazyWithRetry(() => import("./pages/SalesQuotationList"));
 const SalesAnalysisReportPage = lazyWithRetry(() => import("./pages/SalesAnalysisReportPage"));
 const ItemListReportPage = lazyWithRetry(() => import("./pages/ItemListReportPage"));
 const InventoryPostingListReportPage = lazyWithRetry(() => import("./pages/InventoryPostingListReportPage"));
+const InventoryInWarehouseReportPage = lazyWithRetry(() => import("./pages/InventoryInWarehouseReportPage"));
 const PurchaseAnalysisReport = lazyWithRetry(() => import("./pages/PurchaseAnalysisReport"));
 const PurchaseRequestReportPage = lazyWithRetry(() => import("./pages/PurchaseRequestReportPage"));
 const ReportsStudioPage = lazyWithRetry(() => import("./pages/ReportsStudioPage"));
@@ -171,6 +174,7 @@ function App() {
                   <Route path="/business-partner" element={<BusinessPartner />} />
                   <Route path="/business-partner/find" element={<BusinessPartnerList />} />
                   <Route path="/warehouse" element={<Warehouse />} />
+                  <Route path="/general-settings" element={<GeneralSettings />} />
                   <Route path="/price-list" element={<PriceList />} />
                   <Route path="/tax-code" element={<TaxCode />} />
                   <Route path="/uom-group" element={<UoMGroup />} />
@@ -227,6 +231,7 @@ function App() {
                   <Route path="/reports/sales/analysis" element={<SalesAnalysisReportPage />} />
                   <Route path="/reports/item-list" element={<ItemListReportPage />} />
                   <Route path="/reports/inventory/posting-list" element={<InventoryPostingListReportPage />} />
+                  <Route path="/reports/inventory/in-warehouse" element={<InventoryInWarehouseReportPage />} />
                   <Route path="/reports/purchasing/analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchase-analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchase/analysis" element={<PurchaseAnalysisReport />} />
@@ -249,6 +254,7 @@ function App() {
                   <Route path="/ap-credit-memo/find" element={<APCreditMemoList />} />
                   <Route path="/incoming-payments" element={<IncomingPayments />} />
                   <Route path="/outgoing-payments" element={<OutgoingPayments />} />
+                  <Route path="/journal-entry" element={<JournalEntry />} />
                 </Route>
               </Route>
 

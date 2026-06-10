@@ -71,6 +71,9 @@ const sanitizeExpandedPayload = (expanded = {}) => {
 };
 
 const sanitizeInventoryPostingPayload = (payload = {}) => ({
+  activeSelectionTab: ["items", "resources", "bp", "other"].includes(payload.activeSelectionTab)
+    ? payload.activeSelectionTab
+    : "items",
   itemFrom: sanitizeText(payload.itemFrom),
   itemTo: sanitizeText(payload.itemTo),
   groupCode: sanitizeText(payload.groupCode || "*") || "*",
@@ -84,6 +87,23 @@ const sanitizeInventoryPostingPayload = (payload = {}) => ({
   printSeparatePage: Boolean(payload.printSeparatePage),
   printDirectly: Boolean(payload.printDirectly),
   propertyFilter: sanitizePropertyFilter(payload.propertyFilter),
+  resourceSelection: {
+    codeFrom: sanitizeText(payload.resourceSelection?.codeFrom),
+    codeTo: sanitizeText(payload.resourceSelection?.codeTo),
+    groupCode: sanitizeText(payload.resourceSelection?.groupCode || "*") || "*",
+    propertyFilter: sanitizePropertyFilter(payload.resourceSelection?.propertyFilter),
+  },
+  bpSelection: {
+    codeFrom: sanitizeText(payload.bpSelection?.codeFrom),
+    codeTo: sanitizeText(payload.bpSelection?.codeTo),
+    customerGroup: sanitizeText(payload.bpSelection?.customerGroup || "*") || "*",
+    vendorGroup: sanitizeText(payload.bpSelection?.vendorGroup || "*") || "*",
+    propertyFilter: sanitizePropertyFilter(payload.bpSelection?.propertyFilter),
+  },
+  otherSelection: {
+    by: sanitizeText(payload.otherSelection?.by),
+    selectedValues: sanitizeCodeArray(payload.otherSelection?.selectedValues),
+  },
   locationSelection: {
     mode: payload.locationSelection?.mode === "warehouse" ? "warehouse" : "location",
     locationCodes: sanitizeCodeArray(payload.locationSelection?.locationCodes),
@@ -111,6 +131,15 @@ const postInventoryPostingList = async (req, res) => {
   }
 };
 
+const getInventoryPostingListLookups = async (_req, res) => {
+  try {
+    res.json(await inventoryPostingListService.getInventoryPostingListLookups());
+  } catch (error) {
+    res.status(error.status || 500).json({ message: getErrorMessage(error) });
+  }
+};
+
 module.exports = {
+  getInventoryPostingListLookups,
   postInventoryPostingList,
 };

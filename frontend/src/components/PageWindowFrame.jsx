@@ -11,6 +11,7 @@ const WINDOW_FRAME_EXCLUDED_PATHS = new Set([
   "/reports/sales/analysis",
   "/reports/item-list",
   "/reports/inventory/posting-list",
+  "/reports/inventory/in-warehouse",
   "/reports/purchasing/analysis",
   "/reports/purchase-analysis",
   "/reports/purchase/analysis",
