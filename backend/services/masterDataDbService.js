@@ -84,8 +84,10 @@ const toIssueMethod = (value) => {
 };
 
 const toItemType = (value) => {
+  if (typeof value === "string" && value.startsWith("pit_")) return value;
   const map = {
     4: "pit_Item",
+    290: "pit_Resource",
   };
   return map[Number(value)] || "pit_Item";
 };
@@ -416,23 +418,33 @@ const mapBOMHeader = (row) => ({
   PlanAvgProdSize: row.PlAvgSize ?? 1,
 });
 
-const mapBOMLine = (row) => ({
-  ItemCode: row.Code || "",
-  ItemName: row.ItemName || "",
-  Quantity: row.Quantity ?? 1,
-  Warehouse: row.Warehouse || "",
-  Price: row.Price ?? 0,
-  PriceList: row.PriceList ?? "",
-  IssueMethod: toIssueMethod(row.IssueMthd),
-  ItemType: toItemType(row.Type),
-  DistributionRule: row.OcrCode || "",
-  Project: row.Project || "",
-  WipAccount: row.WipActCode || "",
-  Comment: row.Comment || row.LineText || "",
-  InventoryUOM: row.InvntryUom || "",
-  ChildNum: row.ChildNum ?? 0,
-  VisualOrder: row.VisOrder ?? 0,
-});
+const mapBOMLine = (row) => {
+  const hasItemCode = Boolean(String(row.Code || "").trim());
+  const lineText = row.Comment || row.LineText || "";
+
+  return {
+    ItemCode: row.Code || "",
+    ItemName: row.ItemName || row.ItemMasterName || "",
+    Quantity: row.Quantity ?? 1,
+    Warehouse: row.Warehouse || "",
+    Price: row.Price ?? 0,
+    PriceList: row.PriceList ?? "",
+    IssueMethod: toIssueMethod(row.IssueMthd),
+    ItemType: hasItemCode ? toItemType(row.Type) : "pit_Text",
+    DistributionRule: row.OcrCode || "",
+    Project: row.Project || "",
+    WipAccount: row.WipActCode || "",
+    Comment: lineText,
+    AdditionalQuantity: row.AddQuant ?? row.AdditionalQuantity ?? 0,
+    InventoryUOM: row.UoMName || row.InvntryUom || "",
+    UoMName: row.UoMName || row.InvntryUom || "",
+    ProductionStdCost: row.ProdStdCost ?? row.StdCost ?? row.Price ?? 0,
+    ChildNum: row.ChildNum ?? 0,
+    VisualOrder: row.VisOrder ?? 0,
+    StageID: row.StageId ?? row.StageID ?? "",
+    RouteSequence: row.StageId ?? row.StageID ?? row.VisOrder ?? 0,
+  };
+};
 
 const getBranch = async (bplid) => {
   const row = await queryOne(`
@@ -1401,9 +1413,14 @@ const getBOM = async (treeCode) => {
   if (!row) return null;
 
   const lines = await queryRows(`
-    SELECT L.*, I.InvntryUom
+    SELECT L.*,
+           COALESCE(NULLIF(I.ItemName, ''), NULLIF(R.ResName, '')) AS ItemMasterName,
+           I.InvntryUom,
+           COALESCE(NULLIF(I.InvntryUom, ''), NULLIF(U.UomCode, ''), NULLIF(U.UomName, '')) AS UoMName
     FROM ITT1 L
     LEFT JOIN OITM I ON I.ItemCode = L.Code
+    LEFT JOIN ORSC R ON R.ResCode = L.Code
+    LEFT JOIN OUOM U ON U.UomEntry = I.IUoMEntry
     WHERE L.Father = @treeCode
     ORDER BY L.ChildNum
   `, { treeCode });

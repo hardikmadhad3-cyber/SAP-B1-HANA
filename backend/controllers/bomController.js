@@ -1,20 +1,12 @@
 const sapService = require("../services/sapService");
 const masterDataDbService = require("../services/masterDataDbService");
-const escapeOData = (v) => String(v || "").replace(/'/g, "''");
 
 // ── List BOMs ─────────────────────────────────────────────────────────────────
 const listBOMs = async (req, res) => {
   try {
-    await sapService.ensureSession();
     const { query = "", top = 50, skip = 0 } = req.query;
-    const filter = query
-      ? `&$filter=contains(TreeCode,'${escapeOData(query)}') or contains(ProductDescription,'${escapeOData(query)}')`
-      : "";
-    const resp = await sapService.request({
-      method: "GET",
-      url: `/ProductTrees?$select=TreeCode,TreeType,Quantity,ProductDescription,Warehouse,PriceList,PlanAvgProdSize,HideBOMComponentsInPrintout${filter}&$top=${top}&$skip=${skip}`,
-    });
-    res.json(resp.data.value || []);
+    const rows = await masterDataDbService.listBOMs(query, top, skip);
+    res.json(rows);
   } catch (err) {
     res.status(err.response?.status || 500).json({ message: _sapMsg(err) });
   }
@@ -23,13 +15,12 @@ const listBOMs = async (req, res) => {
 // ── Get single BOM ────────────────────────────────────────────────────────────
 const getBOM = async (req, res) => {
   try {
-    await sapService.ensureSession();
     const code = req.params.treeCode;
-    const resp = await sapService.request({
-      method: "GET",
-      url: `/ProductTrees('${encodeURIComponent(code)}')`,
-    });
-    res.json(resp.data);
+    const bom = await masterDataDbService.getBOM(code);
+    if (!bom) {
+      return res.status(404).json({ message: `BOM "${code}" not found.` });
+    }
+    res.json(bom);
   } catch (err) {
     res.status(err.response?.status || 500).json({ message: _sapMsg(err) });
   }
@@ -51,7 +42,8 @@ const createBOM = async (req, res) => {
     }
     
     const resp = await sapService.request({ method: "POST", url: "/ProductTrees", data: payload });
-    res.status(201).json(resp.data);
+    const created = await masterDataDbService.getBOM(payload.TreeCode).catch(() => null);
+    res.status(201).json(created || resp.data);
   } catch (err) {
     console.error("[BOM create]", _sapMsg(err), JSON.stringify(err.response?.data));
     if (_isDuplicateEntryError(err)) {
@@ -80,8 +72,8 @@ const updateBOM = async (req, res) => {
     }
     
     await sapService.request({ method: "PATCH", url: `/ProductTrees('${encodeURIComponent(code)}')`, data: payload });
-    const updated = await sapService.request({ method: "GET", url: `/ProductTrees('${encodeURIComponent(code)}')` });
-    res.json(updated.data);
+    const updated = await masterDataDbService.getBOM(code);
+    res.json(updated || payload);
   } catch (err) {
     console.error("[BOM update]", _sapMsg(err), JSON.stringify(err.response?.data));
     res.status(err.response?.status || 500).json({ message: _sapMsg(err) });
@@ -227,6 +219,7 @@ function _buildPayload(body) {
         if (opt(l.Project))          line.Project          = l.Project;
         if (opt(l.AdditionalQuantity)) line.AdditionalQuantity = Number(l.AdditionalQuantity);
         if (opt(l.StageID))          line.StageID          = Number(l.StageID);
+        if (!opt(l.StageID) && opt(l.RouteSequence)) line.StageID = Number(l.RouteSequence);
         return line;
       });
   }

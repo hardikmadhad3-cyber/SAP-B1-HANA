@@ -128,6 +128,8 @@ const TYPE_LABELS = {
   bopotDisassemble: "Disassemble",
 };
 
+const formatSummaryNumber = (value) => Number(value || 0).toFixed(2);
+
 export default function ProductionOrderModule() {
   const [mode,    setMode]    = useState(MODES.ADD);
   const [tab,     setTab]     = useState(0);
@@ -254,26 +256,31 @@ export default function ProductionOrderModule() {
     setItemModal({ open: false, target: null });
     
     if (target === "header") {
+      const selectedItemCode = item.ItemCode || item.TreeCode || item.Code || "";
+      const selectedItemName = item.ItemName || item.ProductDescription || item.Name || "";
+      const selectedWarehouse = item.BOMWarehouse || item.Warehouse || item.DefaultWarehouse || "";
+      const selectedUom = item.UoMName || item.InventoryUOM || item.InventoryUOMName || "";
+
       setHeader((prev) => ({
         ...prev,
-        item_code: item.ItemCode,
-        item_name: item.ItemName,
-        uom_name: item.UoMName || item.InventoryUOM || prev.uom_name,
-        warehouse: item.DefaultWarehouse || prev.warehouse,
+        item_code: selectedItemCode,
+        item_name: selectedItemName,
+        uom_name: selectedUom || prev.uom_name,
+        warehouse: selectedWarehouse || prev.warehouse,
       }));
       
       // Automatically explode BOM for the selected item
       try {
-        const bomData = await explodeBOM(item.ItemCode, header.planned_qty || 1);
+        const bomData = await explodeBOM(selectedItemCode, header.planned_qty || 1);
         
         // Auto-populate warehouse and other header fields from BOM
         setHeader((prev) => ({
           ...prev,
           item_code: bomData.item_code,
           item_name: bomData.item_name,
-          uom_name: bomData.uom_name || item.UoMName || item.InventoryUOM || prev.uom_name,
+          uom_name: bomData.uom_name || selectedUom || prev.uom_name,
           bom_qty: bomData.bom_qty ?? prev.bom_qty,
-          warehouse: bomData.warehouse || item.DefaultWarehouse || prev.warehouse,
+          warehouse: bomData.warehouse || selectedWarehouse || prev.warehouse,
           distribution_rule: bomData.distribution_rule || prev.distribution_rule,
           project: bomData.project || prev.project,
         }));
@@ -477,7 +484,12 @@ export default function ProductionOrderModule() {
 
   const handleFind = async () => {
     const query = String(header.doc_num || "").trim() || header.item_code.trim() || header.item_name.trim();
-    if (!query) { showAlert("error", "Enter a Doc No., Item Code, or Description to search."); return; }
+    setListQuery(query);
+    setMode(MODES.LIST);
+  };
+
+  const openFind = () => {
+    const query = String(header.doc_num || "").trim() || header.item_code.trim() || header.item_name.trim();
     setListQuery(query);
     setMode(MODES.LIST);
   };
@@ -617,6 +629,20 @@ export default function ProductionOrderModule() {
   const isReadOnly = header.status === "boposClosed" || header.status === "boposCancelled";
   const statusKey  = STATUS_LABELS[header.status] || header.status;
   const canEditStatus = mode === MODES.UPDATE && !isReadOnly;
+  const componentCount = lines.filter((line) => line.item_code || line.line_text).length;
+  const dueDateValue = header.due_date || "";
+  const actualClosingDate = header.status === "boposClosed" ? (header.due_date || "") : "";
+  const overdueDays = (() => {
+    if (!header.due_date || header.status === "boposClosed" || header.status === "boposCancelled") return "";
+    const due = new Date(header.due_date);
+    const now = new Date();
+    due.setHours(0, 0, 0, 0);
+    now.setHours(0, 0, 0, 0);
+    const diffMs = now.getTime() - due.getTime();
+    if (diffMs <= 0) return "";
+    return String(Math.floor(diffMs / 86400000));
+  })();
+  const totalRunTime = formatSummaryNumber(componentCount);
 
   // ── List view ──────────────────────────────────────────────────────────────
   if (mode === MODES.LIST) {
@@ -624,7 +650,7 @@ export default function ProductionOrderModule() {
   }
 
   return (
-    <div className="im-page">
+    <div className="im-page po-page">
       {/* Toolbar */}
       <div className="im-toolbar">
         <span className="im-toolbar__title">Production Order</span>
@@ -641,7 +667,7 @@ export default function ProductionOrderModule() {
           {loading ? "…" : mode === MODES.FIND ? "Find" : mode === MODES.ADD ? "Add" : "Update"}
         </button>
         <button className="im-btn" onClick={() => { setMode(MODES.ADD); resetForm(); }}>New</button>
-        <button className="im-btn" onClick={() => setMode(MODES.LIST)}>List</button>
+        <button className="im-btn" onClick={openFind}>Find</button>
         
         {/* Conditional action buttons based on status */}
         {mode === MODES.UPDATE && header.status === "boposPlanned" && (
@@ -925,10 +951,106 @@ export default function ProductionOrderModule() {
         )}
         {tab === 1 && (
           <div className="po-summary-panel">
-            <div><span>Planned Qty</span><strong>{Number(header.planned_qty || 0).toFixed(2)}</strong></div>
-            <div><span>Completed</span><strong>{Number(header.completed_qty || 0).toFixed(2)}</strong></div>
-            <div><span>Rejected</span><strong>{Number(header.rejected_qty || 0).toFixed(2)}</strong></div>
-            <div><span>Components</span><strong>{lines.filter((line) => line.item_code || line.line_text).length}</strong></div>
+            <div className="po-summary-columns">
+              <div className="po-summary-group">
+                <div className="po-summary-group__title">Costs</div>
+                <div className="po-summary-field">
+                  <label>Actual Item Component Cost</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Actual Resource Component Cost</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Actual Additional Cost</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Actual Product Cost</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Actual By-Product Cost</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Total Variance</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+              </div>
+
+              <div className="po-summary-group">
+                <div className="po-summary-group__title">Quantities</div>
+                <div className="po-summary-field">
+                  <label>Planned Quantity</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(header.planned_qty)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Completed Quantity</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(header.completed_qty)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Rejected Quantity</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(header.rejected_qty)} readOnly />
+                </div>
+
+                <div className="po-summary-group__title po-summary-group__title--spaced">Dates</div>
+                <div className="po-summary-field">
+                  <label>Due Date</label>
+                  <input className="im-field__input po-readonly" value={dueDateValue} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Actual Closing Date</label>
+                  <input className="im-field__input po-readonly" value={actualClosingDate} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Overdue</label>
+                  <input className="im-field__input po-readonly" value={overdueDays} readOnly />
+                </div>
+              </div>
+
+              <div className="po-summary-group">
+                <div className="po-summary-group__title">Planned Times</div>
+                <div className="po-summary-field">
+                  <label>Total Production Time</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Total Additional Time</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Total Run Time</label>
+                  <input className="im-field__input po-readonly" value={totalRunTime} readOnly />
+                </div>
+
+                <div className="po-summary-group__title po-summary-group__title--spaced">Planned Days</div>
+                <div className="po-summary-field">
+                  <label>Total Required Days</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Total Waiting Days</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+                <div className="po-summary-field">
+                  <label>Total Days</label>
+                  <input className="im-field__input po-readonly" value={formatSummaryNumber(0)} readOnly />
+                </div>
+              </div>
+            </div>
+
+            <div className="po-summary-footer">
+              <div className="po-summary-field po-summary-field--wide">
+                <label>Journal Remark</label>
+                <input className="im-field__input po-readonly" value={header.journal_remark || ""} readOnly />
+              </div>
+              <div className="po-summary-field po-summary-field--wide">
+                <label>Referenced Document</label>
+                <input className="im-field__input po-readonly" value={header.linked_order || header.origin_num || ""} readOnly />
+              </div>
+            </div>
           </div>
         )}
         {tab === 2 && (
@@ -980,7 +1102,7 @@ export default function ProductionOrderModule() {
                 ? fetchProdOrderResources
                 : fetchProdOrderComponentItems
           }
-          autoSearchOnOpen={itemModal.target !== "header"}
+          autoSearchOnOpen
           emptyMessage={itemModal.target === "header" ? "" : "No items found."}
           columns={
             itemModal.target === "header"

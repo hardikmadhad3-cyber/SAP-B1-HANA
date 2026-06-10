@@ -4,6 +4,7 @@
  * SAP B1 endpoint: InventoryGenEntries (Type 59 = Receipt from Production)
  */
 const sapService = require('./sapService');
+const productionDbService = require('./productionDbService');
 
 const escapeOData = (v) => String(v || '').replace(/'/g, "''");
 const formatDate = (v) => (v ? String(v).split('T')[0] : '');
@@ -375,6 +376,7 @@ function _validate(body) {
   const primaryLine = mainLines[0] || validLines[0];
   const itemCode = body.item_code || primaryLine?.item_code;
   const receiptQty = body.receipt_qty != null ? toQty(body.receipt_qty) : toQty(primaryLine?.quantity);
+  const isReturnComponents = body.return_components === true || body.return_components === 'Y';
 
   if (!itemCode) {
     throw new Error('Finished goods item code is required.');
@@ -385,15 +387,15 @@ function _validate(body) {
   if (validLines.length === 0 && (!body.item_code || !body.receipt_qty)) {
     throw new Error('At least one receipt line with a valid quantity is required.');
   }
-  if (mainLines.length === 0) {
+  if (!isReturnComponents && mainLines.length === 0) {
     throw new Error('Exactly one main finished goods line is required. Mark additional output lines as by-products.');
   }
-  if (mainLines.length > 1) {
+  if (!isReturnComponents && mainLines.length > 1) {
     throw new Error('Only one main finished goods line is allowed per receipt. Mark the other lines as by-products.');
   }
 
   const remainingQty = Number(body.remaining_qty ?? Infinity);
-  if (remainingQty !== Infinity && receiptQty > remainingQty + EPSILON) {
+  if (!isReturnComponents && remainingQty !== Infinity && receiptQty > remainingQty + EPSILON) {
     throw new Error(`Receipt quantity (${receiptQty}) exceeds remaining quantity (${remainingQty.toFixed(2)}).`);
   }
 
@@ -452,12 +454,19 @@ function _validate(body) {
 }
 
 function _buildPayload(body) {
+  const hasProductionOrderBase =
+    Number(body.prod_order_entry) > 0 ||
+    (Array.isArray(body.lines) && body.lines.some((line) => Number(line.base_type ?? 202) === 202 && Number(line.base_entry ?? body.prod_order_entry) > 0));
+
   const payload = {
     DocDate: body.posting_date,
-    TaxDate: body.document_date || body.posting_date,
     Comments: body.remarks || '',
     JournalMemo: body.journal_remark || '',
   };
+
+  if (!hasProductionOrderBase) {
+    payload.TaxDate = body.document_date || body.posting_date;
+  }
 
   if (opt(body.series)) payload.Series = Number(body.series);
   if (opt(body.ref_2)) payload.Reference2 = body.ref_2;
@@ -561,11 +570,30 @@ function _buildPayload(body) {
   return payload;
 }
 
+const getReferenceDataByOdbc = () => productionDbService.getReceiptReferenceData();
+
+const getProductionOrderForReceiptByOdbc = async (docEntry) => {
+  const data = await productionDbService.getProductionOrderForReceipt(docEntry);
+  if (!data) throw new Error('Production order not found.');
+  return data;
+};
+
+const getReceiptListByOdbc = (query) => productionDbService.getReceiptList(query);
+
+const getReceiptByDocEntryByOdbc = async (docEntry) => {
+  const data = await productionDbService.getReceiptByDocEntry(docEntry);
+  if (!data) throw new Error('Receipt from production not found.');
+  return data;
+};
+
+const lookupProductionOrdersByOdbc = (query = '', type = '') =>
+  productionDbService.lookupOpenProductionOrders(query, true, type, { receiptOpenOnly: true });
+
 module.exports = {
-  getReferenceData,
-  getProductionOrderForReceipt,
-  getReceiptList,
-  getReceiptByDocEntry,
+  getReferenceData: getReferenceDataByOdbc,
+  getProductionOrderForReceipt: getProductionOrderForReceiptByOdbc,
+  getReceiptList: getReceiptListByOdbc,
+  getReceiptByDocEntry: getReceiptByDocEntryByOdbc,
   createReceipt,
-  lookupProductionOrders,
+  lookupProductionOrders: lookupProductionOrdersByOdbc,
 };

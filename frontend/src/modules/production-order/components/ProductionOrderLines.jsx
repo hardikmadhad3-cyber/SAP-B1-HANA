@@ -183,15 +183,6 @@ export default function ProductionOrderLines({
                   </td>
 
                   <td className="po-grid__cell">
-                    <input
-                      className="po-cell-input"
-                      value={line.wip_account || ""}
-                      readOnly={readOnly || isText}
-                      onChange={(e) => onChange(line._id, "wip_account", e.target.value)}
-                    />
-                  </td>
-
-                  <td className="po-grid__cell">
                     <select
                       className="po-cell-select"
                       value={line.issue_method}
@@ -207,9 +198,9 @@ export default function ProductionOrderLines({
                   <td className="po-grid__cell">
                     <input
                       className="po-cell-input"
-                      value={line.location || ""}
+                      value={line.wip_account || ""}
                       readOnly={readOnly || isText}
-                      onChange={(e) => onChange(line._id, "location", e.target.value)}
+                      onChange={(e) => onChange(line._id, "wip_account", e.target.value)}
                     />
                   </td>
 
@@ -225,6 +216,15 @@ export default function ProductionOrderLines({
                         <option key={d.FactorCode} value={d.FactorCode}>{d.FactorCode}</option>
                       ))}
                     </select>
+                  </td>
+
+                  <td className="po-grid__cell">
+                    <input
+                      className="po-cell-input"
+                      value={line.location || ""}
+                      readOnly={readOnly || isText}
+                      onChange={(e) => onChange(line._id, "location", e.target.value)}
+                    />
                   </td>
 
                   <td className="po-grid__cell">
