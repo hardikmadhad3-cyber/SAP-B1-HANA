@@ -32,7 +32,7 @@ const formatAmount = (value) =>
     maximumFractionDigits: 2,
   });
 
-function BusinessPartnerLookupModal({ isOpen, onClose, onSelect }) {
+function BusinessPartnerLookupModal({ isOpen, onClose, onSelect, type = 'cCustomer' }) {
   const navigate = useNavigate();
   const [searchText, setSearchText] = useState('');
   const [rows, setRows] = useState([]);
@@ -45,7 +45,7 @@ function BusinessPartnerLookupModal({ isOpen, onClose, onSelect }) {
     setLoading(true);
     setError('');
     try {
-      const response = await searchBP(query, 'cCustomer', 200, 0);
+      const response = await searchBP(query, type, 200, 0);
       setRows(Array.isArray(response) ? response : []);
       setSelectedIndex(0);
     } catch (loadError) {
@@ -66,7 +66,7 @@ function BusinessPartnerLookupModal({ isOpen, onClose, onSelect }) {
     }
 
     loadRows('');
-  }, [isOpen]);
+  }, [isOpen, type]);
 
   const normalizedRows = useMemo(
     () =>

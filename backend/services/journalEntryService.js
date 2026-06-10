@@ -887,7 +887,89 @@ const generateFromServiceAPInvoice = async ({ docEntry, payload, persist = false
   return { ...journal, persisted: false };
 };
 
+const normalizeManualLine = (line = {}) => ({
+  accountCode: String(line.accountCode || line.account || line.glAccount || '').trim(),
+  accountName: String(line.accountName || line.name || '').trim(),
+  debit: round2(toNumber(line.debit)),
+  credit: round2(toNumber(line.credit)),
+  remarks: String(line.remarks || line.lineMemo || '').trim(),
+  taxCode: String(line.taxCode || '').trim(),
+  project: String(line.project || '').trim(),
+  distRule: String(line.distRule || line.profitCenter || '').trim(),
+  location: String(line.location || line.loc || '').trim(),
+});
+
+const createManualJournalEntry = async (payload = {}) => {
+  const header = payload.header || payload;
+  const sourceLines = Array.isArray(payload.lines) ? payload.lines : [];
+  const lines = sourceLines
+    .map(normalizeManualLine)
+    .filter((line) => line.accountCode || line.accountName || line.debit || line.credit || line.remarks);
+
+  if (!lines.length) {
+    throw new Error('At least one journal entry row is required.');
+  }
+
+  const invalidLine = lines.find((line) => !line.accountCode || (line.debit > 0 && line.credit > 0) || (line.debit <= 0 && line.credit <= 0));
+  if (invalidLine) {
+    throw new Error('Each journal row must have an account and either debit or credit amount.');
+  }
+
+  const totalDebit = round2(lines.reduce((sum, line) => sum + line.debit, 0));
+  const totalCredit = round2(lines.reduce((sum, line) => sum + line.credit, 0));
+  if (Math.abs(totalDebit - totalCredit) >= 0.005) {
+    throw new Error('Journal entry is not balanced.');
+  }
+
+  const data = {
+    ReferenceDate: formatDate(header.postingDate || header.ReferenceDate),
+    DueDate: formatDate(header.dueDate || header.DueDate || header.postingDate),
+    TaxDate: formatDate(header.documentDate || header.taxDate || header.TaxDate || header.postingDate),
+    Memo: String(header.remarks || header.memo || '').trim(),
+    TransactionCode: String(header.transCode || header.transactionCode || '').trim(),
+    Reference: String(header.reference1 || header.ref1 || '').trim(),
+    Reference2: String(header.reference2 || header.ref2 || '').trim(),
+    Reference3: String(header.reference3 || header.ref3 || '').trim(),
+    ProjectCode: String(header.project || '').trim(),
+    Indicator: String(header.indicator || '').trim(),
+    JournalEntryLines: lines.map((line) => {
+      const journalLine = {
+        AccountCode: line.accountCode,
+        Debit: line.debit,
+        Credit: line.credit,
+        LineMemo: line.remarks,
+      };
+
+      if (line.taxCode) journalLine.TaxCode = line.taxCode;
+      if (line.project) journalLine.ProjectCode = line.project;
+      if (line.distRule) journalLine.CostingCode = line.distRule;
+      if (line.location) journalLine.LocationCode = line.location;
+      return journalLine;
+    }),
+  };
+
+  Object.keys(data).forEach((key) => {
+    if (data[key] === '') delete data[key];
+  });
+
+  const sapService = require('./sapService');
+  const response = await sapService.request({
+    method: 'POST',
+    url: '/JournalEntries',
+    data,
+  });
+
+  return {
+    success: true,
+    message: 'Journal Entry added successfully.',
+    totalDebit,
+    totalCredit,
+    data: response.data,
+  };
+};
+
 module.exports = {
   generateFromServiceARInvoice,
   generateFromServiceAPInvoice,
+  createManualJournalEntry,
 };

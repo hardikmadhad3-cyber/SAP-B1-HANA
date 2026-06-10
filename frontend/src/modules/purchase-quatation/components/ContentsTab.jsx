@@ -191,23 +191,30 @@ export default function ContentsTab({
     const cellRenderers = {
       itemNo: () => (
         <td key="itemNo">
-          <select
-            className="so-grid__input"
-            style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
-            name="itemNo"
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="so-grid__input"
+              style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
+              name="itemNo"
               data-sap-lookup="item"
               data-sap-row-index={i}
               onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
-            value={line.itemNo || ''}
-            onChange={(e) => onLineChange(i, e)}
-          >
-            <option value="">Select</option>
-            {(lineItemOptions[i] || []).map((item) => (
-              <option key={item.ItemCode} value={item.ItemCode}>
-                {item.ItemCode}
-              </option>
-            ))}
-          </select>
+              value={line.itemNo || ''}
+              onChange={(e) => onLineChange(i, e)}
+              placeholder="Item Code"
+              list={`purchase-quotation-items-${i}`}
+            />
+            <datalist id={`purchase-quotation-items-${i}`}>
+              {(lineItemOptions[i] || []).map((item) => (
+                <option key={item.ItemCode} value={item.ItemCode} />
+              ))}
+            </datalist>
+            {onOpenItemModal ? (
+              <button type="button" onClick={() => onOpenItemModal(i)} style={pickerButtonStyle} title="Select Item">
+                ...
+              </button>
+            ) : null}
+          </div>
           {valErrors.lines[i]?.itemNo && (
             <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].itemNo}</div>
           )}

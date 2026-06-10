@@ -78,13 +78,22 @@ const APP_MENU_DEFINITIONS = [
     icon: 'payments',
     sortOrder: 2,
   },
+  {
+    key: 'journal-entry',
+    parentKey: 'banking',
+    menuName: 'Journal Entry',
+    menuPath: '/journal-entry',
+    icon: 'document',
+    sortOrder: 3,
+  },
 
   { key: 'reports', menuName: 'Reports', icon: 'reports', sortOrder: 8 },
   { key: 'sales-analysis', parentKey: 'reports', menuName: 'Sales Analysis', menuPath: '/reports/sales/analysis', icon: 'report', sortOrder: 1 },
   { key: 'item-list-report', parentKey: 'reports', menuName: 'Item List', menuPath: '/reports/item-list', icon: 'report', sortOrder: 2 },
-  { key: 'inventory-posting-list-report', parentKey: 'reports', menuName: 'Inventory Posting List', menuPath: '/reports/inventory/posting-list', icon: 'report', sortOrder: 3 },
-  { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 4 },
-  { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 5 },
+  { key: 'inventory-in-warehouse-report', parentKey: 'reports', menuName: 'Inventory in Warehouse Report', menuPath: '/reports/inventory/in-warehouse', icon: 'report', sortOrder: 3 },
+  { key: 'inventory-posting-list-report', parentKey: 'reports', menuName: 'Inventory Posting List', menuPath: '/reports/inventory/posting-list', icon: 'report', sortOrder: 4 },
+  { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 5 },
+  { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 6 },
 ];
 
 const normalizeText = (value) => String(value || '').trim();

@@ -178,12 +178,12 @@ const getPropertyNumbers = (propertyFilter = {}) => {
     .filter((value) => Number.isInteger(value) && value >= 1 && value <= 64);
 };
 
-const appendPropertyFilter = (whereClauses, propertyFilter = {}) => {
+const appendPropertyFilter = (whereClauses, propertyFilter = {}, alias = "I") => {
   const selectedNumbers = getPropertyNumbers(propertyFilter);
   if (!selectedNumbers.length) return;
 
   const selectedSet = new Set(selectedNumbers);
-  const clauses = selectedNumbers.map((number) => `ISNULL(I.QryGroup${number}, 'N') = 'Y'`);
+  const clauses = selectedNumbers.map((number) => `ISNULL(${alias}.QryGroup${number}, 'N') = 'Y'`);
   const operator = propertyFilter.linkMode === "or" ? " OR " : " AND ";
   whereClauses.push(`(${clauses.join(operator)})`);
 
@@ -191,7 +191,7 @@ const appendPropertyFilter = (whereClauses, propertyFilter = {}) => {
     const unselected = [];
     for (let index = 1; index <= 64; index += 1) {
       if (!selectedSet.has(index)) {
-        unselected.push(`ISNULL(I.QryGroup${index}, 'N') <> 'Y'`);
+        unselected.push(`ISNULL(${alias}.QryGroup${index}, 'N') <> 'Y'`);
       }
     }
     whereClauses.push(`(${unselected.join(" AND ")})`);
@@ -276,6 +276,44 @@ const formatDocumentNumber = (row) => {
   return number ? `${meta.prefix} ${number}` : "";
 };
 
+const getInventoryPostingListLookups = async (options = {}) => {
+  const [bpGroups, resources, salesEmployees, projects] = await Promise.all([
+    queryRows(`
+      SELECT TOP 500 GroupCode, GroupName, GroupType
+      FROM OCRG
+      ORDER BY GroupType, GroupName, GroupCode
+    `, {}, options),
+    tableExists("ORSC", options)
+      .then((exists) => exists ? queryRows(`
+        SELECT TOP 500 ResCode, ResName
+        FROM ORSC
+        ORDER BY ResCode
+      `, {}, options) : []),
+    queryRows(`
+      SELECT TOP 500 SlpCode, SlpName
+      FROM OSLP
+      ORDER BY CASE WHEN SlpCode = -1 THEN 0 ELSE 1 END, SlpName
+    `, {}, options),
+    tableExists("OPRJ", options)
+      .then((exists) => exists ? queryRows(`
+        SELECT TOP 500 PrjCode, PrjName
+        FROM OPRJ
+        ORDER BY PrjCode
+      `, {}, options) : []),
+  ]);
+
+  return {
+    bpGroups: bpGroups.map((row) => ({
+      code: String(row.GroupCode ?? ""),
+      name: row.GroupName || "",
+      type: row.GroupType || "",
+    })),
+    resources: resources.map((row) => ({ code: row.ResCode || "", name: row.ResName || "" })),
+    salesEmployees: salesEmployees.map((row) => ({ code: String(row.SlpCode ?? ""), name: row.SlpName || "" })),
+    projects: projects.map((row) => ({ code: row.PrjCode || "", name: row.PrjName || "" })),
+  };
+};
+
 const getInventoryPostingList = async (criteria = {}, options = {}) => {
   if (!(await tableExists("OINM", options))) {
     const error = new Error("Inventory posting data table OINM was not found in the selected company database.");
@@ -283,13 +321,15 @@ const getInventoryPostingList = async (criteria = {}, options = {}) => {
     throw error;
   }
 
-  const [baseRefColumn, docLineColumn, descriptionColumn, priceColumn, transNumColumn, cardCodeColumn] = await Promise.all([
+  const [baseRefColumn, docLineColumn, descriptionColumn, priceColumn, transNumColumn, cardCodeColumn, salesEmployeeColumn, projectColumn] = await Promise.all([
     firstExistingColumn("OINM", ["BASE_REF", "BaseRef", "Ref1"], options),
     firstExistingColumn("OINM", ["DocLineNum", "DocLine"], options),
     firstExistingColumn("OINM", ["Dscription", "ItemName"], options),
     firstExistingColumn("OINM", ["CalcPrice", "Price"], options),
     firstExistingColumn("OINM", ["TransNum", "TransSeq"], options),
     firstExistingColumn("OINM", ["CardCode"], options),
+    firstExistingColumn("OINM", ["SlpCode"], options),
+    firstExistingColumn("OINM", ["PrjCode", "Project"], options),
   ]);
 
   const params = {};
@@ -297,6 +337,7 @@ const getInventoryPostingList = async (criteria = {}, options = {}) => {
   const itemFrom = normalizeText(criteria.itemFrom);
   const itemTo = normalizeText(criteria.itemTo);
   const groupCode = normalizeText(criteria.groupCode);
+  const activeSelectionTab = normalizeText(criteria.activeSelectionTab) || "items";
 
   whereClauses.push(...buildRangeCondition("T0.ItemCode", itemFrom, itemTo, params, "item"));
 
@@ -322,6 +363,49 @@ const getInventoryPostingList = async (criteria = {}, options = {}) => {
   }
 
   appendPropertyFilter(whereClauses, criteria.propertyFilter);
+
+  if (activeSelectionTab === "resources") {
+    whereClauses.push(...buildRangeCondition("T0.ItemCode", criteria.resourceSelection?.codeFrom, criteria.resourceSelection?.codeTo, params, "resource"));
+  }
+
+  if (activeSelectionTab === "bp" && cardCodeColumn) {
+    const bp = criteria.bpSelection || {};
+    whereClauses.push(...buildRangeCondition(columnExpression("T0", cardCodeColumn), bp.codeFrom, bp.codeTo, params, "bp"));
+    appendPropertyFilter(whereClauses, bp.propertyFilter, "BP");
+
+    const customerGroup = normalizeText(bp.customerGroup);
+    const vendorGroup = normalizeText(bp.vendorGroup);
+    const groupConditions = [];
+    if (customerGroup && !["*", "all"].includes(customerGroup.toLowerCase())) {
+      if (customerGroup.toLowerCase() === "none") groupConditions.push("(BP.CardType = 'C' AND BP.GroupCode IS NULL)");
+      else {
+        params.customerGroup = customerGroup;
+        groupConditions.push("(BP.CardType = 'C' AND CAST(BP.GroupCode AS NVARCHAR(50)) = @customerGroup)");
+      }
+    }
+    if (vendorGroup && !["*", "all"].includes(vendorGroup.toLowerCase())) {
+      if (vendorGroup.toLowerCase() === "none") groupConditions.push("(BP.CardType = 'S' AND BP.GroupCode IS NULL)");
+      else {
+        params.vendorGroup = vendorGroup;
+        groupConditions.push("(BP.CardType = 'S' AND CAST(BP.GroupCode AS NVARCHAR(50)) = @vendorGroup)");
+      }
+    }
+    if (groupConditions.length) whereClauses.push(`(${groupConditions.join(" OR ")})`);
+  }
+
+  if (activeSelectionTab === "other" && criteria.otherSelection?.selectedValues?.length) {
+    const otherColumns = {
+      warehouseCode: "T0.Warehouse",
+      location: "CAST(W.Location AS NVARCHAR(50))",
+      receiptQuantity: "CAST(ISNULL(T0.InQty, 0) AS NVARCHAR(50))",
+      issueQuantity: "CAST(ISNULL(T0.OutQty, 0) AS NVARCHAR(50))",
+      document: baseRefColumn ? columnExpression("T0", baseRefColumn) : "",
+      salesEmployee: salesEmployeeColumn ? `CAST(${columnExpression("T0", salesEmployeeColumn)} AS NVARCHAR(50))` : "",
+      projectCode: projectColumn ? columnExpression("T0", projectColumn) : "",
+    };
+    const otherColumn = otherColumns[criteria.otherSelection.by];
+    if (otherColumn) appendInClause(whereClauses, otherColumn, criteria.otherSelection.selectedValues, params, "other");
+  }
 
   const selectedTransTypes = getSelectedDocumentTransTypes(criteria.expanded?.documentTypes);
   if (selectedTransTypes.length) {
@@ -410,6 +494,7 @@ const getInventoryPostingList = async (criteria = {}, options = {}) => {
     criteria: {
       itemFrom,
       itemTo,
+      activeSelectionTab,
       groupCode: groupCode || "*",
       dateFrom: parseSapDate(criteria.dateFrom),
       dateTo: parseSapDate(criteria.dateTo),
@@ -442,5 +527,6 @@ const getInventoryPostingList = async (criteria = {}, options = {}) => {
 
 module.exports = {
   DOCUMENT_TYPES,
+  getInventoryPostingListLookups,
   getInventoryPostingList,
 };

@@ -28,6 +28,7 @@ import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../..
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
@@ -175,8 +176,10 @@ const INIT_HEADER = {
     billToAddress: '', billToCode: '', shipToAddress: '',
 };
 
-const createInitialHeader = () => ({
+const createInitialHeader = (settings = readGeneralSettings()) => ({
     ...INIT_HEADER,
+    warehouse: settings.salesWarehouse || '',
+    series: settings.salesSeries || '',
     postingDate: today(),
     documentDate: today(),
 });
@@ -198,9 +201,11 @@ function SalesOrder() {
     const { removeTask, upsertTask } = useSapWindowTaskbarActions();
     const formRef = useRef(null);
     const handledCopyFromRef = useRef('');
+    const generalSettingsRef = useRef(readGeneralSettings());
+    const defaultWarehouseAppliedRef = useRef(false);
     const [isCopyFromClick, setIsCopyFromClick] = useState(false);
     const [currentDocEntry, setCurrentDocEntry] = useState(null);
-    const [header, setHeader] = useState(() => createInitialHeader());
+    const [header, setHeader] = useState(() => createInitialHeader(generalSettingsRef.current));
     const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
     const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
     const [lines, setLines] = useState([createLine()]);
@@ -282,6 +287,13 @@ function SalesOrder() {
             : null;
 
         if (matchedSeries) return matchedSeries;
+
+        const preferredSeries = String(generalSettingsRef.current.salesSeries || '').trim();
+        const settingsSeries = preferredSeries
+            ? seriesList.find((series) => String(series.Series) === preferredSeries)
+            : null;
+
+        if (settingsSeries) return settingsSeries;
 
         const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
         return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
@@ -715,6 +727,32 @@ function SalesOrder() {
 
     // Filter warehouses by selected branch
     const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
+
+    useEffect(() => {
+        if (currentDocEntry || copyFromMode || isCopyFromClick || defaultWarehouseAppliedRef.current) return;
+
+        const defaultWarehouse = String(generalSettingsRef.current.salesWarehouse || '').trim();
+        if (!defaultWarehouse) {
+            defaultWarehouseAppliedRef.current = true;
+            return;
+        }
+
+        if (!effectiveWarehouses.length) return;
+
+        const warehouse = effectiveWarehouses.find((entry) => String(entry.WhsCode || '') === defaultWarehouse);
+        defaultWarehouseAppliedRef.current = true;
+        if (!warehouse) return;
+
+        const warehouseBranch = warehouse.BranchID ?? warehouse.BPLid ?? warehouse.BPLId ?? warehouse.BPLID ?? '';
+        setHeader((prev) => {
+            if (prev.warehouse && String(prev.warehouse) !== defaultWarehouse) return prev;
+            return {
+                ...prev,
+                warehouse: prev.warehouse || defaultWarehouse,
+                branch: prev.branch || (warehouseBranch !== '' ? String(warehouseBranch) : ''),
+            };
+        });
+    }, [copyFromMode, currentDocEntry, effectiveWarehouses, isCopyFromClick]);
 
     const payTermOpts = refData.payment_terms.length
         ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
@@ -1949,7 +1987,7 @@ function SalesOrder() {
         const duplicated = duplicateDocumentInPlace({
             currentDocEntry,
             header,
-            initialHeader: createInitialHeader(),
+            initialHeader: createInitialHeader(generalSettingsRef.current),
             lines,
             createLine,
             rowUdfDefinitions,
@@ -2239,7 +2277,8 @@ function SalesOrder() {
 
             const r = currentDocEntry ? await updateSalesOrder(currentDocEntry, payload) : await submitSalesOrder(payload);
             const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-            const resetHeader = createInitialHeader();
+            defaultWarehouseAppliedRef.current = false;
+            const resetHeader = createInitialHeader(generalSettingsRef.current);
             setSnapshotPending(false);
             setIsDirty(false);
             setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
@@ -2264,7 +2303,8 @@ function SalesOrder() {
     };
 
     const resetForm = () => {
-        const resetHeader = createInitialHeader();
+        defaultWarehouseAppliedRef.current = false;
+        const resetHeader = createInitialHeader(generalSettingsRef.current);
         setSnapshotPending(false);
         setIsDirty(false);
         setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);

@@ -1,4 +1,5 @@
 import React from 'react';
+import TaxCodeLookup from '../../../components/TaxCodeLookup';
 
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
 import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
@@ -234,20 +235,14 @@ export default function ContentsTab({
 
                   {/* Tax Code */}
                   <td>
-                    <select
+                    <TaxCodeLookup
                       className="so-grid__input"
                       style={{ width: '100%', textAlign: 'left' }}
                       name="taxCode"
                       value={line.taxCode}
                       onChange={e => onLineChange(i, e)}
-                    >
-                      <option value="">Select</option>
-                      {effectiveTaxCodes.map(t => (
-                        <option key={t.Code} value={t.Code}>
-                          {fmtTaxLabel(t)}
-                        </option>
-                      ))}
-                    </select>
+                      taxCodes={effectiveTaxCodes}
+                    />
                   </td>
 
                   {/* Total Before Tax */}
@@ -332,7 +327,7 @@ export default function ContentsTab({
                       style={{ padding: '2px 8px', fontSize: 14 }}
                       onClick={() => onRemoveLine(i)}
                     >
-                      ×
+                      x
                     </button>
                   </td>
                 </tr>

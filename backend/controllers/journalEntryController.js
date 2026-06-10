@@ -37,7 +37,17 @@ const generateFromAPInvoice = async (req, res) => {
   }
 };
 
+const createManualJournalEntry = async (req, res) => {
+  try {
+    const result = await journalEntryService.createManualJournalEntry(req.body || {});
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(error.response?.status || 500).json(getErrorPayload(error, 'Failed to add Journal Entry.'));
+  }
+};
+
 module.exports = {
   generateFromARInvoice,
   generateFromAPInvoice,
+  createManualJournalEntry,
 };

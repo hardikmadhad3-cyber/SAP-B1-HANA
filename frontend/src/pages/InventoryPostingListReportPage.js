@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { fetchInventoryPostingList } from "../api/inventoryPostingListApi";
+import { fetchInventoryPostingList, fetchInventoryPostingListLookups } from "../api/inventoryPostingListApi";
 import { fetchItemGroups, fetchItemProperties, fetchWarehouses } from "../api/itemApi";
+import BusinessPartnerLookupModal from "../components/reports/BusinessPartnerLookupModal";
 import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
@@ -21,6 +22,20 @@ const ITEM_TABS = [
   { key: "resources", label: "Resources" },
   { key: "bp", label: "BP" },
   { key: "other", label: "Other" },
+];
+
+const OTHER_SELECTION_OPTIONS = [
+  ["warehouseCode", "Warehouse Code"],
+  ["salesEmployee", "Sales Employee"],
+  ["projectCode", "Project Code"],
+  ["blockNumber", "Block Number"],
+  ["vendorCatalogNo", "Vendor Catalog No."],
+  ["serialNumber", "Serial Number"],
+  ["receiptQuantity", "Receipt Quantity"],
+  ["issueQuantity", "Issue Quantity"],
+  ["importLog", "Import Log"],
+  ["location", "Location"],
+  ["document", "Document"],
 ];
 
 const ORIGINAL_JOURNAL_GROUPS = [
@@ -105,6 +120,33 @@ const createInitialState = () => ({
     linkMode: "and",
     exactlyMatch: false,
     selectedPropertyNumbers: [],
+  },
+  resourceSelection: {
+    codeFrom: "",
+    codeTo: "",
+    groupCode: "*",
+    propertyFilter: {
+      ignoreProperties: true,
+      linkMode: "and",
+      exactlyMatch: false,
+      selectedPropertyNumbers: [],
+    },
+  },
+  bpSelection: {
+    codeFrom: "",
+    codeTo: "",
+    customerGroup: "*",
+    vendorGroup: "*",
+    propertyFilter: {
+      ignoreProperties: true,
+      linkMode: "and",
+      exactlyMatch: false,
+      selectedPropertyNumbers: [],
+    },
+  },
+  otherSelection: {
+    by: "warehouseCode",
+    selectedValues: [],
   },
   locationSelection: {
     mode: "location",
@@ -275,11 +317,17 @@ function InventoryPostingListReportPage() {
   const [activeItemTab, setActiveItemTab] = useState("items");
   const [activeLocationTab, setActiveLocationTab] = useState("location");
   const [itemGroups, setItemGroups] = useState([{ code: "*", name: "*" }]);
+  const [bpGroups, setBpGroups] = useState([]);
+  const [resources, setResources] = useState([]);
+  const [salesEmployees, setSalesEmployees] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [itemProperties, setItemProperties] = useState(DEFAULT_ITEM_PROPERTIES);
   const [warehouses, setWarehouses] = useState([]);
   const [expandedLocations, setExpandedLocations] = useState(() => new Set());
-  const [showProperties, setShowProperties] = useState(false);
+  const [propertiesTarget, setPropertiesTarget] = useState("");
   const [showExpanded, setShowExpanded] = useState(false);
+  const [showOtherSelection, setShowOtherSelection] = useState(false);
+  const [bpLookupTarget, setBpLookupTarget] = useState("");
   const [lookupTarget, setLookupTarget] = useState("");
   const [reportResult, setReportResult] = useState(null);
   const [isLoadingReport, setIsLoadingReport] = useState(false);
@@ -306,11 +354,15 @@ function InventoryPostingListReportPage() {
 
   useEffect(() => {
     let isMounted = true;
-    Promise.all([fetchItemGroups(""), fetchItemProperties(), fetchWarehouses("")])
-      .then(([groups, properties, warehouseRows]) => {
+    Promise.all([fetchItemGroups(""), fetchItemProperties(), fetchWarehouses(""), fetchInventoryPostingListLookups()])
+      .then(([groups, properties, warehouseRows, lookups]) => {
         if (!isMounted) return;
         setItemGroups(Array.isArray(groups) && groups.length ? groups : [{ code: "*", name: "*" }]);
         setItemProperties(Array.isArray(properties) && properties.length ? properties : DEFAULT_ITEM_PROPERTIES);
+        setBpGroups(Array.isArray(lookups?.bpGroups) ? lookups.bpGroups : []);
+        setResources(Array.isArray(lookups?.resources) ? lookups.resources : []);
+        setSalesEmployees(Array.isArray(lookups?.salesEmployees) ? lookups.salesEmployees : []);
+        setProjects(Array.isArray(lookups?.projects) ? lookups.projects : []);
         const normalizedWarehouses = (Array.isArray(warehouseRows) ? warehouseRows : []).map(normalizeWarehouse);
         setWarehouses(normalizedWarehouses);
         setExpandedLocations(new Set(normalizedWarehouses.map((warehouse) => warehouse.locationCode)));
@@ -341,6 +393,22 @@ function InventoryPostingListReportPage() {
     return [...map.values()].sort((left, right) => left.name.localeCompare(right.name));
   }, [warehouses]);
 
+  const otherSelectionRows = useMemo(() => {
+    if (formState.otherSelection.by === "warehouseCode") {
+      return warehouses.map((row) => ({ code: row.code, name: row.name }));
+    }
+    if (formState.otherSelection.by === "location") {
+      return locations.map((row) => ({ code: row.code, name: row.name }));
+    }
+    if (formState.otherSelection.by === "salesEmployee") {
+      return salesEmployees;
+    }
+    if (formState.otherSelection.by === "projectCode") {
+      return projects;
+    }
+    return [];
+  }, [formState.otherSelection.by, locations, projects, salesEmployees, warehouses]);
+
   const displayRows = useMemo(
     () => buildDisplayRows(reportResult?.rows || [], formState.displaySubtotals),
     [formState.displaySubtotals, reportResult?.rows],
@@ -349,6 +417,13 @@ function InventoryPostingListReportPage() {
   const propertyModeLabel = formState.propertyFilter.ignoreProperties
     ? "Ignore"
     : `${formState.propertyFilter.selectedPropertyNumbers.length} Selected`;
+
+  const propertyLabel = (filter = {}) => filter.ignoreProperties
+    ? "Ignore"
+    : `${filter.selectedPropertyNumbers?.length || 0} Selected`;
+
+  const customerGroups = bpGroups.filter((group) => !group.type || String(group.type).toUpperCase() === "C");
+  const vendorGroups = bpGroups.filter((group) => !group.type || String(group.type).toUpperCase() === "S");
 
   const setField = (field, value) => {
     setFormState((current) => ({
@@ -423,13 +498,27 @@ function InventoryPostingListReportPage() {
   };
 
   const handleItemSelect = (item) => {
-    const itemCode = item.ItemCode || "";
+    const itemCode = String(item?.ItemCode || item?.itemCode || "");
     if (lookupTarget === "itemFrom" || lookupTarget === "itemTo") {
       setField(lookupTarget, itemCode);
     } else if (lookupTarget === "expanded.itemCode.from") {
       setExpandedParameter("itemCode", { from: itemCode });
+    } else if (lookupTarget === "expanded.itemCode.to") {
+      setExpandedParameter("itemCode", { to: itemCode });
     }
     setLookupTarget("");
+  };
+
+  const openItemLookup = (target) => {
+    setLookupTarget(target);
+    setStatusMessage("");
+  };
+
+  const handleBpSelect = (bp) => {
+    if (bpLookupTarget) {
+      setNested("bpSelection", { [bpLookupTarget]: String(bp?.CardCode || "") });
+    }
+    setBpLookupTarget("");
   };
 
   const handleOk = async () => {
@@ -438,6 +527,7 @@ function InventoryPostingListReportPage() {
     try {
       const payload = {
         ...formState,
+        activeSelectionTab: activeItemTab,
         locationSelection: {
           ...formState.locationSelection,
           mode: activeLocationTab,
@@ -496,29 +586,55 @@ function InventoryPostingListReportPage() {
 
   const renderWindowControls = (windowFrame, onMinimize, onClose) => (
     <div className="item-list-window__controls">
-      <button type="button" aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"} onClick={onMinimize}>
+      <button className="sap-report-window-control" type="button" aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"} onClick={onMinimize}>
         {windowFrame.isMinimized ? "[]" : "-"}
       </button>
-      <button type="button" aria-label={windowFrame.isMaximized ? "Restore" : "Maximize"} onClick={windowFrame.toggleMaximize}>
+      <button className="sap-report-window-control" type="button" aria-label={windowFrame.isMaximized ? "Restore" : "Maximize"} onClick={windowFrame.toggleMaximize}>
         []
       </button>
-      <button type="button" aria-label="Close" onClick={onClose}>x</button>
+      <button className="sap-report-window-control" type="button" aria-label="Close" onClick={onClose}>x</button>
     </div>
   );
 
   const renderItemsTab = () => (
     <div className="ipl-criteria__left-panel">
       <div className="ipl-criteria__code-row">
-        <label>Code</label>
-        <span>From</span>
-        <div className="item-list-criteria__lookup-wrap">
-          <input value={formState.itemFrom} onChange={(event) => setField("itemFrom", event.target.value)} />
-          <button type="button" onClick={() => setLookupTarget("itemFrom")}>...</button>
+        <div className="ipl-criteria__row-label">Item Code</div>
+        <div>
+          <div className="ipl-criteria__column-head">From</div>
+          <div className="item-list-criteria__lookup-wrap">
+            <input
+              value={formState.itemFrom}
+              onChange={(event) => setField("itemFrom", event.target.value)}
+              onDoubleClick={() => openItemLookup("itemFrom")}
+            />
+            <button
+              type="button"
+              className="ipl-lookup-btn"
+              aria-label="Lookup item code from"
+              onClick={() => openItemLookup("itemFrom")}
+            >
+              ...
+            </button>
+          </div>
         </div>
-        <span>To</span>
-        <div className="item-list-criteria__lookup-wrap">
-          <input value={formState.itemTo} onChange={(event) => setField("itemTo", event.target.value)} />
-          <button type="button" onClick={() => setLookupTarget("itemTo")}>...</button>
+        <div>
+          <div className="ipl-criteria__column-head">To</div>
+          <div className="item-list-criteria__lookup-wrap">
+            <input
+              value={formState.itemTo}
+              onChange={(event) => setField("itemTo", event.target.value)}
+              onDoubleClick={() => openItemLookup("itemTo")}
+            />
+            <button
+              type="button"
+              className="ipl-lookup-btn"
+              aria-label="Lookup item code to"
+              onClick={() => openItemLookup("itemTo")}
+            >
+              ...
+            </button>
+          </div>
         </div>
       </div>
 
@@ -535,7 +651,7 @@ function InventoryPostingListReportPage() {
       </div>
 
       <div className="ipl-criteria__property-row">
-        <button type="button" className="item-list-btn item-list-btn--wide" onClick={() => setShowProperties(true)}>
+        <button type="button" className="item-list-btn item-list-btn--wide" onClick={() => setPropertiesTarget("items")}>
           Properties
         </button>
         <input type="text" value={propertyModeLabel} readOnly />
@@ -585,11 +701,117 @@ function InventoryPostingListReportPage() {
     </div>
   );
 
-  const renderPassiveTab = (label) => (
-    <div className="ipl-criteria__left-panel">
-      <div className="ipl-criteria__empty-panel">{label} selection uses the same document and transaction filters for this report.</div>
+  const renderCodeRange = ({ label, section, fromField = "codeFrom", toField = "codeTo", onLookup }) => (
+    <div className="ipl-criteria__code-row">
+      <div className="ipl-criteria__row-label">{label}</div>
+      <div>
+        <div className="ipl-criteria__column-head">From</div>
+        <div className={onLookup ? "item-list-criteria__lookup-wrap" : ""}>
+          <input value={formState[section][fromField]} onChange={(event) => setNested(section, { [fromField]: event.target.value })} />
+          {onLookup ? <button type="button" className="ipl-lookup-btn" onClick={() => onLookup(fromField)}>...</button> : null}
+        </div>
+      </div>
+      <div>
+        <div className="ipl-criteria__column-head">To</div>
+        <div className={onLookup ? "item-list-criteria__lookup-wrap" : ""}>
+          <input value={formState[section][toField]} onChange={(event) => setNested(section, { [toField]: event.target.value })} />
+          {onLookup ? <button type="button" className="ipl-lookup-btn" onClick={() => onLookup(toField)}>...</button> : null}
+        </div>
+      </div>
     </div>
   );
+
+  const renderSharedTransactionCriteria = () => (
+    <>
+      <div className="ipl-criteria__section-title">Trans. Selection Criteria</div>
+      <div className="ipl-criteria__date-row">
+        <label className="item-list-criteria__checkbox">
+          <input type="checkbox" checked={formState.dateEnabled} onChange={(event) => setField("dateEnabled", event.target.checked)} />
+          <span>Date</span>
+        </label>
+        <span>From</span>
+        <input value={formState.dateFrom} onChange={(event) => setField("dateFrom", event.target.value)} />
+        <span>To</span>
+        <input value={formState.dateTo} onChange={(event) => setField("dateTo", event.target.value)} />
+        <button type="button" className="item-list-btn" onClick={() => setShowExpanded(true)}>Expanded</button>
+      </div>
+      <label className="item-list-criteria__checkbox">
+        <input type="checkbox" checked={formState.hideTransWithoutQtyChange} onChange={(event) => setField("hideTransWithoutQtyChange", event.target.checked)} />
+        <span>Hide Trans. without Qty Change</span>
+      </label>
+      <label className="item-list-criteria__checkbox">
+        <input checked={formState.sort} type="checkbox" onChange={(event) => setField("sort", event.target.checked)} />
+        <span>Sort</span>
+      </label>
+    </>
+  );
+
+  const renderResourcesTab = () => (
+    <div className="ipl-criteria__left-panel">
+      {renderCodeRange({ label: "Resource Code", section: "resourceSelection" })}
+      <div className="ipl-other-summary">{resources.length} resources available</div>
+      <div className="ipl-criteria__group-row">
+        <label>Resource Group</label>
+        <select value={formState.resourceSelection.groupCode} onChange={(event) => setNested("resourceSelection", { groupCode: event.target.value })}>
+          <option value="*">All</option>
+          <option value="none">None</option>
+        </select>
+      </div>
+      <div className="ipl-criteria__property-row">
+        <button type="button" className="item-list-btn item-list-btn--wide" onClick={() => setPropertiesTarget("resources")}>Properties</button>
+        <input value={propertyLabel(formState.resourceSelection.propertyFilter)} readOnly />
+      </div>
+      {renderSharedTransactionCriteria()}
+    </div>
+  );
+
+  const renderBpTab = () => (
+    <div className="ipl-criteria__left-panel">
+      {renderCodeRange({ label: "BP Code", section: "bpSelection", onLookup: setBpLookupTarget })}
+      <div className="ipl-criteria__group-row">
+        <label>Customer Group</label>
+        <select value={formState.bpSelection.customerGroup} onChange={(event) => setNested("bpSelection", { customerGroup: event.target.value })}>
+          <option value="*">All</option>
+          {customerGroups.map((group) => <option key={`c-${group.code}`} value={group.code}>{group.name || group.code}</option>)}
+          <option value="none">None</option>
+        </select>
+      </div>
+      <div className="ipl-criteria__group-row">
+        <label>Vendor Group</label>
+        <select value={formState.bpSelection.vendorGroup} onChange={(event) => setNested("bpSelection", { vendorGroup: event.target.value })}>
+          <option value="*">All</option>
+          {vendorGroups.map((group) => <option key={`v-${group.code}`} value={group.code}>{group.name || group.code}</option>)}
+          <option value="none">None</option>
+        </select>
+      </div>
+      <div className="ipl-criteria__property-row">
+        <button type="button" className="item-list-btn item-list-btn--wide" onClick={() => setPropertiesTarget("bp")}>Properties</button>
+        <input value={propertyLabel(formState.bpSelection.propertyFilter)} readOnly />
+      </div>
+      {renderSharedTransactionCriteria()}
+    </div>
+  );
+
+  const renderOtherTab = () => (
+    <div className="ipl-criteria__left-panel">
+      <div className="ipl-criteria__group-row">
+        <label>By</label>
+        <select value={formState.otherSelection.by} onChange={(event) => setNested("otherSelection", { by: event.target.value, selectedValues: [] })}>
+          {OTHER_SELECTION_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </div>
+      <button type="button" className="item-list-btn item-list-btn--wide" onClick={() => setShowOtherSelection(true)}>Selection</button>
+      <div className="ipl-other-summary">{formState.otherSelection.selectedValues.length} selected</div>
+      {renderSharedTransactionCriteria()}
+    </div>
+  );
+
+  const renderSelectionTab = () => {
+    if (activeItemTab === "items") return renderItemsTab();
+    if (activeItemTab === "resources") return renderResourcesTab();
+    if (activeItemTab === "bp") return renderBpTab();
+    return renderOtherTab();
+  };
 
   const renderLocationPanel = () => (
     <div className="ipl-location-panel">
@@ -703,8 +925,8 @@ function InventoryPostingListReportPage() {
           <div className="sap-report-titlebar ipl-expanded-modal__titlebar">
             <div className="sap-report-title">Expanded Selection Criteria</div>
             <div className="item-list-window__controls">
-              <button type="button" aria-label="Minimize">-</button>
-              <button type="button" aria-label="Close" onClick={() => setShowExpanded(false)}>x</button>
+              <button className="sap-report-window-control" type="button" aria-label="Minimize">-</button>
+              <button className="sap-report-window-control" type="button" aria-label="Close" onClick={() => setShowExpanded(false)}>x</button>
             </div>
           </div>
           <div className="item-list-window__accent" />
@@ -750,10 +972,36 @@ function InventoryPostingListReportPage() {
                       <input
                         value={row.from || ""}
                         onChange={(event) => setExpandedParameter(key, { from: event.target.value })}
+                        onDoubleClick={hasLookup ? () => openItemLookup("expanded.itemCode.from") : undefined}
                       />
-                      {hasLookup ? <button type="button" onClick={() => setLookupTarget("expanded.itemCode.from")}>...</button> : null}
+                      {hasLookup ? (
+                        <button
+                          type="button"
+                          className="ipl-lookup-btn"
+                          aria-label="Lookup expanded item code from"
+                          onClick={() => openItemLookup("expanded.itemCode.from")}
+                        >
+                          ...
+                        </button>
+                      ) : null}
                     </div>
-                    <input value={row.to || ""} onChange={(event) => setExpandedParameter(key, { to: event.target.value })} />
+                    <div className={hasLookup ? "item-list-criteria__lookup-wrap" : ""}>
+                      <input
+                        value={row.to || ""}
+                        onChange={(event) => setExpandedParameter(key, { to: event.target.value })}
+                        onDoubleClick={hasLookup ? () => openItemLookup("expanded.itemCode.to") : undefined}
+                      />
+                      {hasLookup ? (
+                        <button
+                          type="button"
+                          className="ipl-lookup-btn"
+                          aria-label="Lookup expanded item code to"
+                          onClick={() => openItemLookup("expanded.itemCode.to")}
+                        >
+                          ...
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 );
               })}
@@ -761,9 +1009,45 @@ function InventoryPostingListReportPage() {
           </div>
 
           <div className="ipl-expanded-modal__footer">
-            <button type="button" className="item-list-btn" onClick={() => setShowExpanded(false)}>OK</button>
-            <button type="button" className="item-list-btn" onClick={() => setShowExpanded(false)}>Cancel</button>
-            <button type="button" className="item-list-btn ipl-expanded-modal__clear" onClick={clearExpandedSelections}>Clear Selections</button>
+            <button type="button" className="item-list-btn sap-report-btn sap-report-btn--primary" onClick={() => setShowExpanded(false)}>OK</button>
+            <button type="button" className="item-list-btn sap-report-btn" onClick={() => setShowExpanded(false)}>Cancel</button>
+            <button type="button" className="item-list-btn sap-report-btn ipl-expanded-modal__clear" onClick={clearExpandedSelections}>Clear Selections</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderOtherSelectionModal = () => {
+    if (!showOtherSelection) return null;
+    const selected = new Set(formState.otherSelection.selectedValues);
+    const label = OTHER_SELECTION_OPTIONS.find(([value]) => value === formState.otherSelection.by)?.[1] || "Selection";
+
+    return (
+      <div className="ipl-expanded-modal__backdrop" onClick={() => setShowOtherSelection(false)}>
+        <div className="ipl-selection-modal sap-report-window" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+          <div className="sap-report-titlebar ipl-expanded-modal__titlebar">
+            <div className="sap-report-title">Inventory Posting List - {label} Selection</div>
+            <button className="sap-report-window-control" type="button" aria-label="Close" onClick={() => setShowOtherSelection(false)}>x</button>
+          </div>
+          <div className="item-list-window__accent" />
+          <div className="ipl-selection-modal__grid">
+            <div className="ipl-selection-modal__header"><span>#</span><span>Display</span><span>{label}</span></div>
+            {otherSelectionRows.length ? otherSelectionRows.map((row, index) => (
+              <label className="ipl-selection-modal__row" key={`${row.code}-${index}`}>
+                <span>{index + 1}</span>
+                <input
+                  type="checkbox"
+                  checked={selected.has(row.code)}
+                  onChange={() => toggleCode("otherSelection", "selectedValues", row.code)}
+                />
+                <span>{row.code}{row.name ? ` - ${row.name}` : ""}</span>
+              </label>
+            )) : <div className="ipl-selection-modal__empty">Enter this criterion through Expanded Selection Criteria.</div>}
+          </div>
+          <div className="ipl-selection-modal__footer">
+            <button type="button" className="item-list-btn sap-report-btn sap-report-btn--primary" onClick={() => setShowOtherSelection(false)}>OK</button>
+            <button type="button" className="item-list-btn sap-report-btn" onClick={() => setShowOtherSelection(false)}>Cancel</button>
           </div>
         </div>
       </div>
@@ -884,7 +1168,7 @@ function InventoryPostingListReportPage() {
               <button type="button" className="item-list-report__back-btn" aria-label="Back to selection criteria" onClick={handleCloseReportWindow}>
                 &lt;-
               </button>
-              <button type="button" className="item-list-btn" onClick={handleCloseReportWindow}>OK</button>
+              <button type="button" className="item-list-btn sap-report-btn sap-report-btn--primary" onClick={handleCloseReportWindow}>OK</button>
             </div>
             <label className="item-list-criteria__checkbox">
               <input
@@ -929,7 +1213,7 @@ function InventoryPostingListReportPage() {
                     </button>
                   ))}
                 </div>
-                {activeItemTab === "items" ? renderItemsTab() : renderPassiveTab(ITEM_TABS.find((tab) => tab.key === activeItemTab)?.label)}
+                {renderSelectionTab()}
               </div>
 
               <div>{renderLocationPanel()}</div>
@@ -958,10 +1242,10 @@ function InventoryPostingListReportPage() {
 
             <div className="ipl-window-footer">
               <div>
-                <button type="button" className="item-list-btn" onClick={handleOk}>OK</button>
-                <button type="button" className="item-list-btn" onClick={handleCloseCriteriaWindow}>Cancel</button>
+                <button type="button" className="item-list-btn sap-report-btn sap-report-btn--primary" onClick={handleOk}>OK</button>
+                <button type="button" className="item-list-btn sap-report-btn" onClick={handleCloseCriteriaWindow}>Cancel</button>
               </div>
-              <button type="button" className="item-list-btn" onClick={selectAllWarehouses}>Select All</button>
+              <button type="button" className="item-list-btn sap-report-btn" onClick={selectAllWarehouses}>Select All</button>
             </div>
           </div>
         ) : null}
@@ -969,17 +1253,27 @@ function InventoryPostingListReportPage() {
 
       {reportResult ? renderReportWindow() : null}
       {renderExpandedModal()}
+      {renderOtherSelectionModal()}
 
       <ItemLookupModal isOpen={Boolean(lookupTarget)} onClose={() => setLookupTarget("")} onSelect={handleItemSelect} />
+      <BusinessPartnerLookupModal isOpen={Boolean(bpLookupTarget)} type="" onClose={() => setBpLookupTarget("")} onSelect={handleBpSelect} />
 
       <PropertiesSelectionModal
-        isOpen={showProperties}
+        isOpen={Boolean(propertiesTarget)}
         title="Properties"
-        propertyLabelPrefix="Items Property"
+        propertyLabelPrefix={propertiesTarget === "bp" ? "Business Partners Property" : propertiesTarget === "resources" ? "Resources Property" : "Items Property"}
         properties={itemProperties}
-        value={formState.propertyFilter}
-        onClose={() => setShowProperties(false)}
-        onSave={(nextFilter) => setField("propertyFilter", nextFilter)}
+        value={propertiesTarget === "bp"
+          ? formState.bpSelection.propertyFilter
+          : propertiesTarget === "resources"
+            ? formState.resourceSelection.propertyFilter
+            : formState.propertyFilter}
+        onClose={() => setPropertiesTarget("")}
+        onSave={(nextFilter) => {
+          if (propertiesTarget === "bp") setNested("bpSelection", { propertyFilter: nextFilter });
+          else if (propertiesTarget === "resources") setNested("resourceSelection", { propertyFilter: nextFilter });
+          else setField("propertyFilter", nextFilter);
+        }}
       />
     </div>
   );
