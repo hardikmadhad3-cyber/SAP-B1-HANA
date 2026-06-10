@@ -15,5 +15,5 @@ export const fetchReceiptByDocEntry = (docEntry) =>
 export const createReceipt = (data) =>
   apiClient.post('/receipt-from-production', data).then((r) => r.data);
 
-export const lookupProductionOrdersForReceipt = (query = '') =>
-  apiClient.get('/receipt-from-production/lookup/production-orders', { params: { query } }).then((r) => r.data);
+export const lookupProductionOrdersForReceipt = (query = '', type = '') =>
+  apiClient.get('/receipt-from-production/lookup/production-orders', { params: { query, type } }).then((r) => r.data);

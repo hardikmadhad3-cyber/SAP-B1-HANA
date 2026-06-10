@@ -6,7 +6,18 @@ const STATUS_LABEL = {
   boposPlanned:  "Planned",
 };
 
-export default function ProductionOrderSearchModal({ onSelect, onClose }) {
+const TYPE_LABEL = {
+  bopotStandard: "Standard",
+  bopotSpecial: "Special",
+  bopotDisassemble: "Disassembly",
+};
+
+export default function ProductionOrderSearchModal({
+  title = "List of Production Orders",
+  type = "",
+  onSelect,
+  onClose,
+}) {
   const [query,   setQuery]   = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -20,7 +31,7 @@ export default function ProductionOrderSearchModal({ onSelect, onClose }) {
   const search = async (q) => {
     setLoading(true);
     try {
-      const data = await lookupProductionOrdersForReceipt(q);
+      const data = await lookupProductionOrdersForReceipt(q, type);
       setResults(data);
     } catch {
       setResults([]);
@@ -38,7 +49,7 @@ export default function ProductionOrderSearchModal({ onSelect, onClose }) {
     <div className="rfp-po-modal-overlay" onClick={onClose}>
       <div className="rfp-po-modal" onClick={(e) => e.stopPropagation()}>
         <div className="rfp-po-modal__header">
-          Select Production Order for Receipt
+          {title}
           <button className="rfp-po-modal__close" onClick={onClose}>✕</button>
         </div>
 
@@ -67,6 +78,7 @@ export default function ProductionOrderSearchModal({ onSelect, onClose }) {
                 <th>Doc No.</th>
                 <th>Item Code</th>
                 <th>Description</th>
+                <th>Type</th>
                 <th>Status</th>
                 <th>Planned Qty</th>
                 <th>Completed Qty</th>
@@ -85,6 +97,7 @@ export default function ProductionOrderSearchModal({ onSelect, onClose }) {
                     <td>{o.DocNum}</td>
                     <td>{o.ItemNo}</td>
                     <td>{o.ProductDescription}</td>
+                    <td>{TYPE_LABEL[o.Type] || o.Type || "Standard"}</td>
                     <td>{STATUS_LABEL[o.ProductionOrderStatus] || o.ProductionOrderStatus}</td>
                     <td style={{ textAlign: "right" }}>{planned.toFixed(2)}</td>
                     <td style={{ textAlign: "right" }}>{completed.toFixed(2)}</td>

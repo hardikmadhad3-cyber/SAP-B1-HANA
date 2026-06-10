@@ -162,6 +162,12 @@ export default function BOMModule() {
     setShowFindResults(false);
   }, []);
 
+  const enterFindMode = useCallback(() => {
+    setMode(MODES.FIND);
+    resetForm();
+    setItemModal({ open: true, target: "header" });
+  }, [resetForm]);
+
   const handleHeaderChange = useCallback((e) => {
     const { name, value } = e.target;
     const nextValue = e.target.type === "checkbox" ? (e.target.checked ? "tYES" : "tNO") : value;
@@ -211,8 +217,11 @@ export default function BOMModule() {
                     ...line,
                     ItemCode: details.ItemCode,
                     ItemName: details.ItemName,
-                    InventoryUOM: details.InventoryUOM || "",
+                    InventoryUOM: details.UoMName || details.InventoryUOM || "",
                     Warehouse: details.DefaultWarehouse || line.Warehouse,
+                    IssueMethod: details.IssuePrimarilyBy || line.IssueMethod,
+                    DistributionRule: details.DistributionRule || line.DistributionRule,
+                    Project: details.Project || line.Project,
                   }
                 : line
             )
@@ -233,7 +242,7 @@ export default function BOMModule() {
                     ...line,
                     ItemCode: item.ItemCode,
                     ItemName: item.ItemName,
-                    InventoryUOM: item.InventoryUOM || "",
+                    InventoryUOM: item.UoMName || item.InventoryUOM || "",
                   }
                 : line
             )
@@ -351,6 +360,7 @@ export default function BOMModule() {
           ...(opt(line.WipAccount) && { WipAccount: line.WipAccount }),
           ...(opt(line.DistributionRule) && { DistributionRule: line.DistributionRule }),
           ...(opt(line.Project) && { Project: line.Project }),
+          ...(opt(line.RouteSequence) && { RouteSequence: Number(line.RouteSequence) }),
         })),
     };
   }, [header, lines]);
@@ -400,7 +410,7 @@ export default function BOMModule() {
       const code = treeCode || header.TreeCode.trim();
       const query = code || header.ProductDescription.trim();
       if (!query) {
-        showAlert("error", "Enter a Product No. or Product Description to search.");
+        setItemModal({ open: true, target: "header" });
         return;
       }
 
@@ -505,16 +515,16 @@ export default function BOMModule() {
 
     const loadedLines = (data.ProductTreeLines || []).map((line) => {
         const qty = line.Quantity ?? 1;
-        const stdCost = 0;
+        const stdCost = line.ProductionStdCost ?? line.StdCost ?? 0;
         const price = line.Price ?? 0;
 
         return {
           _id: Date.now() + Math.random(),
           ItemType: line.ItemType || "pit_Item",
           ItemCode: line.ItemCode || "",
-          ItemName: line.ItemName || "",
+          ItemName: line.ItemName || line.ItemDescription || "",
           Quantity: qty,
-          InventoryUOM: line.InventoryUOM || "",
+          InventoryUOM: line.UoMName || line.InventoryUOM || line.UomCode || "",
           Warehouse: line.Warehouse || "",
           IssueMethod: line.IssueMethod || "im_Manual",
           ProductionStdCost: stdCost,
@@ -525,7 +535,7 @@ export default function BOMModule() {
           Comment: line.Comment || "",
           DistributionRule: line.DistributionRule || "",
           WipAccount: line.WipAccount || "",
-          RouteSequence: line.VisualOrder ?? 0,
+          RouteSequence: line.RouteSequence ?? line.StageID ?? line.StageId ?? line.VisualOrder ?? 0,
           Project: line.Project || "",
         };
       });
@@ -553,7 +563,7 @@ export default function BOMModule() {
         <button type="button" className="im-btn" onClick={() => { setMode(MODES.ADD); resetForm(); }}>
           New
         </button>
-        <button type="button" className="im-btn" onClick={() => { setMode(MODES.FIND); resetForm(); }}>
+        <button type="button" className="im-btn" onClick={enterFindMode}>
           Find
         </button>
         <button type="button" className="im-btn" onClick={resetForm}>

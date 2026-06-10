@@ -1,4 +1,5 @@
 const sapService = require('./sapService');
+const productionDbService = require('./productionDbService');
 
 const escapeOData = (v) => String(v || '').replace(/'/g, "''");
 const formatDate  = (v) => (v ? String(v).split('T')[0] : '');
@@ -342,11 +343,8 @@ const createProductionOrder = async (body) => {
   // If we have docEntry but not docNum, fetch the created order to get the document number
   if (docEntry && !docNum) {
     try {
-      const fetchResp = await sapService.request({
-        method: 'GET',
-        url: `/ProductionOrders(${docEntry})`,
-      });
-      docNum = fetchResp.data?.DocumentNumber || fetchResp.data?.DocNum;
+      const createdOrder = await productionDbService.getProductionOrderByDocEntry(docEntry);
+      docNum = createdOrder?.production_order?.doc_num;
       console.log('[ProductionOrder] Fetched DocNum from created order:', docNum);
     } catch (err) {
       console.warn('[ProductionOrder] Could not fetch document number:', err.message);
@@ -433,11 +431,8 @@ const updateProductionOrder = async (docEntry, body) => {
   const payload = _buildPayload(body, false); // Pass false to indicate update
   await sapService.request({ method: 'PATCH', url: `/ProductionOrders(${n})`, data: payload });
 
-  const updated = await sapService.request({ 
-    method: 'GET', 
-    url: `/ProductionOrders(${n})` 
-  });
-  return { message: 'Production order updated.', production_order: mapToForm(updated.data || {}) };
+  const updated = await productionDbService.getProductionOrderByDocEntry(n);
+  return { message: 'Production order updated.', production_order: updated?.production_order || null };
 };
 
 // ── Release ───────────────────────────────────────────────────────────────────
@@ -452,11 +447,8 @@ const releaseProductionOrder = async (docEntry) => {
     data: { ProductionOrderStatus: 'boposReleased' },
   });
   
-  const updated = await sapService.request({ 
-    method: 'GET', 
-    url: `/ProductionOrders(${n})` 
-  });
-  return { message: 'Production order released.', production_order: mapToForm(updated.data || {}) };
+  const updated = await productionDbService.getProductionOrderByDocEntry(n);
+  return { message: 'Production order released.', production_order: updated?.production_order || null };
 };
 
 // ── Close ─────────────────────────────────────────────────────────────────────
@@ -471,11 +463,8 @@ const closeProductionOrder = async (docEntry) => {
     data: { ProductionOrderStatus: 'boposClosed' },
   });
   
-  const updated = await sapService.request({ 
-    method: 'GET', 
-    url: `/ProductionOrders(${n})` 
-  });
-  return { message: 'Production order closed.', production_order: mapToForm(updated.data || {}) };
+  const updated = await productionDbService.getProductionOrderByDocEntry(n);
+  return { message: 'Production order closed.', production_order: updated?.production_order || null };
 };
 
 // ── Lookups ───────────────────────────────────────────────────────────────────
@@ -642,21 +631,21 @@ function _buildPayload(body, isCreate = false) {
 }
 
 module.exports = {
-  getReferenceData,
-  getProductionOrders,
-  getProductionOrderByDocEntry,
+  getReferenceData: productionDbService.getProductionOrderReferenceData,
+  getProductionOrders: productionDbService.getProductionOrders,
+  getProductionOrderByDocEntry: productionDbService.getProductionOrderByDocEntry,
   createProductionOrder,
   updateProductionOrder,
   releaseProductionOrder,
   closeProductionOrder,
-  explodeBOM,
-  lookupItems,
-  lookupComponentItems,
-  lookupResources,
-  lookupRouteStages,
-  lookupWarehouses,
-  lookupDistributionRules,
-  lookupProjects,
-  lookupBranches,
-  lookupCustomers,
+  explodeBOM: productionDbService.explodeBOM,
+  lookupItems: productionDbService.lookupProductionOrderItems,
+  lookupComponentItems: productionDbService.lookupComponentItems,
+  lookupResources: productionDbService.lookupResources,
+  lookupRouteStages: productionDbService.lookupRouteStages,
+  lookupWarehouses: productionDbService.lookupProdWarehouses,
+  lookupDistributionRules: productionDbService.lookupDistributionRules,
+  lookupProjects: productionDbService.lookupProjects,
+  lookupBranches: productionDbService.lookupBranches,
+  lookupCustomers: productionDbService.lookupCustomers,
 };

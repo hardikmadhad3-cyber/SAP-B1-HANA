@@ -8,6 +8,23 @@ const STATUS_BADGE = {
   Released:   "released",
   Closed:     "closed",
   Cancelled:  "cancelled",
+  boposPlanned:   "planned",
+  boposReleased:  "released",
+  boposClosed:    "closed",
+  boposCancelled: "cancelled",
+};
+
+const STATUS_LABELS = {
+  boposPlanned: "Planned",
+  boposReleased: "Released",
+  boposClosed: "Closed",
+  boposCancelled: "Cancelled",
+};
+
+const TYPE_LABELS = {
+  bopotStandard: "Standard",
+  bopotSpecial: "Special",
+  bopotDisassemble: "Disassemble",
 };
 
 export default function ProductionOrderList({ onSelect, initialQuery = "" }) {
@@ -37,7 +54,7 @@ export default function ProductionOrderList({ onSelect, initialQuery = "" }) {
   return (
     <div className="im-page" style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       <div className="im-toolbar">
-        <span className="im-toolbar__title">Production Orders</span>
+        <span className="im-toolbar__title">Find Production Order</span>
         <button className="im-btn im-btn--primary" onClick={() => onSelect(null)}>New</button>
       </div>
 
@@ -48,14 +65,14 @@ export default function ProductionOrderList({ onSelect, initialQuery = "" }) {
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           <input
             className="im-field__input"
-            placeholder="Search by document no., item code, or description…"
+            placeholder="Find by document no., product no., or description..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && load(query)}
             style={{ width: "350px" }}
           />
           <button className="im-btn" onClick={() => load(query)} disabled={loading} style={{ minWidth: "80px" }}>
-            {loading ? "Searching..." : "Search"}
+            {loading ? "Finding..." : "Find"}
           </button>
           <button className="im-btn" onClick={() => { setQuery(""); load(""); }} style={{ minWidth: "70px" }}>
             Clear
@@ -69,8 +86,8 @@ export default function ProductionOrderList({ onSelect, initialQuery = "" }) {
           <thead>
             <tr>
               <th style={{ minWidth: "80px" }}>Doc No.</th>
-              <th style={{ minWidth: "120px" }}>Item Code</th>
-              <th style={{ minWidth: "250px" }}>Description</th>
+              <th style={{ minWidth: "120px" }}>Product No.</th>
+              <th style={{ minWidth: "250px" }}>Product Description</th>
               <th style={{ minWidth: "100px" }}>Type</th>
               <th style={{ minWidth: "100px" }}>Status</th>
               <th style={{ minWidth: "110px", textAlign: "right" }}>Planned Qty</th>
@@ -99,10 +116,10 @@ export default function ProductionOrderList({ onSelect, initialQuery = "" }) {
                 <td style={{ fontWeight: 600, color: "#0070c0" }}>{o.doc_num}</td>
                 <td>{o.item_code}</td>
                 <td>{o.item_name}</td>
-                <td>{o.type}</td>
+                <td>{TYPE_LABELS[o.type] || o.type}</td>
                 <td>
                   <span className={`po-status-badge po-status-badge--${STATUS_BADGE[o.status] || "planned"}`}>
-                    {o.status}
+                    {STATUS_LABELS[o.status] || o.status}
                   </span>
                 </td>
                 <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>

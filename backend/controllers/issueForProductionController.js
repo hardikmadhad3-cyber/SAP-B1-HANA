@@ -57,7 +57,7 @@ const createIssue = async (req, res) => {
 
 const lookupProductionOrders = async (req, res) => {
   try {
-    const data = await svc.lookupProductionOrders(req.query.query || '');
+    const data = await svc.lookupProductionOrders(req.query.query || '', req.query.type || '');
     res.json(data);
   } catch (e) {
     console.error('[IssueForProd] lookupPO error:', e.response?.data || e.message);
