@@ -91,9 +91,11 @@ const APP_MENU_DEFINITIONS = [
   { key: 'sales-analysis', parentKey: 'reports', menuName: 'Sales Analysis', menuPath: '/reports/sales/analysis', icon: 'report', sortOrder: 1 },
   { key: 'item-list-report', parentKey: 'reports', menuName: 'Item List', menuPath: '/reports/item-list', icon: 'report', sortOrder: 2 },
   { key: 'inventory-in-warehouse-report', parentKey: 'reports', menuName: 'Inventory in Warehouse Report', menuPath: '/reports/inventory/in-warehouse', icon: 'report', sortOrder: 3 },
-  { key: 'inventory-posting-list-report', parentKey: 'reports', menuName: 'Inventory Posting List', menuPath: '/reports/inventory/posting-list', icon: 'report', sortOrder: 4 },
-  { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 5 },
-  { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 6 },
+  { key: 'inventory-audit-report', parentKey: 'reports', menuName: 'Inventory Audit Report', menuPath: '/reports/inventory/audit', icon: 'report', sortOrder: 4 },
+  { key: 'inventory-aging-report', parentKey: 'reports', menuName: 'Inventory Aging Report', menuPath: '/reports/inventory/aging', icon: 'report', sortOrder: 5 },
+  { key: 'inventory-posting-list-report', parentKey: 'reports', menuName: 'Inventory Posting List', menuPath: '/reports/inventory/posting-list', icon: 'report', sortOrder: 6 },
+  { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 7 },
+  { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 8 },
 ];
 
 const normalizeText = (value) => String(value || '').trim();

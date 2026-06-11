@@ -93,6 +93,8 @@ const SalesAnalysisReportPage = lazyWithRetry(() => import("./pages/SalesAnalysi
 const ItemListReportPage = lazyWithRetry(() => import("./pages/ItemListReportPage"));
 const InventoryPostingListReportPage = lazyWithRetry(() => import("./pages/InventoryPostingListReportPage"));
 const InventoryInWarehouseReportPage = lazyWithRetry(() => import("./pages/InventoryInWarehouseReportPage"));
+const InventoryAuditReportPage = lazyWithRetry(() => import("./pages/InventoryAuditReportPage"));
+const InventoryAgingReportPage = lazyWithRetry(() => import("./pages/InventoryAgingReportPage"));
 const PurchaseAnalysisReport = lazyWithRetry(() => import("./pages/PurchaseAnalysisReport"));
 const PurchaseRequestReportPage = lazyWithRetry(() => import("./pages/PurchaseRequestReportPage"));
 const ReportsStudioPage = lazyWithRetry(() => import("./pages/ReportsStudioPage"));
@@ -232,6 +234,8 @@ function App() {
                   <Route path="/reports/item-list" element={<ItemListReportPage />} />
                   <Route path="/reports/inventory/posting-list" element={<InventoryPostingListReportPage />} />
                   <Route path="/reports/inventory/in-warehouse" element={<InventoryInWarehouseReportPage />} />
+                  <Route path="/reports/inventory/audit" element={<InventoryAuditReportPage />} />
+                  <Route path="/reports/inventory/aging" element={<InventoryAgingReportPage />} />
                   <Route path="/reports/purchasing/analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchase-analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchase/analysis" element={<PurchaseAnalysisReport />} />
