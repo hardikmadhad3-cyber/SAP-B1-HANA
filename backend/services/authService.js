@@ -55,7 +55,8 @@ const TOP_LEVEL_MENU_PRIORITY = new Map([
   ['purchasing', 2],
   ['purchasing a p', 2],
   ['reports', 6],
-  ['admin panel', 7],
+  ['general settings', 7],
+  ['admin panel', 8],
 ]);
 
 const normalizeMenuPriorityName = (menuName) =>
