@@ -94,6 +94,8 @@ const APP_MENU_DEFINITIONS = [
   { key: 'inventory-posting-list-report', parentKey: 'reports', menuName: 'Inventory Posting List', menuPath: '/reports/inventory/posting-list', icon: 'report', sortOrder: 4 },
   { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 5 },
   { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 6 },
+
+  { key: 'general-settings', menuName: 'General Settings', menuPath: '/general-settings', icon: 'settings', sortOrder: 9 },
 ];
 
 const normalizeText = (value) => String(value || '').trim();
