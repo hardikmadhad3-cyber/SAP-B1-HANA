@@ -8,6 +8,7 @@ import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
 import "../styles/inventory-aging-report.css";
 import "../styles/sales-analysis-report.css";
+import "../styles/inventory-report-common.css";
 
 const DEFAULT_PROPERTIES = Array.from({ length: 64 }, (_, index) => ({
   number: index + 1,
@@ -247,7 +248,7 @@ function InventoryAgingReportPage() {
                   </div>
 
                   <div className="iag-property-row">
-                    <button type="button" className="iag-btn iag-btn--field" onClick={() => setShowProperties(true)}>Properties</button>
+                    <button type="button" className="iag-btn iag-btn--field sap-report-btn sap-report-property-btn" onClick={() => setShowProperties(true)}>Properties</button>
                     <input value={propertyLabel} readOnly />
                   </div>
                 </div>
@@ -311,8 +312,8 @@ function InventoryAgingReportPage() {
           {message ? <div className="iag-status">{message}</div> : null}
 
           <footer className="iag-footer sales-analysis-window__footer">
-            <button type="button" className="iag-btn" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</button>
-            <button type="button" className="iag-btn iag-btn--secondary" onClick={handleCloseFilter}>Cancel</button>
+            <button type="button" className="iag-btn sap-report-btn sap-report-btn--primary" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</button>
+            <button type="button" className="iag-btn iag-btn--secondary sap-report-btn" onClick={handleCloseFilter}>Cancel</button>
           </footer>
         </div>
       ) : null}

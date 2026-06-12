@@ -103,7 +103,7 @@ const mapToForm = (o) => {
     procure_items: o.ProcureItems === 'tYES' || o.ProcureItems === true,
     distribution_rule: o.DistributionRule || '',
     project:      o.Project || '',
-    journal_remark: o.JournalMemo || '',
+    journal_remark: o.JournalRemarks || o.JournalMemo || '',
     remarks:      o.Remarks || '',
     series:       o.Series != null ? String(o.Series) : '',
     origin_num:   o.OriginNum != null ? String(o.OriginNum) : '',
@@ -590,7 +590,7 @@ function _buildPayload(body, isCreate = false) {
   if (opt(body.type))         p.ProductionOrderType      = body.type;
   if (opt(body.distribution_rule)) p.DistributionRule   = body.distribution_rule;
   if (opt(body.project))      p.Project                  = body.project;
-  if (opt(body.journal_remark)) p.JournalMemo            = body.journal_remark;
+  if (opt(body.journal_remark)) p.JournalRemarks         = body.journal_remark;
   if (opt(body.remarks))      p.Remarks                  = body.remarks;
   
   // Only include Series if explicitly provided and valid

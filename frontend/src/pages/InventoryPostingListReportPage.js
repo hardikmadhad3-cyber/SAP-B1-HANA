@@ -11,6 +11,7 @@ import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContex
 import "../styles/item-list-report.css";
 import "../styles/inventory-posting-list-report.css";
 import "../styles/sales-analysis-report.css";
+import "../styles/inventory-report-common.css";
 
 const DEFAULT_ITEM_PROPERTIES = Array.from({ length: 64 }, (_, index) => ({
   number: index + 1,
@@ -651,7 +652,7 @@ function InventoryPostingListReportPage() {
       </div>
 
       <div className="ipl-criteria__property-row">
-        <button type="button" className="item-list-btn item-list-btn--wide" onClick={() => setPropertiesTarget("items")}>
+        <button type="button" className="item-list-btn item-list-btn--wide sap-report-btn sap-report-property-btn" onClick={() => setPropertiesTarget("items")}>
           Properties
         </button>
         <input type="text" value={propertyModeLabel} readOnly />
@@ -758,7 +759,7 @@ function InventoryPostingListReportPage() {
         </select>
       </div>
       <div className="ipl-criteria__property-row">
-        <button type="button" className="item-list-btn item-list-btn--wide" onClick={() => setPropertiesTarget("resources")}>Properties</button>
+        <button type="button" className="item-list-btn item-list-btn--wide sap-report-btn sap-report-property-btn" onClick={() => setPropertiesTarget("resources")}>Properties</button>
         <input value={propertyLabel(formState.resourceSelection.propertyFilter)} readOnly />
       </div>
       {renderSharedTransactionCriteria()}
@@ -785,7 +786,7 @@ function InventoryPostingListReportPage() {
         </select>
       </div>
       <div className="ipl-criteria__property-row">
-        <button type="button" className="item-list-btn item-list-btn--wide" onClick={() => setPropertiesTarget("bp")}>Properties</button>
+        <button type="button" className="item-list-btn item-list-btn--wide sap-report-btn sap-report-property-btn" onClick={() => setPropertiesTarget("bp")}>Properties</button>
         <input value={propertyLabel(formState.bpSelection.propertyFilter)} readOnly />
       </div>
       {renderSharedTransactionCriteria()}

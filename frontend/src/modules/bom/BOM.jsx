@@ -81,7 +81,7 @@ export const EMPTY_LINE = () => ({
   Comment: "",
   DistributionRule: "",
   WipAccount: "",
-  RouteSequence: 0,
+  RouteSequence: "",
   Project: "",
 });
 
@@ -334,6 +334,7 @@ export default function BOMModule() {
 
   const buildPayload = useCallback(() => {
     const opt = (value) => value !== "" && value != null;
+    const validStageId = (value) => Number.isInteger(Number(value)) && Number(value) > 0;
 
     return {
       TreeCode: header.TreeCode,
@@ -360,7 +361,7 @@ export default function BOMModule() {
           ...(opt(line.WipAccount) && { WipAccount: line.WipAccount }),
           ...(opt(line.DistributionRule) && { DistributionRule: line.DistributionRule }),
           ...(opt(line.Project) && { Project: line.Project }),
-          ...(opt(line.RouteSequence) && { RouteSequence: Number(line.RouteSequence) }),
+          ...(validStageId(line.RouteSequence) && { RouteSequence: Number(line.RouteSequence) }),
         })),
     };
   }, [header, lines]);
@@ -535,7 +536,7 @@ export default function BOMModule() {
           Comment: line.Comment || "",
           DistributionRule: line.DistributionRule || "",
           WipAccount: line.WipAccount || "",
-          RouteSequence: line.RouteSequence ?? line.StageID ?? line.StageId ?? line.VisualOrder ?? 0,
+          RouteSequence: line.RouteSequence ?? line.StageID ?? line.StageId ?? "",
           Project: line.Project || "",
         };
       });
