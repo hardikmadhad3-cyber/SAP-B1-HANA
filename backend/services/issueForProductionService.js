@@ -20,6 +20,21 @@ const productionDbService = require('./productionDbService');
 const escapeOData = (v) => String(v || '').replace(/'/g, "''");
 const formatDate  = (v) => (v ? String(v).split('T')[0] : '');
 const opt         = (v) => v !== '' && v != null;
+const LIVE_LOOKUP_TIMEOUT_MS = 6000;
+
+const withTimeout = (promise, timeoutMs, message) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  promise.then(
+    (value) => {
+      clearTimeout(timer);
+      resolve(value);
+    },
+    (error) => {
+      clearTimeout(timer);
+      reject(error);
+    },
+  );
+});
 
 const PO_STATUS_LABEL = {
   boposReleased:  'Released',
@@ -27,6 +42,14 @@ const PO_STATUS_LABEL = {
   boposClosed:    'Closed',
   boposCancelled: 'Cancelled',
 };
+
+const getProductionOrderLineIssueMethod = (line = {}) =>
+  line.ProductionOrderIssueType || line.IssueMethod || 'im_Manual';
+
+const isOpenManualIssueLine = (line = {}) =>
+  Boolean(line.ItemNo) &&
+  getProductionOrderLineIssueMethod(line) !== 'im_Backflush' &&
+  Number(line.PlannedQuantity || 0) - Number(line.IssuedQuantity || 0) > 0;
 
 // ── Map a single InventoryGenExit document to our form shape ─────────────────
 const mapToForm = (doc) => ({
@@ -104,9 +127,7 @@ const getProductionOrderForIssue = async (docEntry) => {
   }
 
   // Filter: only im_Manual lines — backflush lines are excluded per SAP logic
-  const manualLines = (po.ProductionOrderLines || []).filter(
-    (l) => (l.IssueMethod || 'im_Manual') !== 'im_Backflush'
-  );
+  const manualLines = (po.ProductionOrderLines || []).filter(isOpenManualIssueLine);
 
   // Fetch item details to get batch/serial management info and auto-select batches
   const itemCodes = [...new Set(manualLines.map(l => l.ItemNo).filter(Boolean))];
@@ -179,7 +200,7 @@ const getProductionOrderForIssue = async (docEntry) => {
       issue_qty:      issueQty,
       uom:            l.UoMCode || l.MeasureUnit || '',
       warehouse:      l.Warehouse || po.Warehouse || '',
-      issue_method:   l.IssueMethod || 'im_Manual',
+      issue_method:   getProductionOrderLineIssueMethod(l),
       distribution_rule: l.DistributionRule || '',
       project:        l.Project || '',
       base_entry:     poDocEntry,
@@ -422,14 +443,80 @@ const getIssueByDocEntryByOdbc = async (docEntry) => {
   return data;
 };
 
-const lookupProductionOrdersByOdbc = (query = '', type = '') =>
-  productionDbService.lookupOpenProductionOrders(query, true, type || 'production', { issueableOnly: true });
+const lookupIssueableProductionOrders = async (query = '', type = '') => {
+  const filterParts = ["ProductionOrderStatus eq 'boposReleased'"];
+  const normalizedType = String(type || '').trim().toLowerCase();
+
+  if (normalizedType === 'disassembly') {
+    filterParts.push("ProductionOrderType eq 'bopotDisassemble'");
+  } else if (normalizedType === 'production') {
+    filterParts.push("ProductionOrderType ne 'bopotDisassemble'");
+  }
+
+  if (query && query.trim()) {
+    const q = escapeOData(query.trim());
+    filterParts.push(/^\d+$/.test(query.trim())
+      ? `(DocumentNumber eq ${query.trim()} or contains(ItemNo,'${q}') or contains(ProductDescription,'${q}'))`
+      : `(contains(ItemNo,'${q}') or contains(ProductDescription,'${q}'))`);
+  }
+
+  const resp = await sapService.request({
+    method: 'GET',
+    url: `/ProductionOrders?$filter=${encodeURIComponent(filterParts.join(' and '))}&$top=200&$orderby=DueDate asc,DocumentNumber asc`,
+  });
+
+  return (resp.data?.value || [])
+    .filter((order) => (order.ProductionOrderLines || []).some(isOpenManualIssueLine))
+    .slice(0, 50)
+    .map((order) => ({
+      DocEntry: order.AbsoluteEntry || order.DocEntry,
+      DocNum: order.DocumentNumber || order.DocNum,
+      Series: order.Series,
+      SeriesName: order.SeriesName || '',
+      Type: order.ProductionOrderType || '',
+      ItemNo: order.ItemNo || '',
+      ProductDescription: order.ProductDescription || '',
+      PlannedQuantity: order.PlannedQuantity ?? 0,
+      CompletedQuantity: order.CompletedQuantity ?? 0,
+      ProductionOrderStatus: order.ProductionOrderStatus || '',
+      Warehouse: order.Warehouse || '',
+      DueDate: formatDate(order.DueDate),
+      PostingDate: formatDate(order.PostingDate),
+      StartDate: formatDate(order.StartDate),
+    }));
+};
+
+const getProductionOrderForIssueWithFallback = async (docEntry) => {
+  try {
+    return await withTimeout(
+      getProductionOrderForIssue(docEntry),
+      LIVE_LOOKUP_TIMEOUT_MS,
+      'Live SAP order load timed out',
+    );
+  } catch (error) {
+    console.warn('[IssueForProd] Live SAP order load failed; using database fallback:', error.message);
+    return getProductionOrderForIssueByOdbc(docEntry);
+  }
+};
+
+const lookupProductionOrdersWithFallback = async (query = '', type = '') => {
+  try {
+    return await withTimeout(
+      lookupIssueableProductionOrders(query, type),
+      LIVE_LOOKUP_TIMEOUT_MS,
+      'Live SAP lookup timed out',
+    );
+  } catch (error) {
+    console.warn('[IssueForProd] Live SAP lookup failed; using database fallback:', error.message);
+    return productionDbService.lookupOpenProductionOrders(query, true, type, { issueableOnly: true });
+  }
+};
 
 module.exports = {
   getReferenceData: getReferenceDataByOdbc,
-  getProductionOrderForIssue: getProductionOrderForIssueByOdbc,
+  getProductionOrderForIssue: getProductionOrderForIssueWithFallback,
   getIssueList: getIssueListByOdbc,
   getIssueByDocEntry: getIssueByDocEntryByOdbc,
   createIssue,
-  lookupProductionOrders: lookupProductionOrdersByOdbc,
+  lookupProductionOrders: lookupProductionOrdersWithFallback,
 };

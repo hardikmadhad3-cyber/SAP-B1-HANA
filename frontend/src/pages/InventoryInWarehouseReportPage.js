@@ -9,6 +9,7 @@ import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
 import "../styles/inventory-in-warehouse-report.css";
 import "../styles/sales-analysis-report.css";
+import "../styles/inventory-report-common.css";
 
 const DEFAULT_PROPERTIES = Array.from({ length: 64 }, (_, index) => ({
   number: index + 1,
@@ -322,8 +323,8 @@ function InventoryInWarehouseReportPage() {
             </table>
           </div>
           <footer className="iwh-opening-footer">
-            <button type="button" className="iwh-btn sales-analysis__sap-btn" onClick={() => setShowOpeningBalances(false)}>OK</button>
-            <button type="button" className="iwh-btn iwh-btn--muted sales-analysis__sap-btn sales-analysis__sap-btn--secondary" disabled>Remove</button>
+            <button type="button" className="iwh-btn sales-analysis__sap-btn sap-report-btn sap-report-btn--primary" onClick={() => setShowOpeningBalances(false)}>OK</button>
+            <button type="button" className="iwh-btn iwh-btn--muted sales-analysis__sap-btn sales-analysis__sap-btn--secondary sap-report-btn" disabled>Remove</button>
           </footer>
         </div>
       ) : null}
@@ -352,7 +353,7 @@ function InventoryInWarehouseReportPage() {
                   </select>
                 </div>
                 <div className="iwh-property-row">
-                  <button type="button" className="iwh-btn sales-analysis__sap-btn sales-analysis__sap-btn--field" onClick={() => setShowProperties(true)}>Properties</button>
+                  <button type="button" className="iwh-btn sales-analysis__sap-btn sales-analysis__sap-btn--field sap-report-btn sap-report-property-btn" onClick={() => setShowProperties(true)}>Properties</button>
                   <input value={propertyLabel} readOnly />
                 </div>
                 <label className="iwh-checkbox"><input type="checkbox" checked={criteria.hideNoStock} onChange={(event) => setField("hideNoStock", event.target.checked)} />Hide Items with No Quantity in Stock</label>
@@ -371,7 +372,7 @@ function InventoryInWarehouseReportPage() {
             </div>
             <button type="button" className="iwh-opening-trigger" aria-label="Open inventory valuation opening balances" title="Inventory Valuation Report - Opening Balances" onClick={() => setShowOpeningBalances(true)}>...</button>
             {message ? <div className="iwh-status">{message}</div> : null}
-            <footer className="iwh-footer sales-analysis-window__footer"><button type="button" className="iwh-btn sales-analysis__sap-btn" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</button><button type="button" className="iwh-btn sales-analysis__sap-btn sales-analysis__sap-btn--secondary" onClick={handleCloseCriteria}>Cancel</button></footer>
+            <footer className="iwh-footer sales-analysis-window__footer"><button type="button" className="iwh-btn sales-analysis__sap-btn sap-report-btn sap-report-btn--primary" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</button><button type="button" className="iwh-btn sales-analysis__sap-btn sales-analysis__sap-btn--secondary sap-report-btn" onClick={handleCloseCriteria}>Cancel</button></footer>
           </div>
         ) : null}
       </section>

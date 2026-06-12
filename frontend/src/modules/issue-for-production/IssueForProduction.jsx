@@ -45,7 +45,8 @@ const decorateIssueLine = (line, orderNo = "") => ({
   planned_qty: line.planned_qty ?? 0,
   issued_qty: line.issued_qty ?? line.issue_qty ?? 0,
   remaining_qty: line.remaining_qty ?? 0,
-  issue_qty: line.issue_qty ?? 0,
+  issue_qty: line.issue_qty ?? line.copy_qty ?? line.remaining_qty ?? 0,
+  copy_qty: line.copy_qty ?? line.issue_qty ?? line.remaining_qty ?? 0,
   uom: line.uom || "",
   uom_name: line.uom_name || line.uom || "",
   warehouse: line.warehouse || "",
@@ -143,7 +144,13 @@ export default function IssueForProductionModule() {
       due_date: data.due_date,
       start_date: data.start_date,
     });
-    setLines((selectedLines || data.lines || []).map((line) => decorateIssueLine(line, data.doc_num)));
+    setLines((selectedLines || data.lines || []).map((line) => {
+      const decorated = decorateIssueLine(line, data.doc_num);
+      return {
+        ...decorated,
+        issue_qty: decorated.copy_qty ?? decorated.issue_qty ?? decorated.remaining_qty ?? 0,
+      };
+    }));
     setTab(0);
   }, []);
 

@@ -442,7 +442,7 @@ const mapBOMLine = (row) => {
     ChildNum: row.ChildNum ?? 0,
     VisualOrder: row.VisOrder ?? 0,
     StageID: row.StageId ?? row.StageID ?? "",
-    RouteSequence: row.StageId ?? row.StageID ?? row.VisOrder ?? 0,
+    RouteSequence: row.StageId ?? row.StageID ?? "",
   };
 };
 

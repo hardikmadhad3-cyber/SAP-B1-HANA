@@ -9,6 +9,7 @@ import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
 import "../styles/inventory-audit-report.css";
 import "../styles/sales-analysis-report.css";
+import "../styles/inventory-report-common.css";
 
 const DEFAULT_PROPERTIES = Array.from({ length: 64 }, (_, index) => ({
   number: index + 1,
@@ -406,7 +407,7 @@ function InventoryAuditReportPage() {
                 </select>
               </div>
               <div className="ia-property-row">
-                <button type="button" className="ia-btn ia-btn--field" onClick={() => setShowProperties(true)}>Properties</button>
+                <button type="button" className="ia-btn ia-btn--field sap-report-btn sap-report-property-btn" onClick={() => setShowProperties(true)}>Properties</button>
                 <input value={propertyLabel} readOnly />
               </div>
             </div>
@@ -448,8 +449,8 @@ function InventoryAuditReportPage() {
           {message ? <div className="ia-status">{message}</div> : null}
 
           <footer className="ia-footer sales-analysis-window__footer">
-            <button type="button" className="ia-btn" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</button>
-            <button type="button" className="ia-btn ia-btn--secondary" onClick={handleCloseCriteria}>Cancel</button>
+            <button type="button" className="ia-btn sap-report-btn sap-report-btn--primary" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</button>
+            <button type="button" className="ia-btn ia-btn--secondary sap-report-btn" onClick={handleCloseCriteria}>Cancel</button>
           </footer>
         </div>
       ) : null}

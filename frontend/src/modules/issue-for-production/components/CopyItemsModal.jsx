@@ -7,6 +7,7 @@ const numeric = (value, decimals = 3) => {
 
 export default function CopyItemsModal({ order, lines = [], onOk, onClose }) {
   const [selectedIds, setSelectedIds] = useState(() => new Set(lines.map((line) => line._id)));
+  const copyQuantity = (line) => line.copy_qty ?? line.issue_qty ?? line.remaining_qty ?? 0;
 
   const selectedLines = useMemo(
     () => lines.filter((line) => selectedIds.has(line._id)),
@@ -23,7 +24,12 @@ export default function CopyItemsModal({ order, lines = [], onOk, onClose }) {
   };
 
   const choose = () => {
-    onOk(selectedLines.length > 0 ? selectedLines : lines);
+    const chosenLines = selectedLines.length > 0 ? selectedLines : lines;
+    onOk(chosenLines.map((line) => ({
+      ...line,
+      copy_qty: copyQuantity(line),
+      issue_qty: copyQuantity(line),
+    })));
   };
 
   return (
@@ -77,7 +83,7 @@ export default function CopyItemsModal({ order, lines = [], onOk, onClose }) {
                       <td>{line.item_code}</td>
                       <td>{line.item_name}</td>
                       <td>{line.line_type || "Item"}</td>
-                      <td style={{ textAlign: "right" }}>{numeric(line.copy_qty ?? 0)}</td>
+                      <td style={{ textAlign: "right" }}>{numeric(copyQuantity(line))}</td>
                       <td>{line.warehouse}</td>
                       <td>{order?.start_date}</td>
                       <td>{order?.due_date}</td>
