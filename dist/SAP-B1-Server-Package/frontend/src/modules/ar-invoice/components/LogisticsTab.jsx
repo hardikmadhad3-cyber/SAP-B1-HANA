@@ -122,6 +122,9 @@ export default function LogisticsTab({
             <input
               type="checkbox"
               id="useBillToAddress"
+              name="useBillToForTax"
+              checked={!!header.useBillToForTax}
+              onChange={onHeaderChange}
               style={{ cursor: 'pointer', width: '16px', height: '16px' }}
               disabled={!isEditable}
             />
@@ -157,43 +160,85 @@ export default function LogisticsTab({
           {/* Language */}
           <div className="del-field">
             <label className="del-field__label">Language</label>
-            <select className="del-field__select" disabled={!isEditable}>
+            <select
+              className="del-field__select"
+              name="language"
+              value={header.language || ''}
+              onChange={onHeaderChange}
+              disabled={!isEditable}
+            >
               <option value="">Select</option>
-              <option>English</option>
-              <option>Hindi</option>
-              <option>Gujarati</option>
+              <option value="8">English</option>
+              <option value="56">Hindi</option>
+              <option value="59">Gujarati</option>
+              {header.language && !['8', '56', '59'].includes(String(header.language)) && (
+                <option value={header.language}>{header.language}</option>
+              )}
             </select>
           </div>
 
           {/* Tracking No. */}
           <div className="del-field">
             <label className="del-field__label">Tracking No.</label>
-            <input className="del-field__input" disabled={!isEditable} />
+            <input
+              className="del-field__input"
+              name="trackingNo"
+              value={header.trackingNo || ''}
+              onChange={onHeaderChange}
+              disabled={!isEditable}
+            />
           </div>
 
           {/* Stamp No. */}
           <div className="del-field">
             <label className="del-field__label">Stamp No.</label>
-            <input className="del-field__input" disabled={!isEditable} />
+            <input
+              className="del-field__input"
+              name="stampNo"
+              value={header.stampNo || ''}
+              onChange={onHeaderChange}
+              disabled={!isEditable}
+            />
           </div>
 
           {/* Pick and Pack Remarks */}
           <div className="del-field">
             <label className="del-field__label">Pick and Pack Remarks</label>
-            <input className="del-field__input" disabled={!isEditable} />
+            <input
+              className="del-field__input"
+              name="pickPackRemarks"
+              value={header.pickPackRemarks || ''}
+              onChange={onHeaderChange}
+              disabled={!isEditable}
+            />
           </div>
 
           {/* BP Channel Name */}
           <div className="del-field">
             <label className="del-field__label">BP Channel Name</label>
-            <input className="del-field__input" disabled={!isEditable} />
+            <input
+              className="del-field__input"
+              name="bpChannelName"
+              value={header.bpChannelName || ''}
+              onChange={onHeaderChange}
+              disabled={!isEditable}
+            />
           </div>
 
           {/* BP Channel Contact */}
           <div className="del-field">
             <label className="del-field__label">BP Channel Contact</label>
-            <select className="del-field__select" disabled={!isEditable}>
+            <select
+              className="del-field__select"
+              name="bpChannelContact"
+              value={header.bpChannelContact || ''}
+              onChange={onHeaderChange}
+              disabled={!isEditable}
+            >
               <option value="">Select</option>
+              {header.bpChannelContact && (
+                <option value={header.bpChannelContact}>{header.bpChannelContact}</option>
+              )}
             </select>
           </div>
 

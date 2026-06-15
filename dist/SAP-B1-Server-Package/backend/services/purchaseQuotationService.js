@@ -3,6 +3,7 @@ const purchaseQuotationDb = require('./purchaseQuotationDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { isSapUdfKey, normalizeUdfValue, normalizeUdfValues } = require('./udfPayloadUtils');
 
 // ───────── HELPERS ─────────
 
@@ -265,31 +266,30 @@ const getPurchaseQuotationLineUdfMetadata = async () => {
   };
 };
 
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
+};
+
 const buildValidatedLineUdfs = (line, udfMetadata) => {
   const availableUdfKeys = udfMetadata.keys || new Set();
   const udfs = {};
 
   Object.entries(line.udf || {}).forEach(([key, value]) => {
-    if (availableUdfKeys.has(key) && hasValue(value)) {
-      udfs[key] = value;
+    if (availableUdfKeys.has(key)) {
+      udfs[key] = normalizeUdfValue(value);
     }
   });
 
   PURCHASE_QUOTATION_LINE_UDF_MAPPINGS.forEach(({ sapField, getValue }) => {
     if (!availableUdfKeys.has(sapField)) return;
-    const value = getValue(line);
-    if (hasValue(value)) {
-      udfs[sapField] = value;
-    }
+    udfs[sapField] = normalizeUdfValue(getValue(line));
   });
 
   PURCHASE_QUOTATION_LABEL_UDF_MAPPINGS.forEach(({ labels, getValue }) => {
     const sapField = labels.map((label) => udfMetadata.labelToKey?.[compactLabel(label)]).find(Boolean);
     if (!sapField || !availableUdfKeys.has(sapField) || udfs[sapField] !== undefined) return;
-    const value = getValue(line);
-    if (hasValue(value)) {
-      udfs[sapField] = value;
-    }
+    udfs[sapField] = normalizeUdfValue(getValue(line));
   });
 
   return udfs;
@@ -305,6 +305,7 @@ const cleanObject = (value) => {
   if (value && typeof value === 'object') {
     return Object.entries(value).reduce((acc, [key, nestedValue]) => {
       const cleanedValue = cleanObject(nestedValue);
+      const preserveNullUdf = isSapUdfKey(key) && cleanedValue === null;
       const isEmptyObject =
         cleanedValue &&
         typeof cleanedValue === 'object' &&
@@ -313,7 +314,7 @@ const cleanObject = (value) => {
 
       if (
         cleanedValue === undefined ||
-        cleanedValue === null ||
+        (cleanedValue === null && !preserveNullUdf) ||
         cleanedValue === '' ||
         isEmptyObject
       ) {
@@ -332,8 +333,8 @@ const buildDocumentLines = async (lines = []) => {
   const udfMetadata = await getPurchaseQuotationLineUdfMetadata();
   return lines
     .filter((line) => String(line.itemNo || '').trim())
-    .map((line) =>
-      cleanObject({
+    .map((line) => {
+      const documentLine = cleanObject({
         ItemCode: line.itemNo,
         ItemDescription: line.itemDescription,
         Quantity: toNumberOrUndefined(line.quantity),
@@ -351,13 +352,15 @@ const buildDocumentLines = async (lines = []) => {
         ...(line.baseType && line.baseEntry != null ? { BaseType: Number(line.baseType) } : {}),
         ...(line.baseEntry != null ? { BaseEntry: Number(line.baseEntry) } : {}),
         ...(line.baseLine != null ? { BaseLine: Number(line.baseLine) } : {}),
-        ...buildValidatedLineUdfs(line, udfMetadata),
-      })
-    );
+      });
+
+      Object.assign(documentLine, buildValidatedLineUdfs(line, udfMetadata));
+      return documentLine;
+    });
 };
 
-const buildPurchaseQuotationPayload = async ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) =>
-  cleanObject({
+const buildPurchaseQuotationPayload = async ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) => {
+  const sapPayload = cleanObject({
     CardCode: header.vendor,
     NumAtCard: header.salesContractNo,
     DocDate: header.postingDate || header.documentDate,
@@ -375,10 +378,14 @@ const buildPurchaseQuotationPayload = async ({ header = {}, lines = [], header_u
     JournalMemo: header.journalRemark,
     Confirmed: header.confirmed ? 'tYES' : 'tNO',
     DiscountPercent: toNumberOrUndefined(header.discount),
-    ...header_udfs,
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
     DocumentLines: await buildDocumentLines(lines),
   });
+
+  const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OPQT');
+  Object.assign(sapPayload, normalizeUdfValues(header_udfs, null, headerUdfDefinitionsByKey));
+  return sapPayload;
+};
 
 const validatePurchaseQuotationPayload = async ({ header = {}, lines = [] }) => {
   const vendorCode = String(header.vendor || '').trim();

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useLocation } from "react-router-dom";
 import {
   fetchIncomingPaymentByDocEntry,
   fetchIncomingPaymentOpenInvoices,
@@ -239,6 +240,8 @@ const normalizeLocations = (rows = []) =>
     .filter((location) => location.code);
 
 export default function IncomingPaymentsPage() {
+  const location = useLocation();
+  const requestedDocEntry = Number(location.state?.incomingPaymentDocEntry || 0);
   const createInitialHeader = (branch = "", transactionNumber = "", series = {}) => ({
     businessPartnerCode: "",
     businessPartnerName: "",
@@ -316,6 +319,7 @@ export default function IncomingPaymentsPage() {
   const [journalRemarks, setJournalRemarks] = useState("");
   const [bpLookupTrigger, setBpLookupTrigger] = useState(0);
   const [documentFindTrigger, setDocumentFindTrigger] = useState(0);
+  const routedDocumentRef = useRef(0);
 
   useEffect(() => {
     let mounted = true;
@@ -753,6 +757,12 @@ export default function IncomingPaymentsPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!requestedDocEntry || routedDocumentRef.current === requestedDocEntry) return;
+    routedDocumentRef.current = requestedDocEntry;
+    handleIncomingPaymentSelect({ docEntry: requestedDocEntry });
+  }, [requestedDocEntry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const resetForm = () => {
     const selectedSeries =

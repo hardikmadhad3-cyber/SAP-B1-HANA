@@ -3,6 +3,7 @@ const arInvoiceDb = require('./arInvoiceDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { applyUdfValues, isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
@@ -15,17 +16,117 @@ const isUdfValuePresent = (value) => {
   return true;
 };
 
-const applyUdfs = (target, udfValues = {}, allowedKeys = null) => {
-  Object.entries(udfValues || {}).forEach(([key, value]) => {
-    if (String(key || '').startsWith('U_') && isUdfValuePresent(value) && (!allowedKeys || allowedKeys.has(key))) {
-      target[key] = value;
-    }
-  });
+const addIfPresent = (target, key, value) => {
+  if (!isUdfValuePresent(value)) return;
+  target[key] = value;
+};
+
+const normalizeOptionalNumber = (value) => {
+  if (!isUdfValuePresent(value)) return undefined;
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : undefined;
+};
+
+const parseLineNumber = (value, fallback = 0) => {
+  const parsed = Number(String(value ?? '').replace(/,/g, ''));
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const yesNo = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['y', 'yes', 'true', '1', 'tyes'].includes(normalized) ? 'tYES' : 'tNO';
+};
+
+const buildWithholdingTaxData = (rows = []) =>
+  (Array.isArray(rows) ? rows : [])
+    .filter((row) => String(row?.code || row?.WTCode || '').trim())
+    .map((row) => ({
+      WTCode: String(row.code || row.WTCode || '').trim(),
+      TaxableAmount: parseLineNumber(row.taxableAmount, 0),
+      WTAmount: parseLineNumber(row.wtaxAmount || row.WTAmount, 0),
+      Category: 'I',
+    }));
+
+const getLineTotal = (line = {}) => {
+  const total = normalizeOptionalNumber(line.total ?? line.totalLC ?? line.LineTotal);
+  return total !== undefined && total > 0 ? total : undefined;
+};
+
+const getLineUnitPrice = (line = {}) => {
+  const total = getLineTotal(line);
+  const quantity = parseLineNumber(line.quantity, 0);
+  const discount = parseLineNumber(line.stdDiscount ?? line.discountPercent, 0);
+  const discountFactor = 1 - discount / 100;
+
+  if (total !== undefined && quantity > 0 && discountFactor > 0) {
+    return total / quantity / discountFactor;
+  }
+
+  return parseLineNumber(line.unitPrice, 0);
+};
+
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
 };
 
 const getAllowedUdfKeys = async (tableId) => {
   const definitions = await getUdfDefinitions(tableId);
   return new Set(definitions.map((field) => field.key));
+};
+
+const normalizeUdfAlias = (value) =>
+  String(value || '')
+    .replace(/^U_/i, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase();
+
+const resolveUdfOptionValue = (field, value) => {
+  const text = String(value ?? '').trim();
+  if (!text || !Array.isArray(field?.options) || !field.options.length) return text;
+
+  const normalizedText = text.toLowerCase();
+  const byValue = field.options.find((option) => String(option.value || '').trim().toLowerCase() === normalizedText);
+  if (byValue) return String(byValue.value);
+
+  const byLabel = field.options.find((option) => String(option.label || '').trim().toLowerCase() === normalizedText);
+  if (byLabel) return String(byLabel.value);
+
+  return text;
+};
+
+const DOCUMENT_TYPE_CODE_BY_LABEL = {
+  gsttaxinvoice: 'INV',
+  taxinvoice: 'INV',
+  billofsupply: 'BIL',
+  gstdebitmemo: 'DBN',
+  debitmemo: 'DBN',
+};
+
+const resolveDocumentTypeCode = (value) => {
+  const text = String(value ?? '').trim();
+  return DOCUMENT_TYPE_CODE_BY_LABEL[normalizeUdfAlias(text)] || text;
+};
+
+const setKnownUdfValue = (target, definitionsByKey, aliases, value) => {
+  if (value === undefined) return;
+
+  const normalizedAliases = aliases.map(normalizeUdfAlias);
+  const matchedKey = Array.from(definitionsByKey.keys()).find((key) => normalizedAliases.includes(normalizeUdfAlias(key)));
+  if (!matchedKey) return;
+  if (isBlankUdfValue(value)) {
+    target[matchedKey] = null;
+    return;
+  }
+
+  const resolvedValue = resolveUdfOptionValue(definitionsByKey.get(matchedKey), value);
+  target[matchedKey] = normalizeUdfAlias(matchedKey) === 'doctype'
+    ? resolveDocumentTypeCode(resolvedValue)
+    : resolvedValue;
+
+  const normalizedValue = normalizeUdfValue(value, definitionsByKey.get(matchedKey), matchedKey);
+  if (normalizedValue !== undefined) target[matchedKey] = normalizedValue;
+
 };
 
 // ───────── REFERENCE DATA (USING ODBC) ─────────
@@ -56,6 +157,7 @@ const getReferenceData = async (companyId) => {
       shipping_types: [],
       branches: [],
       tax_codes: [],
+      withholding_tax_codes: [],
       uom_groups: [],
       decimal_settings: {
         QtyDec: 2,
@@ -64,6 +166,9 @@ const getReferenceData = async (companyId) => {
         RateDec: 2,
         PercentDec: 2
       },
+      matrix_columns: [],
+      line_field_metadata: { matrix_columns: [], sap_form: {} },
+      udf_metadata: { header: [], rows: [] },
       warnings: [`Failed to load reference data: ${error.message}`],
     };
   }
@@ -83,6 +188,7 @@ const getCustomerDetails = async (customerCode) => {
       contacts: [],
       pay_to_addresses: [],
       ship_to_addresses: [],
+      withholding_tax: { subject: false, defaultCode: '', allowedCodes: [] },
     };
   }
 };
@@ -200,9 +306,10 @@ const submitARInvoice = async (payload) => {
     
     console.log("🔍 [ARInvoiceService] Using customer code:", customerCode);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const [allowedHeaderUdfs, allowedLineUdfs] = await Promise.all([
+    const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('OINV'),
       getAllowedUdfKeys('INV1'),
+      getUdfDefinitionsByKey('OINV'),
     ]);
 
     // Transform payload to SAP format
@@ -244,9 +351,14 @@ const submitARInvoice = async (payload) => {
         const line = {
           ItemCode: l.itemNo,
           Quantity: Number(l.quantity),
-          UnitPrice: Number(l.unitPrice),
+          UnitPrice: getLineUnitPrice(l),
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
+          WTLiable: yesNo(l.wTaxLiable ?? l.wtaxLiable),
+          AccountCode: l.glAccount || undefined,
+          CostingCode: l.distRule || undefined,
+          COGSCostingCode: l.cogsDistRule || l.distRule || undefined,
+          CountryOrg: l.countryOfOrigin || undefined,
         };
 
         if (warehouseCode) {
@@ -268,14 +380,32 @@ const submitARInvoice = async (payload) => {
         }
 
         console.log(`🔍 [ARInvoiceService] Transformed line ${index}:`, line);
-        applyUdfs(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, l.udf, allowedLineUdfs);
         return line;
       })
     };
 
+    addIfPresent(sapPayload, 'ShipToCode', payload.header.shipToCode);
+    addIfPresent(sapPayload, 'PayToCode', payload.header.billToCode || payload.header.payToCode);
+    addIfPresent(sapPayload, 'TransportationCode', normalizeOptionalNumber(payload.header.shippingType));
+    addIfPresent(sapPayload, 'PaymentMethod', payload.header.paymentMethod);
+    addIfPresent(sapPayload, 'DocumentsOwner', normalizeOptionalNumber(payload.header.ownerCode));
+    if (payload.header.confirmed != null) {
+      sapPayload.Confirmed = payload.header.confirmed ? 'tYES' : 'tNO';
+    }
+    if (allowedHeaderUdfs.has('U_PlaceOfSupply')) {
+      addIfPresent(sapPayload, 'U_PlaceOfSupply', payload.header.placeOfSupply);
+    }
+    const withholdingTaxData = buildWithholdingTaxData(payload.withholdingTaxRows);
+    if (withholdingTaxData.length) {
+      sapPayload.WithholdingTaxDataWTXCollection = withholdingTaxData;
+    }
+
     console.log("🔥 [ARInvoiceService] SAP AR INVOICE PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
-    applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], payload.header.transactionType);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], payload.header.indicator);
 
     // Use Service Layer for POST operations - Invoices endpoint
     const response = await sapService.request({
@@ -324,9 +454,10 @@ const updateARInvoice = async (docEntry, payload) => {
     // Use vendor or customerCode (frontend sends vendor)
     const customerCode = payload.header.vendor || payload.header.customerCode || payload.header.customer;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const [allowedHeaderUdfs, allowedLineUdfs] = await Promise.all([
+    const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('OINV'),
       getAllowedUdfKeys('INV1'),
+      getUdfDefinitionsByKey('OINV'),
     ]);
 
     // Transform payload to SAP format (similar to submit)
@@ -352,9 +483,14 @@ const updateARInvoice = async (docEntry, payload) => {
         const line = {
           ItemCode: l.itemNo,
           Quantity: Number(l.quantity),
-          UnitPrice: Number(l.unitPrice),
+          UnitPrice: getLineUnitPrice(l),
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
+          WTLiable: yesNo(l.wTaxLiable ?? l.wtaxLiable),
+          AccountCode: l.glAccount || undefined,
+          CostingCode: l.distRule || undefined,
+          COGSCostingCode: l.cogsDistRule || l.distRule || undefined,
+          CountryOrg: l.countryOfOrigin || undefined,
           DiscountPercent: l.stdDiscount ? Number(l.stdDiscount) : (l.discountPercent ? Number(l.discountPercent) : 0),
           BaseType: l.baseType ? Number(l.baseType) : undefined,
           BaseEntry: l.baseEntry ? Number(l.baseEntry) : undefined,
@@ -363,12 +499,30 @@ const updateARInvoice = async (docEntry, payload) => {
         if (warehouseCode) {
           line.WarehouseCode = warehouseCode;
         }
-        applyUdfs(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, l.udf, allowedLineUdfs);
         return line;
       })
     };
 
-    applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
+    addIfPresent(sapPayload, 'ShipToCode', payload.header.shipToCode);
+    addIfPresent(sapPayload, 'PayToCode', payload.header.billToCode || payload.header.payToCode);
+    addIfPresent(sapPayload, 'TransportationCode', normalizeOptionalNumber(payload.header.shippingType));
+    addIfPresent(sapPayload, 'PaymentMethod', payload.header.paymentMethod);
+    addIfPresent(sapPayload, 'DocumentsOwner', normalizeOptionalNumber(payload.header.ownerCode));
+    if (payload.header.confirmed != null) {
+      sapPayload.Confirmed = payload.header.confirmed ? 'tYES' : 'tNO';
+    }
+    if (allowedHeaderUdfs.has('U_PlaceOfSupply')) {
+      addIfPresent(sapPayload, 'U_PlaceOfSupply', payload.header.placeOfSupply);
+    }
+    const withholdingTaxData = buildWithholdingTaxData(payload.withholdingTaxRows);
+    if (withholdingTaxData.length) {
+      sapPayload.WithholdingTaxDataWTXCollection = withholdingTaxData;
+    }
+
+    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], payload.header.transactionType);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], payload.header.indicator);
 
     // Use Service Layer for PATCH operations
     const response = await sapService.request({
@@ -393,9 +547,9 @@ const updateARInvoice = async (docEntry, payload) => {
 
 // ───────── DOCUMENT SERIES ─────────
 
-const getDocumentSeries = async (targetDate = null) => {
+const getDocumentSeries = async (targetDate = null, transactionType = '', branch = '') => {
   try {
-    const result = await arInvoiceDb.getDocumentSeries(targetDate);
+    const result = await arInvoiceDb.getDocumentSeries(targetDate, transactionType, branch);
     return { series: result };
   } catch (error) {
     console.error('[AR Invoice Service] Failed to load document series:', error);

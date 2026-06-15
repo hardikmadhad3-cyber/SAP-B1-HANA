@@ -11,6 +11,9 @@ export const searchOutgoingPaymentBusinessPartners = (query = "", bpType = "Vend
 export const searchOutgoingPayments = (query = "") =>
   apiClient.get(`${BASE}/documents`, { params: { query } }).then((response) => response.data);
 
+export const fetchOutgoingPaymentByDocEntry = (docEntry) =>
+  apiClient.get(`${BASE}/documents/${encodeURIComponent(docEntry)}`).then((response) => response.data);
+
 export const fetchOutgoingPaymentOpenInvoices = (cardCode = "", branch = "") =>
   apiClient.get(`${BASE}/open-invoices`, { params: { cardCode, branch } }).then((response) => response.data);
 

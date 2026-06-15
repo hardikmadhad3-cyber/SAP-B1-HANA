@@ -22,6 +22,22 @@ export default function PlanningTab({ form, onChange }) {
         </div>
 
         <div className="im-field">
+          <label className="im-field__label">Component Warehouse</label>
+          <select className="im-field__select" name="ComponentWarehouse" value={form.ComponentWarehouse || "bomcw_BOM"} onChange={onChange}>
+            <option value="bomcw_BOM">From BOM</option>
+            <option value="bomcw_Parent">From Parent Item</option>
+          </select>
+        </div>
+
+        <div className="im-field">
+          <label className="im-field__label">Advanced Rules</label>
+          <select className="im-field__select" name="TypeOfAdvancedRules" value={form.TypeOfAdvancedRules || "toarGeneral"} onChange={onChange}>
+            <option value="toarGeneral">General</option>
+            <option value="toarWarehouse">Warehouse</option>
+          </select>
+        </div>
+
+        <div className="im-field">
           <label className="im-field__label">Order Interval</label>
           <input className="im-field__input" name="OrderIntervals" type="number" value={form.OrderIntervals || ""} onChange={onChange} />
         </div>

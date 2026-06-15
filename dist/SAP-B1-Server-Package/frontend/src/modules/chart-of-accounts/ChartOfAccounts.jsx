@@ -1,6 +1,9 @@
-import React, { useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import "./styles/chartOfAccounts.css";
 import FindResultsModal from "../../components/FindResultsModal";
+import { isRouteStateForActiveCompany } from "../../utils/companyStorageScope";
+import { replaceRouteStatePreservingWindow } from "../../utils/copyToState";
 import {
   createAccount,
   getAccount,
@@ -33,6 +36,8 @@ const EMPTY_FORM = {
 };
 
 export default function ChartOfAccounts() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [form, setForm] = useState(EMPTY_FORM);
   const [alert, setAlert] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -59,6 +64,52 @@ export default function ChartOfAccounts() {
     setMode("update");
     showAlert("success", `Account "${data.Code}" loaded.`);
   };
+
+  useEffect(() => {
+    let ignore = false;
+    const stateAccountCode = location.state?.accountCode || location.state?.glAccountCode;
+    const accountCode = stateAccountCode || new URLSearchParams(location.search).get("accountCode");
+    const normalizedAccountCode = String(accountCode || "").trim();
+
+    if (!normalizedAccountCode) {
+      return () => {
+        ignore = true;
+      };
+    }
+
+    if (stateAccountCode && !isRouteStateForActiveCompany(location.state)) {
+      replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+      return () => {
+        ignore = true;
+      };
+    }
+
+    const loadRoutedAccount = async () => {
+      setLoading(true);
+      try {
+        const data = await getAccount(normalizedAccountCode);
+        if (ignore) return;
+        setForm({ ...EMPTY_FORM, ...data });
+        setMode("update");
+        showAlert("success", `Account "${data.Code}" loaded.`);
+        if (stateAccountCode) {
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+        }
+      } catch (err) {
+        if (!ignore) {
+          showAlert("error", err.response?.data?.message || err.message || `Could not load account "${normalizedAccountCode}".`);
+        }
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    };
+
+    loadRoutedAccount();
+
+    return () => {
+      ignore = true;
+    };
+  }, [location.pathname, location.search, location.state, navigate]);
 
   const handleFind = async () => {
     const code = form.Code.trim();

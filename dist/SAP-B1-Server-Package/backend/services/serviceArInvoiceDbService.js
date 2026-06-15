@@ -26,6 +26,24 @@ const formatDate = (value) => {
   return Number.isNaN(date.getTime()) ? String(value).split('T')[0] : date.toISOString().split('T')[0];
 };
 
+const normalizeUdfKey = (value) =>
+  String(value || '')
+    .replace(/^U_/i, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase();
+
+const getKnownHeaderUdfValue = (values = {}, aliases = []) => {
+  const normalizedAliases = aliases.map(normalizeUdfKey);
+  const match = Object.entries(values || {}).find(([key, value]) => (
+    normalizedAliases.includes(normalizeUdfKey(key)) &&
+    value !== undefined &&
+    value !== null &&
+    String(value).trim() !== ''
+  ));
+
+  return match ? String(match[1]) : '';
+};
+
 const mapLookupRows = (rows = []) => {
   const seen = new Set();
   const options = [];
@@ -399,7 +417,8 @@ const getServiceARInvoice = async (docEntry) => {
         contactPerson: header.CntctCode ? String(header.CntctCode) : '',
         salesContractNo: header.NumAtCard || '',
         currency: header.DocCur || 'INR',
-        transactionType: 'GST Tax Invoice',
+        transactionType: getKnownHeaderUdfValue(headerUdfs, ['TransactionType', 'TransType', 'DocumentType', 'DocType']),
+        indicator: getKnownHeaderUdfValue(headerUdfs, ['Indicator']),
         docNo: header.DocNum ? String(header.DocNum) : '',
         status: header.Status || 'Open',
         series: header.Series ? String(header.Series) : '',

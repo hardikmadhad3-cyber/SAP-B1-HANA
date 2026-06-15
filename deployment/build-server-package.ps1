@@ -26,7 +26,12 @@ function Invoke-Robocopy {
 }
 
 if (Test-Path $PackageDir) {
-  Remove-Item -Recurse -Force $PackageDir
+  try {
+    Remove-Item -Recurse -Force $PackageDir
+  } catch {
+    Write-Host "[warning] Package directory is in use. Reusing it after clearing its contents."
+    Get-ChildItem -Force -Path $PackageDir | Remove-Item -Recurse -Force
+  }
 }
 if (Test-Path $ZipPath) {
   Remove-Item -Force $ZipPath

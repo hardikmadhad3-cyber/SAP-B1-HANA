@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import "../item-master/styles/itemMaster.css";
 import "./styles/businessPartner.css";
 import GeneralTab    from "./components/GeneralTab";
@@ -19,6 +19,8 @@ import {
 } from "../../api/businessPartnerApi";
 import { searchShippingTypes } from "../../api/shippingTypeApi";
 import { searchAccounts }      from "../../api/chartOfAccountsApi";
+import { isRouteStateForActiveCompany } from "../../utils/companyStorageScope";
+import { replaceRouteStatePreservingWindow } from "../../utils/copyToState";
 
 const TABS  = ["General", "Contact Persons", "Addresses", "Payment Terms", "Payment Run", "Accounting", "Properties", "Remarks"];
 const MODES = { ADD: "add", FIND: "find", UPDATE: "update" };
@@ -57,6 +59,9 @@ const normalizeGenderValue = (value) => {
   if (value === "gt_NotSpecified") return "gt_Undefined";
   return value || "gt_Undefined";
 };
+
+const safeText = (value) => String(value ?? "");
+const safeTrim = (value) => safeText(value).trim();
 
 const getContactPersonName = (contact) => String(contact?.Name || "").trim();
 const getDefaultContactPersonName = (contacts = []) => {
@@ -156,6 +161,9 @@ const mergeTaxInfoIntoFiscalRows = (rows = [], taxInfo = buildEmptyTaxInfo()) =>
 
 const normalizeBP = (data) => {
   const d = { ...data };
+  d.CardCode = safeText(d.CardCode);
+  d.CardName = safeText(d.CardName);
+  d.CardForeignName = safeText(d.CardForeignName);
   const bools = ["Valid","Frozen","BlockSendingMarketingContent","PartialDelivery","BackOrder",
     "SinglePayment","EndorsableChecksFromBP","AcceptsEndorsedChecks","PaymentBlock",
     "CollectionAuthorization","Affiliate","UseBillToAddrToDetermineTax",
@@ -175,7 +183,7 @@ const normalizeBP = (data) => {
   d.ContactEmployees = d.ContactEmployees.map((contact) => ({
     ...contact,
     Address: contact.Address || contact.Department || "",
-    PlaceOfBirth: contact.PlaceOfBirth || contact.CityOfBirth || "",
+    PlaceOfBirth: contact.PlaceOfBirth || "",
     Gender: normalizeGenderValue(contact.Gender),
   }));
   d.BPBankAccounts = d.BPBankAccounts.map((row, index) => ({
@@ -314,8 +322,8 @@ function buildPayload(form) {
   const isManualSeries = !form.Series || form.Series === "0" || form.Series === "";
   const p = {};
 
-  p.CardCode = form.CardCode;
-  p.CardName = form.CardName;
+  p.CardCode = safeText(form.CardCode);
+  p.CardName = safeText(form.CardName);
   p.CardType = form.CardType || "cCustomer";
 
   if (!isManualSeries && opt(form.Series)) { const v = num(form.Series); if (v != null) p.Series = v; }
@@ -469,7 +477,7 @@ function buildPayload(form) {
           DateOfBirth: c.DateOfBirth,
           Gender: normalizeGenderValue(c.Gender),
           Profession: c.Profession,
-          PlaceOfBirth: c.PlaceOfBirth || c.CityOfBirth,
+          PlaceOfBirth: c.PlaceOfBirth,
           Active: c.Active || "tYES",
           BlockSendingMarketingContent: c.BlockSendingMarketingContent || "tNO",
         };
@@ -574,6 +582,7 @@ function buildPayload(form) {
 
 export default function BusinessPartnerModule() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [mode, setMode]       = useState(MODES.ADD);
   const [tab, setTab]         = useState(0);
   const [form, setForm]       = useState(EMPTY_FORM);
@@ -587,8 +596,15 @@ export default function BusinessPartnerModule() {
   const [currencyLoading, setCurrencyLoading] = useState(false);
   const [showCFL, setShowCFL]   = useState(false);
   const [cflResults, setCflResults] = useState([]);
+  const [duplicateSourceCardCode, setDuplicateSourceCardCode] = useState("");
 
   const isManual  = (s)  => !s || s === "0" || s === "";
+  const pickDefaultSeries = (rows = []) =>
+    rows.find((row) => row.isDefault && !row.isManual)
+    || rows.find((row) => !row.isManual)
+    || rows.find((row) => row.isDefault)
+    || rows[0]
+    || null;
 
   // Load BP groups once
   useEffect(() => {
@@ -627,10 +643,18 @@ export default function BusinessPartnerModule() {
 
   useEffect(() => {
     let ignore = false;
-    const cardCode = new URLSearchParams(location.search).get("cardCode");
+    const stateCardCode = location.state?.businessPartnerCardCode || location.state?.cardCode;
+    const cardCode = stateCardCode || new URLSearchParams(location.search).get("cardCode");
     const normalizedCardCode = String(cardCode || "").trim();
 
     if (!normalizedCardCode) {
+      return () => {
+        ignore = true;
+      };
+    }
+
+    if (stateCardCode && !isRouteStateForActiveCompany(location.state)) {
+      replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
       return () => {
         ignore = true;
       };
@@ -646,8 +670,12 @@ export default function BusinessPartnerModule() {
 
         setForm({ ...EMPTY_FORM, ...normalizeBP(data) });
         setMode(MODES.UPDATE);
+        setDuplicateSourceCardCode("");
         setTab(0);
         showAlert("success", `"${data.CardCode}" loaded.`);
+        if (stateCardCode) {
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+        }
       } catch (error) {
         if (!ignore) {
           showAlert("error", error.response?.data?.message || `Could not load "${normalizedCardCode}".`);
@@ -664,7 +692,7 @@ export default function BusinessPartnerModule() {
     return () => {
       ignore = true;
     };
-  }, [location.search]);
+  }, [location.pathname, location.search, location.state, navigate]);
 
   useEffect(() => {
     const currentContactPerson = String(form.ContactPerson || "").trim();
@@ -719,7 +747,12 @@ export default function BusinessPartnerModule() {
     }
   };
 
-  const resetForm = () => { setForm(EMPTY_FORM); setTab(0); setAlert(null); };
+  const resetForm = () => {
+    setForm(EMPTY_FORM);
+    setDuplicateSourceCardCode("");
+    setTab(0);
+    setAlert(null);
+  };
 
   const showAlert = (type, msg) => {
     setAlert({ type, msg });
@@ -743,10 +776,8 @@ export default function BusinessPartnerModule() {
   };
 
   const activateFind = useCallback(() => {
-    setMode(MODES.FIND);
-    resetForm();
-    setTimeout(() => document.querySelector('input[name="CardCode"]')?.focus(), 100);
-  }, []);
+    navigate("/business-partner/find");
+  }, [navigate]);
 
   // Lookup helpers
   const fetchShippingTypesLookup = async (q = "") => {
@@ -820,7 +851,12 @@ export default function BusinessPartnerModule() {
       }
 
       if (!exactCountry) {
-        throw new Error(`Contact "${contact.Name || "Define New"}" has an invalid Country/Region of Birth.`);
+        hasChanges = true;
+        return {
+          ...contact,
+          PlaceOfBirth: "",
+          PlaceOfBirthName: "",
+        };
       }
 
       const nextCode = String(exactCountry.code || "").trim();
@@ -855,36 +891,44 @@ export default function BusinessPartnerModule() {
 
   // CRUD handlers
   const handleAdd = useCallback(async () => {
-    if (!form.CardCode.trim()) { showAlert("error", "Card Code is required."); return; }
-    if (!form.CardName.trim()) { showAlert("error", "Card Name is required."); return; }
+    const cardCode = safeTrim(form.CardCode);
+    if (!cardCode) { showAlert("error", "Card Code is required."); return; }
     setLoading(true);
     try {
       const normalizedForm = await normalizeContactBirthCountries(form);
       if (normalizedForm !== form) setForm(normalizedForm);
-      await createBP(buildPayload(normalizedForm));
-      showAlert("success", `Business Partner "${form.CardCode}" created successfully.`);
+      const payload = buildPayload(normalizedForm);
+      if (duplicateSourceCardCode) {
+        payload._duplicateFromCardCode = duplicateSourceCardCode;
+        payload.CardCode = cardCode;
+        payload.CardType = normalizedForm.CardType || "cCustomer";
+      }
+      await createBP(payload);
+      showAlert("success", `Business Partner "${cardCode}" created successfully.`);
       setMode(MODES.UPDATE);
+      setDuplicateSourceCardCode("");
     } catch (err) {
       showAlert("error", err.response?.data?.message || err.message || "Failed to create.");
     } finally { setLoading(false); }
-  }, [form, normalizeContactBirthCountries]);
+  }, [form, normalizeContactBirthCountries, duplicateSourceCardCode]);
 
   const handleFind = useCallback(async () => {
-    const cardCode = form.CardCode.trim();
+    const cardCode = safeTrim(form.CardCode);
     const searchTerm = cardCode
-      || form.CardName.trim()
-      || form.CardForeignName.trim()
-      || form.Phone1.trim()
-      || form.EmailAddress.trim();
+      || safeTrim(form.CardName)
+      || safeTrim(form.CardForeignName)
+      || safeTrim(form.Phone1)
+      || safeTrim(form.EmailAddress);
+    const shouldShowList = !searchTerm;
 
-    if (!searchTerm) { showAlert("error", "Enter a Card Code, Name, Phone, or Email to search."); return; }
     setLoading(true);
     try {
-      if (cardCode) {
+      if (cardCode && !shouldShowList) {
         try {
           const data = await getBP(cardCode);
           setForm({ ...EMPTY_FORM, ...normalizeBP(data) });
           setMode(MODES.UPDATE);
+          setDuplicateSourceCardCode("");
           showAlert("success", `"${data.CardCode}" loaded.`);
           return;
         } catch (_) {}
@@ -892,10 +936,11 @@ export default function BusinessPartnerModule() {
 
       const results = await searchBP(searchTerm, form.CardType, 100);
       if (results.length === 0) { showAlert("error", "No matching business partners found."); }
-      else if (results.length === 1) {
+      else if (results.length === 1 && !shouldShowList) {
         const data = await getBP(results[0].CardCode);
         setForm({ ...EMPTY_FORM, ...normalizeBP(data) });
         setMode(MODES.UPDATE);
+        setDuplicateSourceCardCode("");
         showAlert("success", `"${data.CardCode}" loaded.`);
       } else {
         setCflResults(results);
@@ -913,20 +958,84 @@ export default function BusinessPartnerModule() {
       const data = await getBP(bp.CardCode);
       setForm({ ...EMPTY_FORM, ...normalizeBP(data) });
       setMode(MODES.UPDATE);
+      setDuplicateSourceCardCode("");
       showAlert("success", `"${data.CardCode}" loaded.`);
     } catch (err) {
       showAlert("error", err.response?.data?.message || "Failed to load.");
     } finally { setLoading(false); }
   };
 
+  const handleDuplicate = useCallback(async () => {
+    if (mode !== MODES.UPDATE || !form.CardCode) return;
+
+    const sourceCardCode = safeTrim(form.CardCode);
+    const sourceCardType = form.CardType || "cCustomer";
+    const duplicatedAddresses = (form.BPAddresses || []).map(({ RowNum, ...address }) => address);
+    const duplicatedBanks = (form.BPBankAccounts || []).map(({ InternalKey, ...bank }) => bank);
+    const duplicatedContacts = (form.ContactEmployees || []).map(({ InternalCode, CardCode, ...contact }) => ({
+      ...contact,
+      PlaceOfBirth: safeTrim(contact.PlaceOfBirth),
+      PlaceOfBirthName: safeText(contact.PlaceOfBirthName),
+    }));
+
+    const duplicateForm = {
+      ...form,
+      Series: "",
+      CardCode: "",
+      BPAddresses: duplicatedAddresses,
+      BPBankAccounts: duplicatedBanks,
+      ContactEmployees: duplicatedContacts,
+      PaymentBankInternalKey: "",
+      PaymentBankSelectedIndex: duplicatedBanks.length > 0 ? 0 : -1,
+    };
+
+    setLoading(true);
+    setDuplicateSourceCardCode(sourceCardCode);
+    setMode(MODES.ADD);
+    setTab(0);
+    setForm(duplicateForm);
+
+    try {
+      const rows = await fetchNumberingSeries(sourceCardType);
+      setNumberingSeries(Array.isArray(rows) ? rows : []);
+      const selectedSeries = pickDefaultSeries(Array.isArray(rows) ? rows : []);
+
+      if (!selectedSeries || selectedSeries.isManual) {
+        setForm((prev) => ({
+          ...prev,
+          Series: selectedSeries?.series || "",
+          CardCode: "",
+        }));
+        showAlert("success", "Business partner duplicated. Enter a manual code and add it as a new business partner.");
+        setTimeout(() => document.querySelector('input[name="CardCode"]')?.focus(), 50);
+        return;
+      }
+
+      const next = await getNextSeriesNumber(selectedSeries.series, sourceCardType);
+      setForm((prev) => ({
+        ...prev,
+        Series: selectedSeries.series,
+        CardCode: next.formattedCode || "",
+      }));
+      showAlert("success", "Business partner duplicated with the live SAP B1 numbering series. Review and add it as a new business partner.");
+    } catch (err) {
+      setNumberingSeries([]);
+      showAlert("error", err.response?.data?.message || "Business partner duplicated, but live numbering series could not be loaded.");
+      setTimeout(() => document.querySelector('select[name="Series"]')?.focus(), 50);
+    } finally {
+      setLoading(false);
+    }
+  }, [form, mode]);
+
   const handleUpdate = useCallback(async () => {
-    if (!form.CardCode.trim()) { showAlert("error", "Card Code is required."); return; }
+    const cardCode = safeTrim(form.CardCode);
+    if (!cardCode) { showAlert("error", "Card Code is required."); return; }
     setLoading(true);
     try {
       const normalizedForm = await normalizeContactBirthCountries(form);
       if (normalizedForm !== form) setForm(normalizedForm);
-      await updateBP(form.CardCode.trim(), buildPayload(normalizedForm));
-      showAlert("success", `"${form.CardCode}" updated successfully.`);
+      await updateBP(cardCode, buildPayload(normalizedForm));
+      showAlert("success", `"${cardCode}" updated successfully.`);
     } catch (err) {
       showAlert("error", err.response?.data?.message || err.message || "Failed to update.");
     } finally { setLoading(false); }
@@ -966,6 +1075,9 @@ export default function BusinessPartnerModule() {
         <button className="im-btn" onClick={() => { setMode(MODES.ADD); resetForm(); }}>New</button>
         <button className={`im-btn${mode === MODES.FIND ? " im-btn--find-active" : ""}`}
           onClick={activateFind} title="Ctrl+F">Find</button>
+        {mode === MODES.UPDATE && (
+          <button className="im-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>Duplicate</button>
+        )}
         {mode === MODES.UPDATE && (
           <button className="im-btn" onClick={resetForm}>Cancel</button>
         )}

@@ -4,6 +4,15 @@ import ManageItemBySection from "./ManageItemBySection";
 import { fetchManufacturers, fetchHSNCodes } from "../../../api/itemApi";
 
 export default function GeneralTab({ form, onChange, onDefineManufacturer, mode }) {
+  const isServiceItem = form.ItemClass === "itcService";
+  const isMaterialItem = form.ItemClass === "itcMaterial" || !form.ItemClass;
+  const itemCategoryLocked = mode === "update" && Boolean(form.ItemCode);
+
+  const handleGSTMaterialTypeChange = (e) => {
+    onChange(e);
+    onChange({ target: { name: "MaterialType", value: e.target.value } });
+  };
+
   return (
     <div className="im-general-tab">
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "40px" }}>
@@ -130,8 +139,9 @@ export default function GeneralTab({ form, onChange, onDefineManufacturer, mode 
                   type="radio"
                   name="ItemClass"
                   value="itcService"
-                  checked={form.ItemClass === "itcService"}
+                  checked={isServiceItem}
                   onChange={onChange}
+                  disabled={itemCategoryLocked}
                 />
                 Service
               </label>
@@ -140,15 +150,16 @@ export default function GeneralTab({ form, onChange, onDefineManufacturer, mode 
                   type="radio"
                   name="ItemClass"
                   value="itcMaterial"
-                  checked={form.ItemClass === "itcMaterial" || !form.ItemClass}
+                  checked={isMaterialItem}
                   onChange={onChange}
+                  disabled={itemCategoryLocked}
                 />
                 Material
               </label>
             </div>
           </div>
 
-          {form.ItemClass === "itcService" && (
+          {isServiceItem && (
             <div className="im-field" style={{ marginTop: "10px" }}>
               <label className="im-field__label">Service Category</label>
               <select 
@@ -198,15 +209,14 @@ export default function GeneralTab({ form, onChange, onDefineManufacturer, mode 
             </div>
           )}
 
-          {form.GSTRelevnt === "tYES" && (
+          {form.GSTRelevnt === "tYES" && isMaterialItem && (
             <div className="im-field" style={{ marginTop: "10px" }}>
               <label className="im-field__label">Material Type</label>
               <select 
                 className="im-field__select" 
                 name="GSTMaterialType" 
                 value={form.GSTMaterialType || ""} 
-                onChange={onChange}
-                style={{ background: "#FFFFCC" }}
+                onChange={handleGSTMaterialTypeChange}
               >
                 <option value="">- Select -</option>
                 <option value="Capital Goods">Capital Goods</option>

@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import "./styles/itemMaster.css";
 import GeneralTab        from "./components/GeneralTab";
 import PurchasingTab     from "./components/PurchasingTab";
@@ -13,10 +14,12 @@ import LookupField       from "./components/LookupField";
 import ItemGroupSetup     from "./components/ItemGroupSetup";
 import ManufacturerSetup  from "./components/ManufacturerSetup";
 import { useAuth } from "../../auth/AuthContext";
+import { isRouteStateForActiveCompany } from "../../utils/companyStorageScope";
+import { replaceRouteStatePreservingWindow } from "../../utils/copyToState";
 import {
   createItem, getItem, updateItem, checkItemCodeExists,
   fetchItemGroups, fetchVendors, fetchPriceLists, fetchUoMGroups, fetchItemCodePrefixes,
-  fetchWarehouses, searchItems, generateItemCode,
+  fetchWarehouses, fetchCustomsGroups, searchItems, generateItemCode,
 } from "../../api/itemApi";
 
 const TABS = [
@@ -33,6 +36,7 @@ const loadVisibleTabs = () => {
     if (saved) {
       const parsed = JSON.parse(saved).filter((tab) => TABS.includes(tab));
       REQUIRED_TABS.forEach((t) => { if (!parsed.includes(t)) parsed.push(t); });
+      TABS.forEach((t) => { if (!parsed.includes(t)) parsed.push(t); });
       return new Set(parsed);
     }
   } catch (_) {}
@@ -47,8 +51,39 @@ const buildInitialProps = () => {
   return p;
 };
 
+const clonePlain = (value) => {
+  if (Array.isArray(value)) return value.map(clonePlain);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, clonePlain(entry)]));
+  }
+  return value;
+};
+
+const normalizeGSTMaterialType = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "-1") return "";
+
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const map = {
+    capitalgoods: "Capital Goods",
+    mtcapitalgoods: "Capital Goods",
+    1: "Capital Goods",
+    finishedgoods: "Finished Goods",
+    mtfinishedgoods: "Finished Goods",
+    3: "Finished Goods",
+    rawmaterial: "Raw Materials",
+    rawmaterials: "Raw Materials",
+    mtrawmaterial: "Raw Materials",
+    mtrawmaterials: "Raw Materials",
+    2: "Raw Materials",
+  };
+
+  return map[normalized] || raw;
+};
+
 const EMPTY_FORM = {
   ItemCode: "", ItemCodePrefix: "", ItemCodeNumber: "", BarCode: "", ItemName: "", ForeignName: "",
+  PriceListNum: "", PriceListName: "", Price: "",
   ItemsGroupCode: "", ItemsGroupName: "",
   UoMGroupEntry: "", UoMGroupName: "",
   InventoryItem: "tYES", SalesItem: "tYES", PurchaseItem: "tYES", AssetItem: "tNO",
@@ -97,7 +132,7 @@ const EMPTY_FORM = {
   PurchaseUnitWeight1: "", PurchaseWeightUnit1: "5",
   PurchaseFactor1: "", PurchaseFactor2: "", PurchaseFactor3: "", PurchaseFactor4: "",
   PurchaseVATGroup: "", LeadTime: "", ExpanseAccount: "",
-  DefaultPurchasingUoMEntry: "", CustomsGroupCode: "",
+  DefaultPurchasingUoMEntry: "", CustomsGroupCode: "-1",
   // Sales
   SalesUnit: "", SalesItemsPerUnit: "", SalesPackagingUnit: "", SalesQtyPerPackUnit: "",
   SalesUnitLength: "", SalesLengthUnit: "3",
@@ -139,7 +174,10 @@ const EMPTY_FORM = {
 
 export default function ItemMaster() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [mode, setMode]       = useState(MODES.ADD);
+  const [duplicateSourceItemCode, setDuplicateSourceItemCode] = useState("");
   const [tab, setTab]         = useState(0);
   const [form, setForm]       = useState(EMPTY_FORM);
   const [initialForm, setInitialForm] = useState(EMPTY_FORM); // For dirty detection
@@ -162,6 +200,7 @@ export default function ItemMaster() {
   
   // Warehouse reference data
   const [warehouses, setWarehouses] = useState([]);
+  const [customsGroups, setCustomsGroups] = useState([]);
 
   // Dirty form detection
   const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
@@ -179,20 +218,15 @@ export default function ItemMaster() {
     setInitialForm(EMPTY_FORM);
     setPrices([]); setStock([]); setBarcodes([]);
     setUoms([]); setPrefVendors([]); setAttachments([]);
+    setDuplicateSourceItemCode("");
     setTab(0); setAlert(null); setItemCodeError("");
   }, [isDirty]);
 
   // Activate Find Mode
   const activateFindMode = useCallback(() => {
     if (isDirty && !window.confirm("You have unsaved changes. Discard them?")) return;
-    setMode(MODES.FIND);
-    resetForm();
-    // Auto-focus on primary search field (ItemCode)
-    setTimeout(() => {
-      const itemCodeInput = document.querySelector('input[name="ItemCodeNumber"]');
-      if (itemCodeInput) itemCodeInput.focus();
-    }, 100);
-  }, [isDirty, resetForm]);
+    navigate("/item-master/find");
+  }, [isDirty, navigate]);
 
   // Handle New
   const handleNew = useCallback(async () => {
@@ -252,6 +286,13 @@ export default function ItemMaster() {
       .catch(err => {
         console.error("Failed to load warehouses:", err);
       });
+
+    fetchCustomsGroups()
+      .then(setCustomsGroups)
+      .catch((err) => {
+        console.error("Failed to load customs groups:", err);
+        setCustomsGroups([]);
+      });
   }, []);
 
   // Split ItemCode into prefix and number when loading existing item
@@ -264,14 +305,14 @@ export default function ItemMaster() {
     return { prefix: "", number: itemCode };
   }, []);
 
-  // Load Item logic
-  const loadItem = useCallback(async (itemCode) => {
-    const data = await getItem(itemCode.trim());
+  const prepareItemForForm = useCallback((source) => {
+    const data = clonePlain(source || {});
+    data.GSTMaterialType = normalizeGSTMaterialType(data.GSTMaterialType || data.MaterialType);
     const SAP_UNSET_INT = -1;
     const intFields = [
-      "UoMGroupEntry", "InventoryUoMEntry", "DefaultSalesUoMEntry",
+      "InventoryUoMEntry", "DefaultSalesUoMEntry",
       "DefaultPurchasingUoMEntry", "DefaultCountingUoMEntry",
-      "ShipType", "Manufacturer", "CommissionGroup", "ServiceGroup", "MaterialGroup",
+      "ShipType", "Manufacturer", "CommissionGroup", "ServiceGroup", "MaterialGroup", "WarrantyTemplate",
     ];
     intFields.forEach((f) => { if (data[f] === SAP_UNSET_INT) data[f] = ""; });
     const unitDefaults = {
@@ -284,7 +325,25 @@ export default function ItemMaster() {
     };
     Object.entries(unitDefaults).forEach(([f, def]) => { if (data[f] == null) data[f] = def; });
     const { prefix, number } = splitItemCode(data.ItemCode);
-    const loadedForm = { ...EMPTY_FORM, ...data, ItemCodePrefix: prefix, ItemCodeNumber: number };
+    const manageItemBy = data.ManageSerialNumbers === "tYES"
+      ? "Serial"
+      : data.ManageBatchNumbers === "tYES"
+        ? "Batch"
+        : "None";
+    const loadedForm = {
+      ...EMPTY_FORM,
+      ...data,
+      ManageItemBy: data.ManageItemBy || manageItemBy,
+      ItemCodePrefix: prefix,
+      ItemCodeNumber: number,
+    };
+    return { data, loadedForm };
+  }, [splitItemCode]);
+
+  // Load Item logic
+  const loadItem = useCallback(async (itemCode) => {
+    const source = await getItem(itemCode.trim());
+    const { data, loadedForm } = prepareItemForForm(source);
     setForm(loadedForm);
     setInitialForm(loadedForm); // Set as clean state
     setPrices(data.ItemPrices || []);
@@ -292,8 +351,44 @@ export default function ItemMaster() {
     setBarcodes(data.ItemBarCodeCollection || []);
     setUoms(data.ItemUnitOfMeasurementCollection || []);
     setPrefVendors(data.ItemPreferredVendors || []);
+    setDuplicateSourceItemCode("");
     setMode(MODES.UPDATE);
-  }, [splitItemCode]);
+  }, [prepareItemForForm]);
+
+  useEffect(() => {
+    const stateItemCode = location.state?.itemMasterItemCode || location.state?.itemCode;
+    const queryItemCode = new URLSearchParams(location.search).get("itemCode");
+    const validStateItemCode = stateItemCode && isRouteStateForActiveCompany(location.state)
+      ? stateItemCode
+      : "";
+    const itemCodeToLoad = String(validStateItemCode || queryItemCode || "").trim();
+
+    if (!itemCodeToLoad) return;
+
+    let ignore = false;
+    setLoading(true);
+    loadItem(itemCodeToLoad)
+      .then(() => {
+        if (!ignore) {
+          showAlert("success", `Item "${itemCodeToLoad}" loaded.`);
+          if (validStateItemCode) {
+            replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+          }
+        }
+      })
+      .catch((err) => {
+        if (!ignore) {
+          showAlert("error", err.response?.data?.message || `Could not load "${itemCodeToLoad}".`);
+        }
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [location.pathname, location.search, location.state, loadItem, navigate, showAlert]);
 
   // Handle Find logic
   const handleFind = useCallback(async () => {
@@ -337,8 +432,8 @@ export default function ItemMaster() {
   }, [form.ItemCode, form.ItemCodeNumber, form.ItemName, form.ForeignName, form.BarCode, loadItem, showAlert]);
 
   // Smart default value logic based on item properties
-  const applySmartDefaults = useCallback((fieldName, value) => {
-    const newForm = { ...form, [fieldName]: value };
+  const applySmartDefaults = useCallback((sourceForm, fieldName, value) => {
+    const newForm = { ...sourceForm, [fieldName]: value };
     
     // Set defaults based on item type changes
     if (fieldName === 'ItemType') {
@@ -415,19 +510,15 @@ export default function ItemMaster() {
     }
     
     return newForm;
-  }, [form]);
+  }, []);
 
   // Enhanced change handler with smart defaults
   const handleChange = useCallback((e) => {
     const { name, value, type, checked, label } = e.target;
     const finalValue = type === 'checkbox' ? (checked ? 'tYES' : 'tNO') : value;
     
-    // Apply smart defaults first
-    const newForm = applySmartDefaults(name, finalValue);
-    
-    // Handle additional logic that was in the original handleChange
     setForm((prev) => {
-      const updated = { ...newForm };
+      const updated = applySmartDefaults(prev, name, finalValue);
       
       // Handle label for lookups (e.g. ManufacturerName)
       if (label !== undefined) {
@@ -500,13 +591,6 @@ export default function ItemMaster() {
     
     // Sales Item validations - ItemPrices collection is used instead of a single PriceListNum field
   // The UI Price List selection is handled via ItemPrices collection in buildPayload
-    
-    // Inventory Item validations
-    if (form.InventoryItem === 'tYES') {
-      if (!String(form.DefaultWarehouse || "").trim()) {
-        errors.push("Default Warehouse is required for inventory items.");
-      }
-    }
     
     // Asset Item validations
     if (form.AssetItem === 'tYES') {
@@ -609,9 +693,26 @@ export default function ItemMaster() {
     return errors;
   }, [form, itemCodeError]);
 
+  const validateDuplicateItemForm = useCallback(() => {
+    const errors = [];
+
+    if (!String(form.ItemCode || "").trim()) {
+      errors.push("Item Code is required.");
+    }
+    if (!String(form.ItemName || "").trim()) {
+      errors.push("Item Name is required.");
+    }
+    if (itemCodeError) {
+      errors.push("Please fix item code validation errors.");
+    }
+
+    return errors;
+  }, [form.ItemCode, form.ItemName, itemCodeError]);
+
   // Handle Add logic
   const handleAdd = useCallback(async () => {
-    const errors = validateItemForm(false);
+    const sourceItemCode = String(duplicateSourceItemCode || form._duplicateFromItemCode || "").trim();
+    const errors = sourceItemCode ? validateDuplicateItemForm() : validateItemForm(false);
     if (errors.length > 0) {
       showAlert("error", errors[0]); // Show first error
       return;
@@ -619,14 +720,21 @@ export default function ItemMaster() {
     
     setLoading(true);
     try {
-      await createItem(buildPayload(form, prices, barcodes, uoms, prefVendors, user));
+      const payload = sourceItemCode
+        ? buildDuplicatePayload(form, sourceItemCode, user)
+        : buildPayload(form, prices, barcodes, uoms, prefVendors, stock, user);
+      await createItem(payload);
       showAlert("success", `Item "${form.ItemCode}" created successfully.`);
-      setInitialForm(form); // Mark as saved
+      const savedForm = { ...form };
+      delete savedForm._duplicateFromItemCode;
+      setForm(savedForm);
+      setInitialForm(savedForm); // Mark as saved
+      setDuplicateSourceItemCode("");
       setMode(MODES.UPDATE);
     } catch (err) {
       showAlert("error", extractSapError(err));
     } finally { setLoading(false); }
-  }, [form, prices, barcodes, uoms, prefVendors, user, validateItemForm, showAlert]);
+  }, [duplicateSourceItemCode, form, prices, barcodes, uoms, prefVendors, stock, user, validateDuplicateItemForm, validateItemForm, showAlert]);
 
   // Handle Update logic
   const handleUpdate = useCallback(async () => {
@@ -638,13 +746,13 @@ export default function ItemMaster() {
     
     setLoading(true);
     try {
-      await updateItem(form.ItemCode.trim(), buildPayload(form, prices, barcodes, uoms, prefVendors, user));
+      await updateItem(form.ItemCode.trim(), buildPayload(form, prices, barcodes, uoms, prefVendors, stock, user));
       showAlert("success", `Item "${form.ItemCode}" updated successfully.`);
       setInitialForm(form); // Mark as saved
     } catch (err) {
       showAlert("error", extractSapError(err));
     } finally { setLoading(false); }
-  }, [form, prices, barcodes, uoms, prefVendors, user, validateItemForm, showAlert]);
+  }, [form, prices, barcodes, uoms, prefVendors, stock, user, validateItemForm, showAlert]);
 
   // handleSave logic
   const handleSave = useCallback(() => {
@@ -691,6 +799,42 @@ export default function ItemMaster() {
   const handleWarehouseChange = (i, field, value) =>
     setStock((prev) => prev.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
 
+  const handleDuplicate = useCallback(async () => {
+    if (mode !== MODES.UPDATE || !form.ItemCode) return;
+
+    const sourceItemCode = String(form.ItemCode || "").trim();
+    setLoading(true);
+    try {
+      const source = await getItem(sourceItemCode);
+      const { data, loadedForm } = prepareItemForForm(source);
+      const duplicatedForm = {
+        ...loadedForm,
+        _duplicateFromItemCode: sourceItemCode,
+        ItemCode: "",
+        ItemCodePrefix: "",
+        ItemCodeNumber: "",
+      };
+
+      setForm(duplicatedForm);
+      setInitialForm(EMPTY_FORM);
+      setPrices(clonePlain(data.ItemPrices || []));
+      setStock(clonePlain(data.ItemWarehouseInfoCollection || []));
+      setBarcodes(clonePlain(data.ItemBarCodeCollection || []));
+      setUoms(clonePlain(data.ItemUnitOfMeasurementCollection || []));
+      setPrefVendors(clonePlain(data.ItemPreferredVendors || []));
+      setAttachments(clonePlain(attachments));
+      setDuplicateSourceItemCode(sourceItemCode);
+      setItemCodeError("");
+      setMode(MODES.ADD);
+      showAlert("success", `Item "${sourceItemCode}" duplicated. Enter a new item number, then click Add.`);
+      setTimeout(() => document.querySelector('input[name="ItemCodeNumber"]')?.focus(), 50);
+    } catch (err) {
+      showAlert("error", err.response?.data?.message || "Failed to duplicate item.");
+    } finally {
+      setLoading(false);
+    }
+  }, [attachments, form.ItemCode, mode, prepareItemForForm, showAlert]);
+
   const handleCFLSelect = async (item) => {
     setShowCFL(false);
     setLoading(true);
@@ -732,6 +876,11 @@ export default function ItemMaster() {
           >
             Find
           </button>
+          {mode === MODES.UPDATE && (
+            <button className="im-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
+              Duplicate
+            </button>
+          )}
           {mode === MODES.UPDATE && (
             <button className="im-btn im-btn--danger" onClick={resetForm}>Cancel</button>
           )}
@@ -870,7 +1019,7 @@ export default function ItemMaster() {
 
       <div className="im-tab-panel">
         {activeTabName === "General"        && <GeneralTab        form={form} onChange={handleChange} onDefineManufacturer={() => setShowManufacturerSetup(true)} mode={mode} />}
-        {activeTabName === "Purchasing Data" && <PurchasingTab    form={form} onChange={handleChange} fetchVendors={fetchVendors} />}
+        {activeTabName === "Purchasing Data" && <PurchasingTab    form={form} onChange={handleChange} fetchVendors={fetchVendors} customsGroups={customsGroups} />}
         {activeTabName === "Sales Data"      && <SalesTab         form={form} onChange={handleChange} />}
         {activeTabName === "Inventory Data"  && <InventoryTab     form={form} onChange={handleChange} stock={stock} onWarehouseChange={handleWarehouseChange} fetchWarehouses={fetchWarehouses} />}
         {activeTabName === "Planning Data"   && <PlanningTab      form={form} onChange={handleChange} />}
@@ -963,7 +1112,25 @@ const extractSapError = (err) =>
   err.message ||
   "An error occurred.";
 
-function buildPayload(form, prices = [], barcodes = [], uoms = [], prefVendors = [], currentUser = null) {
+function buildDuplicatePayload(form, duplicateSourceItemCode, currentUser = null) {
+  const payload = {
+    _duplicateFromItemCode: duplicateSourceItemCode,
+    ItemCode: form.ItemCode,
+    ItemName: form.ItemName,
+  };
+  const currentUserName = String(currentUser?.fullName || currentUser?.username || "").trim();
+  const currentUserCode = currentUser?.userId != null ? String(currentUser.userId).trim() : "";
+
+  if (currentUserName) payload.U_WEBUSER = currentUserName;
+  if (currentUserCode) payload.U_WEBUSERCODE = currentUserCode;
+  if (form.ItemCodePrefix && form.ItemCodePrefix !== "Manual" && !Number.isNaN(Number(form.ItemCodePrefix))) {
+    payload.Series = Number(form.ItemCodePrefix);
+  }
+
+  return payload;
+}
+
+function buildPayload(form, prices = [], barcodes = [], uoms = [], prefVendors = [], stock = [], currentUser = null) {
   const opt = (v) => v !== "" && v != null;
   const num = (v) => v !== "" && v != null && !isNaN(v) ? Number(v) : undefined;
   const currentUserName = String(currentUser?.fullName || currentUser?.username || "").trim();
@@ -1032,7 +1199,7 @@ function buildPayload(form, prices = [], barcodes = [], uoms = [], prefVendors =
     p.ServiceCategoryEntry = Number(form.ServiceCategoryEntry);
   if (opt(form.ItemsGroupCode)) { const v = num(form.ItemsGroupCode); if (v != null) p.ItemsGroupCode = v; }
   if (opt(form.BarCode))      p.BarCode = form.BarCode;
-  if (num(form.UoMGroupEntry) != null && num(form.UoMGroupEntry) !== -1) p.UoMGroupEntry = num(form.UoMGroupEntry);
+  if (num(form.UoMGroupEntry) != null) p.UoMGroupEntry = num(form.UoMGroupEntry);
   if (opt(form.Mainsupplier))           p.Mainsupplier           = form.Mainsupplier;
   if (opt(form.PurchaseUnit))           p.PurchaseUnit           = form.PurchaseUnit;
   if (num(form.PurchaseItemsPerUnit))   p.PurchaseItemsPerUnit   = num(form.PurchaseItemsPerUnit);
@@ -1054,6 +1221,9 @@ function buildPayload(form, prices = [], barcodes = [], uoms = [], prefVendors =
   if (opt(form.PurchaseVATGroup))  p.PurchaseVATGroup  = form.PurchaseVATGroup;
   if (num(form.LeadTime))          p.LeadTime          = num(form.LeadTime);
   if (opt(form.ExpanseAccount))    p.ExpanseAccount    = form.ExpanseAccount;
+  if (num(form.CustomsGroupCode) != null && num(form.CustomsGroupCode) !== -1) {
+    p.CustomsGroupCode = num(form.CustomsGroupCode);
+  }
   if (opt(form.SalesUnit))              p.SalesUnit              = form.SalesUnit;
   if (num(form.SalesItemsPerUnit))      p.SalesItemsPerUnit      = num(form.SalesItemsPerUnit);
   if (opt(form.SalesPackagingUnit))     p.SalesPackagingUnit     = form.SalesPackagingUnit;
@@ -1072,7 +1242,9 @@ function buildPayload(form, prices = [], barcodes = [], uoms = [], prefVendors =
   if (opt(form.SalesWeightUnit1))       p.SalesWeightUnit1       = form.SalesWeightUnit1;
   [1,2,3,4].forEach((n) => { if (num(form[`SalesFactor${n}`])) p[`SalesFactor${n}`] = num(form[`SalesFactor${n}`]); });
   if (opt(form.SalesVATGroup))          p.SalesVATGroup          = form.SalesVATGroup;
-  if (opt(form.WarrantyTemplate))       p.WarrantyTemplate       = form.WarrantyTemplate;
+  if (opt(form.WarrantyTemplate) && String(form.WarrantyTemplate) !== "-1") {
+    p.WarrantyTemplate = form.WarrantyTemplate;
+  }
   if (num(form.CommissionPercent))      p.CommissionPercent      = num(form.CommissionPercent);
   if (num(form.CommissionGroup))        p.CommissionGroup        = num(form.CommissionGroup);
   if (opt(form.IncomeAccount))          p.IncomeAccount          = form.IncomeAccount;
@@ -1095,6 +1267,8 @@ function buildPayload(form, prices = [], barcodes = [], uoms = [], prefVendors =
   if (opt(form.InventoryWeightUnit))    p.InventoryWeightUnit    = form.InventoryWeightUnit;
   if (opt(form.PlanningSystem))    p.PlanningSystem    = form.PlanningSystem;
   if (opt(form.ProcurementMethod)) p.ProcurementMethod = form.ProcurementMethod;
+  if (opt(form.ComponentWarehouse)) p.ComponentWarehouse = form.ComponentWarehouse;
+  if (opt(form.TypeOfAdvancedRules)) p.TypeOfAdvancedRules = form.TypeOfAdvancedRules;
   if (num(form.OrderIntervals))    p.OrderIntervals    = num(form.OrderIntervals);
   if (num(form.OrderMultiple))     p.OrderMultiple     = num(form.OrderMultiple);
   if (num(form.MinOrderQuantity))  p.MinOrderQuantity  = num(form.MinOrderQuantity);
@@ -1113,13 +1287,22 @@ function buildPayload(form, prices = [], barcodes = [], uoms = [], prefVendors =
   if (barcodes.filter((b) => b.Barcode).length > 0) {
     p.ItemBarCodeCollection = barcodes.filter((b) => b.Barcode).map((b) => ({ Barcode: b.Barcode, UoMEntry: b.UoMEntry ? Number(b.UoMEntry) : null, Quantity: Number(b.Quantity) || 1 }));
   }
-  if (uoms.filter((u) => u.AlternateUoM).length > 0) {
-    p.ItemUnitOfMeasurementCollection = uoms.filter((u) => u.AlternateUoM).map((u) => ({
-      AlternateUoM: Number(u.AlternateUoM), BaseQuantity: Number(u.BaseQuantity) || 1, AlternateQuantity: Number(u.AlternateQuantity) || 1, UoMType: u.UoMType || "uomtPurchasing",
-    }));
-  }
   if (prefVendors.filter((v) => v.VendorCode).length > 0) {
-    p.ItemPreferredVendors = prefVendors.filter((v) => v.VendorCode).map((v) => ({ VendorCode: v.VendorCode, Priority: Number(v.Priority) || 1 }));
+    p.ItemPreferredVendors = prefVendors
+      .filter((v) => v.VendorCode)
+      .map((v) => ({ BPCode: v.VendorCode }));
   }
+  const warehouseRows = stock
+    .filter((row) => row.WarehouseCode)
+    .map((row) => {
+      const warehouse = { WarehouseCode: row.WarehouseCode };
+      if (opt(row.Locked)) warehouse.Locked = row.Locked;
+      if (num(row.MinimalStock) != null) warehouse.MinimalStock = num(row.MinimalStock);
+      if (num(row.MaximalStock) != null) warehouse.MaximalStock = num(row.MaximalStock);
+      if (num(row.MinimalOrder) != null) warehouse.MinimalOrder = num(row.MinimalOrder);
+      return warehouse;
+    })
+    .filter((row) => Object.keys(row).length > 1);
+  if (warehouseRows.length > 0) p.ItemWarehouseInfoCollection = warehouseRows;
   return p;
 }

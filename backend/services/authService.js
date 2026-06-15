@@ -2,9 +2,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const env = require('../config/env');
 const authDbService = require('./authDbService');
+const generalSettingsService = require('./generalSettingsService');
 const { syncApplicationSidebarMenus } = require('./applicationMenuSyncService');
 const { appendVirtualMenus } = require('./virtualMenuService');
-const { appendVirtualLayoutManagerMenu } = require('./reportLayoutService');
 
 const createHttpError = (statusCode, message) => {
   const error = new Error(message);
@@ -229,11 +229,13 @@ const buildAuthorizedMenus = async (roleId, roleName = '', companyId = null) => 
     .map((menu) => String(menu.MenuPath || '').trim())
     .filter(Boolean);
 
-  return appendVirtualLayoutManagerMenu(appendVirtualMenus({
+  const menuPayload = appendVirtualMenus({
     menus: menuTree,
     menuPaths,
     includeAdminPanel: isAdminRoleName(roleName),
-  }));
+  });
+
+  return menuPayload;
 };
 
 const login = async (username, password) => {
@@ -337,7 +339,10 @@ const selectCompany = async (userId, companyId) => {
     throw createHttpError(403, 'No role is assigned for the selected company.');
   }
 
-  const { menus, menuPaths } = await buildAuthorizedMenus(role.RoleId, role.RoleName, companyId);
+  const [{ menus, menuPaths }, generalSettings] = await Promise.all([
+    buildAuthorizedMenus(role.RoleId, role.RoleName, companyId),
+    generalSettingsService.getSettings(userId, companyId),
+  ]);
   const accessToken = createToken(
     {
       tokenType: 'access',
@@ -355,6 +360,7 @@ const selectCompany = async (userId, companyId) => {
     roleId: role.RoleId,
     roleName: role.RoleName,
     company: sanitizeCompany(company),
+    generalSettings,
     menus,
     menuPaths,
   };

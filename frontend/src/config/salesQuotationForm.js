@@ -169,7 +169,10 @@ const ROW_UDF_DEFINITIONS = [
 
 const BASE_MATRIX_COLUMNS = [
   { key: 'itemNo', label: 'Item No.', visible: true },
-  { key: 'quantity', label: 'Quantity', visible: true },
+  { key: 'requiredDate', label: 'Required Date', visible: true },
+  { key: 'quotedDate', label: 'Quoted Date', visible: true },
+  { key: 'requiredQty', label: 'Required Qty.', visible: true },
+  { key: 'quantity', label: 'Quoted Qty.', visible: true },
   { key: 'unitPrice', label: 'Unit Price', visible: true },
   { key: 'stdDiscount', label: 'Discount %', visible: true },
   { key: 'taxCode', label: 'Tax Code', visible: true },
@@ -196,6 +199,7 @@ const BASE_MATRIX_COLUMNS = [
   { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', visible: true },
   { key: 'hsnCode', label: 'HSN', visible: true },
   { key: 'sacCode', label: 'SAC', visible: true },
+  { key: 'unitPriceUdf', label: 'Unit Price', visible: true },
   { key: 'sellerBrokerage', label: 'Seller Brokerage', visible: true },
   { key: 'buyerBrokerage', label: 'Buyer Brokerage', visible: true },
   { key: 'buyerDelivery', label: 'Buyer - Delivery', visible: true },

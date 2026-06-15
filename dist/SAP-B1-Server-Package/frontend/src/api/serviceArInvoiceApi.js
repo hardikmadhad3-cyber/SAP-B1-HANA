@@ -11,8 +11,13 @@ export const fetchServiceARInvoiceCustomerDetails = (customerCode) =>
 export const fetchServiceARInvoiceCustomerOptions = (params = {}) =>
   client.get(`${API_BASE}/customers/search`, { params });
 
-export const fetchServiceARInvoiceSeries = (date = '') =>
-  client.get(`${API_BASE}/series`, { params: date ? { date } : {} });
+export const fetchServiceARInvoiceSeries = (date = '', transactionType = '') =>
+  client.get(`${API_BASE}/series`, {
+    params: {
+      ...(date ? { date } : {}),
+      ...(transactionType ? { transactionType } : {}),
+    },
+  });
 
 export const fetchServiceARInvoiceNextNumber = (series) =>
   client.get(`${API_BASE}/series/next`, { params: { series } });
@@ -28,6 +33,13 @@ export const submitServiceARInvoice = (data) =>
 
 export const updateServiceARInvoice = (docEntry, data) =>
   client.patch(`${API_BASE}/${encodeURIComponent(docEntry)}`, data);
+
+export const generateServiceARInvoiceJournalEntry = ({ docEntry, payload, persist = false }) =>
+  client.post('/journal-entry/generate-from-ar-invoice', {
+    ...(docEntry ? { docEntry } : {}),
+    ...(payload ? { payload } : {}),
+    persist,
+  });
 
 export const fetchOpenServiceSalesQuotationsForARInvoice = (customerCode = null) =>
   client.get(`${API_BASE}/open-sales-quotations`, {

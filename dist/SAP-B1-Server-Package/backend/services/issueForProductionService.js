@@ -15,6 +15,7 @@
  * 4. BaseEntry and BaseLine must reference the production order
  */
 const sapService = require('./sapService');
+const productionDbService = require('./productionDbService');
 
 const escapeOData = (v) => String(v || '').replace(/'/g, "''");
 const formatDate  = (v) => (v ? String(v).split('T')[0] : '');
@@ -41,11 +42,20 @@ const mapToForm = (doc) => ({
   lines: (doc.DocumentLines || []).map((l) => ({
     _id:            l.LineNum ?? Math.random(),
     line_num:       l.LineNum ?? 0,
+    order_no:       l.BaseRef || '',
+    series_no:      '',
+    line_type:      'Item',
     item_code:      l.ItemCode || '',
     item_name:      l.ItemDescription || '',
     issue_qty:      l.Quantity ?? 0,
     uom:            l.UoMCode || l.MeasureUnit || '',
+    uom_name:       l.MeasureUnit || l.UoMCode || '',
     warehouse:      l.WarehouseCode || '',
+    item_cost:      l.Price || '',
+    available_qty:  '',
+    location:       l.LocationCode || '',
+    sauda_node_ref: '',
+    ap_inv_doc_key: '',
     base_entry:     l.BaseEntry ?? null,      // production order DocEntry
     base_line:      l.BaseLine ?? null,       // production order line number
     base_type:      l.BaseType ?? 202,        // 202 = Production Order
@@ -59,6 +69,11 @@ const mapSummary = (doc) => ({
   doc_entry:    doc.DocEntry,
   doc_num:      doc.DocNum,
   posting_date: formatDate(doc.DocDate),
+  document_date: formatDate(doc.TaxDate),
+  ref_2:        doc.Reference2 || '',
+  journal_remark: doc.JournalMemo || '',
+  production_order_no:
+    doc.DocumentLines?.find((l) => Number(l.BaseType) === 202)?.BaseRef || '',
   remarks:      doc.Comments || '',
   total_lines:  Array.isArray(doc.DocumentLines) ? doc.DocumentLines.length : 0,
 });
@@ -203,7 +218,7 @@ const getIssueList = async ({ query = '', top = 50, skip = 0 } = {}) => {
 
   const resp = await sapService.request({
     method: 'GET',
-    url: `/InventoryGenExits?$select=DocEntry,DocNum,DocDate,Comments,DocumentLines${filter}&$top=${top}&$skip=${skip}&$orderby=DocEntry desc`,
+    url: `/InventoryGenExits?$select=DocEntry,DocNum,DocDate,TaxDate,Reference2,JournalMemo,Comments,DocumentLines${filter}&$top=${top}&$skip=${skip}&$orderby=DocEntry desc`,
   });
 
   return { issues: (resp.data?.value || []).map(mapSummary) };
@@ -391,11 +406,30 @@ function _buildPayload(body) {
   return p;
 }
 
+const getReferenceDataByOdbc = () => productionDbService.getIssueReferenceData();
+
+const getProductionOrderForIssueByOdbc = async (docEntry) => {
+  const data = await productionDbService.getProductionOrderForIssue(docEntry);
+  if (!data) throw new Error('Production order not found.');
+  return data;
+};
+
+const getIssueListByOdbc = (query) => productionDbService.getIssueList(query);
+
+const getIssueByDocEntryByOdbc = async (docEntry) => {
+  const data = await productionDbService.getIssueByDocEntry(docEntry);
+  if (!data) throw new Error('Issue for production not found.');
+  return data;
+};
+
+const lookupProductionOrdersByOdbc = (query = '', type = '') =>
+  productionDbService.lookupOpenProductionOrders(query, true, type || 'production', { issueableOnly: true });
+
 module.exports = {
-  getReferenceData,
-  getProductionOrderForIssue,
-  getIssueList,
-  getIssueByDocEntry,
+  getReferenceData: getReferenceDataByOdbc,
+  getProductionOrderForIssue: getProductionOrderForIssueByOdbc,
+  getIssueList: getIssueListByOdbc,
+  getIssueByDocEntry: getIssueByDocEntryByOdbc,
   createIssue,
-  lookupProductionOrders,
+  lookupProductionOrders: lookupProductionOrdersByOdbc,
 };

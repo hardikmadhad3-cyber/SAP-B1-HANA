@@ -99,7 +99,7 @@ export default function LineValueLookupModal({
     setSelectedIndex(-1);
   }, [searchQuery, options]);
 
-  const closeModal = () => {
+  const resetModal = () => {
     setSearchQuery('');
     setSelectedIndex(-1);
     setShowCreateForm(false);
@@ -107,12 +107,21 @@ export default function LineValueLookupModal({
     setNewDescription('');
     setCreateError('');
     setSaving(false);
+  };
+
+  const closeModal = () => {
+    resetModal();
     onClose();
+    window.SapB1TabNavigation?.restoreLookup?.();
   };
 
   const chooseOption = (option) => {
-    onSelect(option);
-    closeModal();
+    const selection = onSelect(option);
+    resetModal();
+    onClose();
+    Promise.resolve(selection).finally(() => {
+      window.SapB1TabNavigation?.completeLookup?.();
+    });
   };
 
   const handleChoose = () => {

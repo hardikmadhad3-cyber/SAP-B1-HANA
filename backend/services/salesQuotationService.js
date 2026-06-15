@@ -18,14 +18,22 @@ const toNumberOrUndefined = (value) => {
 };
 
 const SALES_QUOTATION_LINE_UDF_MAPPINGS = [
+  { sapField: 'U_Required_Date', getValue: (line) => line.requiredDate },
+  { sapField: 'U_ReqDate', getValue: (line) => line.requiredDate },
+  { sapField: 'U_Quoted_Date', getValue: (line) => line.quotedDate },
+  { sapField: 'U_QuoteDate', getValue: (line) => line.quotedDate },
+  { sapField: 'U_Req_Qty', getValue: (line) => line.requiredQty },
+  { sapField: 'U_ReqQty', getValue: (line) => line.requiredQty },
   { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
   { sapField: 'U_COMPRC', getValue: (line) => line.commission },
   { sapField: 'U_S_BrokPerQty', getValue: (line) => line.sellerBrokeragePerQty },
+  { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf ?? line.unitPrice },
   { sapField: 'U_Brok_Seller', getValue: (line) => line.sellerBrokerage },
   { sapField: 'U_Brok_Buyer', getValue: (line) => line.buyerBrokerage },
   { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
   { sapField: 'U_Seller_Delivery', getValue: (line) => line.sellerDelivery },
   { sapField: 'U_Buyer_Payment_Terms', getValue: (line) => line.buyerPaymentTerms },
+  { sapField: 'U_Seller_Payment_Term', getValue: (line) => line.sellerPaymentTerms },
   { sapField: 'U_Seller_Payment_Terms', getValue: (line) => line.sellerPaymentTerms },
   { sapField: 'U_Buyer_Quality', getValue: (line) => line.buyerQuality },
   { sapField: 'U_Seller_Quality', getValue: (line) => line.sellerQuality },
@@ -49,6 +57,9 @@ const SALES_QUOTATION_LINE_UDF_MAPPINGS = [
 
 const SALES_QUOTATION_LABEL_UDF_MAPPINGS = [
   { labels: ['Allow Procmnt. Doc.', 'Allow Procurement Doc'], getValue: (line) => (line.allowProcurementDoc ? 'Y' : '') },
+  { labels: ['Required Date'], getValue: (line) => line.requiredDate },
+  { labels: ['Quoted Date'], getValue: (line) => line.quotedDate },
+  { labels: ['Required Qty.', 'Required Qty', 'Req Qty'], getValue: (line) => line.requiredQty },
   { labels: ['Sauda Node Ref', 'Sauda Nodh Ref', 'Sauda Nodh No'], getValue: (line) => line.saudaNodeRef },
   { labels: ['AP Inv DocKey'], getValue: (line) => line.apInvDocKey },
   { labels: ['AP Inv DocNum'], getValue: (line) => line.apInvDocNum },
@@ -59,6 +70,9 @@ const SALES_QUOTATION_LABEL_UDF_MAPPINGS = [
   { labels: ['RG23DNo', 'RG23DNO'], getValue: (line) => line.rg23dNo },
   { labels: ['HSN'], getValue: (line) => line.hsnCode },
   { labels: ['SAC'], getValue: (line) => line.sacCode },
+  { labels: ['Unit Price'], getValue: (line) => line.unitPriceUdf ?? line.unitPrice },
+  { labels: ['Seller - Terms of Payment'], getValue: (line) => line.sellerPaymentTerms },
+  { labels: ['Document Created'], getValue: (line) => line.documentCreated },
 ];
 
 const compactLabel = (value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -119,6 +133,8 @@ const buildDocumentLines = async (lines = []) => {
         MeasureUnit: line.uomCode || undefined,
         UoMCode: line.uomCode || undefined,
         DiscountPercent: toNumberOrUndefined(line.stdDiscount),
+        RequiredDate: line.requiredDate || undefined,
+        ShipDate: line.quotedDate || undefined,
         CostingCode: line.distRule,
         COGSCostingCode: line.cogsDistRule,
         CountryOrg: line.countryOfOrigin,

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import './styles/ARCreditMemo.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
@@ -16,6 +16,8 @@ import StateSelectionModal from '../sales-order/components/StateSelectionModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -58,6 +60,7 @@ import {
   FORM_SETTINGS_STORAGE_KEY,
   HEADER_UDF_DEFINITIONS,
   ROW_UDF_DEFINITIONS,
+  createDefaultFormSettings,
   createUdfState,
   normalizeUdfState,
   readSavedFormSettings,
@@ -160,11 +163,15 @@ const FALLBACK_SHIPPING = [
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
+const DEFAULT_WAREHOUSE_CODE = '01';
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
-  itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
-  uomCode: '', stdDiscount: '', taxCode: '', total: '', whse: '',
-  loc: '', branch: '',
+  itemNo: '', itemDescription: '', hsnCode: '', sacCode: '', quantity: '', unitPrice: '',
+  uomCode: '', stdDiscount: '', taxCode: '', total: '', whse: DEFAULT_WAREHOUSE_CODE,
+  loc: '', branch: '', noOfPackages: '', wTaxLiable: 'N', glAccount: '',
+  distRule: '', taxLiable: 'Y', weight: '', taxAmount: '', totalLC: '',
+  uomName: '', cogsDistRule: '', countryOfOrigin: '',
+  enableSettingCost: 'N', returnCost: '', blanketAgreementNo: '',
   batchManaged: false,
   hasBatchesAvailable: false,
   batches: [],
@@ -174,7 +181,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
 });
 
 const INIT_HEADER = {
-  vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: '',
+  vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
   docNo: '', status: 'Open', series: '', nextNumber: '',
   postingDate: today(), deliveryDate: '', documentDate: today(), contractDate: '',
   branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
@@ -201,6 +208,7 @@ function ARCreditMemo() {
   const [header, setHeader] = useState(INIT_HEADER);
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState([]);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
@@ -208,7 +216,7 @@ function ARCreditMemo() {
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
-    [headerUdfDefinitions, rowUdfDefinitions],
+    [headerUdfDefinitions, rowUdfDefinitions, matrixColumnDefinitions],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
@@ -217,6 +225,10 @@ function ARCreditMemo() {
     warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [],
     payment_terms: [], shipping_types: [], branches: [], uom_groups: [],
     decimal_settings: DEC, warnings: [], series: [], states: [],
+    matrix_columns: [],
+    line_field_metadata: { matrix_columns: [], sap_form: {} },
+    gl_accounts: [],
+    distribution_rules: [],
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
@@ -230,6 +242,17 @@ function ARCreditMemo() {
   const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1 });
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
+  const [lineLookupModal, setLineLookupModal] = useState({
+    open: false,
+    lineIndex: -1,
+    field: '',
+    udfKey: '',
+    title: '',
+    options: [],
+    searchPlaceholder: '',
+    emptyMessage: '',
+    columns: [],
+  });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyToModal, setCopyToModal] = useState(false);
   const [addressForm, setAddressForm] = useState({
@@ -340,9 +363,16 @@ function ARCreditMemo() {
           const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
           const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
-          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, formSettingsStorageKey);
+          const nextMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+            ? refDataRes.data.line_field_metadata.matrix_columns
+            : (refDataRes.data.matrix_columns || []);
+          const hasSapMatrixPreferences =
+            Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0;
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
+          const nextSapDefaults = createDefaultFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns);
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
+          setMatrixColumnDefinitions(nextMatrixColumns);
           setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
             ...line,
@@ -355,10 +385,21 @@ function ARCreditMemo() {
               ...nextDefaults.headerUdfs,
               ...(prev.headerUdfs || {}),
             },
-            rowUdfs: {
-              ...nextDefaults.rowUdfs,
-              ...(prev.rowUdfs || {}),
-            },
+            rowUdfs: nextRowUdfs.reduce((settings, field) => ({
+              ...settings,
+              [field.key]: hasSapMatrixPreferences && field.sapColumnId
+                ? nextSapDefaults.rowUdfs[field.key]
+                : {
+                    ...(nextDefaults.rowUdfs[field.key] || {}),
+                    ...((prev.rowUdfs || {})[field.key] || {}),
+                  },
+            }), hasSapMatrixPreferences ? nextSapDefaults.rowUdfs : nextDefaults.rowUdfs),
+            matrixColumns: hasSapMatrixPreferences
+              ? nextSapDefaults.matrixColumns
+              : {
+                  ...nextDefaults.matrixColumns,
+                  ...(prev.matrixColumns || {}),
+                },
           }));
           setRefData(prev => ({
             ...prev,
@@ -376,8 +417,12 @@ function ARCreditMemo() {
             sales_employees: refDataRes.data.sales_employees || [],
             branches: refDataRes.data.branches || [],
             states: refDataRes.data.states || [],
+            gl_accounts: refDataRes.data.gl_accounts || [],
+            distribution_rules: refDataRes.data.distribution_rules || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
+            matrix_columns: nextMatrixColumns,
+            line_field_metadata: refDataRes.data.line_field_metadata || { matrix_columns: nextMatrixColumns, sap_form: {} },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             warnings: refDataRes.data.warnings || [],
             series: Array.isArray(prev.series) ? prev.series : [],
@@ -391,7 +436,7 @@ function ARCreditMemo() {
     };
     load();
     return () => { ignore = true; };
-  }, []);
+  }, [formSettingsStorageKey]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -646,7 +691,7 @@ function ARCreditMemo() {
       contactPerson:    srcHeader.contactPerson    || srcHeader.CntctCode || '',
       salesContractNo:  srcHeader.salesContractNo  || srcHeader.customerRefNo || srcHeader.CustomerRefNo || srcHeader.NumAtCard || '',
       branch:           srcHeader.branch           || srcHeader.BPL_IDAssignedToInvoice || '',
-      warehouse:        srcHeader.warehouse        || '',
+      warehouse:        srcHeader.warehouse        || DEFAULT_WAREHOUSE_CODE,
       paymentTerms:     srcHeader.paymentTerms     || srcHeader.GroupNum  || '',
       placeOfSupply:    srcHeader.placeOfSupply    || '',
       otherInstruction: srcHeader.otherInstruction || srcHeader.Comments || '',
@@ -676,7 +721,7 @@ function ARCreditMemo() {
         hsnCode:         l.hsnCode            || l.HSNCode || '',
         taxCode:         l.taxCode            || l.TaxCode || '',
         total:           String(l.total       || l.LineTotal || 0),
-        whse:            l.whse               || l.WarehouseCode || l.WhsCode || '',
+        whse:            l.whse               || l.WarehouseCode || l.WhsCode || DEFAULT_WAREHOUSE_CODE,
         loc:             l.loc                || l.Location || '',
         stdDiscount:     String(l.stdDiscount || l.discount || l.DiscountPercent || l.DiscPrcnt || 0),
         baseEntry:       baseDocument?.baseEntry || copyFrom.docEntry,
@@ -757,6 +802,37 @@ function ARCreditMemo() {
     acc[i] = code && !exists ? [{ ItemCode: code, ItemName: line.itemDescription || code }, ...refData.items] : refData.items;
     return acc;
   }, {});
+
+  const accountLookupOptions = useMemo(() => (refData.gl_accounts || []).map((account) => ({
+    value: account.code || '',
+    description: account.name || '',
+    label: account.name ? `${account.code} - ${account.name}` : account.code,
+    accountNumber: account.code || '',
+    accountName: account.name || '',
+    accountBalance: Number(account.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    inactive: account.inactive || 'No',
+  })).filter((option) => option.value), [refData.gl_accounts]);
+
+  const distributionRuleLookupOptions = useMemo(() => (refData.distribution_rules || []).map((rule) => {
+    const value = rule.FactorCode || rule.OcrCode || rule.code || '';
+    const description = rule.FactorDescription || rule.OcrName || rule.name || '';
+    return {
+      value,
+      description,
+      label: description ? `${value} - ${description}` : value,
+      factorCode: value,
+      factorDescription: description,
+    };
+  }).filter((option) => option.value), [refData.distribution_rules]);
+
+  const itemLookupOptions = useMemo(() => (refData.items || []).map((item) => ({
+    value: item.ItemCode || '',
+    description: item.ItemName || '',
+    label: item.ItemName ? `${item.ItemCode} - ${item.ItemName}` : item.ItemCode,
+    itemCode: item.ItemCode || '',
+    itemName: item.ItemName || '',
+    salesUnit: item.SalesUnit || item.InventoryUOM || '',
+  })).filter((option) => option.value), [refData.items]);
 
   const fmtTaxLabel = (t) => {
     const code = String(t?.Code || '').trim();
@@ -1055,6 +1131,88 @@ function ARCreditMemo() {
     }
   };
 
+  const openLineLookup = (field, lineIndex, udfField = null) => {
+    if (!isDocumentEditable) return;
+    const isAccount = field === 'glAccount';
+    const isDistributionRule = field === 'distRule';
+
+    setLineLookupModal({
+      open: true,
+      lineIndex,
+      field,
+      udfKey: udfField?.key || '',
+      title: isAccount
+        ? 'List of G/L Accounts'
+        : isDistributionRule
+          ? 'List of Distribution Rules'
+          : 'List of Items',
+      options: isAccount
+        ? accountLookupOptions
+        : isDistributionRule
+          ? distributionRuleLookupOptions
+          : itemLookupOptions,
+      searchPlaceholder: isAccount
+        ? 'Search G/L accounts'
+        : isDistributionRule
+          ? 'Search distribution rules'
+          : 'Search items',
+      emptyMessage: isAccount
+        ? 'No G/L accounts found'
+        : isDistributionRule
+          ? 'No distribution rules found'
+          : 'No items found',
+      columns: isAccount
+        ? [
+            { key: 'accountNumber', label: 'Account Number', width: 150, primary: true },
+            { key: 'accountName', label: 'Account Name' },
+            { key: 'accountBalance', label: 'Account Balance', width: 130, align: 'right' },
+            { key: 'inactive', label: 'Inactive', width: 90 },
+          ]
+        : isDistributionRule
+          ? [
+              { key: 'factorCode', label: 'Distr. Rule', width: 140, primary: true },
+              { key: 'factorDescription', label: 'Description' },
+            ]
+          : [
+              { key: 'itemCode', label: 'Item No.', width: 150, primary: true },
+              { key: 'itemName', label: 'Item Description' },
+              { key: 'salesUnit', label: 'UoM', width: 100 },
+            ],
+    });
+  };
+
+  const closeLineLookup = () => {
+    setLineLookupModal((prev) => ({ ...prev, open: false, lineIndex: -1, field: '', udfKey: '' }));
+  };
+
+  const handleLineLookupSelect = (option) => {
+    if (lineLookupModal.lineIndex < 0 || !lineLookupModal.field) return;
+    const selectedValue = option?.value || '';
+
+    setLines((prev) => prev.map((line, index) => {
+      if (index !== lineLookupModal.lineIndex) return line;
+
+      if (lineLookupModal.udfKey) {
+        return {
+          ...line,
+          udf: {
+            ...(line.udf || {}),
+            [lineLookupModal.udfKey]: selectedValue,
+          },
+        };
+      }
+
+      const next = { ...line, [lineLookupModal.field]: selectedValue };
+      if (lineLookupModal.field === 'distRule') {
+        next.cogsDistRule = selectedValue;
+      }
+      return next;
+    }));
+
+    markDirty();
+    closeLineLookup();
+  };
+
   const handleLineChange = async (i, e) => {
     const { name, value } = e.target;
     setValErrors(p => ({ ...p, lines: { ...p.lines, [i]: { ...(p.lines[i] || {}), [name]: '' } }, form: '' }));
@@ -1084,6 +1242,9 @@ function ARCreditMemo() {
             // Step 1: Set Item Details
             next.itemDescription = item.ItemName || next.itemDescription;
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
+            next.glAccount = next.glAccount || item.SalesGLAccount || item.IncomeAccount || item.IncomeAcct || item.RevenuesAccount || item.RevenuesAc || '';
+            next.distRule = next.distRule || item.DistributionRule || item.OcrCode || '';
+            next.cogsDistRule = next.distRule || next.cogsDistRule || item.COGSDistributionRule || item.COGSCostingCode || item.CogsOcrCod || '';
             
             // Step 2: Set HSN Code from API response (OCHP.ChapterID via JOIN)
             next.hsnCode = hsnData.hsnCode || hsnData.hsn_sww || '';
@@ -1143,6 +1304,9 @@ function ARCreditMemo() {
           if (item) {
             next.itemDescription = item.ItemName || next.itemDescription;
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
+            next.glAccount = next.glAccount || item.SalesGLAccount || item.IncomeAccount || item.IncomeAcct || item.RevenuesAccount || item.RevenuesAc || '';
+            next.distRule = next.distRule || item.DistributionRule || item.OcrCode || '';
+            next.cogsDistRule = next.distRule || next.cogsDistRule || item.COGSDistributionRule || item.COGSCostingCode || item.CogsOcrCod || '';
             next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
             
             // Set batch management flag
@@ -1226,6 +1390,9 @@ function ARCreditMemo() {
     setLines(prev => prev.map((line, idx) => {
       if (idx !== i) return line;
       const next = { ...line, [name]: numDec[name] !== undefined ? sanitize(value, numDec[name]) : value };
+      if (name === 'distRule') {
+        next.cogsDistRule = value;
+      }
       next.total = fmtDec(calcLineTotal(next), numDec.total);
       return next;
     }));
@@ -1347,7 +1514,7 @@ function ARCreditMemo() {
       ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
-      whse: header.warehouse || ''
+      whse: header.warehouse || DEFAULT_WAREHOUSE_CODE
     }]);
   };
 
@@ -1626,7 +1793,7 @@ function ARCreditMemo() {
             ...hydrateDocumentLineFromItem(line, mergedItem, {
               side: 'sales',
               hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
-              fallbackWarehouse: header.warehouse,
+              fallbackWarehouse: header.warehouse || DEFAULT_WAREHOUSE_CODE,
               calcLineTotal,
               formatTotal: (value) => fmtDec(value, numDec.total),
             }),
@@ -1637,6 +1804,9 @@ function ARCreditMemo() {
             uomFactor: uomFactor,
             batches: [],
           };
+          updatedLine.glAccount = updatedLine.glAccount || mergedItem.SalesGLAccount || mergedItem.IncomeAccount || mergedItem.IncomeAcct || mergedItem.RevenuesAccount || mergedItem.RevenuesAc || '';
+          updatedLine.distRule = updatedLine.distRule || mergedItem.DistributionRule || mergedItem.OcrCode || '';
+          updatedLine.cogsDistRule = updatedLine.distRule || updatedLine.cogsDistRule || mergedItem.COGSDistributionRule || mergedItem.COGSCostingCode || mergedItem.CogsOcrCod || '';
           
           // Auto-populate tax code based on HSN
           if (updatedLine.hsnCode) {
@@ -1656,12 +1826,18 @@ function ARCreditMemo() {
       console.error('Error selecting item:', error);
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
-          return hydrateDocumentLineFromItem(line, mergedItem, {
+          const nextLine = hydrateDocumentLineFromItem(line, mergedItem, {
             side: 'sales',
-            fallbackWarehouse: header.warehouse,
+            fallbackWarehouse: header.warehouse || DEFAULT_WAREHOUSE_CODE,
             calcLineTotal,
             formatTotal: (value) => fmtDec(value, numDec.total),
           });
+          return {
+            ...nextLine,
+            glAccount: nextLine.glAccount || mergedItem.SalesGLAccount || mergedItem.IncomeAccount || mergedItem.IncomeAcct || mergedItem.RevenuesAccount || mergedItem.RevenuesAc || '',
+            distRule: nextLine.distRule || mergedItem.DistributionRule || mergedItem.OcrCode || '',
+            cogsDistRule: nextLine.distRule || nextLine.cogsDistRule || mergedItem.COGSDistributionRule || mergedItem.COGSCostingCode || mergedItem.CogsOcrCod || '',
+          };
         }
         return line;
       }));
@@ -1993,9 +2169,14 @@ function ARCreditMemo() {
     setHeader(prev => ({ ...prev, ...normHeader }));
 
     const rawLines = copySource.lines;
-    const newLines = rawLines.map((line, idx) =>
-      ({ ...createLine(rowUdfDefinitions), ...normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch) })
-    );
+    const newLines = rawLines.map((line, idx) => {
+      const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch);
+      return {
+        ...createLine(rowUdfDefinitions),
+        ...normalizedLine,
+        whse: normalizedLine.whse || normalizedLine.WarehouseCode || normalizedLine.WhsCode || normHeader.warehouse || DEFAULT_WAREHOUSE_CODE,
+      };
+    });
     setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
 
     const cardCode = normHeader.vendor;
@@ -2321,6 +2502,14 @@ function ARCreditMemo() {
                       </select>
                     </div>
 
+                    <DocumentCurrencySelect
+                      classPrefix="del"
+                      header={header}
+                      onHeaderChange={handleHeaderChange}
+                      businessPartners={refData.vendors || []}
+                      disabled={pageState.vendorLoading || !header.vendor || !!currentDocEntry}
+                    />
+
                     {/* Place of Supply */}
                     <div className="del-field">
                       <label className="del-field__label">Place of Supply *</label>
@@ -2489,6 +2678,7 @@ function ARCreditMemo() {
                 onRemoveLine={removeLine}
                 onOpenHSNModal={openHSNModal}
                 onOpenItemModal={openItemModal}
+                onOpenLineLookup={openLineLookup}
                 lineItemOptions={lineItemOptions}
                 getUomOptions={getUomOptions}
                 effectiveTaxCodes={effectiveTaxCodes}
@@ -2496,6 +2686,9 @@ function ARCreditMemo() {
                 fmtTaxLabel={fmtTaxLabel}
                 getBranchName={getBranchName}
                 valErrors={valErrors}
+                isEditable={isDocumentEditable}
+                formSettings={formSettings}
+                matrixFields={matrixColumnDefinitions}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
               />
@@ -2712,7 +2905,7 @@ function ARCreditMemo() {
             className="so-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
-            matrixFields={[]}
+            matrixFields={matrixColumnDefinitions}
             headerUdfFields={headerUdfDefinitions}
             rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}
@@ -2808,6 +3001,17 @@ function ARCreditMemo() {
         freightCharges={freightModal.freightCharges}
         taxCodes={effectiveTaxCodes}
         loading={freightModal.loading}
+      />
+      <LineValueLookupModal
+        isOpen={lineLookupModal.open}
+        onClose={closeLineLookup}
+        onSelect={handleLineLookupSelect}
+        options={lineLookupModal.options}
+        title={lineLookupModal.title}
+        searchPlaceholder={lineLookupModal.searchPlaceholder}
+        emptyMessage={lineLookupModal.emptyMessage}
+        allowCreate={false}
+        columns={lineLookupModal.columns}
       />
     </form>
   );

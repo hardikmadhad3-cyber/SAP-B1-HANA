@@ -78,11 +78,11 @@ const inferParameterLookup = (parameter) => {
   const identity = `${parameter?.displayName || ''} ${parameter?.paramName || ''}`.toLowerCase();
   const lookupTable = String(parameter?.lookup?.table || '').trim().toUpperCase();
 
-  if (identity.includes('seller')) {
+  if (identity.includes('seller') || identity.includes('vendor')) {
     return INFERRED_LOOKUPS.seller;
   }
 
-  if (identity.includes('buyer')) {
+  if (identity.includes('buyer') || identity.includes('customer')) {
     return INFERRED_LOOKUPS.buyer;
   }
 
@@ -108,8 +108,12 @@ const isOptionalFilterLookup = (parameter) => {
     identity.includes('item') ||
     identity.includes('product') ||
     identity.includes('customer') ||
+    identity.includes('vendor') ||
     identity.includes('buyer') ||
-    identity.includes('seller')
+    identity.includes('seller') ||
+    identity.includes('business partner') ||
+    identity.includes('card code') ||
+    identity.includes('cardcode')
   );
 };
 

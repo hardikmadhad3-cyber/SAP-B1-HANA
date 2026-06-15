@@ -82,6 +82,7 @@ const apInvoiceRoutes            = require('./routes/apInvoice');
 const arInvoiceRoutes            = require('./routes/arInvoice');
 const serviceArInvoiceRoutes      = require('./routes/serviceArInvoice');
 const serviceApInvoiceRoutes      = require('./routes/serviceApInvoice');
+const journalEntryRoutes           = require('./routes/journalEntryRoutes');
 const incomingPaymentsRoutes      = require('./routes/incomingPayments');
 const outgoingPaymentsRoutes      = require('./routes/outgoingPayments');
 const apCreditMemoRoutes         = require('./routes/apCreditMemo');
@@ -94,6 +95,16 @@ const inventoryTransferRequestRoutes = require('./routes/inventoryTransferReques
 const inventoryTransferRoutes    = require('./routes/inventoryTransfer');
 const purchaseAnalysisRoutes     = require('./routes/reports/purchaseAnalysis.routes');
 const purchaseRequestReportRoutes = require('./routes/reports/purchaseRequestReport.routes');
+const itemListReportRoutes       = require('./routes/reports/itemListReport.routes');
+const inventoryPostingListRoutes = require('./routes/reports/inventoryPostingList.routes');
+const inventoryInWarehouseRoutes = require('./routes/reports/inventoryInWarehouse.routes');
+const inventoryAuditRoutes       = require('./routes/reports/inventoryAudit.routes');
+const inventoryAgingRoutes       = require('./routes/reports/inventoryAging.routes');
+const glAccountsBusinessPartnersRoutes = require('./routes/reports/glAccountsBusinessPartners.routes');
+const generalLedgerRoutes        = require('./routes/reports/generalLedger.routes');
+const customerReceivablesAgingRoutes = require('./routes/reports/customerReceivablesAging.routes');
+const vendorLiabilitiesAgingRoutes = require('./routes/reports/vendorLiabilitiesAging.routes');
+const accountingTransactionReportsRoutes = require('./routes/reports/accountingTransactionReports.routes');
 const reportStudioRoutes         = require('./routes/reportStudioRoutes');
 const reportLookupsRoutes        = require('./routes/reportLookups');
 const adminPanelRoutes           = require('./routes/adminPanelRoutes');
@@ -144,7 +155,8 @@ const isAllowedOrigin = (origin) => {
 
   try {
     const { protocol, hostname, port } = new URL(origin);
-    if (protocol !== 'http:' || !['3000', '3001'].includes(port)) {
+    const allowedPorts = new Set(['3000', '3001', String(env.port)]);
+    if (protocol !== 'http:' || !allowedPorts.has(port)) {
       return false;
     }
 
@@ -282,6 +294,7 @@ app.use('/api/ap-invoice',         apInvoiceRoutes);
 app.use('/api/ar-invoice',         arInvoiceRoutes);
 app.use('/api/services/ar-invoice', serviceArInvoiceRoutes);
 app.use('/api/services/ap-invoice', serviceApInvoiceRoutes);
+app.use('/api/journal-entry',      journalEntryRoutes);
 app.use('/api/incoming-payments',  incomingPaymentsRoutes);
 app.use('/api/outgoing-payments',  outgoingPaymentsRoutes);
 app.use('/api/ap-credit-memo',     apCreditMemoRoutes);
@@ -293,6 +306,16 @@ app.use('/api/inventory-transfer-request', inventoryTransferRequestRoutes);
 app.use('/api/inventory-transfer', inventoryTransferRoutes);
 app.use('/api/reports',            purchaseAnalysisRoutes);
 app.use('/api/reports',            purchaseRequestReportRoutes);
+app.use('/api/reports',            itemListReportRoutes);
+app.use('/api/reports',            inventoryPostingListRoutes);
+app.use('/api/reports',            inventoryInWarehouseRoutes);
+app.use('/api/reports',            inventoryAuditRoutes);
+app.use('/api/reports',            inventoryAgingRoutes);
+app.use('/api/reports',            glAccountsBusinessPartnersRoutes);
+app.use('/api/reports',            generalLedgerRoutes);
+app.use('/api/reports',            customerReceivablesAgingRoutes);
+app.use('/api/reports',            vendorLiabilitiesAgingRoutes);
+app.use('/api/reports',            accountingTransactionReportsRoutes);
 app.use('/api/lookups',            reportLookupsRoutes);
 app.use('/api/admin-panel',        adminPanelRoutes);
 app.use('/api/performance',        performanceRoutes);

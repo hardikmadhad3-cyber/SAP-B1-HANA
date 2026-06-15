@@ -124,6 +124,7 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
+const DEFAULT_WAREHOUSE = '01';
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
@@ -135,7 +136,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   stdDiscount: '',
   taxCode: '',
   total: '',
-  whse: '',
+  whse: DEFAULT_WAREHOUSE,
   batchManaged: false,
   batches: [],
   inventoryUOM: '',
@@ -154,6 +155,7 @@ const INIT_HEADER = {
   contactPerson: '',
   salesContractNo: '',
   branch: '',
+  warehouse: DEFAULT_WAREHOUSE,
   docNo: '',
   status: 'Open',
   series: '',
@@ -1051,7 +1053,7 @@ function GoodsReceiptPO() {
   const addLine = () => {
     markDirty();
     setValErrors(p => ({ ...p, form: '' }));
-    setLines(p => [...p, { ...createLine(rowUdfDefinitions), whse: header.warehouse || '', branch: header.branch || '', loc: header.branch || '' }]);
+    setLines(p => [...p, { ...createLine(rowUdfDefinitions), whse: header.warehouse || DEFAULT_WAREHOUSE, branch: header.branch || '', loc: header.branch || '' }]);
   };
 
   const removeLine = (i) => {
@@ -1760,6 +1762,9 @@ function GoodsReceiptPO() {
                       {branchFilteredWarehouses.map(w => (
                         <option key={w.WhsCode} value={w.WhsCode}>{w.WhsCode} - {w.WhsName}</option>
                       ))}
+                      {header.warehouse && !branchFilteredWarehouses.some(w => String(w.WhsCode) === String(header.warehouse)) && (
+                        <option value={header.warehouse}>{header.warehouse}</option>
+                      )}
                     </select>
                   </div>
                   <div className="po-field">

@@ -29,15 +29,21 @@ const SODA_SALES_ORDER_LINE_UDFS = [
   },
   {
     tableName: 'RDR1',
-    name: 'Seller_Payment_Terms',
-    fieldName: 'U_Seller_Payment_Terms',
+    name: 'Seller_Payment_Term',
+    fieldName: 'U_Seller_Payment_Term',
     description: 'Seller - Terms of Payment',
     type: 'db_Alpha',
     size: 100,
   },
 ];
 
+const SODA_FREE_TEXT_PRICE_UDFS = [
+  { aliasId: 'Buyer_Price', fieldName: 'U_Buyer_Price' },
+  { aliasId: 'Seller_Price', fieldName: 'U_Seller_Price' },
+];
+
 let ensureUdfsPromise = null;
+let ensurePriceUdfsFreeTextPromise = null;
 
 const getExistingLineUdfs = async () => {
   const rows = await db.query(`
@@ -108,18 +114,83 @@ const ensureSODASalesOrderLineUdfs = async ({ warnOnly = false } = {}) => {
   }
 };
 
+const getPriceUdfDefinitions = async () => {
+  const result = await db.query(`
+    SELECT
+      T0.FieldID,
+      T0.AliasID,
+      T0.Dflt AS DefaultValue,
+      COUNT(T1.IndexID) AS ValidValueCount
+    FROM CUFD T0
+    LEFT JOIN UFD1 T1
+      ON T0.TableID = T1.TableID
+     AND T0.FieldID = T1.FieldID
+    WHERE T0.TableID = 'RDR1'
+      AND T0.AliasID IN (${SODA_FREE_TEXT_PRICE_UDFS.map((_, index) => `@alias${index}`).join(', ')})
+    GROUP BY T0.FieldID, T0.AliasID, T0.Dflt
+  `, SODA_FREE_TEXT_PRICE_UDFS.reduce((params, udf, index) => {
+    params[`alias${index}`] = udf.aliasId;
+    return params;
+  }, {}));
+
+  return result.recordset || [];
+};
+
+const ensureSODAPriceUdfsFreeText = async ({ warnOnly = false } = {}) => {
+  if (!ensurePriceUdfsFreeTextPromise) {
+    ensurePriceUdfsFreeTextPromise = (async () => {
+      const definitions = await getPriceUdfDefinitions();
+
+      for (const udf of definitions) {
+        const hasValidValues = Number(udf.ValidValueCount || 0) > 0;
+        const hasDefaultValue = String(udf.DefaultValue || '').trim() !== '';
+        if (!hasValidValues && !hasDefaultValue) continue;
+
+        await sapService.request({
+          method: 'PATCH',
+          url: `/UserFieldsMD(TableName='RDR1',FieldID=${Number(udf.FieldID)})`,
+          headers: {
+            'B1S-ReplaceCollectionsOnPatch': 'true',
+          },
+          data: {
+            DefaultValue: null,
+            ValidValuesMD: [],
+          },
+        });
+
+        const fieldName = SODA_FREE_TEXT_PRICE_UDFS.find(
+          (item) => item.aliasId === udf.AliasID,
+        )?.fieldName || `U_${udf.AliasID}`;
+        console.log(`[SODA Sales Order] Removed fixed valid values from ${fieldName}.`);
+      }
+    })().finally(() => {
+      ensurePriceUdfsFreeTextPromise = null;
+    });
+  }
+
+  try {
+    await ensurePriceUdfsFreeTextPromise;
+  } catch (error) {
+    if (!warnOnly) throw error;
+    console.warn('[SODA Sales Order] Unable to make price UDFs free text:', error.message || error);
+  }
+};
+
 const getReferenceData = async (...args) => {
   await ensureSODASalesOrderLineUdfs({ warnOnly: true });
+  await ensureSODAPriceUdfsFreeText({ warnOnly: true });
   return salesOrderService.getReferenceData(...args);
 };
 
 const submitSalesOrder = async (...args) => {
   await ensureSODASalesOrderLineUdfs();
+  await ensureSODAPriceUdfsFreeText();
   return salesOrderService.submitSalesOrder(...args);
 };
 
 const updateSalesOrder = async (...args) => {
   await ensureSODASalesOrderLineUdfs();
+  await ensureSODAPriceUdfsFreeText();
   return salesOrderService.updateSalesOrder(...args);
 };
 

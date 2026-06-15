@@ -15,15 +15,6 @@ const STATIC_DASHBOARD_MENU = {
   sortOrder: -1,
   children: [],
 };
-const STATIC_GENERAL_SETTINGS_MENU = {
-  menuId: 'general-settings-static',
-  menuName: 'General Settings',
-  menuPath: '/general-settings',
-  parentId: null,
-  icon: 'settings',
-  sortOrder: 99,
-  children: [],
-};
 const SIDEBAR_COLLAPSED_KEY = 'sap-b1-sidebar-collapsed';
 
 const TOP_LEVEL_MENU_PRIORITY = new Map([
@@ -301,11 +292,49 @@ const normalizeReportSidebarTree = (menus = []) =>
     };
   });
 
-const hasMenuPath = (menus = [], targetPath = '') =>
-  menus.some((menu) => {
-    const menuPath = menu.menuPath ? normalizePath(menu.menuPath) : '';
-    return menuPath === targetPath || hasMenuPath(menu.children || [], targetPath);
+const mergeReportLayoutManagerIntoReports = (menus = []) => {
+  const layoutManagerMenus = menus.filter((menu) =>
+    REPORT_STUDIO_NAMES.has(normalizeMenuPriorityName(menu?.menuName)),
+  );
+  const remainingMenus = menus.filter((menu) =>
+    !REPORT_STUDIO_NAMES.has(normalizeMenuPriorityName(menu?.menuName)),
+  );
+  const layoutChildren = layoutManagerMenus.flatMap((menu) =>
+    flattenReportSidebarItems(menu.children || [], menu.menuName),
+  );
+
+  if (!layoutChildren.length) {
+    return remainingMenus;
+  }
+
+  return remainingMenus.map((menu) => {
+    if (normalizeMenuPriorityName(menu?.menuName) !== REPORTS_MENU_NAME) {
+      return menu;
+    }
+
+    const existingKeys = new Set((menu.children || []).map((child) =>
+      child.menuPath
+        ? `path:${normalizePath(child.menuPath)}`
+        : `name:${normalizeMenuPriorityName(child.menuName)}`,
+    ));
+    const nextChildren = [...(menu.children || [])];
+
+    for (const child of layoutChildren) {
+      const key = child.menuPath
+        ? `path:${normalizePath(child.menuPath)}`
+        : `name:${normalizeMenuPriorityName(child.menuName)}`;
+      if (!existingKeys.has(key)) {
+        existingKeys.add(key);
+        nextChildren.push(child);
+      }
+    }
+
+    return {
+      ...menu,
+      children: nextChildren,
+    };
   });
+};
 
 const buildSidebarMenus = (menus = []) => {
   const { dashboardMenu, remainingMenus } = extractDashboardMenu(menus);
@@ -320,6 +349,10 @@ const buildSidebarMenus = (menus = []) => {
       const isMasterMenu = normalizeMenuPriorityName(item?.menuName) === MASTER_MENU_NAME;
       const isInsideMaster = insideMaster || isMasterMenu;
       const filteredChildren = removeHiddenSidebarItems(item.children || [], isInsideMaster);
+
+      if (menuPath === '/general-settings') {
+        return nextItems;
+      }
 
       if (insideMaster && !shouldShowMasterChild(item, menuPath) && !filteredChildren.length) {
         return nextItems;
@@ -336,14 +369,13 @@ const buildSidebarMenus = (menus = []) => {
       return nextItems;
     }, []);
 
-  const visibleMenus = sortSalesMenuChildren(normalizeReportSidebarTree(removeHiddenSidebarItems(remainingMenus)));
-  const generalSettingsMenus = hasMenuPath(visibleMenus, STATIC_GENERAL_SETTINGS_MENU.menuPath)
-    ? []
-    : [STATIC_GENERAL_SETTINGS_MENU];
-
+  const visibleMenus = sortSalesMenuChildren(
+    mergeReportLayoutManagerIntoReports(
+      normalizeReportSidebarTree(removeHiddenSidebarItems(remainingMenus)),
+    ),
+  );
   return [
     dashboardMenu,
-    ...generalSettingsMenus,
     ...sortTopLevelMenus(visibleMenus),
   ];
 };

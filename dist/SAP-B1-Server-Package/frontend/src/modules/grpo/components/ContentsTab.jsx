@@ -2,6 +2,78 @@ import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
 
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
+
+const normalizeFieldIdentity = (field = {}) =>
+  [
+    field.key,
+    field.sapField,
+    field.aliasId,
+    field.label,
+    field.description,
+    field.Descr,
+  ].join(' ').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+const isSellerBrokerageAmtPerField = (field) => {
+  const identity = normalizeFieldIdentity(field);
+  return identity.includes('sellerbrokerageamtper') ||
+    identity.includes('sellerbrokerageamountper') ||
+    identity.includes('selbrokap');
+};
+
+const isDocumentCreatedField = (field) => {
+  const identity = normalizeFieldIdentity(field);
+  return identity.includes('documentcreated');
+};
+
+const isSapPairDropdownField = (field) =>
+  isSellerBrokerageAmtPerField(field) || isDocumentCreatedField(field);
+
+const getSapPairDropdownOptions = (field) => {
+  const options = Array.isArray(field.options) ? field.options : [];
+  if (options.length) return options;
+
+  if (isSellerBrokerageAmtPerField(field)) {
+    return [
+      { value: 'Amount', label: 'Amount' },
+      { value: 'Percentage', label: 'Percentage' },
+    ];
+  }
+
+  if (isDocumentCreatedField(field)) {
+    return [
+      { value: 'N', label: 'No' },
+      { value: 'Y', label: 'Yes' },
+    ];
+  }
+
+  return options;
+};
+
+const normalizeSapPairDropdownOption = (field, option) => {
+  const normalizedOption = typeof option === 'object'
+    ? { value: option.value ?? '', label: option.label ?? option.value ?? '' }
+    : { value: option, label: option };
+  const value = String(normalizedOption.value ?? '');
+  let label = String(normalizedOption.label ?? value);
+
+  if (isDocumentCreatedField(field)) {
+    const normalizedValue = value.trim().toUpperCase();
+    if (normalizedValue === 'N') label = 'No';
+    if (normalizedValue === 'Y') label = 'Yes';
+  }
+
+  if (isSellerBrokerageAmtPerField(field)) {
+    const normalizedText = `${value} ${label}`.toLowerCase();
+    if (normalizedText.includes('amount')) label = 'Amount';
+    if (normalizedText.includes('percentage')) label = 'Percentage';
+  }
+
+  return {
+    value,
+    label: isSapPairDropdownField(field) ? `${value} - ${label}` : label,
+  };
+};
 
 export default function ContentsTab({
   lines,
@@ -23,6 +95,8 @@ export default function ContentsTab({
   onRowUdfChange,
   formSettings,
 }) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -58,6 +132,9 @@ export default function ContentsTab({
                           className="po-grid__input"
                           style={{ flex: 1, textAlign: 'left', border: valErrors.lines[index]?.itemNo ? '1px solid #c00' : undefined }}
                           name="itemNo" value={line.itemNo || ''} disabled={!isActive}
+                          data-sap-lookup="item"
+                          data-sap-row-index={index}
+                          onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, index)}
                           onChange={e => onLineChange(index, e)}
                           placeholder="Item Code"
                         />
@@ -187,11 +264,49 @@ export default function ContentsTab({
                   );
                 })}
 
-                {visibleRowUdfs.map(f => (
-                  <td key={f.key}>
-                    <input className="po-grid__input" value={line.udf?.[f.key] || ''} onChange={e => onRowUdfChange(index, f.key, e.target.value)} />
-                  </td>
-                ))}
+                {visibleRowUdfs.map(f => {
+                  const value = line.udf?.[f.key] || '';
+                  const disabled = f.readOnly || formSettings.rowUdfs?.[f.key]?.active === false;
+                  const renderAsSelect = f.type === 'select' || isSapPairDropdownField(f);
+
+                  return (
+                    <td key={f.key}>
+                      {renderAsSelect ? (
+                        <select
+                          className="po-grid__input"
+                          value={value}
+                          disabled={disabled}
+                          onChange={e => onRowUdfChange(index, f.key, e.target.value)}
+                        >
+                          <option value=""></option>
+                          {getSapPairDropdownOptions(f).map((option) => {
+                            const normalizedOption = normalizeSapPairDropdownOption(f, option);
+                            return (
+                              <option key={normalizedOption.value} value={normalizedOption.value}>
+                                {normalizedOption.label}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      ) : f.type === 'checkbox' ? (
+                        <input
+                          type="checkbox"
+                          checked={['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase())}
+                          disabled={disabled}
+                          onChange={e => onRowUdfChange(index, f.key, e.target.checked ? 'Y' : 'N')}
+                        />
+                      ) : (
+                        <input
+                          className="po-grid__input"
+                          type={f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text'}
+                          value={value}
+                          disabled={disabled}
+                          onChange={e => onRowUdfChange(index, f.key, e.target.value)}
+                        />
+                      )}
+                    </td>
+                  );
+                })}
 
                 <td>
                   {line.batchManaged && onOpenBatchModal ? (

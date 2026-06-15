@@ -522,12 +522,39 @@ const getCountries = () => safe(db.query(`
   ORDER  BY Name
 `));
 
-const getDistributionRules = () => safe(db.query(`
-  SELECT TOP 200 OcrCode AS FactorCode, OcrName AS FactorDescription
-  FROM   OOCR
-  WHERE  Active <> 'N'
-  ORDER  BY OcrCode
-`));
+const getDistributionRules = async () => {
+  const [ruleMetadata, dimensionMetadata] = await Promise.all([
+    getTableFieldMetadata('OOCR'),
+    getTableFieldMetadata('ODIM'),
+  ]);
+
+  const hasDimensionCode = Boolean(ruleMetadata?.DimCode);
+  const dimensionCodeExpression = hasDimensionCode ? 'T0.DimCode' : '1';
+  const dimensionNameColumn = ['DimDesc', 'DimName', 'Name']
+    .find((columnName) => dimensionMetadata?.[columnName]);
+  const dimensionJoin = dimensionMetadata?.DimCode
+    ? `LEFT JOIN ODIM T1 ON T1.DimCode = ${dimensionCodeExpression}`
+    : '';
+  const dimensionNameExpression = dimensionNameColumn
+    ? `COALESCE(T1.${quoteSqlIdentifier(dimensionNameColumn)}, 'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10)))`
+    : `'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10))`;
+  const activeDimensionFilter = dimensionMetadata?.Active
+    ? "AND (T1.Active IS NULL OR T1.Active <> 'N')"
+    : '';
+
+  return safe(db.query(`
+    SELECT TOP 500
+      T0.OcrCode AS FactorCode,
+      T0.OcrName AS FactorDescription,
+      ${dimensionCodeExpression} AS DimensionCode,
+      ${dimensionNameExpression} AS DimensionName
+    FROM   OOCR T0
+    ${dimensionJoin}
+    WHERE  T0.Active <> 'N'
+      ${activeDimensionFilter}
+    ORDER  BY ${dimensionCodeExpression}, T0.OcrCode
+  `));
+};
 const getTaxCodes = () => masterDataDbService.searchDocumentTaxCodes('', 'sales', 500, 0);
 
 const getTaxCodeDiagnostics = async (taxCodes = []) => {
@@ -1151,6 +1178,18 @@ const getReferenceData = async () => {
     }
   }
   const uom_groups = Object.values(uomMap);
+  const distributionDimensionMap = new Map();
+  distributionRules.forEach((rule) => {
+    const dimensionCode = String(rule.DimensionCode || '1').trim() || '1';
+    if (!distributionDimensionMap.has(dimensionCode)) {
+      distributionDimensionMap.set(dimensionCode, {
+        DimensionCode: dimensionCode,
+        DimensionName: rule.DimensionName || `Dimension ${dimensionCode}`,
+      });
+    }
+  });
+  const distributionDimensions = [...distributionDimensionMap.values()]
+    .sort((a, b) => Number(a.DimensionCode) - Number(b.DimensionCode));
 
   const mappedCustomers = customers.map(c => ({
     CardCode:        c.CardCode,
@@ -1197,7 +1236,10 @@ const getReferenceData = async () => {
     distribution_rules: distributionRules.map(rule => ({
       FactorCode: rule.FactorCode || '',
       FactorDescription: rule.FactorDescription || '',
+      DimensionCode: rule.DimensionCode != null ? String(rule.DimensionCode) : '1',
+      DimensionName: rule.DimensionName || '',
     })),
+    distribution_dimensions: distributionDimensions,
     tax_codes:      taxCodes.map(t => ({ Code: t.Code, Name: t.Name, Rate: t.Rate, GSTType: t.GSTType })),
     sac_codes:      sacCodes.map(s => ({
       absEntry: s.absEntry ?? s.AbsEntry ?? null,
@@ -1584,6 +1626,7 @@ const getSalesOrder = async (docEntry) => {
       ? `T1.${quoteSqlIdentifier(columnName)} AS ${quoteSqlIdentifier(alias)}`
       : `${fallback} AS ${quoteSqlIdentifier(alias)}`
   );
+  const hasSellerPaymentTermField = Boolean(lineFieldMetadata?.U_Seller_Payment_Term);
   const hasSellerPaymentTermsField = Boolean(lineFieldMetadata?.U_Seller_Payment_Terms);
   const hasRateField = Boolean(lineFieldMetadata?.U_Rate);
   const sacSql = getSacLookupSqlParts('T1', 'SAC', sacFieldMetadata);
@@ -1650,6 +1693,10 @@ const getSalesOrder = async (docEntry) => {
     T1.unitMsr AS UomCode,
     T1.unitMsr AS UomName,
     T1.OcrCode AS DistributionRule,
+    ${lineField('OcrCode2', 'DistributionRule2')},
+    ${lineField('OcrCode3', 'DistributionRule3')},
+    ${lineField('OcrCode4', 'DistributionRule4')},
+    ${lineField('OcrCode5', 'DistributionRule5')},
     ${lineField('SACEntry', 'SACEntry', 'NULL')},
     ${sacSql.displayExpression} AS SACCode,
     ${sacSql.serviceNameColumn} AS SACServiceName,
@@ -1670,6 +1717,7 @@ const getSalesOrder = async (docEntry) => {
     ${lineField('U_Buyer_Delivery', 'BuyerDelivery')},
     ${lineField('U_Seller_Delivery', 'SellerDelivery')},
     ${lineField('U_Buyer_Payment_Terms', 'BuyerPaymentTerms')},
+    ${lineField('U_Seller_Payment_Term', 'SellerPaymentTerm')},
     ${lineField('U_Seller_Payment_Terms', 'SellerPaymentTerms')},
     ${lineField('U_Buyer_Quality', 'BuyerQuality')},
     ${lineField('U_Seller_Quality', 'SellerQuality')},
@@ -1872,6 +1920,7 @@ ORDER BY T1.LineNum
         U_Buyer_Delivery,
         U_Seller_Delivery,
         U_Buyer_Payment_Terms,
+        ${hasSellerPaymentTermField ? 'U_Seller_Payment_Term,' : ''}
         ${hasSellerPaymentTermsField ? 'U_Seller_Payment_Terms,' : ''}
         U_Buyer_Quality,
         U_Seller_Quality,
@@ -1912,6 +1961,7 @@ ORDER BY T1.LineNum
           U_Buyer_Delivery: row.U_Buyer_Delivery || '',
           U_Seller_Delivery: row.U_Seller_Delivery || '',
           U_Buyer_Payment_Terms: row.U_Buyer_Payment_Terms || '',
+          U_Seller_Payment_Term: row.U_Seller_Payment_Term || '',
           U_Seller_Payment_Terms: row.U_Seller_Payment_Terms || '',
           U_Buyer_Quality: row.U_Buyer_Quality || '',
           U_Seller_Quality: row.U_Seller_Quality || '',
@@ -2045,7 +2095,7 @@ ORDER BY T1.LineNum
           commission: lineUdf.U_COMPRC != null ? String(lineUdf.U_COMPRC) : (line.Commission != null ? String(line.Commission) : ''),
           sellerBrokeragePerQty: lineUdf.U_S_BrokPerQty != null ? String(lineUdf.U_S_BrokPerQty) : (line.SellerBrokeragePerQty != null ? String(line.SellerBrokeragePerQty) : ''),
           buyerPaymentTerms: lineUdf.U_Buyer_Payment_Terms || line.BuyerPaymentTerms || '',
-          sellerPaymentTerms: lineUdf.U_Seller_Payment_Terms || line.SellerPaymentTerms || '',
+          sellerPaymentTerms: lineUdf.U_Seller_Payment_Term || line.SellerPaymentTerm || '',
           qtySpecialInstruction: lineUdf.U_Seller_SPINS || line.QtySpecialInstruction || line.SellerSpecialInstruction || '',
           deliverySpecialInstruction: lineUdf.U_Buyer_SPINS || line.DeliverySpecialInstruction || line.BuyerSpecialInstruction || '',
           buyerSpecialInstruction: lineUdf.U_Buyer_SPINS || line.BuyerSpecialInstruction || '',
@@ -2068,6 +2118,10 @@ ORDER BY T1.LineNum
           taxAmount: String(line.LineTaxAmount || 0),
           whse: line.WhsCode || '',
           distRule: line.DistributionRule || '',
+          distRule2: line.DistributionRule2 || '',
+          distRule3: line.DistributionRule3 || '',
+          distRule4: line.DistributionRule4 || '',
+          distRule5: line.DistributionRule5 || '',
           freeText: line.FreeText || '',
           countryOfOrigin: line.CountryOfOrigin || '',
           openQty: line.OpenQuantity != null ? String(line.OpenQuantity) : '',
@@ -2092,6 +2146,7 @@ ORDER BY T1.LineNum
             U_Buyer_Delivery: lineUdf.U_Buyer_Delivery || '',
             U_Seller_Delivery: lineUdf.U_Seller_Delivery || '',
             U_Buyer_Payment_Terms: lineUdf.U_Buyer_Payment_Terms || '',
+            U_Seller_Payment_Term: lineUdf.U_Seller_Payment_Term || '',
             U_Seller_Payment_Terms: lineUdf.U_Seller_Payment_Terms || '',
             U_Buyer_Quality: lineUdf.U_Buyer_Quality || '',
             U_Seller_Quality: lineUdf.U_Seller_Quality || '',
@@ -2198,6 +2253,10 @@ const getSalesOrderForCopy = async (docEntry) => {
       T0.WhsCode AS WarehouseCode,
       T0.TaxCode, T0.unitMsr AS UomCode, T0.unitMsr AS UomName,
       T0.OcrCode AS DistributionRule,
+      ${lineField('OcrCode2', 'DistributionRule2')},
+      ${lineField('OcrCode3', 'DistributionRule3')},
+      ${lineField('OcrCode4', 'DistributionRule4')},
+      ${lineField('OcrCode5', 'DistributionRule5')},
       ${lineField('SACEntry', 'SACEntry', 'NULL')},
       ${sacSql.displayExpression} AS SACCode,
       ${sacSql.serviceNameColumn} AS SACServiceName,

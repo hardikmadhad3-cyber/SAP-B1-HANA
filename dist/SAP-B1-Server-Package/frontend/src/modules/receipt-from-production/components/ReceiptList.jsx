@@ -44,7 +44,7 @@ export default function ReceiptList({ onSelect, onNew }) {
     <div className="im-page">
       {/* Page Title */}
       <div className="im-toolbar">
-        <span className="im-toolbar__title">Receipt from Production — List</span>
+        <span className="im-toolbar__title">Receipt from Production - Find</span>
         <button className="im-btn im-btn--primary" onClick={onNew}>
           New Receipt
         </button>

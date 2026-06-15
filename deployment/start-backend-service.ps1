@@ -1,5 +1,6 @@
 param(
-  [switch]$InstallAutoStart
+  [switch]$InstallAutoStart,
+  [switch]$Restart
 )
 
 $ErrorActionPreference = 'Stop'
@@ -110,6 +111,22 @@ if ($InstallAutoStart) {
 }
 
 $existingProcessIds = Get-PortProcessIds -Port $Port
+if ($Restart -and $existingProcessIds.Count -gt 0) {
+  Write-Host "[restart] Stopping existing backend process(es) on port $Port`: $($existingProcessIds -join ', ')"
+  foreach ($processId in $existingProcessIds) {
+    Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+  }
+
+  for ($attempt = 1; $attempt -le 20; $attempt++) {
+    Start-Sleep -Milliseconds 250
+    if ((Get-PortProcessIds -Port $Port).Count -eq 0) {
+      break
+    }
+  }
+
+  $existingProcessIds = Get-PortProcessIds -Port $Port
+}
+
 if ($existingProcessIds.Count -gt 0) {
   Write-Host "[start] Port $Port is already listening. Backend may already be running. PID(s): $($existingProcessIds -join ', ')"
 } else {

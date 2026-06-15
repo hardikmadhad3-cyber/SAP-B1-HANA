@@ -100,11 +100,17 @@ const inventoryPostingListRoutes = require('./routes/reports/inventoryPostingLis
 const inventoryInWarehouseRoutes = require('./routes/reports/inventoryInWarehouse.routes');
 const inventoryAuditRoutes       = require('./routes/reports/inventoryAudit.routes');
 const inventoryAgingRoutes       = require('./routes/reports/inventoryAging.routes');
+const glAccountsBusinessPartnersRoutes = require('./routes/reports/glAccountsBusinessPartners.routes');
+const generalLedgerRoutes        = require('./routes/reports/generalLedger.routes');
+const customerReceivablesAgingRoutes = require('./routes/reports/customerReceivablesAging.routes');
+const vendorLiabilitiesAgingRoutes = require('./routes/reports/vendorLiabilitiesAging.routes');
+const accountingTransactionReportsRoutes = require('./routes/reports/accountingTransactionReports.routes');
 const reportStudioRoutes         = require('./routes/reportStudioRoutes');
 const reportLookupsRoutes        = require('./routes/reportLookups');
 const adminPanelRoutes           = require('./routes/adminPanelRoutes');
 const performanceRoutes          = require('./routes/performanceRoutes');
 const formSettingsRoutes         = require('./routes/formSettings');
+const generalSettingsRoutes      = require('./routes/generalSettingsRoutes');
 const predefinedTextRoutes       = require('./routes/predefinedTextRoutes');
 
 const app = express();
@@ -306,10 +312,16 @@ app.use('/api/reports',            inventoryPostingListRoutes);
 app.use('/api/reports',            inventoryInWarehouseRoutes);
 app.use('/api/reports',            inventoryAuditRoutes);
 app.use('/api/reports',            inventoryAgingRoutes);
+app.use('/api/reports',            glAccountsBusinessPartnersRoutes);
+app.use('/api/reports',            generalLedgerRoutes);
+app.use('/api/reports',            customerReceivablesAgingRoutes);
+app.use('/api/reports',            vendorLiabilitiesAgingRoutes);
+app.use('/api/reports',            accountingTransactionReportsRoutes);
 app.use('/api/lookups',            reportLookupsRoutes);
 app.use('/api/admin-panel',        adminPanelRoutes);
 app.use('/api/performance',        performanceRoutes);
 app.use('/api/form-settings',      formSettingsRoutes);
+app.use('/api/general-settings',   generalSettingsRoutes);
 app.use('/api/predefined-texts',   predefinedTextRoutes);
 app.use('/api',                    sapRoutes);
 

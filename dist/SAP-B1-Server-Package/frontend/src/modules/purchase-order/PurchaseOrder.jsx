@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import './styles/purchaseOrder.css';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../auth/AuthContext';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import ContentsTab from './components/ContentsTab';
@@ -120,6 +121,7 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
+const DEFAULT_WAREHOUSE = '01';
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
@@ -131,7 +133,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   stdDiscount: '',
   taxCode: '',
   total: '',
-  whse: '',
+  whse: DEFAULT_WAREHOUSE,
   loc: '',
   branch: '',
   baseEntry: null,
@@ -147,7 +149,7 @@ const INIT_HEADER = {
   contactPerson: '',
   salesContractNo: '',
   branch: '',
-  warehouse: '',
+  warehouse: DEFAULT_WAREHOUSE,
   docNo: '',
   status: 'Open',
   series: '',
@@ -247,12 +249,15 @@ const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT
 function PurchaseOrder() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { company } = useAuth();
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
+  const activeCompanyId = company?.companyId || PURCHASE_ORDER_COMPANY_ID;
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(BASE_MATRIX_COLUMNS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
@@ -260,7 +265,7 @@ function PurchaseOrder() {
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
-    [headerUdfDefinitions, rowUdfDefinitions],
+    [headerUdfDefinitions, rowUdfDefinitions, matrixColumnDefinitions],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
@@ -286,6 +291,7 @@ function PurchaseOrder() {
     series: [],
     states: [],
     udf_metadata: { header: [], rows: [] },
+    line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
   });
   const [pageState, setPageState] = useState({
     loading: false,
@@ -407,7 +413,7 @@ function PurchaseOrder() {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
         const [refDataRes, seriesRes, hsnRes] = await Promise.all([
-          fetchPurchaseOrderReferenceData(PURCHASE_ORDER_COMPANY_ID),
+          fetchPurchaseOrderReferenceData(activeCompanyId),
           fetchDocumentSeries(),
           fetchHSNCodes(),
         ]);
@@ -415,25 +421,42 @@ function PurchaseOrder() {
         if (!ignore) {
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
           const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          const nextMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+            ? refDataRes.data.line_field_metadata.matrix_columns
+            : BASE_MATRIX_COLUMNS;
+          const hasSapMatrixPreferences =
+            Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0;
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
+          setMatrixColumnDefinitions(nextMatrixColumns);
           setHeaderUdfs((prev) => createUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
             ...line,
             udf: createUdfState(nextRowUdfs, line.udf || {}),
           })));
-          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, formSettingsStorageKey);
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
           setFormSettings((prev) => ({
             ...nextDefaults,
             ...prev,
+            matrixColumns: hasSapMatrixPreferences
+              ? nextDefaults.matrixColumns
+              : {
+                  ...nextDefaults.matrixColumns,
+                  ...(prev.matrixColumns || {}),
+                },
             headerUdfs: {
               ...nextDefaults.headerUdfs,
               ...(prev.headerUdfs || {}),
             },
-            rowUdfs: {
-              ...nextDefaults.rowUdfs,
-              ...(prev.rowUdfs || {}),
-            },
+            rowUdfs: nextRowUdfs.reduce((settings, field) => ({
+              ...settings,
+              [field.key]: hasSapMatrixPreferences && field.sapColumnId
+                ? nextDefaults.rowUdfs[field.key]
+                : {
+                    ...(nextDefaults.rowUdfs[field.key] || {}),
+                    ...((prev.rowUdfs || {})[field.key] || {}),
+                  },
+            }), nextDefaults.rowUdfs),
           }));
 
           setRefData({
@@ -456,6 +479,7 @@ function PurchaseOrder() {
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
+            line_field_metadata: refDataRes.data.line_field_metadata || { matrix_columns: nextMatrixColumns, sap_form: {} },
             warnings: refDataRes.data.warnings || [],
             series: seriesRes.data.series || [],
           });
@@ -476,7 +500,7 @@ function PurchaseOrder() {
     };
     load();
     return () => { ignore = true; };
-  }, []);
+  }, [activeCompanyId, formSettingsStorageKey]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -1119,7 +1143,7 @@ function PurchaseOrder() {
       ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
-      whse: header.warehouse || ''
+      whse: header.warehouse || DEFAULT_WAREHOUSE
     }]);
   };
 
@@ -1137,7 +1161,16 @@ function PurchaseOrder() {
     markDirty();
     setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
   };
-  const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...p[g], [k]: { ...p[g][k], [prop]: val } } }));
+  const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({
+    ...p,
+    [g]: {
+      ...(p[g] || {}),
+      [k]: {
+        ...((p[g] || {})[k] || {}),
+        [prop]: val,
+      },
+    },
+  }));
   const toggleHeaderUdfs = () => {
     setFormSettingsOpen(false);
     setSidebarOpen(p => !p);
@@ -1589,7 +1622,7 @@ function PurchaseOrder() {
         ...line,
         udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
       }));
-      const payload = { company_id: PURCHASE_ORDER_COMPANY_ID, header: prep, lines: payloadLines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
+      const payload = { company_id: activeCompanyId, header: prep, lines: payloadLines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
       const r = currentDocEntry ? await updatePurchaseOrder(currentDocEntry, payload) : await submitPurchaseOrder(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       setSnapshotPending(false);
@@ -1891,6 +1924,9 @@ function PurchaseOrder() {
                             {w.WhsCode} - {w.WhsName}
                           </option>
                         ))}
+                        {header.warehouse && !branchFilteredWarehouses.some(w => String(w.WhsCode) === String(header.warehouse)) && (
+                          <option value={header.warehouse}>{header.warehouse}</option>
+                        )}
                       </select>
                       {valErrors.header.warehouse && (
                         <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.header.warehouse}</div>
@@ -2010,6 +2046,8 @@ function PurchaseOrder() {
                 effectiveWarehouses={branchFilteredWarehouses}
                 fmtTaxLabel={fmtTaxLabel}
                 getBranchName={getBranchName}
+                matrixFields={matrixColumnDefinitions}
+                formSettings={formSettings}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
                 valErrors={valErrors}
@@ -2230,7 +2268,7 @@ function PurchaseOrder() {
             className="po-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
-            matrixFields={BASE_MATRIX_COLUMNS}
+            matrixFields={matrixColumnDefinitions}
             headerUdfFields={headerUdfDefinitions}
             rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}

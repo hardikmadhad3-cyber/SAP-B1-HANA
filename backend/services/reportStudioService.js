@@ -407,6 +407,45 @@ const loadMenusAndReportsForCompany = async (companyId) => {
   return { menus, reports };
 };
 
+const getAuthorizedReportMenuIds = async (roleId, companyId) => {
+  if (!toInt(roleId) || !toInt(companyId)) {
+    return new Set();
+  }
+
+  const rows = await authDbService.queryRows(`
+    SELECT DISTINCT RM.ReportMenuId
+    FROM dbo.ReportMenus RM
+    INNER JOIN dbo.Menus M
+      ON LOWER(LTRIM(RTRIM(COALESCE(M.MenuPath, '')))) =
+         LOWER(CONCAT('/reportlayoutmanager/menu/', RM.ReportMenuId))
+    INNER JOIN dbo.RoleRights RR
+      ON RR.MenuId = M.MenuId
+      AND RR.RoleId = @roleId
+      AND RR.CanView = 1
+    WHERE RM.CompanyId = @companyId
+  `, { roleId: toInt(roleId), companyId: toInt(companyId) });
+
+  return new Set(rows.map((row) => Number(row.ReportMenuId)).filter(Number.isInteger));
+};
+
+const filterAuthorizedReportCatalog = (menus, reports, authorizedMenuIds) => {
+  const menuById = new Map(menus.map((menu) => [Number(menu.MenuId), menu]));
+  const visibleMenuIds = new Set(authorizedMenuIds);
+
+  for (const menuId of authorizedMenuIds) {
+    let current = menuById.get(Number(menuId));
+    while (current?.ParentId && menuById.has(Number(current.ParentId))) {
+      visibleMenuIds.add(Number(current.ParentId));
+      current = menuById.get(Number(current.ParentId));
+    }
+  }
+
+  return {
+    menus: menus.filter((menu) => visibleMenuIds.has(Number(menu.MenuId))),
+    reports: reports.filter((report) => authorizedMenuIds.has(Number(report.ReportMenuId))),
+  };
+};
+
 const loadSharedMenusAndReports = async () => {
   const [menus, reports] = await Promise.all([
     authDbService.queryRows(`
@@ -541,11 +580,14 @@ const ensureSchema = async () => {
   return schemaReadyPromise;
 };
 
-const getVisibleMenusAndReports = async ({ userId, companyId }) => {
+const getVisibleMenusAndReports = async ({ userId, companyId, roleId }) => {
   await ensureSchema();
 
-  const { menus: allMenus, reports: visibleReports } = await loadMenusAndReportsForCompany(companyId);
-  const completeVisibleMenus = appendAncestorMenus(allMenus, allMenus);
+  const { menus: allMenus, reports: allReports } = await loadMenusAndReportsForCompany(companyId);
+  const authorizedMenuIds = await getAuthorizedReportMenuIds(roleId, companyId);
+  const { menus: visibleMenus, reports: visibleReports } =
+    filterAuthorizedReportCatalog(allMenus, allReports, authorizedMenuIds);
+  const completeVisibleMenus = appendAncestorMenus(visibleMenus, allMenus);
   const menuTree = buildMenuTree(completeVisibleMenus, visibleReports);
 
   return {
@@ -578,11 +620,12 @@ const getVisibleMenusAndReports = async ({ userId, companyId }) => {
 const listReportMenus = async (auth) => {
   const userId = toInt(auth?.userId);
   const companyId = toInt(auth?.companyId);
-  if (!userId || !companyId) {
+  const roleId = toInt(auth?.roleId);
+  if (!userId || !companyId || !roleId) {
     throw createHttpError(401, 'A valid company session is required.');
   }
 
-  return getVisibleMenusAndReports({ userId, companyId });
+  return getVisibleMenusAndReports({ userId, companyId, roleId });
 };
 
 const listAuthorizedReportCodes = async (auth, query = '') => {
@@ -870,7 +913,8 @@ const addReportParameter = async (payload, auth) => {
 const getReportById = async (reportId, auth) => {
   const userId = toInt(auth?.userId);
   const companyId = toInt(auth?.companyId);
-  if (!userId || !companyId) {
+  const roleId = toInt(auth?.roleId);
+  if (!userId || !companyId || !roleId) {
     throw createHttpError(401, 'A valid company session is required.');
   }
 
@@ -885,6 +929,11 @@ const getReportById = async (reportId, auth) => {
 
   if (!reportRow) {
     throw createHttpError(404, 'Report not found.');
+  }
+
+  const authorizedMenuIds = await getAuthorizedReportMenuIds(roleId, companyId);
+  if (!authorizedMenuIds.has(Number(reportRow.ReportMenuId))) {
+    throw createHttpError(403, 'You do not have permission to run this report.');
   }
 
   let parameterRows = await loadStoredReportParameters(reportId);
@@ -941,8 +990,11 @@ const normalizeParameterInput = (parameter, rawValue) => {
     && (
       identity.includes('item') ||
       identity.includes('product') ||
+      identity.includes('customer') ||
+      identity.includes('vendor') ||
       identity.includes('buyer') ||
       identity.includes('seller') ||
+      identity.includes('business partner') ||
       identity.includes('card code') ||
       identity.includes('cardcode')
     )
@@ -959,8 +1011,12 @@ const isOptionalLookupFilterParameter = (parameter) => {
     identity.includes('item') ||
     identity.includes('product') ||
     identity.includes('customer') ||
+    identity.includes('vendor') ||
     identity.includes('buyer') ||
     identity.includes('seller') ||
+    identity.includes('business partner') ||
+    identity.includes('card code') ||
+    identity.includes('cardcode') ||
     identity.includes('enter type') ||
     identity.includes('type')
   );

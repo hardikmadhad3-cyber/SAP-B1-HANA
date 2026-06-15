@@ -110,7 +110,7 @@ Ensure-FirewallRule -Port $Port
 
 if (-not $SkipStart) {
   Write-Step 'Starting backend and registering auto-start'
-  & $StartScript -InstallAutoStart
+  & $StartScript -InstallAutoStart -Restart
 }
 
 Write-Host ''

@@ -20,7 +20,7 @@ const ENTITY_CONFIGS = [
     path: '/admin/companies',
     group: 'Core Setup',
     lookupLabelColumns: ['CompanyName', 'DbName'],
-    listColumns: ['CompanyId', 'CompanyName', 'DbName', 'DbServer', 'SapBaseUrl', 'SalesOrderDefaultToVendorCode', 'SAPVersion', 'IsActive', 'CreatedAt'],
+    listColumns: ['CompanyId', 'CompanyName', 'DbName', 'DbServer', 'SapBaseUrl', 'ReportServiceBaseUrl', 'SalesOrderDefaultToVendorCode', 'SAPVersion', 'IsActive', 'CreatedAt'],
     revealSensitiveColumns: ['SapPassword', 'ReportServicePassword', 'DbPassword'],
     formSections: [
       {

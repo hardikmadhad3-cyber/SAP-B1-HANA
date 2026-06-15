@@ -11,7 +11,7 @@ const {
   lookupManufacturers, createManufacturer,
   lookupHSNCodes,
   lookupPriceLists, lookupVendors, lookupWarehouses, lookupGLAccounts,
-  lookupUoMGroups, lookupItemProperties, lookupItemCodePrefixes,
+  lookupUoMGroups, lookupCustomsGroups, lookupItemProperties, lookupItemCodePrefixes,
   getAttachments, uploadAttachment, deleteAttachment, serveAttachment,
 } = require("../controllers/itemController");
 
@@ -26,6 +26,7 @@ router.get("/lookup/vendors",           lookupVendors);
 router.get("/lookup/warehouses",        lookupWarehouses);
 router.get("/lookup/gl-accounts",       lookupGLAccounts);
 router.get("/lookup/uom-groups",        lookupUoMGroups);
+router.get("/lookup/customs-groups",    lookupCustomsGroups);
 router.get("/lookup/item-properties",   lookupItemProperties);
 router.get("/lookup/item-code-prefixes", lookupItemCodePrefixes);
 

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TaxCodeLookup from '../../components/TaxCodeLookup';
 import CopyFromModal from '../../components/document/CopyFromModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
@@ -9,6 +10,7 @@ import LineValueLookupModal from '../../components/sales-document/LineValueLooku
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import { createActiveCompanyScopedRouteState } from '../../utils/companyStorageScope';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { BASE_TYPE, normaliseDocumentHeader, unwrapCopyFromDocument } from '../../api/copyFromApi';
@@ -21,6 +23,7 @@ import ElectronicDocumentsTab from '../ar-invoice/components/ElectronicDocuments
 import AttachmentsTab from '../ar-invoice/components/AttachmentsTab';
 import AddressModal from '../ar-invoice/components/AddressModal';
 import TaxInfoModal from '../ar-invoice/components/TaxInfoModal';
+import JournalEntryPreviewModal from './JournalEntryPreviewModal';
 import {
   fetchOpenServiceDeliveriesForARInvoice,
   fetchOpenServiceSalesOrdersForARInvoice,
@@ -33,6 +36,7 @@ import {
   fetchServiceDeliveryForARInvoiceCopy,
   fetchServiceSalesOrderForARInvoiceCopy,
   fetchServiceSalesQuotationForARInvoiceCopy,
+  generateServiceARInvoiceJournalEntry,
   submitServiceARInvoice,
   updateServiceARInvoice,
 } from '../../api/serviceArInvoiceApi';
@@ -55,7 +59,7 @@ const INIT_HEADER = {
   contactPerson: '',
   salesContractNo: '',
   currency: 'INR',
-  transactionType: 'GST Tax Invoice',
+  transactionType: '',
   placeOfSupply: '',
   indicator: '',
   series: '',
@@ -88,26 +92,11 @@ const INIT_HEADER = {
   journalRemark: '',
   paymentMethod: '',
   otherInstruction: '',
+  itemServiceType: 'Service',
+  summaryType: 'No Summary',
 };
 
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
-const DEFAULT_TRANSACTION_TYPES = [
-  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
-  { value: 'Bill of Supply', label: 'Bill of Supply' },
-];
-
-const toArray = (value, fallbackKeys = []) => {
-  if (Array.isArray(value)) return value;
-  if (!value || typeof value !== 'object') return [];
-  for (const key of fallbackKeys) {
-    if (Array.isArray(value[key])) return value[key];
-  }
-  if (Array.isArray(value.value)) return value.value;
-  if (Array.isArray(value.data)) return value.data;
-  if (Array.isArray(value.rows)) return value.rows;
-  if (Array.isArray(value.items)) return value.items;
-  return [];
-};
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
   id: i + 1,
@@ -256,35 +245,49 @@ const isFixedServiceMatrixField = (field = {}) =>
 const applyServiceRowUdfDefaults = (definitions = []) =>
   definitions.map((field) => ({ ...field, visible: false }));
 
-const TRANSACTION_TYPE_FIELD_NAMES = new Set([
-  'transactiontype',
-  'transtype',
-  'documenttype',
-  'doctype',
-]);
+const DEFAULT_TRANSACTION_TYPES = [
+  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
+  { value: 'Bill of Supply', label: 'Bill of Supply' },
+  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
+];
 
-const getOptionValue = (option) => String(
-  typeof option === 'string'
-    ? option
-    : option?.value ?? option?.Value ?? option?.Code ?? option?.code ?? option?.Name ?? option?.name ?? option?.label ?? option?.Description ?? ''
-);
+const normalizeSeriesText = (value) =>
+  String(value || '')
+    .replace(/^U_/i, '')
+    .replace(/[^a-z0-9]+/gi, '')
+    .toLowerCase();
 
-const getOptionLabel = (option) => String(
-  typeof option === 'string'
-    ? option
-    : option?.label ?? option?.Label ?? option?.Description ?? option?.description ?? option?.Name ?? option?.name ?? option?.Value ?? option?.value ?? option?.Code ?? option?.code ?? ''
-);
-
-const normalizeSelectOptions = (options = []) => {
-  const seen = new Set();
-  return toArray(options, ['options', 'validValues', 'ValidValues', 'values']).reduce((acc, option) => {
-    const value = getOptionValue(option).trim();
-    if (!value || seen.has(value)) return acc;
-    seen.add(value);
-    acc.push({ value, label: getOptionLabel(option).trim() || value });
-    return acc;
-  }, []);
+const getTransactionTypeOptions = () => {
+  return DEFAULT_TRANSACTION_TYPES;
 };
+
+const filterSeriesByTransactionType = (series = [], transactionType = '') => {
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (!normalizedType) return series;
+
+  const matches = series.filter((item) => {
+    const candidates = [
+      item.TransactionType,
+      item.transactionType,
+      item.DocType,
+      item.DocumentType,
+      item.Indicator,
+      item.SeriesName,
+    ];
+
+    return candidates.some((candidate) => {
+      const normalizedCandidate = normalizeSeriesText(candidate);
+      return normalizedCandidate && (
+        normalizedCandidate.includes(normalizedType) ||
+        normalizedType.includes(normalizedCandidate)
+      );
+    });
+  });
+
+  return matches.length ? matches : series;
+};
+
+const pickFirstSeries = (series = [], transactionType = '') => filterSeriesByTransactionType(series, transactionType)[0];
 
 const LINE_LOOKUP_FIELDS = new Set([
   'buyerTermsOfPayment',
@@ -457,6 +460,11 @@ function ServiceARInvoicePage() {
     gstType: '',
     gstin: '',
   });
+  const [journalPreview, setJournalPreview] = useState({
+    open: false,
+    loading: false,
+    data: null,
+  });
   const [lineLookupModal, setLineLookupModal] = useState({
     open: false,
     lineIndex: -1,
@@ -495,14 +503,14 @@ function ServiceARInvoicePage() {
   const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
   const payTermOpts = paymentTerms.map((term) => ({ value: String(term.GroupNum ?? term.code ?? ''), label: term.PymntGroup || term.name || String(term.GroupNum ?? '') }));
   const shipTypeOpts = shippingTypes.map((type) => ({ value: String(type.TrnspCode ?? type.code ?? ''), label: type.TrnspName || type.name || String(type.TrnspCode ?? '') }));
-  const transactionTypeOptions = useMemo(() => {
-    const transactionTypeUdf = headerUdfDefinitions.find((field) => fieldNameMatches(field, TRANSACTION_TYPE_FIELD_NAMES));
-    const udfOptions = normalizeSelectOptions(
-      transactionTypeUdf?.options || transactionTypeUdf?.validValues || transactionTypeUdf?.ValidValues || []
-    );
-    const refOptions = normalizeSelectOptions(refData.transaction_types || refData.transactionTypes);
-    return udfOptions.length ? udfOptions : (refOptions.length ? refOptions : DEFAULT_TRANSACTION_TYPES);
-  }, [headerUdfDefinitions, refData.transaction_types, refData.transactionTypes]);
+  const transactionTypeOptions = useMemo(
+    () => getTransactionTypeOptions(headerUdfDefinitions, refData),
+    [headerUdfDefinitions, refData.transaction_types, refData.transactionTypes],
+  );
+  const visibleSeries = useMemo(
+    () => filterSeriesByTransactionType(refData.series || [], header.transactionType),
+    [refData.series, header.transactionType],
+  );
 
   const accountLookupOptions = useMemo(() => accounts.map((account) => ({
     value: account.code || '',
@@ -709,11 +717,25 @@ function ServiceARInvoicePage() {
         ]);
         if (ignore) return;
 
-        const nextRefData = {
+        let nextRefData = {
           ...refRes.data,
           series: seriesRes.data?.series || refRes.data?.series || [],
         };
         const nextHeaderUdfs = nextRefData.udf_metadata?.header || [];
+        const liveTransactionTypes = getTransactionTypeOptions(nextHeaderUdfs, nextRefData);
+        const defaultTransactionType = liveTransactionTypes[0]?.value || '';
+        if (defaultTransactionType) {
+          try {
+            const typedSeriesRes = await fetchServiceARInvoiceSeries(header.postingDate, defaultTransactionType);
+            if (ignore) return;
+            nextRefData = {
+              ...nextRefData,
+              series: typedSeriesRes.data?.series || nextRefData.series || [],
+            };
+          } catch (_seriesError) {
+            // Keep the all-series response if the typed series lookup is unavailable.
+          }
+        }
         const nextRowUdfs = applyServiceRowUdfDefaults(nextRefData.udf_metadata?.rows || []);
         const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, CONTENT_COLUMNS, formSettingsStorageKey);
         setHeaderUdfDefinitions(nextHeaderUdfs);
@@ -740,12 +762,15 @@ function ServiceARInvoicePage() {
           },
         }));
         setRefData(nextRefData);
-        const firstSeries = nextRefData.series?.[0];
-        if (firstSeries && !requestedDocEntry) {
+        const defaultIndicator = liveTransactionTypes[0]?.indicator || '';
+        const firstSeries = pickFirstSeries(nextRefData.series || [], defaultTransactionType);
+        if (!requestedDocEntry) {
           setHeader((prev) => ({
             ...prev,
-            series: String(firstSeries.Series || ''),
-            nextNumber: String(firstSeries.NextNumber || ''),
+            transactionType: prev.transactionType || defaultTransactionType,
+            indicator: prev.indicator || defaultIndicator,
+            series: firstSeries ? String(firstSeries.Series || '') : '',
+            nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
           }));
         }
         setPageState((prev) => ({ ...prev, loading: false }));
@@ -937,11 +962,48 @@ function ServiceARInvoicePage() {
       return;
     }
 
+    if (name === 'transactionType') {
+      const selectedOption = transactionTypeOptions.find((option) => String(option.value) === String(value));
+      setHeader((prev) => ({
+        ...prev,
+        transactionType: value,
+        indicator: selectedOption?.indicator || prev.indicator,
+        series: '',
+        nextNumber: '',
+      }));
+      setPageState((prev) => ({ ...prev, seriesLoading: true }));
+      try {
+        const res = await fetchServiceARInvoiceSeries(header.postingDate, value);
+        const nextSeries = res.data?.series || [];
+        const firstSeries = pickFirstSeries(nextSeries, value);
+        setRefData((prev) => ({ ...prev, series: nextSeries }));
+        setHeader((prev) => ({
+          ...prev,
+          transactionType: value,
+          indicator: selectedOption?.indicator || prev.indicator,
+          series: firstSeries ? String(firstSeries.Series || '') : '',
+          nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
+        }));
+      } catch (_error) {
+        const firstSeries = pickFirstSeries(refData.series || [], value);
+        setHeader((prev) => ({
+          ...prev,
+          transactionType: value,
+          indicator: selectedOption?.indicator || prev.indicator,
+          series: firstSeries ? String(firstSeries.Series || '') : '',
+          nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
+        }));
+      } finally {
+        setPageState((prev) => ({ ...prev, seriesLoading: false }));
+      }
+      return;
+    }
+
     if (name === 'postingDate') {
       setHeader((prev) => ({ ...prev, postingDate: value }));
       setPageState((prev) => ({ ...prev, seriesLoading: true }));
       try {
-        const res = await fetchServiceARInvoiceSeries(value);
+        const res = await fetchServiceARInvoiceSeries(value, header.transactionType);
         const nextSeries = res.data?.series || [];
         setRefData((prev) => ({ ...prev, series: nextSeries }));
         setHeader((prev) => {
@@ -950,8 +1012,8 @@ function ServiceARInvoicePage() {
           }
 
           const selectedSeries =
-            nextSeries.find((series) => String(series.Series || '') === String(prev.series || '')) ||
-            nextSeries[0];
+            filterSeriesByTransactionType(nextSeries, prev.transactionType).find((series) => String(series.Series || '') === String(prev.series || '')) ||
+            pickFirstSeries(nextSeries, prev.transactionType);
 
           return {
             ...prev,
@@ -974,7 +1036,7 @@ function ServiceARInvoicePage() {
         return;
       }
 
-      const selectedSeries = (refData.series || []).find((series) => String(series.Series || '') === String(value || ''));
+      const selectedSeries = visibleSeries.find((series) => String(series.Series || '') === String(value || ''));
       setHeader((prev) => ({
         ...prev,
         series: value,
@@ -1164,7 +1226,7 @@ function ServiceARInvoicePage() {
     input.click();
   };
 
-  const validate = () => {
+  const validate = ({ requireDescription = true } = {}) => {
     const errors = { header: {}, lines: {}, form: '' };
     if (!String(header.vendor || '').trim()) errors.header.vendor = 'Customer is required';
     if (!String(header.postingDate || '').trim()) errors.header.postingDate = 'Posting Date is required';
@@ -1176,7 +1238,7 @@ function ServiceARInvoicePage() {
     lines.forEach((line, index) => {
       if (!String(line.description || line.glAccount || line.totalLC || '').trim()) return;
       const lineErrors = {};
-      if (!String(line.description || '').trim()) lineErrors.description = 'Description is required';
+      if (requireDescription && !String(line.description || '').trim()) lineErrors.description = 'Description is required';
       if (!String(line.glAccount || '').trim()) lineErrors.glAccount = 'G/L Account is required';
       if (!String(line.taxCode || '').trim()) lineErrors.taxCode = 'Tax Code is required';
       if (parseNum(line.totalLC) <= 0) lineErrors.totalLC = 'Total is required';
@@ -1196,6 +1258,56 @@ function ServiceARInvoicePage() {
     header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
     totals,
   });
+
+  const openJournalLinkedMaster = (line = {}) => {
+    const code = String(line.account || '').trim();
+    if (!code) return;
+
+    setJournalPreview((prev) => ({ ...prev, open: false }));
+    const isBusinessPartnerLine = line.goldenArrowTarget === 'businessPartner' || Boolean(String(line.controlAccount || '').trim());
+    if (isBusinessPartnerLine) {
+      navigate(`/business-partner?cardCode=${encodeURIComponent(code)}`, {
+        state: createActiveCompanyScopedRouteState({
+          businessPartnerCardCode: code,
+          cardCode: code,
+        }),
+      });
+      return;
+    }
+
+    navigate(`/chart-of-accounts?accountCode=${encodeURIComponent(code)}`, {
+      state: createActiveCompanyScopedRouteState({
+        accountCode: code,
+        glAccountCode: code,
+      }),
+    });
+  };
+
+  const previewJournalEntry = async ({ persist = false, docEntry = currentDocEntry } = {}) => {
+    const errors = validate({ requireDescription: false });
+    if (errors.form || Object.keys(errors.header).length || Object.keys(errors.lines).length) {
+      setValErrors(errors);
+      setPageState((prev) => ({ ...prev, success: '', error: errors.form || 'Please correct the highlighted fields before previewing Journal Entry.' }));
+      return null;
+    }
+
+    setJournalPreview((prev) => ({ ...prev, open: true, loading: true }));
+    try {
+      const res = await generateServiceARInvoiceJournalEntry({
+        docEntry,
+        payload: docEntry ? null : buildPayload(),
+        persist,
+      });
+      setJournalPreview({ open: true, loading: false, data: res.data });
+      setPageState((prev) => ({ ...prev, error: '' }));
+      return res.data;
+    } catch (error) {
+      const message = error.response?.data?.message || error.message || 'Failed to preview Journal Entry.';
+      setJournalPreview((prev) => ({ ...prev, loading: false }));
+      setPageState((prev) => ({ ...prev, success: '', error: message }));
+      return null;
+    }
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -1223,6 +1335,9 @@ function ServiceARInvoicePage() {
       setHeader((prev) => ({ ...prev, docNo: docNum ? String(docNum) : prev.docNo, status: 'Open' }));
       setIsDirty(false);
       setPageState((prev) => ({ ...prev, posting: false, success: `${res.data?.message || 'Service A/R Invoice saved.'}${docNum ? ` Doc No: ${docNum}` : ''}` }));
+      if (docEntry) {
+        await previewJournalEntry({ persist: true, docEntry });
+      }
     } catch (error) {
       const message = error.response?.data?.detail?.error?.message?.value || error.response?.data?.message || error.message || 'Service A/R Invoice submission failed.';
       setPageState((prev) => ({ ...prev, posting: false, error: message }));
@@ -1230,11 +1345,14 @@ function ServiceARInvoicePage() {
   };
 
   const resetForm = () => {
-    const firstSeries = (refData.series || [])[0];
+    const defaultTransactionType = transactionTypeOptions[0]?.value || '';
+    const firstSeries = pickFirstSeries(refData.series || [], defaultTransactionType);
     setIsDirty(false);
     setCurrentDocEntry(null);
     setHeader({
       ...INIT_HEADER,
+      transactionType: defaultTransactionType,
+      indicator: transactionTypeOptions[0]?.indicator || '',
       series: firstSeries ? String(firstSeries.Series || '') : '',
       nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
     });
@@ -1242,6 +1360,7 @@ function ServiceARInvoicePage() {
     setLines([createLine(rowUdfDefinitions)]);
     setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
+    setJournalPreview({ open: false, loading: false, data: null });
     setPageState((prev) => ({ ...prev, error: '', success: '' }));
   };
 
@@ -1298,7 +1417,7 @@ function ServiceARInvoicePage() {
     setHeader((prev) => ({
       ...prev,
       ...normalizedHeader,
-      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice',
+      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || '',
     }));
     const baseType = BASE_TYPE[sourceType] || 17;
     setLines(copySource.lines.length
@@ -1353,8 +1472,8 @@ function ServiceARInvoicePage() {
 
     if (duplicated) {
       const selectedSeries =
-        (refData.series || []).find((series) => String(series.Series || '') === String(header.series || '')) ||
-        (refData.series || [])[0];
+        visibleSeries.find((series) => String(series.Series || '') === String(header.series || '')) ||
+        pickFirstSeries(refData.series || [], header.transactionType);
       if (selectedSeries) {
         setHeader((prev) => ({
           ...prev,
@@ -1583,6 +1702,14 @@ function ServiceARInvoicePage() {
           onSuccess={(message) => setPageState((prev) => ({ ...prev, error: '', success: message }))}
           onError={(message) => setPageState((prev) => ({ ...prev, success: '', error: message }))}
         />
+        <button
+          type="button"
+          className="del-btn sap-document-toolbar__journal-preview"
+          onClick={() => previewJournalEntry({ persist: Boolean(currentDocEntry) })}
+          disabled={pageState.posting || journalPreview.loading}
+        >
+          Preview Journal Entry
+        </button>
         <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/services/ar-invoice/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
@@ -1594,7 +1721,7 @@ function ServiceARInvoicePage() {
             document.querySelectorAll('.del-dropdown').forEach((item) => item.classList.remove('active'));
             if (!isActive) dropdown.classList.add('active');
           }}>
-            Copy From ▼
+            Copy From
           </button>
           <div className="del-dropdown-menu">
             {[
@@ -1659,13 +1786,18 @@ function ServiceARInvoicePage() {
                 <label className="del-field__label">Buyer PO No</label>
                 <input className="del-field__input" name="salesContractNo" value={header.salesContractNo} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
               </div>
-              <div className="del-field">
-                <label className="del-field__label">Local Currency</label>
-                <input className="del-field__input" name="currency" value={header.currency} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
-              </div>
+
+              <DocumentCurrencySelect
+                classPrefix="del"
+                header={header}
+                onHeaderChange={handleHeaderChange}
+                businessPartners={refData.vendors || []}
+                disabled={!isDocumentEditable || !header.vendor}
+              />
+
               <div className="del-field">
                 <label className="del-field__label">Transaction Type</label>
-                <select className="del-field__select" name="transactionType" value={header.transactionType} onChange={handleHeaderChange} disabled={!isDocumentEditable}>
+                <select className="del-field__select" name="transactionType" value={header.transactionType} onChange={handleHeaderChange} disabled={!isDocumentEditable || !transactionTypeOptions.length}>
                   {transactionTypeOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
@@ -1690,7 +1822,7 @@ function ServiceARInvoicePage() {
                 <div className="service-ar-docnum">
                   <select className="del-field__select" name="series" value={header.series} onChange={handleHeaderChange} disabled={!isDocumentEditable || currentDocEntry || pageState.seriesLoading}>
                     <option value="manual">Manual</option>
-                    {(refData.series || []).map((series) => (
+                    {visibleSeries.map((series) => (
                       <option key={series.Series} value={series.Series}>{series.SeriesName}</option>
                     ))}
                   </select>
@@ -1956,6 +2088,21 @@ function ServiceARInvoicePage() {
         onSave={saveTaxInfoModal}
         taxInfoForm={taxInfoForm}
         onFormChange={handleTaxInfoFormChange}
+      />
+
+      <JournalEntryPreviewModal
+        isOpen={journalPreview.open}
+        loading={journalPreview.loading}
+        journalEntry={journalPreview.data}
+        onClose={() => setJournalPreview((prev) => ({ ...prev, open: false }))}
+        onOpenLinkedMaster={openJournalLinkedMaster}
+        onRegenerate={() => previewJournalEntry({ persist: Boolean(currentDocEntry) })}
+        onOpenSource={() => {
+          setJournalPreview((prev) => ({ ...prev, open: false }));
+          if (currentDocEntry) {
+            navigate('/services/ar-invoice', { state: { serviceARInvoiceDocEntry: currentDocEntry } });
+          }
+        }}
       />
 
     </form>

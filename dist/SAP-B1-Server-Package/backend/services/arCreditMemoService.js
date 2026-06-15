@@ -3,29 +3,21 @@ const arCreditMemoDb = require('./arCreditMemoDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { applyUdfValues } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
   return normalized === '' ? -1 : Number(normalized);
 };
 
-const isUdfValuePresent = (value) => {
-  if (value == null) return false;
-  if (typeof value === 'string') return value.trim() !== '';
-  return true;
-};
-
-const applyUdfs = (target, udfValues = {}, allowedKeys = null) => {
-  Object.entries(udfValues || {}).forEach(([key, value]) => {
-    if (String(key || '').startsWith('U_') && isUdfValuePresent(value) && (!allowedKeys || allowedKeys.has(key))) {
-      target[key] = value;
-    }
-  });
-};
-
 const getAllowedUdfKeys = async (tableId) => {
   const definitions = await getUdfDefinitions(tableId);
   return new Set(definitions.map((field) => field.key));
+};
+
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
 };
 
 // ───────── REFERENCE DATA (USING ODBC) ─────────
@@ -52,6 +44,8 @@ const getReferenceData = async (companyId) => {
       payment_terms: [],
       shipping_types: [],
       branches: [],
+      gl_accounts: [],
+      distribution_rules: [],
       tax_codes: [],
       uom_groups: [],
       decimal_settings: {
@@ -61,6 +55,9 @@ const getReferenceData = async (companyId) => {
         RateDec: 2,
         PercentDec: 2
       },
+      matrix_columns: [],
+      line_field_metadata: { matrix_columns: [], sap_form: {} },
+      udf_metadata: { header: [], rows: [] },
       warnings: [`Failed to load reference data: ${error.message}`],
     };
   }
@@ -219,9 +216,10 @@ const submitARCreditMemo = async (payload) => {
     
     console.log("🔍 [ARCreditMemoService] Using customer code:", customerCode);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const [allowedHeaderUdfs, allowedLineUdfs] = await Promise.all([
+    const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('ORIN'),
       getAllowedUdfKeys('RIN1'),
+      getUdfDefinitionsByKey('ORIN'),
     ]);
 
     // Transform payload to SAP format
@@ -283,14 +281,14 @@ const submitARCreditMemo = async (payload) => {
         }
 
         console.log(`🔍 [ARCreditMemoService] Transformed line ${index}:`, line);
-        applyUdfs(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, l.udf, allowedLineUdfs);
         return line;
       })
     };
 
     console.log("🔥 [ARCreditMemoService] SAP AR CREDIT MEMO PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
-    applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
 
     // Use Service Layer for POST operations - Credit Memos endpoint
     const response = await sapService.request({
@@ -339,9 +337,10 @@ const updateARCreditMemo = async (docEntry, payload) => {
     // Use vendor or customerCode (frontend sends vendor)
     const customerCode = payload.header.vendor || payload.header.customerCode || payload.header.customer;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const [allowedHeaderUdfs, allowedLineUdfs] = await Promise.all([
+    const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('ORIN'),
       getAllowedUdfKeys('RIN1'),
+      getUdfDefinitionsByKey('ORIN'),
     ]);
 
     // Transform payload to SAP format (similar to submit)
@@ -375,12 +374,12 @@ const updateARCreditMemo = async (docEntry, payload) => {
           BaseEntry: l.baseEntry ? Number(l.baseEntry) : undefined,
           BaseLine: l.baseLine !== undefined ? Number(l.baseLine) : undefined,
         };
-        applyUdfs(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, l.udf, allowedLineUdfs);
         return line;
       })
     };
 
-    applyUdfs(sapPayload, payload.header_udfs, allowedHeaderUdfs);
+    applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
 
     // Use Service Layer for PATCH operations
     const response = await sapService.request({

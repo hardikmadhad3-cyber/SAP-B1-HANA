@@ -34,21 +34,30 @@ const shouldKeepUdfBlankByDefault = (field = {}) => {
     identity.includes('supplyterms');
 };
 
+const asDefinitionArray = (definitions) => (Array.isArray(definitions) ? definitions : []);
+
 const createUdfState = (definitions = [], values = {}) =>
-  definitions.reduce((acc, field) => {
+  asDefinitionArray(definitions).reduce((acc, field) => {
     acc[field.key] = values[field.key] ?? (shouldKeepUdfBlankByDefault(field) ? '' : field.defaultValue ?? '');
     return acc;
   }, {});
 
 const buildVisibilitySettings = (definitions = []) =>
-  definitions.reduce((acc, field) => {
-    acc[field.key] = { visible: true, active: true };
+  asDefinitionArray(definitions).reduce((acc, field) => {
+    acc[field.key] = {
+      visible: field.visible !== false,
+      active: field.active !== false,
+    };
     return acc;
   }, {});
 
-const createDefaultFormSettings = (headerUdfs = HEADER_UDF_DEFINITIONS, rowUdfs = ROW_UDF_DEFINITIONS) => ({
+const createDefaultFormSettings = (
+  headerUdfs = HEADER_UDF_DEFINITIONS,
+  rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = BASE_MATRIX_COLUMNS,
+) => ({
   headerUdfs: buildVisibilitySettings(headerUdfs),
-  matrixColumns: buildVisibilitySettings(BASE_MATRIX_COLUMNS),
+  matrixColumns: buildVisibilitySettings(matrixColumns),
   rowUdfs: buildVisibilitySettings(rowUdfs),
 });
 
@@ -64,12 +73,15 @@ const mergeNestedSettings = (defaults, saved = {}) =>
 const readSavedFormSettings = (
   headerUdfs = HEADER_UDF_DEFINITIONS,
   rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = BASE_MATRIX_COLUMNS,
   storageKey = FORM_SETTINGS_STORAGE_KEY,
 ) => {
-  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs);
+  const effectiveMatrixColumns = Array.isArray(matrixColumns) ? matrixColumns : BASE_MATRIX_COLUMNS;
+  const effectiveStorageKey = typeof matrixColumns === 'string' ? matrixColumns : storageKey;
+  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs, effectiveMatrixColumns);
 
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = localStorage.getItem(effectiveStorageKey);
     if (!raw) return defaults;
     return mergeNestedSettings(defaults, JSON.parse(raw));
   } catch (error) {

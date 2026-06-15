@@ -8,6 +8,7 @@ const authDbService = require('./authDbService');
 const dbService = require('./dbService');
 const { getRequestContext, getOrSetContextValue } = require('./requestContextService');
 const { getActiveCompanyConfig } = require('./companyConfigService');
+const { normalizeSapWritePayload } = require('./sapPayloadUtils');
 
 const httpsAgentsByRejectMode = new Map();
 const SERVICE_LAYER_REQUEST_TIMEOUT_MS = Number(process.env.SAP_SERVICE_LAYER_TIMEOUT_MS || 180000);
@@ -450,8 +451,11 @@ const request = async (config, retryOnAuth = true, retryOnTransientRead = true) 
   const companyDb = serviceLayerConfig.companyDb;
   await ensureSession(companyDb);
   const sessionState = getSessionState(serviceLayerConfig);
-  const requestData = await withAuthenticatedUserStamp(config, companyDb);
   const normalizedMethod = String(config.method || 'get').trim().toUpperCase();
+  const stampedRequestData = await withAuthenticatedUserStamp(config, companyDb);
+  const requestData = WRITE_METHODS.has(normalizedMethod)
+    ? (config.preserveEmptyStrings ? stampedRequestData : normalizeSapWritePayload(stampedRequestData))
+    : stampedRequestData;
   const useKeepAlive = !WRITE_METHODS.has(normalizedMethod);
 
   try {

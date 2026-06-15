@@ -18,6 +18,7 @@ import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import QualitySelectionModal from '../sales-order/components/QualitySelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
@@ -27,6 +28,7 @@ import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/ware
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
@@ -327,6 +329,15 @@ const INIT_HEADER = {
   billToAddress: '', billToCode: '', shipToAddress: '',
 };
 
+const createInitialHeader = (settings = readGeneralSettings()) => ({
+  ...INIT_HEADER,
+  warehouse: settings.deliveryWarehouse || '',
+  series: settings.deliverySeries || '',
+  postingDate: today(),
+  deliveryDate: today(),
+  documentDate: today(),
+});
+
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
   id: i + 1, targetPath: '', fileName: '', attachmentDate: '',
   freeText: '', copyToTargetDocument: '', documentType: '', atchDocDate: '', alert: '',
@@ -340,6 +351,8 @@ function Delivery() {
   const formRef = useRef(null);
   const isHydratingDocumentRef = useRef(false);
   const handledCopyFromRef = useRef('');
+  const generalSettingsRef = useRef(readGeneralSettings());
+  const defaultWarehouseAppliedRef = useRef(false);
   const requestedEditDocEntry = isRouteStateForActiveCompany(location.state) ? (
     location.state?.deliveryDocEntry ||
     location.state?.document?.docEntry ||
@@ -352,7 +365,7 @@ function Delivery() {
   );
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
-  const [header, setHeader] = useState(INIT_HEADER);
+  const [header, setHeader] = useState(() => createInitialHeader(generalSettingsRef.current));
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
@@ -455,6 +468,13 @@ function Delivery() {
       : null;
 
     if (matchedSeries) return matchedSeries;
+
+    const preferredSeries = String(generalSettingsRef.current.deliverySeries || '').trim();
+    const settingsSeries = preferredSeries
+      ? seriesList.find((series) => String(series.Series) === preferredSeries)
+      : null;
+
+    if (settingsSeries) return settingsSeries;
 
     const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
     return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
@@ -1011,6 +1031,32 @@ function Delivery() {
   const shipTypeOpts = refData.shipping_types.length
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
     : FALLBACK_SHIPPING;
+
+  useEffect(() => {
+    if (isHydratingDocumentRef.current || currentDocEntry || requestedEditDocEntry || defaultWarehouseAppliedRef.current) return;
+
+    const defaultWarehouse = String(generalSettingsRef.current.deliveryWarehouse || '').trim();
+    if (!defaultWarehouse) {
+      defaultWarehouseAppliedRef.current = true;
+      return;
+    }
+
+    if (!effectiveWarehouses.length) return;
+
+    const warehouse = effectiveWarehouses.find((entry) => String(getWarehouseCode(entry) || '') === defaultWarehouse);
+    defaultWarehouseAppliedRef.current = true;
+    if (!warehouse) return;
+
+    const warehouseBranch = getWarehouseBranchValue(effectiveWarehouses, defaultWarehouse);
+    setHeader((prev) => {
+      if (prev.warehouse && String(prev.warehouse) !== defaultWarehouse) return prev;
+      return {
+        ...prev,
+        warehouse: prev.warehouse || defaultWarehouse,
+        branch: prev.branch || warehouseBranch,
+      };
+    });
+  }, [currentDocEntry, effectiveWarehouses, requestedEditDocEntry]);
 
   useEffect(() => {
     if (isHydratingDocumentRef.current || currentDocEntry || !header.warehouse) return;
@@ -3220,13 +3266,18 @@ function Delivery() {
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       setSnapshotPending(false);
       setIsDirty(false);
-      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+      defaultWarehouseAppliedRef.current = false;
+      const resetHeader = createInitialHeader(generalSettingsRef.current);
+      setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
       setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setValErrors({ header: {}, lines: {}, form: '' });
       
       if (refData.series.length > 0) {
-        handleSeriesChange(refData.series[0].Series);
+        const defaultSeries = resolvePreferredSeries(refData.series, resetHeader.postingDate);
+        if (defaultSeries?.Series != null) {
+          handleSeriesChange(defaultSeries.Series);
+        }
       }
       
       setPageState(p => ({ ...p, success: `${r.data.message || 'Sales order saved.'}${dn}` }));
@@ -3249,9 +3300,11 @@ function Delivery() {
   };
 
   const resetForm = () => {
+    defaultWarehouseAppliedRef.current = false;
+    const resetHeader = createInitialHeader(generalSettingsRef.current);
     setSnapshotPending(false);
     setIsDirty(false);
-    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+    setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
     setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
@@ -3485,6 +3538,14 @@ function Delivery() {
                       </select>
                     </div>
 
+                    <DocumentCurrencySelect
+                      classPrefix="del"
+                      header={header}
+                      onHeaderChange={handleHeaderChange}
+                      businessPartners={refData.vendors || []}
+                      disabled={pageState.vendorLoading || !header.vendor || !!currentDocEntry}
+                    />
+
                     {/* Place of Supply */}
                     <div className="del-field">
                       <label className="del-field__label">Place of Supply *</label>
@@ -3692,6 +3753,7 @@ function Delivery() {
                 header={header}
                 onHeaderChange={handleHeaderChange}
                 payTermOpts={payTermOpts}
+                isEditable={isDocumentEditable}
               />
             )}
 

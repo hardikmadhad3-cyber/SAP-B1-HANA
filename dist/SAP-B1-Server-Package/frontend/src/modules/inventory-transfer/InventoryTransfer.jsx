@@ -6,10 +6,15 @@ import './styles/inventoryTransfer.css';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
 import ContentsTab from './components/ContentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
+import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
+import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import ItemSelectionModal from '../goods-receipt/components/ItemSelectionModal';
+import DistributionRuleAssignmentModal from '../../components/DistributionRuleAssignmentModal';
+import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import {
   fetchInventoryTransferBusinessPartnerDetails,
   fetchInventoryTransferByDocEntry,
+  fetchInventoryTransferDistributionRules,
   fetchInventoryTransferItems,
   fetchInventoryTransferMetadata,
   fetchInventoryTransferSeries,
@@ -17,24 +22,77 @@ import {
   submitInventoryTransfer,
   updateInventoryTransfer,
 } from '../../api/inventoryTransferApi';
+import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
+import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
+import {
+  INVENTORY_TRANSFER_FORM_SETTINGS_STORAGE_KEY,
+  INVENTORY_TRANSFER_MATRIX_COLUMNS,
+  createUdfState,
+  normalizeUdfState,
+  readSavedFormSettings,
+} from '../../config/inventoryDocumentForm';
 
 const TAB_NAMES = ['Contents', 'Attachments'];
 const today = () => new Date().toISOString().split('T')[0];
 const INVENTORY_TRANSFER_HEADER_CACHE_KEY = 'inventory-transfer-header-cache';
 
-const createLine = () => ({
+const createLine = (rowUdfFields = []) => ({
   itemCode: '',
   itemDescription: '',
   fromWarehouse: '',
   toWarehouse: '',
   location: '',
   quantity: '',
+  itemCost: '',
+  excisable: '',
   distributionRule: '',
+  distributionRule2: '',
+  distributionRule3: '',
+  distributionRule4: '',
+  distributionRule5: '',
   uomCode: '',
   uomName: '',
   branch: '',
+  saudaNodeRef: '',
+  apInvDocKey: '',
+  apInvDocNum: '',
+  apInvLineNum: '',
   assessableValue: '',
+  bedRate: '',
+  bedAmount: '',
+  rg23dNo: '',
+  specialRebate: '',
+  commision: '',
+  brokPerQty: '',
+  unitPrice: '',
+  sellerBrokerage: '',
+  buyerBrokerage: '',
+  buyerDelivery: '',
+  sellerDelivery: '',
+  buyerTermsOfPayment: '',
+  sellerTermsOfPayment: '',
+  buyerQuality: '',
+  sellerQuality: '',
+  buyerPrice: '',
+  sellerPrice: '',
+  buyerSpecialInstruction: '',
+  sellerSpecialInstruction: '',
+  sellerBrokerageAmountPer: '',
+  sellerBrokeragePercentage: '',
+  buyerBillDiscount: '',
+  sellerBillDiscount: '',
+  stcode: '',
+  sellerItem: '',
+  sellerQuantity: '',
+  freightPurchase: '',
+  freightSales: '',
+  freightProvider: '',
+  freightProviderName: '',
+  documentCreated: '',
+  brokerageNumber: '',
+  sellerTermsOfPaymentDuplicate: '',
+  udf: createUdfState(rowUdfFields),
 });
 
 const createHeader = () => ({
@@ -103,6 +161,26 @@ const writeInventoryTransferHeaderCache = (docEntry, header) => {
   }
 };
 
+const buildDistributionDimensions = (rules = []) => {
+  const dimensions = new Map();
+
+  (rules || []).forEach((rule) => {
+    const dimensionCode = String(
+      rule.DimensionCode || rule.DimCode || rule.dimensionCode || '1'
+    ).trim() || '1';
+    if (!dimensions.has(dimensionCode)) {
+      dimensions.set(dimensionCode, {
+        DimensionCode: dimensionCode,
+        DimensionName: rule.DimensionName || rule.DimName || `Dimension ${dimensionCode}`,
+      });
+    }
+  });
+
+  return [...dimensions.values()].sort(
+    (a, b) => Number(a.DimensionCode) - Number(b.DimensionCode)
+  );
+};
+
 const mergeInventoryTransferHeaderFallback = (document, requestedDocEntry) => {
   const docEntry = document?.docEntry ?? requestedDocEntry;
   if (docEntry == null) return document;
@@ -151,7 +229,21 @@ function InventoryTransfer() {
   const [seriesOptions, setSeriesOptions] = useState([]);
   const [priceLists, setPriceLists] = useState([]);
   const [branches, setBranches] = useState([]);
+  const [headerUdfFields, setHeaderUdfFields] = useState([]);
+  const [headerUdfs, setHeaderUdfs] = useState({});
+  const [rowUdfFields, setRowUdfFields] = useState([]);
+  const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
+    INVENTORY_TRANSFER_FORM_SETTINGS_STORAGE_KEY,
+    readSavedFormSettings,
+    [headerUdfFields, rowUdfFields, INVENTORY_TRANSFER_MATRIX_COLUMNS]
+  );
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [businessPartners, setBusinessPartners] = useState([]);
+  const [distributionRules, setDistributionRules] = useState([]);
+  const [distributionDimensions, setDistributionDimensions] = useState([]);
+  const [locations, setLocations] = useState([]);
+  const [paymentTerms, setPaymentTerms] = useState([]);
   const [contactOptions, setContactOptions] = useState([]);
   const [shipToOptions, setShipToOptions] = useState([]);
   const [pageState, setPageState] = useState({
@@ -169,6 +261,19 @@ function InventoryTransfer() {
   const [isDirty, setIsDirty] = useState(false);
   useValidationHighlights(valErrors);
   const [itemModal, setItemModal] = useState({
+    open: false,
+    lineIndex: -1,
+  });
+  const [lineLookupModal, setLineLookupModal] = useState({
+    open: false,
+    lineIndex: -1,
+    field: '',
+    udfKey: '',
+    title: '',
+    options: [],
+    columns: null,
+  });
+  const [distributionRuleModal, setDistributionRuleModal] = useState({
     open: false,
     lineIndex: -1,
   });
@@ -211,6 +316,38 @@ function InventoryTransfer() {
       })),
     [businessPartners]
   );
+  const lookupOptions = useMemo(() => ({
+    distRule: (distributionRules || []).map((rule) => ({
+      value: rule.FactorCode || rule.OcrCode || rule.code || '',
+      description: rule.FactorDescription || rule.OcrName || rule.name || '',
+      code: rule.FactorCode || rule.OcrCode || rule.code || '',
+      name: rule.FactorDescription || rule.OcrName || rule.name || '',
+    })).filter((option) => option.value),
+    location: (locations || []).map((entry) => ({
+      value: String(entry.code ?? entry.Code ?? ''),
+      description: entry.name || entry.Location || entry.Name || '',
+      code: String(entry.code ?? entry.Code ?? ''),
+      name: entry.name || entry.Location || entry.Name || '',
+    })).filter((option) => option.value),
+    item: (items || []).map((item) => ({
+      value: item.itemCode || '',
+      description: item.itemName || '',
+      code: item.itemCode || '',
+      name: item.itemName || '',
+    })).filter((option) => option.value),
+    businessPartner: (businessPartners || []).map((partner) => ({
+      value: partner.cardCode || partner.CardCode || '',
+      description: partner.cardName || partner.CardName || '',
+      code: partner.cardCode || partner.CardCode || '',
+      name: partner.cardName || partner.CardName || '',
+    })).filter((option) => option.value),
+    paymentTerm: (paymentTerms || []).map((term) => ({
+      value: term.name || term.PymntGroup || String(term.code ?? term.GroupNum ?? ''),
+      description: term.code != null || term.GroupNum != null ? `Code: ${term.code ?? term.GroupNum}` : '',
+      code: String(term.code ?? term.GroupNum ?? ''),
+      name: term.name || term.PymntGroup || '',
+    })).filter((option) => option.value),
+  }), [businessPartners, distributionRules, items, locations, paymentTerms]);
   const fromWarehouseOptions = header.fromBranch
     ? warehouses.filter(
         (warehouse) =>
@@ -254,7 +391,39 @@ function InventoryTransfer() {
         setSeriesOptions(loadedSeries);
         setPriceLists(metadata.priceLists || []);
         setBranches(metadata.branches || []);
+        const nextHeaderUdfs = metadata.udfMetadata?.header || [];
+        const nextRowUdfs = metadata.udfMetadata?.rows || [];
+
+        setHeaderUdfFields(nextHeaderUdfs);
+        setHeaderUdfs((current) => normalizeUdfState(nextHeaderUdfs, current));
+        setRowUdfFields(nextRowUdfs);
+        setFormSettings((current) => {
+          const nextDefaults = readSavedFormSettings(
+            nextHeaderUdfs,
+            nextRowUdfs,
+            INVENTORY_TRANSFER_MATRIX_COLUMNS,
+            formSettingsStorageKey
+          );
+          return {
+            headerUdfs: {
+              ...nextDefaults.headerUdfs,
+              ...(current.headerUdfs || {}),
+            },
+            matrixColumns: {
+              ...nextDefaults.matrixColumns,
+              ...(current.matrixColumns || {}),
+            },
+            rowUdfs: {
+              ...nextDefaults.rowUdfs,
+              ...(current.rowUdfs || {}),
+            },
+          };
+        });
         setBusinessPartners(metadata.businessPartners || []);
+        setDistributionRules(metadata.distributionRules || []);
+        setDistributionDimensions(buildDistributionDimensions(metadata.distributionRules || []));
+        setLocations(metadata.locations || []);
+        setPaymentTerms(metadata.paymentTerms || []);
         setHeader((current) => ({
           ...current,
           series: current.series || initialSeries?.series || '',
@@ -310,13 +479,21 @@ function InventoryTransfer() {
           ...createHeader(),
           ...document.header,
         }));
+        setHeaderUdfs(document.headerUdfs || {});
         setLines(
           Array.isArray(document.lines) && document.lines.length
-            ? document.lines.map((line) => ({ ...createLine(), ...line }))
+            ? document.lines.map((line) => ({
+                ...createLine(rowUdfFields),
+                ...line,
+                udf: createUdfState(rowUdfFields, line.udf || {}),
+              }))
             : [{
-                ...createLine(),
+                ...createLine(rowUdfFields),
                 fromWarehouse: document.header?.fromWarehouse || '',
                 toWarehouse: document.header?.toWarehouse || '',
+                location: document.header?.toWarehouse
+                  ? getWarehouseLocationCode(document.header.toWarehouse)
+                  : '',
                 branch: document.header?.toWarehouse
                   ? getWarehouseBranch(document.header.toWarehouse)
                   : '',
@@ -421,6 +598,10 @@ function InventoryTransfer() {
     warehouses.find((warehouse) => warehouse.whsCode === String(whsCode || ''));
 
   const getWarehouseBranch = (whsCode) => getWarehouseByCode(whsCode)?.branchId || '';
+  const getWarehouseLocationCode = (whsCode) => {
+    const warehouse = getWarehouseByCode(whsCode);
+    return warehouse?.locationCode != null ? String(warehouse.locationCode) : '';
+  };
   const getWarehouseBranchDisplay = (whsCode, branchId = '') => {
     const warehouse = getWarehouseByCode(whsCode);
     if (warehouse?.city) return warehouse.city;
@@ -456,6 +637,10 @@ function InventoryTransfer() {
       branch: line.branch || getWarehouseBranch(line.toWarehouse),
       assessableValue:
         quantity > 0 ? (quantity * price).toFixed(2) : line.assessableValue || '0.00',
+      itemCost:
+        line.itemCost === '' || line.itemCost == null
+          ? ''
+          : Number(line.itemCost).toFixed(2),
     };
   };
 
@@ -463,7 +648,7 @@ function InventoryTransfer() {
     const item = getItem(itemCode);
     if (!item) {
       return normalizeLine({
-        ...createLine(),
+        ...createLine(rowUdfFields),
         branch: getWarehouseBranch(header.toWarehouse),
       });
     }
@@ -474,10 +659,13 @@ function InventoryTransfer() {
       itemDescription: item.itemName,
       fromWarehouse: line.fromWarehouse || header.fromWarehouse || item.defaultWarehouse || '',
       toWarehouse: line.toWarehouse || header.toWarehouse || '',
+      location: getWarehouseLocationCode(line.toWarehouse || header.toWarehouse),
       uomCode: item.uomCode || '',
       uomName: item.uomName || '',
       branch: line.branch || getWarehouseBranch(line.toWarehouse || header.toWarehouse),
+      itemCost: item.itemCost != null ? String(item.itemCost) : '',
       assessableValue: line.assessableValue || String(getItemPrice(item, priceList)),
+      unitPrice: line.unitPrice || String(getItemPrice(item, priceList)),
     });
   };
 
@@ -541,6 +729,7 @@ function InventoryTransfer() {
         current.map((line) => ({
           ...line,
           toWarehouse: value,
+          location: value ? getWarehouseLocationCode(value) : '',
           branch: value ? getWarehouseBranch(value) : '',
         }))
       );
@@ -628,19 +817,51 @@ function InventoryTransfer() {
         const nextLine = { ...line, [field]: value };
         if (field === 'toWarehouse') {
           nextLine.branch = value ? getWarehouseBranch(value) : '';
+          nextLine.location = value ? getWarehouseLocationCode(value) : '';
         }
         return normalizeLine(nextLine);
       })
     );
   };
 
+  const handleRowUdfChange = (rowIndex, fieldKey, value) => {
+    setLines((current) =>
+      current.map((line, index) =>
+        index === rowIndex
+          ? { ...line, udf: { ...(line.udf || {}), [fieldKey]: value } }
+          : line
+      )
+    );
+  };
+
+  const handleHeaderUdfChange = (fieldKey, value) => {
+    setHeaderUdfs((current) => ({
+      ...current,
+      [fieldKey]: value,
+    }));
+  };
+
+  const updateFormSetting = (groupKey, fieldKey, settingKey, value) => {
+    setFormSettings((current) => ({
+      ...current,
+      [groupKey]: {
+        ...(current[groupKey] || {}),
+        [fieldKey]: {
+          ...(current[groupKey]?.[fieldKey] || {}),
+          [settingKey]: value,
+        },
+      },
+    }));
+  };
+
   const addLine = () => {
     setLines((current) => [
       ...current,
       {
-        ...createLine(),
+        ...createLine(rowUdfFields),
         fromWarehouse: header.fromWarehouse || '',
         toWarehouse: header.toWarehouse || '',
+        location: getWarehouseLocationCode(header.toWarehouse),
         branch: getWarehouseBranch(header.toWarehouse),
       },
     ]);
@@ -651,9 +872,10 @@ function InventoryTransfer() {
       if (current.length === 1) {
         return [
           {
-            ...createLine(),
+            ...createLine(rowUdfFields),
             fromWarehouse: header.fromWarehouse || '',
             toWarehouse: header.toWarehouse || '',
+            location: getWarehouseLocationCode(header.toWarehouse),
             branch: getWarehouseBranch(header.toWarehouse),
           },
         ];
@@ -722,7 +944,8 @@ function InventoryTransfer() {
       priceList: header.priceList || defaultPriceList?.id || '',
       fromBranch: nextBranch,
     }));
-    setLines([{ ...createLine() }]);
+    setHeaderUdfs(normalizeUdfState(headerUdfFields));
+    setLines([{ ...createLine(rowUdfFields) }]);
     attachmentsRef.current.forEach((attachment) => {
       if (attachment.previewUrl) {
         URL.revokeObjectURL(attachment.previewUrl);
@@ -798,6 +1021,127 @@ function InventoryTransfer() {
     );
   };
 
+  const openLineLookup = async (column, lineIndex, udfField = null) => {
+    if (column.lookup === 'distRule') {
+      setDistributionRuleModal({ open: true, lineIndex });
+      try {
+        const response = await fetchInventoryTransferDistributionRules();
+        const liveRules = Array.isArray(response.data) ? response.data : [];
+        setDistributionRules(liveRules);
+        setDistributionDimensions(buildDistributionDimensions(liveRules));
+      } catch (error) {
+        setPageState((current) => ({
+          ...current,
+          error:
+            error.response?.data?.message ||
+            error.message ||
+            'Failed to load distribution rules.',
+        }));
+      }
+      return;
+    }
+
+    setLineLookupModal({
+      open: true,
+      lineIndex,
+      field: column.key,
+      udfKey: udfField?.key || '',
+      title: `List of ${column.label}`,
+      options: lookupOptions[column.lookup] || [],
+      columns: [
+        { key: 'code', label: 'Code', width: 140, primary: true },
+        { key: 'name', label: 'Description' },
+      ],
+    });
+  };
+
+  const closeDistributionRuleModal = () => {
+    setDistributionRuleModal({ open: false, lineIndex: -1 });
+  };
+
+  const handleDistributionRuleApply = (valuesByDimension = {}) => {
+    const fieldByDimension = {
+      1: 'distributionRule',
+      2: 'distributionRule2',
+      3: 'distributionRule3',
+      4: 'distributionRule4',
+      5: 'distributionRule5',
+    };
+    const lineIndex = distributionRuleModal.lineIndex;
+
+    if (lineIndex < 0) {
+      closeDistributionRuleModal();
+      return;
+    }
+
+    setLines((current) =>
+      current.map((line, index) => {
+        if (index !== lineIndex) return line;
+        const nextLine = { ...line };
+        Object.entries(valuesByDimension).forEach(([dimensionCode, ruleCode]) => {
+          const fieldName = fieldByDimension[Number(dimensionCode)];
+          if (fieldName) nextLine[fieldName] = ruleCode || '';
+        });
+        return normalizeLine(nextLine);
+      })
+    );
+    setValErrors((current) => ({
+      ...current,
+      lines: {
+        ...current.lines,
+        [lineIndex]: {
+          ...(current.lines[lineIndex] || {}),
+          distributionRule: '',
+        },
+      },
+      form: '',
+    }));
+    closeDistributionRuleModal();
+  };
+
+  const closeLineLookup = () => {
+    setLineLookupModal((current) => ({
+      ...current,
+      open: false,
+      lineIndex: -1,
+      field: '',
+      udfKey: '',
+    }));
+  };
+
+  const handleLineLookupSelect = (option) => {
+    const { lineIndex, field, udfKey } = lineLookupModal;
+    if (lineIndex < 0 || !field) return;
+    const value = option?.value || '';
+
+    setLines((current) =>
+      current.map((line, index) => {
+        if (index !== lineIndex) return line;
+        if (udfKey) {
+          return {
+            ...line,
+            udf: {
+              ...(line.udf || {}),
+              [udfKey]: value,
+            },
+          };
+        }
+        const nextLine = { ...line, [field]: value };
+        if (field === 'freightProvider') {
+          nextLine.freightProviderName = option?.description || option?.name || '';
+        }
+        if (field === 'sellerItem') {
+          const selectedItem = items.find((item) => item.itemCode === value);
+          if (selectedItem) {
+            nextLine.sellerItem = selectedItem.itemCode;
+          }
+        }
+        return normalizeLine(nextLine);
+      })
+    );
+    closeLineLookup();
+  };
+
   const openItemModal = (rowIndex) => {
     setItemModal({
       open: true,
@@ -826,6 +1170,36 @@ function InventoryTransfer() {
     closeItemModal();
   };
 
+  const handleDuplicate = () => {
+    const duplicated = duplicateDocumentInPlace({
+      currentDocEntry,
+      header,
+      initialHeader: createHeader(),
+      lines,
+      createLine,
+      rowUdfDefinitions: rowUdfFields,
+      setCurrentDocEntry,
+      setHeader,
+      setLines,
+      setActiveTab,
+      setValErrors,
+      setPageState,
+      setIsDirty,
+      navigate,
+      location,
+      successMessage: 'Inventory Transfer duplicated. Review and add it as a new entry.',
+    });
+
+    if (!duplicated) return;
+
+    setHeaderUdfs(normalizeUdfState(headerUdfFields, headerUdfs));
+    setHeader((current) => ({
+      ...current,
+      series: current.series || currentSeriesOption?.series || '',
+      number: currentSeriesOption?.nextNumber || 'Auto',
+    }));
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (currentDocEntry && !hasUnsavedChanges) return;
@@ -844,6 +1218,7 @@ function InventoryTransfer() {
     try {
       const payload = {
         header,
+        header_udfs: normalizeUdfState(headerUdfFields, headerUdfs),
         lines: lines
           .filter((line) => line.itemCode)
           .map((line) => ({
@@ -853,11 +1228,55 @@ function InventoryTransfer() {
             toWarehouse: line.toWarehouse || header.toWarehouse,
             location: line.location,
             quantity: Number(line.quantity || 0),
+            itemCost: Number(line.itemCost || 0),
+            excisable: line.excisable,
             distributionRule: line.distributionRule,
+            distributionRule2: line.distributionRule2,
+            distributionRule3: line.distributionRule3,
+            distributionRule4: line.distributionRule4,
+            distributionRule5: line.distributionRule5,
             uomCode: line.uomCode,
             uomName: line.uomName,
             branch: line.branch,
+            saudaNodeRef: line.saudaNodeRef,
+            apInvDocKey: line.apInvDocKey,
+            apInvDocNum: line.apInvDocNum,
+            apInvLineNum: line.apInvLineNum,
             assessableValue: Number(line.assessableValue || 0),
+            bedRate: line.bedRate,
+            bedAmount: line.bedAmount,
+            rg23dNo: line.rg23dNo,
+            specialRebate: line.specialRebate,
+            commision: line.commision,
+            brokPerQty: line.brokPerQty,
+            unitPrice: line.unitPrice,
+            sellerBrokerage: line.sellerBrokerage,
+            buyerBrokerage: line.buyerBrokerage,
+            buyerDelivery: line.buyerDelivery,
+            sellerDelivery: line.sellerDelivery,
+            buyerTermsOfPayment: line.buyerTermsOfPayment,
+            sellerTermsOfPayment: line.sellerTermsOfPayment,
+            buyerQuality: line.buyerQuality,
+            sellerQuality: line.sellerQuality,
+            buyerPrice: line.buyerPrice,
+            sellerPrice: line.sellerPrice,
+            buyerSpecialInstruction: line.buyerSpecialInstruction,
+            sellerSpecialInstruction: line.sellerSpecialInstruction,
+            sellerBrokerageAmountPer: line.sellerBrokerageAmountPer,
+            sellerBrokeragePercentage: line.sellerBrokeragePercentage,
+            buyerBillDiscount: line.buyerBillDiscount,
+            sellerBillDiscount: line.sellerBillDiscount,
+            stcode: line.stcode,
+            sellerItem: line.sellerItem,
+            sellerQuantity: line.sellerQuantity,
+            freightPurchase: line.freightPurchase,
+            freightSales: line.freightSales,
+            freightProvider: line.freightProvider,
+            freightProviderName: line.freightProviderName,
+            documentCreated: line.documentCreated,
+            brokerageNumber: line.brokerageNumber,
+            sellerTermsOfPaymentDuplicate: line.sellerTermsOfPaymentDuplicate,
+            udf: line.udf || {},
           })),
         attachments: attachments.map((attachment) => ({
           targetPath: attachment.targetPath,
@@ -894,9 +1313,12 @@ function InventoryTransfer() {
     .filter((line) => line.itemCode)
     .reduce((sum, line) => sum + Number(line.quantity || 0), 0)
     .toFixed(2);
+  const visibleHeaderUdfFields = headerUdfFields.filter(
+    (field) => formSettings.headerUdfs?.[field.key]?.visible !== false
+  );
 
   return (
-    <form className="po-page itr-transfer-request__page" onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form className={`po-page itr-transfer-request__page inventory-document-page${sidebarOpen || formSettingsOpen ? ' inventory-document-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
       <div className="po-toolbar">
         <div className="po-toolbar__title">
           Inventory Transfer
@@ -925,6 +1347,30 @@ function InventoryTransfer() {
         </button>
         <button type="button" className="po-btn" onClick={resetForm}>
           New
+        </button>
+        <button
+          type="button"
+          className="po-btn sap-document-toolbar__duplicate"
+          onClick={handleDuplicate}
+          disabled={!currentDocEntry}
+        >
+          Duplicate
+        </button>
+        <button type="button" className="po-btn" onClick={() => {
+          setFormSettingsOpen(false);
+          setSidebarOpen((open) => !open);
+        }}>
+          {sidebarOpen ? 'Hide UDFs' : 'Show UDFs'}
+        </button>
+        <button
+          type="button"
+          className="po-btn"
+          onClick={() => {
+            setSidebarOpen(false);
+            setFormSettingsOpen((open) => !open);
+          }}
+        >
+          Form Settings
         </button>
         {pageState.loading && (
           <span className="po-alert po-alert--warning" style={{ margin: 0 }}>
@@ -1190,6 +1636,10 @@ function InventoryTransfer() {
             onItemCommit={handleItemCommit}
             onOpenItemModal={openItemModal}
             onFieldChange={handleLineChange}
+            onRowUdfChange={handleRowUdfChange}
+            rowUdfFields={rowUdfFields}
+            formSettings={formSettings}
+            onOpenLineLookup={openLineLookup}
             onAddLine={addLine}
             onRemoveLine={removeLine}
             errors={valErrors.lines}
@@ -1230,11 +1680,53 @@ function InventoryTransfer() {
         loading={pageState.loading}
       />
 
+      <LineValueLookupModal
+        isOpen={lineLookupModal.open}
+        onClose={closeLineLookup}
+        onSelect={handleLineLookupSelect}
+        options={lineLookupModal.options}
+        title={lineLookupModal.title}
+        allowCreate={false}
+        columns={lineLookupModal.columns}
+      />
+
+      <DistributionRuleAssignmentModal
+        isOpen={distributionRuleModal.open}
+        line={distributionRuleModal.lineIndex >= 0 ? lines[distributionRuleModal.lineIndex] : null}
+        rules={distributionRules}
+        dimensions={distributionDimensions}
+        onClose={closeDistributionRuleModal}
+        onApply={handleDistributionRuleApply}
+      />
+
       <BusinessPartnerModal
         isOpen={bpModal}
         onClose={closeBpModal}
         onSelect={handleBpSelect}
         businessPartners={businessPartnerModalItems}
+      />
+
+      <HeaderUdfSidebar
+        className="inventory-document-sidebar"
+        isOpen={sidebarOpen}
+        fields={visibleHeaderUdfFields}
+        formSettings={formSettings}
+        values={headerUdfs}
+        disabled={pageState.posting}
+        onFieldChange={handleHeaderUdfChange}
+        onClose={() => setSidebarOpen(false)}
+      />
+
+      <FormSettingsPanel
+        variant="sidebar"
+        className="inventory-document-sidebar"
+        isOpen={formSettingsOpen}
+        onClose={() => setFormSettingsOpen(false)}
+        matrixFields={INVENTORY_TRANSFER_MATRIX_COLUMNS}
+        headerUdfFields={headerUdfFields}
+        rowUdfFields={rowUdfFields}
+        formSettings={formSettings}
+        onSettingChange={updateFormSetting}
       />
 
       <input

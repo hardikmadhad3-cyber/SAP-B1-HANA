@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import "../../modules/item-master/styles/itemMaster.css";
 import "./receiptFromProduction.css";
-import BackflushPreview from "./components/BackflushPreview";
 import ReceiptAllocationModal from "./components/ReceiptAllocationModal";
 import ReceiptList from "./components/ReceiptList";
 import ReceiptLines from "./components/ReceiptLines";
@@ -16,7 +15,7 @@ import {
 import { fetchBOMItems, getItemDetails } from "../../api/bomApi";
 
 const MODES = { ADD: "add", VIEW: "view", LIST: "list" };
-const TABS = ["Receipt Lines", "Backflush Components", "Remarks"];
+const TABS = ["Contents", "Attachments", "Electronic Documents"];
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EPSILON = 0.000001;
@@ -28,10 +27,18 @@ const EMPTY_HEADER = {
   document_date: today(),
   ref_2: "",
   branch: "",
-  uop: "",
+  qr_code_from: "",
   remarks: "",
-  journal_remark: "",
+  journal_remark: "Receipt from Production",
 };
+
+const pickDefaultSeries = (seriesRows = []) =>
+  seriesRows.find((entry) => entry.IsCurrentPeriod) ||
+  seriesRows.find((entry) => entry.IsDefault) ||
+  seriesRows[0] ||
+  null;
+
+const pickDefaultBranch = (branchRows = []) => branchRows[0] || null;
 
 const EMPTY_LINE = (overrides = {}) => ({
   _id: Date.now() + Math.random(),
@@ -69,12 +76,6 @@ const EMPTY_LINE = (overrides = {}) => ({
   bin_allocations: [],
   ...overrides,
 });
-
-const PO_STATUS_LABEL = {
-  boposReleased: "Released",
-  boposPlanned: "Planned",
-  boposClosed: "Closed",
-};
 
 const isYes = (value) => value === true || value === "tYES" || value === "Y";
 const toQty = (value) => {
@@ -169,7 +170,7 @@ export default function ReceiptFromProductionModule() {
   const [projects, setProjects] = useState([]);
   const [branches, setBranches] = useState([]);
   const [series, setSeries] = useState([]);
-  const [poModal, setPoModal] = useState(false);
+  const [poModal, setPoModal] = useState(null);
   const [itemModal, setItemModal] = useState({ open: false, target: null });
   const [allocationModal, setAllocationModal] = useState({ open: false, lineId: null });
 
@@ -181,8 +182,17 @@ export default function ReceiptFromProductionModule() {
         setWarehouses(data.warehouses || []);
         setDistRules(data.distribution_rules || []);
         setProjects(data.projects || []);
-        setBranches(data.branches || []);
-        setSeries(data.series || []);
+        const nextBranches = data.branches || [];
+        setBranches(nextBranches);
+        const nextSeries = data.series || [];
+        setSeries(nextSeries);
+        const defaultSeries = pickDefaultSeries(nextSeries);
+        const defaultBranch = pickDefaultBranch(nextBranches);
+        setHeader((prev) => ({
+          ...prev,
+          series: prev.series || (defaultSeries?.Series != null ? String(defaultSeries.Series) : ""),
+          branch: prev.branch || (defaultBranch?.BPLID != null ? String(defaultBranch.BPLID) : ""),
+        }));
       })
       .catch(() => {});
   }, []);
@@ -194,15 +204,23 @@ export default function ReceiptFromProductionModule() {
   }, []);
 
   const resetForm = useCallback(() => {
-    setHeader(EMPTY_HEADER);
+    const defaultSeries = pickDefaultSeries(series);
+    setHeader({
+      ...EMPTY_HEADER,
+      series: defaultSeries?.Series != null ? String(defaultSeries.Series) : "",
+      branch: pickDefaultBranch(branches)?.BPLID != null ? String(pickDefaultBranch(branches).BPLID) : "",
+      posting_date: today(),
+      document_date: today(),
+    });
     setLines([EMPTY_LINE()]);
     setBackflushLines([]);
     setPoInfo(null);
     setTab(0);
     setAlert(null);
+    setPoModal(null);
     setItemModal({ open: false, target: null });
     setAllocationModal({ open: false, lineId: null });
-  }, []);
+  }, [branches, series]);
 
   const handleHeaderChange = useCallback((e) => {
     const { name, value } = e.target;
@@ -264,10 +282,41 @@ export default function ReceiptFromProductionModule() {
         completed_qty: data.completed_qty,
         remaining_qty: data.remaining_qty,
         status: data.status,
+        type: data.type || "",
+        series: data.series || "",
+        series_name: data.series_name || "",
         warehouse: data.warehouse,
         due_date: data.due_date,
         manual_lines_count: data.manual_lines_count || 0,
       });
+
+      const isReturnComponents = data.type === "bopotDisassemble";
+      const receiptLines = Array.isArray(data.receipt_lines) ? data.receipt_lines : [];
+
+      if (isReturnComponents && receiptLines.length > 0) {
+        setLines(
+          receiptLines.map((line) =>
+            applyWarehouseSettings(
+              EMPTY_LINE({
+                ...line,
+                quantity: toQty(line.quantity),
+                planned: line.planned ?? 0,
+                completed: line.completed ?? 0,
+                warehouse: line.warehouse || data.warehouse || "",
+                order_no: line.order_no || String(data.doc_num || ""),
+                series_no: line.series_no || data.series_name || "",
+                enable_bin_locations: isYes(line.enable_bin_locations),
+              }),
+              warehouses,
+              line.warehouse || data.warehouse || ""
+            )
+          )
+        );
+        setBackflushLines([]);
+        showAlert("success", `Return Components loaded from Disassembly Order #${data.doc_num}.`);
+        setTab(0);
+        return;
+      }
 
       const primaryLine = applyWarehouseSettings(
         EMPTY_LINE({
@@ -284,11 +333,12 @@ export default function ReceiptFromProductionModule() {
           base_line: 0,
           base_type: 202,
           order_no: String(data.doc_num || ""),
+          series_no: data.series_name || "",
           by_product: false,
-          manage_batch: Boolean(data.manage_batch),
-          manage_serial: Boolean(data.manage_serial),
+          manage_batch: isYes(data.manage_batch),
+          manage_serial: isYes(data.manage_serial),
           issue_primarily_by: data.issue_primarily_by || "",
-          enable_bin_locations: Boolean(data.enable_bin_locations),
+          enable_bin_locations: isYes(data.enable_bin_locations),
         }),
         warehouses,
         data.warehouse || ""
@@ -297,7 +347,7 @@ export default function ReceiptFromProductionModule() {
       setLines([
         {
           ...primaryLine,
-          enable_bin_locations: Boolean(data.enable_bin_locations) || primaryLine.enable_bin_locations,
+          enable_bin_locations: isYes(data.enable_bin_locations) || primaryLine.enable_bin_locations,
         },
       ]);
 
@@ -363,7 +413,7 @@ export default function ReceiptFromProductionModule() {
   }, [itemModal, poInfo, warehouses]);
 
   const handlePoSelect = (po) => {
-    setPoModal(false);
+    setPoModal(null);
     loadProductionOrder(po.DocEntry);
   };
 
@@ -399,18 +449,19 @@ export default function ReceiptFromProductionModule() {
       return false;
     }
 
+    const isReturnComponents = poInfo?.type === "bopotDisassemble";
     const mainLines = validLines.filter((line) => !line.by_product);
-    if (mainLines.length === 0) {
+    if (!isReturnComponents && mainLines.length === 0) {
       showAlert("error", "One main finished goods line is required.");
       return false;
     }
-    if (mainLines.length > 1) {
+    if (!isReturnComponents && mainLines.length > 1) {
       showAlert("error", "Only one main finished goods line is allowed. Mark the others as by-products.");
       return false;
     }
 
-    const primaryLine = mainLines[0];
-    if (toQty(primaryLine.quantity) > toQty(poInfo.remaining_qty) + EPSILON) {
+    const primaryLine = mainLines[0] || validLines[0];
+    if (!isReturnComponents && toQty(primaryLine.quantity) > toQty(poInfo.remaining_qty) + EPSILON) {
       showAlert(
         "error",
         `Receipt quantity (${toQty(primaryLine.quantity).toFixed(2)}) exceeds remaining quantity (${toQty(poInfo.remaining_qty).toFixed(2)}).`
@@ -445,8 +496,10 @@ export default function ReceiptFromProductionModule() {
     try {
       const postingLines = lines.filter((line) => line.item_code.trim());
       const primaryLine = getPrimaryLine(postingLines);
+      const isReturnComponents = poInfo?.type === "bopotDisassemble";
       const payload = {
         prod_order_entry: poInfo.doc_entry,
+        return_components: isReturnComponents,
         item_code: primaryLine?.item_code || "",
         receipt_qty: toQty(primaryLine?.quantity),
         remaining_qty: toQty(poInfo?.remaining_qty),
@@ -459,9 +512,8 @@ export default function ReceiptFromProductionModule() {
         series: header.series,
         ref_2: header.ref_2,
         branch: header.branch,
-        uop: header.uop,
         remarks: header.remarks,
-        journal_remark: header.journal_remark,
+        journal_remark: header.journal_remark || "Receipt from Production",
         lines: postingLines.map((line) => ({
           item_code: line.item_code,
           quantity: toQty(line.quantity),
@@ -492,12 +544,12 @@ export default function ReceiptFromProductionModule() {
 
       showAlert(
         "success",
-        `Receipt #${result.doc_num} posted. Total quantity: ${totalPostedQty.toFixed(2)}.` +
+        `Receipt #${result.doc_num} added. Total quantity: ${totalPostedQty.toFixed(2)}.` +
           (backflushLines.length > 0 ? ` ${backflushLines.length} backflush component(s) auto-issued.` : "")
       );
       resetForm();
     } catch (err) {
-      showAlert("error", err.response?.data?.detail || err.message || "Post failed.");
+      showAlert("error", err.response?.data?.detail || err.message || "Add failed.");
     } finally {
       setLoading(false);
     }
@@ -516,7 +568,7 @@ export default function ReceiptFromProductionModule() {
         document_date: receipt.document_date || today(),
         ref_2: receipt.ref_2 || "",
         branch: receipt.branch || "",
-        uop: receipt.uop || "",
+        qr_code_from: receipt.qr_code_from || "",
         remarks: receipt.remarks || "",
         journal_remark: receipt.journal_remark || "",
       });
@@ -550,10 +602,10 @@ export default function ReceiptFromProductionModule() {
               base_entry: line.base_entry ?? null,
               base_line: line.base_line ?? null,
               base_type: line.base_type ?? 202,
-              manage_batch: Boolean(line.manage_batch),
-              manage_serial: Boolean(line.manage_serial),
+              manage_batch: isYes(line.manage_batch),
+              manage_serial: isYes(line.manage_serial),
               enable_bin_locations:
-                Boolean(line.enable_bin_locations) || isYes(getWarehouseMeta(warehouses, line.warehouse)?.EnableBinLocations),
+                isYes(line.enable_bin_locations) || isYes(getWarehouseMeta(warehouses, line.warehouse)?.EnableBinLocations),
               batch_numbers: line.batch_numbers || [],
               serial_numbers: line.serial_numbers || [],
               bin_allocations: line.bin_allocations || [],
@@ -565,7 +617,7 @@ export default function ReceiptFromProductionModule() {
           return {
             ...mapped,
             enable_bin_locations:
-              Boolean(line.enable_bin_locations) ||
+              isYes(line.enable_bin_locations) ||
               mapped.enable_bin_locations ||
               (line.bin_allocations || []).length > 0,
           };
@@ -585,7 +637,6 @@ export default function ReceiptFromProductionModule() {
 
   const totalQty = lines.reduce((sum, line) => sum + toQty(line.quantity), 0);
   const primaryLine = getPrimaryLine(lines);
-  const receiptQtyForBackflush = toQty(primaryLine?.quantity);
   const activeAllocationLine = lines.find((line) => line._id === allocationModal.lineId) || null;
 
   if (mode === MODES.LIST) {
@@ -612,83 +663,19 @@ export default function ReceiptFromProductionModule() {
 
         {!isView && (
           <button className="im-btn im-btn--primary" onClick={handlePost} disabled={loading || !poInfo}>
-            {loading ? "..." : "Post"}
+            {loading ? "..." : "Add"}
           </button>
         )}
         <button className="im-btn" onClick={() => { resetForm(); setMode(MODES.ADD); }}>New</button>
-        <button className="im-btn" onClick={() => setMode(MODES.LIST)}>List</button>
+        <button className="im-btn" onClick={() => setMode(MODES.LIST)}>Find</button>
         <button className="im-btn" onClick={resetForm}>Cancel</button>
       </div>
 
       {alert && <div className={`im-alert im-alert--${alert.type}`}>{alert.msg}</div>}
 
-      <div className="im-header-card">
-        {poInfo && (
-          <div className="rfp-po-banner">
-            <span>
-              <span className="rfp-po-banner__label">Production Order: </span>
-              <span className="rfp-po-banner__value">#{poInfo.doc_num}</span>
-            </span>
-            {poInfo.item_code && (
-              <span>
-                <span className="rfp-po-banner__label">FG Item: </span>
-                <span className="rfp-po-banner__value">{poInfo.item_code}</span>
-                {poInfo.item_name && <span style={{ color: "#555" }}> - {poInfo.item_name}</span>}
-              </span>
-            )}
-            {poInfo.planned_qty != null && (
-              <span>
-                <span className="rfp-po-banner__label">Planned: </span>
-                <span className="rfp-po-banner__value">{toQty(poInfo.planned_qty).toFixed(2)}</span>
-              </span>
-            )}
-            {poInfo.completed_qty != null && (
-              <span>
-                <span className="rfp-po-banner__label">Completed: </span>
-                <span className="rfp-po-banner__value">{toQty(poInfo.completed_qty).toFixed(2)}</span>
-              </span>
-            )}
-            {poInfo.remaining_qty != null && (
-              <span className="rfp-po-banner__remain">
-                Remaining: {toQty(poInfo.remaining_qty).toFixed(2)}
-              </span>
-            )}
-            {poInfo.status && (
-              <span className="rfp-po-banner__status">
-                {PO_STATUS_LABEL[poInfo.status] || poInfo.status}
-              </span>
-            )}
-            {poInfo.due_date && (
-              <span className="rfp-po-banner__warn">Due: {poInfo.due_date}</span>
-            )}
-            {poInfo.manual_lines_count > 0 && (
-              <span className="rfp-po-banner__warn">
-                {poInfo.manual_lines_count} manual component(s) require Issue for Production
-              </span>
-            )}
-          </div>
-        )}
-
+      <div className="im-header-card rfp-header-card">
         <div className="rfp-header-layout">
           <div className="rfp-header-left">
-            <div className="im-field">
-              <label className="im-field__label rfp-lbl">Production Order</label>
-              <div className="im-lookup-wrap">
-                <input
-                  className="im-field__input"
-                  value={poInfo ? `#${poInfo.doc_num} - ${poInfo.item_code || ""}` : ""}
-                  readOnly
-                  placeholder="Select a production order..."
-                  style={{ width: 240, background: poInfo ? "#f0fff4" : undefined }}
-                />
-                {!isView && (
-                  <button className="im-lookup-btn" onClick={() => setPoModal(true)} disabled={loading}>
-                    ...
-                  </button>
-                )}
-              </div>
-            </div>
-
             <div className="im-field">
               <label className="im-field__label rfp-lbl">Number</label>
               <input
@@ -719,18 +706,6 @@ export default function ReceiptFromProductionModule() {
             </div>
 
             <div className="im-field">
-              <label className="im-field__label rfp-lbl">Ref. 2</label>
-              <input
-                className="im-field__input"
-                name="ref_2"
-                value={header.ref_2}
-                onChange={handleHeaderChange}
-                readOnly={isView}
-                style={{ width: 160 }}
-              />
-            </div>
-
-            <div className="im-field">
               <label className="im-field__label rfp-lbl">Branch</label>
               <select
                 className="im-field__select"
@@ -747,18 +722,6 @@ export default function ReceiptFromProductionModule() {
                   </option>
                 ))}
               </select>
-            </div>
-
-            <div className="im-field">
-              <label className="im-field__label rfp-lbl">UoP</label>
-              <input
-                className="im-field__input"
-                name="uop"
-                value={header.uop}
-                onChange={handleHeaderChange}
-                readOnly={isView}
-                style={{ width: 160 }}
-              />
             </div>
           </div>
           
@@ -790,26 +753,14 @@ export default function ReceiptFromProductionModule() {
             </div>
 
             <div className="im-field">
-              <label className="im-field__label rfp-lbl-r">Journal Remark</label>
+              <label className="im-field__label rfp-lbl-r">Ref. 2</label>
               <input
                 className="im-field__input"
-                name="journal_remark"
-                value={header.journal_remark}
+                name="ref_2"
+                value={header.ref_2}
                 onChange={handleHeaderChange}
                 readOnly={isView}
-                style={{ flex: 1 }}
-              />
-            </div>
-
-            <div className="im-field">
-              <label className="im-field__label rfp-lbl-r">Remarks</label>
-              <input
-                className="im-field__input"
-                name="remarks"
-                value={header.remarks}
-                onChange={handleHeaderChange}
-                readOnly={isView}
-                style={{ flex: 1 }}
+                style={{ width: 150 }}
               />
             </div>
           </div>
@@ -825,21 +776,6 @@ export default function ReceiptFromProductionModule() {
             onClick={() => setTab(index)}
           >
             {tabName}
-            {index === 1 && backflushLines.length > 0 && (
-              <span
-                style={{
-                  marginLeft: 5,
-                  background: "#fff3cd",
-                  color: "#7c5c00",
-                  borderRadius: 3,
-                  padding: "0 5px",
-                  fontSize: 10,
-                  fontWeight: 700,
-                }}
-              >
-                {backflushLines.length}
-              </span>
-            )}
           </button>
         ))}
       </div>
@@ -862,53 +798,56 @@ export default function ReceiptFromProductionModule() {
         )}
 
         {tab === 1 && (
-          <div style={{ padding: "12px 16px" }}>
-            {backflushLines.length === 0 ? (
-              <div style={{ textAlign: "center", color: "#888", fontSize: 13, padding: "30px 0" }}>
-                {poInfo
-                  ? "No backflush components on this production order."
-                  : "Select a Production Order to see backflush components."}
-              </div>
-            ) : (
-              <BackflushPreview
-                lines={backflushLines}
-                receiptQty={receiptQtyForBackflush}
-                plannedQty={toQty(poInfo?.planned_qty || 1)}
-                warehouses={warehouses}
-              />
-            )}
+          <div className="rfp-attachment-panel">
+            <div className="rfp-grid-scroll">
+              <table className="rfp-grid rfp-attachment-grid">
+                <thead>
+                  <tr>
+                    <th className="rfp-th" style={{ width: 40 }}>#</th>
+                    <th className="rfp-th" style={{ width: 330 }}>Target Path</th>
+                    <th className="rfp-th" style={{ width: 270 }}>File Name</th>
+                    <th className="rfp-th" style={{ width: 190 }}>Attachment Date</th>
+                    <th className="rfp-th" style={{ width: 160 }}>Free Text</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: 14 }).map((_, index) => (
+                    <tr key={index} className="rfp-grid__row rfp-grid__row--empty">
+                      <td className="rfp-grid__cell rfp-grid__cell--num">{index === 0 ? 1 : ""}</td>
+                      <td className="rfp-grid__cell" />
+                      <td className="rfp-grid__cell" />
+                      <td className="rfp-grid__cell" />
+                      <td className="rfp-grid__cell" />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="rfp-attachment-actions">
+              <button className="im-btn" disabled>Browse</button>
+              <button className="im-btn" disabled>Display</button>
+              <button className="im-btn" disabled>Delete</button>
+            </div>
           </div>
         )}
 
         {tab === 2 && (
-          <div style={{ padding: "14px 16px" }}>
-            <div className="im-field" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-              <label className="im-field__label" style={{ textAlign: "left" }}>Remarks</label>
-              <textarea
-                name="remarks"
-                value={header.remarks}
-                onChange={handleHeaderChange}
-                readOnly={isView}
-                rows={6}
-                style={{
-                  width: "100%",
-                  maxWidth: 600,
-                  fontSize: 13,
-                  padding: "6px 8px",
-                  border: "1px solid #c8d0da",
-                  borderRadius: 3,
-                  resize: "vertical",
-                }}
-              />
-            </div>
+          <div className="rfp-edoc-panel">
+            <div className="rfp-edoc-row rfp-edoc-title">Generic eDoc Protocol</div>
+            <div className="rfp-edoc-row"><span>eDoc Generation Type</span><input readOnly value="Not Relevant" /></div>
+            <div className="rfp-edoc-row"><span>eDoc Format</span><input readOnly value="" /></div>
+            <div className="rfp-edoc-row"><span>Documents Mapping Determination</span><input readOnly value="Double-click to open" /></div>
+            <div className="rfp-edoc-row"><span>Document Status</span><input readOnly value="" /></div>
           </div>
         )}
       </div>
 
       {poModal && (
         <ProductionOrderSearchModal
+          title={poModal.title}
+          type={poModal.type}
           onSelect={handlePoSelect}
-          onClose={() => setPoModal(false)}
+          onClose={() => setPoModal(null)}
         />
       )}
 
@@ -930,6 +869,46 @@ export default function ReceiptFromProductionModule() {
         />
       )}
 
+      <div className="rfp-form-footer">
+        <div className="rfp-footer-left">
+          <div className="im-field rfp-footer-field">
+            <label className="im-field__label">Remarks</label>
+            <textarea
+              name="remarks"
+              value={header.remarks}
+              onChange={handleHeaderChange}
+              readOnly={isView}
+              rows={2}
+              className="rfp-footer-textarea"
+            />
+          </div>
+          <div className="im-field rfp-footer-field">
+            <label className="im-field__label">Journal Remark</label>
+            <input
+              className="im-field__input"
+              name="journal_remark"
+              value={header.journal_remark}
+              onChange={handleHeaderChange}
+              readOnly={isView}
+              style={{ width: 170 }}
+            />
+          </div>
+        </div>
+
+        <div className="rfp-footer-right">
+          <div className="im-field rfp-footer-field">
+            <label className="im-field__label">Create QR Code From</label>
+            <input
+              className="im-field__input rfp-qr-input"
+              name="qr_code_from"
+              value={header.qr_code_from}
+              onChange={handleHeaderChange}
+              readOnly={isView}
+            />
+          </div>
+        </div>
+      </div>
+
       <div className="rfp-bottom-bar">
         <div className="rfp-bottom-bar__totals">
           <span>
@@ -940,6 +919,24 @@ export default function ReceiptFromProductionModule() {
               FG Qty: <span className="rfp-bottom-bar__total-val">{toQty(primaryLine.quantity).toFixed(2)}</span>
             </span>
           )}
+        </div>
+        <div className="rfp-footer-actions">
+          <button
+            type="button"
+            className="im-btn"
+            onClick={() => setPoModal({ type: "production", title: "List of Production Orders" })}
+            disabled={isView || loading}
+          >
+            Production Order
+          </button>
+          <button
+            type="button"
+            className="im-btn"
+            onClick={() => setPoModal({ type: "disassembly", title: "List of Disassembly Orders" })}
+            disabled={isView || loading}
+          >
+            Return Components
+          </button>
         </div>
       </div>
     </div>

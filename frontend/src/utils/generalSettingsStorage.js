@@ -107,6 +107,11 @@ const buildGeneralSettingsStorageKey = (companyOrScope) => {
 };
 
 export const readGeneralSettings = (companyOrScope) => {
+  const session = getAuthSession?.();
+  if (session?.token) {
+    return normalizeSettings(session.generalSettings || {});
+  }
+
   const storage = getStorage();
   if (!storage) return EMPTY_GENERAL_SETTINGS;
 

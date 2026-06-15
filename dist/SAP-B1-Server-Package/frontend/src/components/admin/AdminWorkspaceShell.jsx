@@ -99,6 +99,9 @@ const AdminWorkspaceShell = ({ children }) => {
             <NavLink to="/admin" end className={({ isActive }) => `admin-workspace__nav-link${isActive ? ' is-active' : ''}`}>
               Overview
             </NavLink>
+            <NavLink to="/general-settings" className={({ isActive }) => `admin-workspace__nav-link${isActive ? ' is-active' : ''}`}>
+              General Settings
+            </NavLink>
           </div>
 
           {isLoading ? (

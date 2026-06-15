@@ -4,6 +4,7 @@ const env = require('../config/env');
 const authDbService = require('./authDbService');
 const { syncApplicationSidebarMenus } = require('./applicationMenuSyncService');
 const { appendVirtualMenus } = require('./virtualMenuService');
+const { appendVirtualLayoutManagerMenu } = require('./reportLayoutService');
 
 const createHttpError = (statusCode, message) => {
   const error = new Error(message);
@@ -54,7 +55,8 @@ const TOP_LEVEL_MENU_PRIORITY = new Map([
   ['purchasing', 2],
   ['purchasing a p', 2],
   ['reports', 6],
-  ['admin panel', 7],
+  ['general settings', 7],
+  ['admin panel', 8],
 ]);
 
 const normalizeMenuPriorityName = (menuName) =>
@@ -227,11 +229,15 @@ const buildAuthorizedMenus = async (roleId, roleName = '', companyId = null) => 
     .map((menu) => String(menu.MenuPath || '').trim())
     .filter(Boolean);
 
-  return appendVirtualMenus({
+  const menuPayload = appendVirtualMenus({
     menus: menuTree,
     menuPaths,
     includeAdminPanel: isAdminRoleName(roleName),
   });
+
+  return isAdminRoleName(roleName)
+    ? appendVirtualLayoutManagerMenu(menuPayload)
+    : menuPayload;
 };
 
 const login = async (username, password) => {

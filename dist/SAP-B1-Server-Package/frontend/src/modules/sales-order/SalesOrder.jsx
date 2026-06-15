@@ -19,6 +19,7 @@ import CopyFromModal from './components/CopyFromModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintSalesOrderActions from './components/PrintSalesOrderActions';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -27,6 +28,7 @@ import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../..
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
@@ -156,7 +158,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
     freightPurchase: '', freightSales: '', freightProvider: '', freightProviderName: '',
     brokerageNumber: '',
     uomCode: '', uomName: '', stdDiscount: '', stcode: '', taxCode: '', total: '', whse: '',
-    distRule: '', freeText: '', countryOfOrigin: '', sacCode: '',
+    distRule: '', distRule2: '', distRule3: '', distRule4: '', distRule5: '', freeText: '', countryOfOrigin: '', sacCode: '',
     openQty: '', deliveredQty: '', taxAmount: '', documentCreated: '',
     loc: '', branch: '', lineNum: undefined, baseEntry: null, baseType: null, baseLine: null,
     udf: createUdfState(rowUdfDefinitions),
@@ -174,8 +176,10 @@ const INIT_HEADER = {
     billToAddress: '', billToCode: '', shipToAddress: '',
 };
 
-const createInitialHeader = () => ({
+const createInitialHeader = (settings = readGeneralSettings()) => ({
     ...INIT_HEADER,
+    warehouse: settings.salesWarehouse || '',
+    series: settings.salesSeries || '',
     postingDate: today(),
     documentDate: today(),
 });
@@ -197,9 +201,11 @@ function SalesOrder() {
     const { removeTask, upsertTask } = useSapWindowTaskbarActions();
     const formRef = useRef(null);
     const handledCopyFromRef = useRef('');
+    const generalSettingsRef = useRef(readGeneralSettings());
+    const defaultWarehouseAppliedRef = useRef(false);
     const [isCopyFromClick, setIsCopyFromClick] = useState(false);
     const [currentDocEntry, setCurrentDocEntry] = useState(null);
-    const [header, setHeader] = useState(() => createInitialHeader());
+    const [header, setHeader] = useState(() => createInitialHeader(generalSettingsRef.current));
     const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
     const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
     const [lines, setLines] = useState([createLine()]);
@@ -216,7 +222,7 @@ function SalesOrder() {
         company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
         warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
         payment_terms: [], shipping_types: [], branches: [], uom_groups: [], sales_employees: [], owners: [],
-        countries: [], distribution_rules: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
+        countries: [], distribution_rules: [], distribution_dimensions: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
         decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
     });
     const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
@@ -281,6 +287,13 @@ function SalesOrder() {
             : null;
 
         if (matchedSeries) return matchedSeries;
+
+        const preferredSeries = String(generalSettingsRef.current.salesSeries || '').trim();
+        const settingsSeries = preferredSeries
+            ? seriesList.find((series) => String(series.Series) === preferredSeries)
+            : null;
+
+        if (settingsSeries) return settingsSeries;
 
         const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
         return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
@@ -447,6 +460,7 @@ function SalesOrder() {
                         owners: refDataRes.data.owners || [],
                         countries: refDataRes.data.countries || [],
                         distribution_rules: refDataRes.data.distribution_rules || [],
+                        distribution_dimensions: refDataRes.data.distribution_dimensions || [],
                         quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
                         price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
                         decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
@@ -713,6 +727,32 @@ function SalesOrder() {
 
     // Filter warehouses by selected branch
     const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
+
+    useEffect(() => {
+        if (currentDocEntry || copyFromMode || isCopyFromClick || defaultWarehouseAppliedRef.current) return;
+
+        const defaultWarehouse = String(generalSettingsRef.current.salesWarehouse || '').trim();
+        if (!defaultWarehouse) {
+            defaultWarehouseAppliedRef.current = true;
+            return;
+        }
+
+        if (!effectiveWarehouses.length) return;
+
+        const warehouse = effectiveWarehouses.find((entry) => String(entry.WhsCode || '') === defaultWarehouse);
+        defaultWarehouseAppliedRef.current = true;
+        if (!warehouse) return;
+
+        const warehouseBranch = warehouse.BranchID ?? warehouse.BPLid ?? warehouse.BPLId ?? warehouse.BPLID ?? '';
+        setHeader((prev) => {
+            if (prev.warehouse && String(prev.warehouse) !== defaultWarehouse) return prev;
+            return {
+                ...prev,
+                warehouse: prev.warehouse || defaultWarehouse,
+                branch: prev.branch || (warehouseBranch !== '' ? String(warehouseBranch) : ''),
+            };
+        });
+    }, [copyFromMode, currentDocEntry, effectiveWarehouses, isCopyFromClick]);
 
     const payTermOpts = refData.payment_terms.length
         ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
@@ -1343,6 +1383,29 @@ function SalesOrder() {
         }
     };
 
+    const handleDistributionRuleChange = (lineIndex, valuesByDimension = {}) => {
+        const fieldByDimension = {
+            1: 'distRule',
+            2: 'distRule2',
+            3: 'distRule3',
+            4: 'distRule4',
+            5: 'distRule5',
+        };
+
+        markDirty();
+        setValErrors(p => ({ ...p, lines: { ...p.lines, [lineIndex]: { ...(p.lines[lineIndex] || {}), distRule: '' } }, form: '' }));
+        setPageState(p => ({ ...p, error: '', success: '' }));
+        setLines(prev => prev.map((line, idx) => {
+            if (idx !== lineIndex) return line;
+            const next = { ...line };
+            Object.entries(valuesByDimension).forEach(([dimensionCode, ruleCode]) => {
+                const fieldName = fieldByDimension[Number(dimensionCode)];
+                if (fieldName) next[fieldName] = ruleCode || '';
+            });
+            return next;
+        }));
+    };
+
     const handleNumBlur = (field, target = 'line', i = null) => {
         const d = numDec[field];
         if (d === undefined) return;
@@ -1924,7 +1987,7 @@ function SalesOrder() {
         const duplicated = duplicateDocumentInPlace({
             currentDocEntry,
             header,
-            initialHeader: createInitialHeader(),
+            initialHeader: createInitialHeader(generalSettingsRef.current),
             lines,
             createLine,
             rowUdfDefinitions,
@@ -2181,6 +2244,10 @@ function SalesOrder() {
                 total: line.total,
                 whse: line.whse,
                 distRule: line.distRule,
+                distRule2: line.distRule2,
+                distRule3: line.distRule3,
+                distRule4: line.distRule4,
+                distRule5: line.distRule5,
                 freeText: line.freeText,
                 countryOfOrigin: line.countryOfOrigin,
                 sacCode: line.sacCode,
@@ -2210,7 +2277,8 @@ function SalesOrder() {
 
             const r = currentDocEntry ? await updateSalesOrder(currentDocEntry, payload) : await submitSalesOrder(payload);
             const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
-            const resetHeader = createInitialHeader();
+            defaultWarehouseAppliedRef.current = false;
+            const resetHeader = createInitialHeader(generalSettingsRef.current);
             setSnapshotPending(false);
             setIsDirty(false);
             setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
@@ -2235,7 +2303,8 @@ function SalesOrder() {
     };
 
     const resetForm = () => {
-        const resetHeader = createInitialHeader();
+        defaultWarehouseAppliedRef.current = false;
+        const resetHeader = createInitialHeader(generalSettingsRef.current);
         setSnapshotPending(false);
         setIsDirty(false);
         setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
@@ -2506,6 +2575,14 @@ function SalesOrder() {
                                             </select>
                                         </div>
 
+                                        <DocumentCurrencySelect
+                                            classPrefix="so"
+                                            header={header}
+                                            onHeaderChange={handleHeaderChange}
+                                            businessPartners={refData.vendors || []}
+                                            disabled={pageState.vendorLoading || !header.vendor || !!currentDocEntry}
+                                        />
+
                                         {/* Place of Supply */}
                                         <div className="so-field">
                                             <label className="so-field__label">Place of Supply *</label>
@@ -2716,6 +2793,8 @@ function SalesOrder() {
                                 valErrors={valErrors}
                                 branches={refData.branches}
                                 distributionRules={refData.distribution_rules || []}
+                                distributionDimensions={refData.distribution_dimensions || []}
+                                onDistributionRuleChange={handleDistributionRuleChange}
                                 countries={refData.countries || []}
                                 onOpenHSNModal={openHSNModal}
                                 onOpenItemModal={openItemModalSafe}

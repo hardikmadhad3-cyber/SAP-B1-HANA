@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import './styles/APCreditMemo.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/ap-invoice/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/ap-invoice/HeaderUdfSidebar';
+import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import ContentsTab from './components/ContentsTab';
 import LogisticsTab from './components/LogisticsTab';
 import AccountingTab from './components/AccountingTab';
@@ -14,6 +15,7 @@ import TaxInfoModal from './components/TaxInfoModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import StateSelectionModal from './components/StateSelectionModal';
+import HSNCodeModal from './components/HSNCodeModal';
 import CopyFromModal from '../purchase-order/components/CopyFromModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
@@ -65,6 +67,7 @@ const getErrMsg = (e, fb) => {
 };
 const today = () => new Date().toISOString().split('T')[0];
 const parseNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const normalizeLookupIdentity = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 const roundTo = (v, d) => { const f = 10 ** Math.max(d, 0); return Math.round((v + Number.EPSILON) * f) / f; };
 const fmtDec = (v, d) => { if (v === '' || v == null) return ''; const n = Number(v); return Number.isNaN(n) ? '' : n.toFixed(Math.max(d, 0)); };
 const sanitize = (v, d) => {
@@ -145,8 +148,13 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   unitPrice: '',
   stdDiscount: '',
   taxCode: '',
+  wtaxLiable: 'N',
   total: '',
   whse: '',
+  distRule: '',
+  countryOfOrigin: '',
+  loc: '',
+  blanketAgreementNo: '',
   baseEntry: null,
   baseType: null,
   baseLine: null,
@@ -294,6 +302,10 @@ function APCreditMemo() {
     warnings: [],
     series: [],
     states: [],
+    distribution_rules: [],
+    locations: [],
+    countries: [],
+    business_partners: [],
   });
   const [pageState, setPageState] = useState({
     loading: false,
@@ -314,6 +326,18 @@ function APCreditMemo() {
   const [addressModal, setAddressModal] = useState(null);
   const [taxInfoModal, setTaxInfoModal] = useState(false);
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
+  const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1, fieldName: 'hsnCode', udfKey: '' });
+  const [lineLookupModal, setLineLookupModal] = useState({
+    open: false,
+    lineIndex: -1,
+    field: '',
+    udfKey: '',
+    title: '',
+    options: [],
+    searchPlaceholder: 'Search values',
+    emptyMessage: 'No values found',
+    columns: null,
+  });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
   const [bpModal, setBpModal] = useState(false);
   const [stateModal, setStateModal] = useState(false);
@@ -460,6 +484,10 @@ function APCreditMemo() {
             sales_employees: refDataRes.data.sales_employees || [],
             branches: refDataRes.data.branches || [],
             states: refDataRes.data.states || [],
+            distribution_rules: refDataRes.data.distribution_rules || [],
+            locations: refDataRes.data.locations || [],
+            countries: refDataRes.data.countries || [],
+            business_partners: refDataRes.data.business_partners || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
@@ -632,6 +660,61 @@ function APCreditMemo() {
     acc[i] = code && !exists ? [{ ItemCode: code, ItemName: line.itemDescription || code }, ...refData.items] : refData.items;
     return acc;
   }, {});
+
+  const distributionRuleLookupOptions = useMemo(() => (refData.distribution_rules || []).map((rule) => {
+    const value = rule.FactorCode || rule.OcrCode || rule.code || '';
+    const description = rule.FactorDescription || rule.OcrName || rule.name || '';
+    return {
+      value,
+      description,
+      label: description ? `${value} - ${description}` : value,
+      factorCode: value,
+      factorDescription: description,
+    };
+  }).filter((option) => option.value), [refData.distribution_rules]);
+
+  const locationLookupOptions = useMemo(() => (refData.locations || []).map((locationItem) => {
+    const value = String(locationItem.code ?? locationItem.Code ?? '');
+    const description = locationItem.name || locationItem.Location || locationItem.Name || '';
+    return { value, description, label: description ? `${value} - ${description}` : value, code: value, locationName: description };
+  }).filter((option) => option.value), [refData.locations]);
+
+  const countryLookupOptions = useMemo(() => (refData.countries || []).map((country) => {
+    const value = String(country.code ?? country.Code ?? '');
+    const description = country.name || country.Name || '';
+    return { value, description, label: description ? `${value} - ${description}` : value, code: value, countryName: description };
+  }).filter((option) => option.value), [refData.countries]);
+
+  const sellerItemLookupOptions = useMemo(() => (refData.items || []).map((item) => ({
+    value: item.ItemCode || '',
+    description: item.ItemName || '',
+    label: item.ItemName ? `${item.ItemCode} - ${item.ItemName}` : item.ItemCode,
+    itemCode: item.ItemCode || '',
+    itemName: item.ItemName || '',
+    purchaseUnit: item.PurchaseUnit || item.InventoryUOM || '',
+  })).filter((option) => option.value), [refData.items]);
+
+  const businessPartnerLookupOptions = useMemo(() => {
+    const partners = refData.business_partners?.length ? refData.business_partners : refData.vendors;
+    return (partners || []).map((partner) => {
+      const value = partner.CardCode || partner.code || partner.Code || '';
+      const description = partner.CardName || partner.name || partner.Name || '';
+      return {
+        value,
+        description,
+        label: description ? `${value} - ${description}` : value,
+        bpCode: value,
+        bpName: description,
+        bpType: partner.CardType || partner.cardType || '',
+      };
+    }).filter((option) => option.value);
+  }, [refData.business_partners, refData.vendors]);
+
+  const paymentTermLookupOptions = useMemo(() => (refData.payment_terms || []).map((term) => {
+    const value = term.PymntGroup || term.name || String(term.GroupNum ?? '');
+    const code = String(term.GroupNum ?? term.code ?? '');
+    return { value, description: code ? `Code: ${code}` : '', label: code ? `${value} (${code})` : value, code };
+  }).filter((option) => option.value), [refData.payment_terms]);
 
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
   const FALLBACK_WAREHOUSES = [{ WhsCode: 'WH01', WhsName: 'Main Warehouse' }];
@@ -1045,6 +1128,113 @@ function APCreditMemo() {
     markDirty();
     setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
   };
+
+  const openLineLookup = (column, lineIndex, udfField = null) => {
+    const lookupType = column.lookup;
+    const configs = {
+      distRule: {
+        title: 'List of Distribution Rules',
+        options: distributionRuleLookupOptions,
+        searchPlaceholder: 'Search distribution rules',
+        emptyMessage: 'No distribution rules found',
+        columns: [
+          { key: 'factorCode', label: 'Distr. Rule', width: 140, primary: true },
+          { key: 'factorDescription', label: 'Description' },
+        ],
+      },
+      location: {
+        title: 'List of Locations',
+        options: locationLookupOptions,
+        searchPlaceholder: 'Search locations',
+        emptyMessage: 'No locations found',
+        columns: [
+          { key: 'code', label: 'Code', width: 100, primary: true },
+          { key: 'locationName', label: 'Location' },
+        ],
+      },
+      country: {
+        title: 'List of Countries/Regions',
+        options: countryLookupOptions,
+        searchPlaceholder: 'Search countries or regions',
+        emptyMessage: 'No countries or regions found',
+        columns: [
+          { key: 'code', label: 'Code', width: 100, primary: true },
+          { key: 'countryName', label: 'Country/Region' },
+        ],
+      },
+      item: {
+        title: 'List of Items',
+        options: sellerItemLookupOptions,
+        searchPlaceholder: 'Search items',
+        emptyMessage: 'No items found',
+        columns: [
+          { key: 'itemCode', label: 'Item No.', width: 150, primary: true },
+          { key: 'itemName', label: 'Item Description' },
+          { key: 'purchaseUnit', label: 'UoM', width: 100 },
+        ],
+      },
+      businessPartner: {
+        title: 'List of Business Partners',
+        options: businessPartnerLookupOptions,
+        searchPlaceholder: 'Search business partners',
+        emptyMessage: 'No business partners found',
+        columns: [
+          { key: 'bpCode', label: 'BP Code', width: 130, primary: true },
+          { key: 'bpName', label: 'BP Name' },
+          { key: 'bpType', label: 'BP Type', width: 90 },
+        ],
+      },
+      paymentTerm: {
+        title: 'List of Payment Terms',
+        options: paymentTermLookupOptions,
+        searchPlaceholder: 'Search payment terms',
+        emptyMessage: 'No payment terms found',
+        columns: [
+          { key: 'value', label: 'Payment Terms', primary: true },
+          { key: 'code', label: 'Code', width: 90 },
+        ],
+      },
+    };
+    const config = configs[lookupType];
+    if (!config) return;
+
+    setLineLookupModal({
+      open: true,
+      lineIndex,
+      field: column.key,
+      udfKey: udfField?.key || '',
+      ...config,
+    });
+  };
+
+  const closeLineLookup = () => {
+    setLineLookupModal(prev => ({ ...prev, open: false, lineIndex: -1, field: '', udfKey: '' }));
+  };
+
+  const handleLineLookupSelect = (option) => {
+    if (lineLookupModal.lineIndex < 0 || !lineLookupModal.field) return;
+    const selectedValue = option?.value || '';
+    const providerNameField = rowUdfDefinitions.find((field) => {
+      const identities = [field.key, field.sapField, field.aliasId, field.label].map(normalizeLookupIdentity);
+      return identities.some((identity) => ['freightprovidername', 'frtransname'].some((candidate) => identity.includes(candidate)));
+    });
+
+    setLines(prev => prev.map((line, index) => {
+      if (index !== lineLookupModal.lineIndex) return line;
+
+      if (lineLookupModal.udfKey) {
+        const nextUdf = { ...(line.udf || {}), [lineLookupModal.udfKey]: selectedValue };
+        if (lineLookupModal.field === 'freightProvider' && providerNameField) {
+          nextUdf[providerNameField.key] = option?.description || option?.bpName || '';
+        }
+        return { ...line, udf: nextUdf };
+      }
+
+      return { ...line, [lineLookupModal.field]: selectedValue };
+    }));
+    markDirty();
+    closeLineLookup();
+  };
   const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({
     ...p,
     [g]: {
@@ -1206,6 +1396,29 @@ function APCreditMemo() {
       }));
     }
     closeItemModal();
+  };
+
+  const openHSNModal = (lineIndex, fieldName = 'hsnCode', udfKey = '') => {
+    setHsnModal({ open: true, lineIndex, fieldName, udfKey });
+  };
+
+  const closeHSNModal = () => {
+    setHsnModal({ open: false, lineIndex: -1, fieldName: 'hsnCode', udfKey: '' });
+  };
+
+  const handleHSNSelect = (hsn) => {
+    const fieldName = hsnModal.fieldName || 'hsnCode';
+    const code = hsn.code || hsn.Code || '';
+    if (hsnModal.lineIndex >= 0) {
+      setLines(prev => prev.map((line, idx) =>
+        idx === hsnModal.lineIndex
+          ? hsnModal.udfKey
+            ? { ...line, udf: { ...(line.udf || {}), [hsnModal.udfKey]: code } }
+            : { ...line, [fieldName]: code }
+          : line
+      ));
+    }
+    closeHSNModal();
   };
 
   // ── Business Partner Modal handlers ──────────────────────────────────────
@@ -1482,7 +1695,12 @@ function APCreditMemo() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
-  const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
+  const visibleRowUdfs = rowUdfDefinitions
+    .filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false)
+    .map(f => ({
+      ...f,
+      active: formSettings.rowUdfs?.[f.key]?.active !== false && f.active !== false,
+    }));
 
   // Continue in next message with render...
 
@@ -1712,9 +1930,12 @@ function APCreditMemo() {
                 fmtTaxLabel={fmtTaxLabel}
                 valErrors={valErrors}
                 branches={refData.branches}
-                onOpenHSNModal={() => {}}
+                onOpenHSNModal={openHSNModal}
                 onOpenItemModal={openItemModal}
+                onOpenLineLookup={openLineLookup}
                 getBranchName={getBranchName}
+                matrixFields={BASE_MATRIX_COLUMNS}
+                formSettings={formSettings}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
               />
@@ -1940,6 +2161,24 @@ function APCreditMemo() {
         onSelect={handleItemSelect}
         items={itemModal.items}
         loading={itemModal.loading}
+      />
+
+      <HSNCodeModal
+        isOpen={hsnModal.open}
+        onClose={closeHSNModal}
+        onSelect={handleHSNSelect}
+      />
+
+      <LineValueLookupModal
+        isOpen={lineLookupModal.open}
+        onClose={closeLineLookup}
+        onSelect={handleLineLookupSelect}
+        options={lineLookupModal.options}
+        title={lineLookupModal.title}
+        searchPlaceholder={lineLookupModal.searchPlaceholder}
+        emptyMessage={lineLookupModal.emptyMessage}
+        allowCreate={false}
+        columns={lineLookupModal.columns}
       />
 
       {/* Business Partner Modal */}

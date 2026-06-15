@@ -3,6 +3,8 @@ import apiClient from './client';
 export const fetchGoodsIssueMetadata = () => apiClient.get('/goods-issue/metadata');
 export const fetchGoodsIssueItems = () => apiClient.get('/goods-issue/items');
 export const fetchGoodsIssueWarehouses = () => apiClient.get('/goods-issue/warehouses');
+export const fetchGoodsIssueDistributionRules = () =>
+  apiClient.get('/goods-issue/distribution-rules');
 export const fetchGoodsIssueSeries = () => apiClient.get('/goods-issue/series');
 export const fetchGoodsIssueBatchesByItem = (itemCode, whsCode) =>
   apiClient.get('/goods-issue/batches', {

@@ -6,6 +6,7 @@ Quick one-click install on another Windows server
 1. Extract SAP-B1-Server-Package.zip on the server.
 2. Edit backend\.env if database, SAP, or PORT settings are different.
 3. Double-click INSTALL_ONE_CLICK.bat.
+   During an update, this restarts the backend so the newly extracted server code is loaded.
 4. Open the app on the server:
    http://localhost:5001
 5. Open from another LAN computer:
@@ -43,7 +44,7 @@ Install and build:
 powershell -ExecutionPolicy Bypass -File .\deployment\install-one-click.ps1
 
 Start backend and register auto-start:
-powershell -ExecutionPolicy Bypass -File .\deployment\start-backend-service.ps1 -InstallAutoStart
+powershell -ExecutionPolicy Bypass -File .\deployment\start-backend-service.ps1 -InstallAutoStart -Restart
 
 Stop backend:
 powershell -ExecutionPolicy Bypass -File .\deployment\stop-backend-service.ps1

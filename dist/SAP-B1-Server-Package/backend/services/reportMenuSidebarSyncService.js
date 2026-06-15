@@ -5,8 +5,8 @@ const createHttpError = (statusCode, message) => {
 };
 
 const REPORT_MENU_PATH_PREFIX = '/reportlayoutmanager/menu/';
-const REPORTS_ROOT_CANDIDATE_PATHS = ['/reportlayoutmanager'];
-const REPORTS_ROOT_CANDIDATE_NAMES = ['report layout manager', 'reports'];
+const REPORTS_ROOT_CANDIDATE_PATHS = ['/reports', '/reportlayoutmanager'];
+const REPORTS_ROOT_CANDIDATE_NAMES = ['reports', 'report layout manager'];
 
 const toInt = (value) => {
   const parsed = Number(value);
@@ -63,11 +63,12 @@ const getDefaultReportsParentMenuId = async (db) => {
     SELECT TOP (1) MenuId
     FROM dbo.Menus
     WHERE
-      LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) IN (@path1)
+      LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) IN (@path1, @path2)
       OR LOWER(LTRIM(RTRIM(COALESCE(MenuName, '')))) IN (@name1, @name2)
     ORDER BY
       CASE
         WHEN LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) = @path1 THEN 0
+        WHEN LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) = @path2 THEN 1
         WHEN LOWER(LTRIM(RTRIM(COALESCE(MenuName, '')))) = @name1 THEN 1
         WHEN LOWER(LTRIM(RTRIM(COALESCE(MenuName, '')))) = @name2 THEN 2
         ELSE 3
@@ -76,6 +77,7 @@ const getDefaultReportsParentMenuId = async (db) => {
       MenuId ASC
   `, {
     path1: REPORTS_ROOT_CANDIDATE_PATHS[0],
+    path2: REPORTS_ROOT_CANDIDATE_PATHS[1],
     name1: REPORTS_ROOT_CANDIDATE_NAMES[0],
     name2: REPORTS_ROOT_CANDIDATE_NAMES[1],
   });

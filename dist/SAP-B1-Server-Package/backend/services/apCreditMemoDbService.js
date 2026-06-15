@@ -258,9 +258,14 @@ const getGRPOForCopy = async (docEntry) => {
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
+      T0.WTLiable,
       T0.LineTotal,
       T0.WhsCode AS Warehouse,
-      T0.unitMsr AS UoMCode
+      T0.unitMsr AS UoMCode,
+      T0.OcrCode AS DistributionRule,
+      T0.CountryOrg AS CountryOfOrigin,
+      T0.LocCode AS LocationCode,
+      T0.AgrNo AS BlanketAgreementNo
     FROM PDN1 T0
     WHERE T0.DocEntry = @docEntry
       AND T0.LineStatus = 'O'
@@ -315,9 +320,14 @@ const getGRPOForCopy = async (docEntry) => {
         unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
         stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
         taxCode: l.TaxCode || '',
+        wtaxLiable: String(l.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
         total: l.LineTotal != null ? String(l.LineTotal) : '',
         whse: l.Warehouse || '',
         uomCode: l.UoMCode || '',
+        distRule: l.DistributionRule || '',
+        countryOfOrigin: l.CountryOfOrigin || '',
+        loc: l.LocationCode != null ? String(l.LocationCode) : '',
+        blanketAgreementNo: l.BlanketAgreementNo ? String(l.BlanketAgreementNo) : '',
         batchManaged: itemInfo.batchManaged,
         batches: [],
         udf: {},
@@ -459,9 +469,14 @@ const getAPCreditMemo = async (docEntry) => {
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
+      T0.WTLiable,
       T0.LineTotal,
       T0.WhsCode AS Warehouse,
       T0.unitMsr AS UoMCode,
+      T0.OcrCode AS DistributionRule,
+      T0.CountryOrg AS CountryOfOrigin,
+      T0.LocCode AS LocationCode,
+      T0.AgrNo AS BlanketAgreementNo,
       T0.BaseEntry,
       T0.BaseType,
       T0.BaseLine
@@ -532,9 +547,14 @@ const getAPCreditMemo = async (docEntry) => {
           unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
           stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
           taxCode: l.TaxCode || '',
+          wtaxLiable: String(l.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
           total: l.LineTotal != null ? String(l.LineTotal) : '',
           whse: l.Warehouse || '',
           uomCode: l.UoMCode || '',
+          distRule: l.DistributionRule || '',
+          countryOfOrigin: l.CountryOfOrigin || '',
+          loc: l.LocationCode != null ? String(l.LocationCode) : '',
+          blanketAgreementNo: l.BlanketAgreementNo ? String(l.BlanketAgreementNo) : '',
           batchManaged: itemInfo.batchManaged,
           batches: [],
           udf: lineUdfsByLineNum[l.LineNum] || {},
@@ -603,6 +623,10 @@ const getReferenceData = async () => {
     decimalRows,
     companyRows,
     udfMetadata,
+    distributionRules,
+    locations,
+    countries,
+    businessPartners,
   ] = await Promise.all([
     getVendors(),
     getItems(),
@@ -617,6 +641,10 @@ const getReferenceData = async () => {
     getDecimalSettings(),
     getCompanyInfo(),
     getMarketingDocumentUdfs({ headerTable: 'ORPC', lineTable: 'RPC1' }),
+    masterDataDbService.lookupDistributionRules(),
+    masterDataDbService.lookupWarehouseLocations(),
+    masterDataDbService.lookupCountries(''),
+    masterDataDbService.searchBP('', '', 5000, 0),
   ]);
 
   const uomGroupMap = {};
@@ -674,6 +702,10 @@ const getReferenceData = async () => {
     uom_groups: Object.values(uomGroupMap),
     decimal_settings: decimalSettings,
     udf_metadata: udfMetadata,
+    distribution_rules: distributionRules,
+    locations,
+    countries,
+    business_partners: businessPartners,
     warnings: [],
   };
 };
