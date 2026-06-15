@@ -7,6 +7,7 @@ const { syncReportMenuSidebarMenuById } = require('./reportMenuSidebarSyncServic
 
 const VALID_PARAM_TYPES = new Set(['date', 'string', 'number']);
 const VALID_REPORT_TYPES = new Set(['GET', 'POST', 'API', 'API_GET', 'API_POST']);
+const DEFAULT_SAP_REPORT_SERVICE_API_PATH = '/rs/v1/ExportPDFData';
 
 let schemaReadyPromise = null;
 let relaxedHttpsAgent = null;
@@ -92,7 +93,7 @@ const normalizeVisibleReport = (row) => ({
   reportName: row.ReportName,
   reportCode: row.ReportCode,
   reportMenuId: row.ReportMenuId,
-  apiUrl: row.ApiUrl,
+  apiUrl: normalizeText(row.ApiUrl) || DEFAULT_SAP_REPORT_SERVICE_API_PATH,
   reportType: row.ReportType,
   companyId: row.CompanyId,
   createdBy: row.CreatedBy,
@@ -235,8 +236,19 @@ const loadStoredReportParameters = async (reportId) =>
     ORDER BY SortOrder ASC, ParamId ASC
   `, { reportId });
 
-const isSapReportServiceApiUrl = (url) =>
-  String(url || '').trim().toLowerCase().includes('/rs/v1/exportpdfdata');
+const isSapReportServiceApiUrl = (url) => {
+  const normalized = String(url || '').trim().toLowerCase();
+  return !normalized || normalized.includes('/rs/v1/exportpdfdata');
+};
+
+const normalizeReportApiUrl = (url) => {
+  const normalized = normalizeText(url);
+  if (!normalized || isSapReportServiceApiUrl(normalized)) {
+    return DEFAULT_SAP_REPORT_SERVICE_API_PATH;
+  }
+
+  return normalized;
+};
 
 const serializeParameterSignature = (parameters = []) =>
   JSON.stringify(
@@ -395,6 +407,45 @@ const loadMenusAndReportsForCompany = async (companyId) => {
   return { menus, reports };
 };
 
+const getAuthorizedReportMenuIds = async (roleId, companyId) => {
+  if (!toInt(roleId) || !toInt(companyId)) {
+    return new Set();
+  }
+
+  const rows = await authDbService.queryRows(`
+    SELECT DISTINCT RM.ReportMenuId
+    FROM dbo.ReportMenus RM
+    INNER JOIN dbo.Menus M
+      ON LOWER(LTRIM(RTRIM(COALESCE(M.MenuPath, '')))) =
+         LOWER(CONCAT('/reportlayoutmanager/menu/', RM.ReportMenuId))
+    INNER JOIN dbo.RoleRights RR
+      ON RR.MenuId = M.MenuId
+      AND RR.RoleId = @roleId
+      AND RR.CanView = 1
+    WHERE RM.CompanyId = @companyId
+  `, { roleId: toInt(roleId), companyId: toInt(companyId) });
+
+  return new Set(rows.map((row) => Number(row.ReportMenuId)).filter(Number.isInteger));
+};
+
+const filterAuthorizedReportCatalog = (menus, reports, authorizedMenuIds) => {
+  const menuById = new Map(menus.map((menu) => [Number(menu.MenuId), menu]));
+  const visibleMenuIds = new Set(authorizedMenuIds);
+
+  for (const menuId of authorizedMenuIds) {
+    let current = menuById.get(Number(menuId));
+    while (current?.ParentId && menuById.has(Number(current.ParentId))) {
+      visibleMenuIds.add(Number(current.ParentId));
+      current = menuById.get(Number(current.ParentId));
+    }
+  }
+
+  return {
+    menus: menus.filter((menu) => visibleMenuIds.has(Number(menu.MenuId))),
+    reports: reports.filter((report) => authorizedMenuIds.has(Number(report.ReportMenuId))),
+  };
+};
+
 const loadSharedMenusAndReports = async () => {
   const [menus, reports] = await Promise.all([
     authDbService.queryRows(`
@@ -529,11 +580,14 @@ const ensureSchema = async () => {
   return schemaReadyPromise;
 };
 
-const getVisibleMenusAndReports = async ({ userId, companyId }) => {
+const getVisibleMenusAndReports = async ({ userId, companyId, roleId }) => {
   await ensureSchema();
 
-  const { menus: allMenus, reports: visibleReports } = await loadMenusAndReportsForCompany(companyId);
-  const completeVisibleMenus = appendAncestorMenus(allMenus, allMenus);
+  const { menus: allMenus, reports: allReports } = await loadMenusAndReportsForCompany(companyId);
+  const authorizedMenuIds = await getAuthorizedReportMenuIds(roleId, companyId);
+  const { menus: visibleMenus, reports: visibleReports } =
+    filterAuthorizedReportCatalog(allMenus, allReports, authorizedMenuIds);
+  const completeVisibleMenus = appendAncestorMenus(visibleMenus, allMenus);
   const menuTree = buildMenuTree(completeVisibleMenus, visibleReports);
 
   return {
@@ -566,11 +620,12 @@ const getVisibleMenusAndReports = async ({ userId, companyId }) => {
 const listReportMenus = async (auth) => {
   const userId = toInt(auth?.userId);
   const companyId = toInt(auth?.companyId);
-  if (!userId || !companyId) {
+  const roleId = toInt(auth?.roleId);
+  if (!userId || !companyId || !roleId) {
     throw createHttpError(401, 'A valid company session is required.');
   }
 
-  return getVisibleMenusAndReports({ userId, companyId });
+  return getVisibleMenusAndReports({ userId, companyId, roleId });
 };
 
 const listAuthorizedReportCodes = async (auth, query = '') => {
@@ -695,13 +750,13 @@ const createReport = async (payload, auth) => {
   const reportName = normalizeText(payload?.reportName || payload?.ReportName);
   const reportCode = normalizeText(payload?.reportCode || payload?.ReportCode).toUpperCase();
   const reportMenuId = toInt(payload?.reportMenuId ?? payload?.ReportMenuId);
-  const apiUrl = normalizeText(payload?.apiUrl || payload?.ApiUrl);
+  const apiUrl = normalizeReportApiUrl(payload?.apiUrl || payload?.ApiUrl);
   const reportTypeRaw = normalizeText(payload?.reportType || payload?.ReportType).toUpperCase() || 'GET';
   const reportType = VALID_REPORT_TYPES.has(reportTypeRaw) ? reportTypeRaw : 'GET';
   const isPublic = Boolean(payload?.isPublic ?? payload?.IsPublic);
 
-  if (!reportName || !reportCode || !reportMenuId || !apiUrl) {
-    throw createHttpError(400, 'ReportName, ReportCode, ReportMenuId, and ApiUrl are required.');
+  if (!reportName || !reportCode || !reportMenuId) {
+    throw createHttpError(400, 'ReportName, ReportCode, and ReportMenuId are required.');
   }
 
   const menu = await authDbService.queryOne(`
@@ -858,7 +913,8 @@ const addReportParameter = async (payload, auth) => {
 const getReportById = async (reportId, auth) => {
   const userId = toInt(auth?.userId);
   const companyId = toInt(auth?.companyId);
-  if (!userId || !companyId) {
+  const roleId = toInt(auth?.roleId);
+  if (!userId || !companyId || !roleId) {
     throw createHttpError(401, 'A valid company session is required.');
   }
 
@@ -873,6 +929,11 @@ const getReportById = async (reportId, auth) => {
 
   if (!reportRow) {
     throw createHttpError(404, 'Report not found.');
+  }
+
+  const authorizedMenuIds = await getAuthorizedReportMenuIds(roleId, companyId);
+  if (!authorizedMenuIds.has(Number(reportRow.ReportMenuId))) {
+    throw createHttpError(403, 'You do not have permission to run this report.');
   }
 
   let parameterRows = await loadStoredReportParameters(reportId);
@@ -922,7 +983,43 @@ const normalizeParameterInput = (parameter, rawValue) => {
     return parsed.toISOString().slice(0, 10);
   }
 
-  return String(rawValue);
+  const textValue = String(rawValue);
+  const identity = `${parameter?.displayName || ''} ${parameter?.paramName || ''}`.toLowerCase();
+  if (
+    textValue.includes(' - ')
+    && (
+      identity.includes('item') ||
+      identity.includes('product') ||
+      identity.includes('customer') ||
+      identity.includes('vendor') ||
+      identity.includes('buyer') ||
+      identity.includes('seller') ||
+      identity.includes('business partner') ||
+      identity.includes('card code') ||
+      identity.includes('cardcode')
+    )
+  ) {
+    return textValue.split(' - ')[0].trim();
+  }
+
+  return textValue;
+};
+
+const isOptionalLookupFilterParameter = (parameter) => {
+  const identity = `${parameter?.displayName || ''} ${parameter?.paramName || ''}`.toLowerCase();
+  return (
+    identity.includes('item') ||
+    identity.includes('product') ||
+    identity.includes('customer') ||
+    identity.includes('vendor') ||
+    identity.includes('buyer') ||
+    identity.includes('seller') ||
+    identity.includes('business partner') ||
+    identity.includes('card code') ||
+    identity.includes('cardcode') ||
+    identity.includes('enter type') ||
+    identity.includes('type')
+  );
 };
 
 const resolveSubmittedParameterValue = (payload, parameter) => {
@@ -1018,9 +1115,9 @@ const collectReportLines = (data) => {
 const executeReportSource = async ({ report, parameters, values, authHeader }) => {
   const normalizedType = String(report.reportType || 'GET').toUpperCase();
   const method = normalizedType.includes('POST') ? 'post' : 'get';
-  const url = resolveApiUrl(report.apiUrl);
+  const isSapReportServiceReport = isSapReportServiceUrl(report.apiUrl);
 
-  if (isSapReportServiceUrl(url)) {
+  if (isSapReportServiceReport) {
     const sapResponse = await reportService.exportReportPdf({
       docCode: report.reportCode,
       parameters: parameters.map((parameter) => ({
@@ -1037,6 +1134,7 @@ const executeReportSource = async ({ report, parameters, values, authHeader }) =
     };
   }
 
+  const url = resolveApiUrl(report.apiUrl);
   const response = await axios({
     method,
     url,
@@ -1124,7 +1222,7 @@ const runReport = async (payload, auth, authHeader) => {
   detail.parameters.forEach((parameter) => {
     const inputValue = resolveSubmittedParameterValue(payload, parameter);
     const normalized = normalizeParameterInput(parameter, inputValue);
-    if (parameter.isRequired && (normalized === '' || normalized == null)) {
+    if (parameter.isRequired && !isOptionalLookupFilterParameter(parameter) && (normalized === '' || normalized == null)) {
       throw createHttpError(400, `${parameter.displayName} is required.`);
     }
     values[parameter.paramName] = normalized;

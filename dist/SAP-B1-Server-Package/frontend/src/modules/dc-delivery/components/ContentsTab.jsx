@@ -1,5 +1,6 @@
 import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
 
 const TABLE_MIN_WIDTH = 3400;
@@ -130,6 +131,7 @@ export default function ContentsTab({
   lines,
   onLineChange,
   onNumBlur,
+  lineItemOptions,
   onAddLine,
   onRemoveLine,
   onOpenBatchModal,
@@ -148,6 +150,7 @@ export default function ContentsTab({
   rowUdfFields = [],
   onRowUdfChange,
 }) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
   const getTaxAmountDisplay = (line) => {
     if (String(line.taxAmount ?? '').trim()) return line.taxAmount;
     const totals = getLineTotalsForDisplay(line, effectiveTaxCodes);
@@ -293,6 +296,9 @@ export default function ContentsTab({
               className="del-grid__input"
               style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
               name="itemNo"
+              data-sap-lookup="item"
+              data-sap-row-index={i}
+              onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
               value={line.itemNo}
               onChange={(e) => onLineChange(i, e)}
               placeholder="Item Code"

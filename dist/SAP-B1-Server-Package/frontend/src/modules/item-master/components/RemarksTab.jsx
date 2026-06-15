@@ -25,6 +25,18 @@ export default function RemarksTab({ form, onChange }) {
         className="im-textarea"
         placeholder="Enter remarks..."
       />
+
+      <div className="im-section-title" style={{ marginTop: 16 }}>Audit Information</div>
+      <div className="im-field-grid">
+        <div className="im-field">
+          <label className="im-field__label">Created</label>
+          <input className="im-field__input" readOnly value={[form.CreateDate, form.CreateTime].filter(Boolean).join(" ")} />
+        </div>
+        <div className="im-field">
+          <label className="im-field__label">Last Updated</label>
+          <input className="im-field__input" readOnly value={[form.UpdateDate, form.UpdateTime].filter(Boolean).join(" ")} />
+        </div>
+      </div>
     </div>
   );
 }

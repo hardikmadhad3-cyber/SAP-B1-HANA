@@ -152,6 +152,7 @@ const getValidationTab = (errors) => {
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
+  requiredDate: '', quotedDate: '', requiredQty: '',
   sacCode: '', uomCode: '', stdDiscount: '', taxCode: '', total: '', totalLC: '', whse: '',
   distRule: '', cogsDistRule: '', countryOfOrigin: '', loc: '', branch: '',
   blanketAgreementNo: '', allowProcurementDoc: false,
@@ -159,6 +160,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   assessableValue: '', bedRate: '', bedAmount: '', rg23dNo: '',
   specialRebate: '', commission: '', sellerItem: '', sellerQty: '',
   sellerBrokeragePerQty: '',
+  unitPriceUdf: '',
   sellerBrokerage: '', buyerBrokerage: '',
   buyerDelivery: '', sellerDelivery: '',
   buyerPaymentTerms: '', sellerPaymentTerms: '',
@@ -168,7 +170,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   sellerBrokerageAmtPer: '', sellerBrokeragePercent: '',
   buyerBillDiscount: '', sellerBillDiscount: '', stcode: '',
   freightPurchase: '', freightSales: '', freightProvider: '', freightProviderName: '',
-  documentCreated: '', brokerageNumber: '',
+  documentCreated: today(), brokerageNumber: '',
   udf: createUdfState(rowUdfDefinitions),
 });
 
@@ -289,6 +291,8 @@ function SalesQuotation() {
   const dec = { ...DEC, ...(refData.decimal_settings || {}) };
   const numDec = {
     quantity: Number(dec.QtyDec), unitPrice: Number(dec.PriceDec),
+    requiredQty: Number(dec.QtyDec),
+    unitPriceUdf: Number(dec.PriceDec),
     sellerQty: Number(dec.QtyDec),
     sellerBrokeragePerQty: Number(dec.PriceDec),
     assessableValue: Number(dec.SumDec),

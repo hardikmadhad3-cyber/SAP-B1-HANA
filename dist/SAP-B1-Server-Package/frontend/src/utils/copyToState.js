@@ -19,6 +19,71 @@ const normalizeDocType = (docType) =>
     .replace(/^-|-$/g, '')
     .toLowerCase();
 
+const firstCopyToValue = (...values) => {
+  for (const value of values) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return String(value).trim();
+    }
+  }
+  return '';
+};
+
+export const buildSapCopyToRemarks = ({
+  sourceLabel = 'Document',
+  sourceDocNo,
+  sourceDocEntry,
+  header = {},
+} = {}) => {
+  const documentNo = firstCopyToValue(
+    sourceDocNo,
+    header.docNo,
+    header.DocNum,
+    header.docNum,
+    header.DocNo,
+    header.documentNumber,
+    header.number,
+    sourceDocEntry
+  );
+  const label = firstCopyToValue(sourceLabel) || 'Document';
+
+  return documentNo ? `Based on ${label} ${documentNo}.` : `Based on ${label}.`;
+};
+
+const combineCopyToRemarks = (manualRemarks, baseRemarks) => {
+  const manual = String(manualRemarks || '').trim();
+  const base = String(baseRemarks || '').trim();
+
+  if (!manual) return base;
+  if (!base || manual.includes(base)) return manual;
+  return `${manual}\n${base}`;
+};
+
+const buildCopyToHeader = ({
+  header,
+  sourceLabel,
+  sourceDocNo,
+  sourceDocEntry,
+}) => {
+  const copiedHeader = { ...(header || {}) };
+  const baseRemarks = buildSapCopyToRemarks({
+    sourceLabel,
+    sourceDocNo,
+    sourceDocEntry,
+    header: copiedHeader,
+  });
+  const remarks = combineCopyToRemarks(
+    firstCopyToValue(copiedHeader.otherInstruction, copiedHeader.remarks, copiedHeader.Comments),
+    baseRemarks
+  );
+
+  return {
+    ...copiedHeader,
+    remarks,
+    otherInstruction: remarks,
+    Comments: remarks,
+  };
+};
+
 export const createDocumentWindowId = (docType, docEntry) =>
   `page-window:${normalizeDocType(docType)}-${docEntry || 'new'}`;
 
@@ -126,6 +191,7 @@ export const buildCopyToState = ({
   sourceDocType,
   sourceLabel,
   sourceDocEntry,
+  sourceDocNo,
   header,
   lines,
   headerUdfs,
@@ -139,7 +205,13 @@ export const buildCopyToState = ({
     type: sourceDocType,
     sourceLabel,
     docEntry: sourceDocEntry,
-    header: { ...(header || {}) },
+    docNo: firstCopyToValue(sourceDocNo, header?.docNo, header?.DocNum, header?.docNum, header?.DocNo),
+    header: buildCopyToHeader({
+      header,
+      sourceLabel,
+      sourceDocNo,
+      sourceDocEntry,
+    }),
     lines: Array.isArray(lines)
       ? lines.map((line, index) => {
           const sourceLineNum = line?.lineNum ?? line?.LineNum ?? index;

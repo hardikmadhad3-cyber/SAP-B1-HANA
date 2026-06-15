@@ -37,6 +37,10 @@ module.exports = {
     (req) => incomingPaymentsService.searchIncomingPayments(req.query.query || ""),
     "Failed to search incoming payments.",
   ),
+  getIncomingPaymentByDocEntry: handle(
+    (req) => incomingPaymentsService.getIncomingPaymentByDocEntry(req.params.docEntry),
+    "Failed to load incoming payment.",
+  ),
   getOpenInvoices: handle(
     (req) => incomingPaymentsService.getOpenInvoices(req.query.cardCode || "", req.query.branch || ""),
     "Failed to load open invoices.",

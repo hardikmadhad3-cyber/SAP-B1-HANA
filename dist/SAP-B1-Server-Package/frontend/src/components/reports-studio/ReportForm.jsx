@@ -43,7 +43,7 @@ function ReportForm({
           <div><strong>Name:</strong> {selectedReport.reportName}</div>
           <div><strong>Code:</strong> {selectedReport.reportCode}</div>
           <div><strong>Type:</strong> {selectedReport.reportType}</div>
-          <div><strong>API:</strong> {selectedReport.apiUrl}</div>
+          <div><strong>API Path:</strong> {selectedReport.apiUrl}</div>
           <div><strong>Visibility:</strong> {selectedReport.isPublic ? 'Public' : 'Private'}</div>
         </div>
       ) : (
@@ -121,12 +121,12 @@ function ReportForm({
         </div>
 
         <label className="rs-field">
-          <span>API URL</span>
+          <span>API Path</span>
           <input
             type="text"
             value={reportForm.apiUrl}
             onChange={(event) => onChange('apiUrl', event.target.value)}
-            placeholder="/api/reports/sales-analysis/customers"
+            placeholder="/rs/v1/ExportPDFData"
           />
         </label>
 

@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import "../item-master/styles/itemMaster.css";
 import "./styles/warehouse.css";
 import FindResultsModal from "../../components/FindResultsModal";
@@ -154,6 +155,7 @@ function mapSapToForm(data) {
 
 
 export default function WarehouseModule() {
+  const location = useLocation();
   const [tab, setTab] = useState(0);
   const [form, setForm] = useState(EMPTY_FORM);
   const [alert, setAlert] = useState(null);
@@ -221,6 +223,53 @@ export default function WarehouseModule() {
     setMode("update");
     showAlert("success", `"${data.WarehouseCode}" loaded.`);
   };
+
+  useEffect(() => {
+    let ignore = false;
+    const params = new URLSearchParams(location.search);
+    const routedWarehouseCode = String(
+      location.state?.warehouseCode
+      || location.state?.whsCode
+      || params.get("warehouseCode")
+      || params.get("whsCode")
+      || "",
+    ).trim();
+
+    if (!routedWarehouseCode) {
+      return () => {
+        ignore = true;
+      };
+    }
+
+    const loadRoutedWarehouse = async () => {
+      setLoading(true);
+      try {
+        const data = await getWarehouse(routedWarehouseCode);
+        if (ignore) return;
+        setForm(mapSapToForm(data));
+        setIsUpdateMode(true);
+        setMode("update");
+        setTab(0);
+        setFindResults([]);
+        setShowFindResults(false);
+        showAlert("success", `"${data.WarehouseCode}" loaded.`);
+      } catch (err) {
+        if (!ignore) {
+          showAlert("error", err.response?.data?.message || err.message || `Could not load warehouse "${routedWarehouseCode}".`);
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadRoutedWarehouse();
+
+    return () => {
+      ignore = true;
+    };
+  }, [location.search, location.state]);
 
   const validateForm = () => {
     if (!form.WarehouseCode.trim()) {

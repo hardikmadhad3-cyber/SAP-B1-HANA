@@ -3,6 +3,15 @@ import { Link } from 'react-router-dom';
 import { fetchAdminEntities } from '../api/adminPanelApi';
 
 const GROUP_ORDER = ['Core Setup', 'Security', 'Navigation', 'Reporting'];
+const WORKSPACE_LINKS = [
+  {
+    key: 'general-settings',
+    title: 'General Settings',
+    description: 'Configure default warehouses and numbering series for document screens.',
+    path: '/general-settings',
+    count: 'Open',
+  },
+];
 
 const AdminPanelHome = () => {
   const [entities, setEntities] = useState([]);
@@ -48,6 +57,16 @@ const AdminPanelHome = () => {
       || String(entity.group || '').toLowerCase().includes(query)
     ));
   }, [entities, searchTerm]);
+
+  const filteredWorkspaceLinks = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    if (!query) return WORKSPACE_LINKS;
+
+    return WORKSPACE_LINKS.filter((link) => (
+      String(link.title || '').toLowerCase().includes(query)
+      || String(link.description || '').toLowerCase().includes(query)
+    ));
+  }, [searchTerm]);
 
   const groupedEntities = useMemo(() => {
     const groups = new Map();
@@ -129,6 +148,26 @@ const AdminPanelHome = () => {
 
       {!isLoading && !error ? (
         <div className="admin-panel-groups">
+          {filteredWorkspaceLinks.length ? (
+            <section className="admin-panel-group">
+              <div className="admin-panel-group__header">
+                <h2>Workspace</h2>
+                <span>{filteredWorkspaceLinks.length} sections</span>
+              </div>
+
+              <div className="admin-panel-card-grid">
+                {filteredWorkspaceLinks.map((link) => (
+                  <Link key={link.key} to={link.path} className="admin-panel-card">
+                    <div className="admin-panel-card__count">{link.count}</div>
+                    <div className="admin-panel-card__title">{link.title}</div>
+                    <div className="admin-panel-card__description">{link.description}</div>
+                    <div className="admin-panel-card__action">Open section</div>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           {groupedEntities.map(([groupName, groupEntities]) => (
             <section key={groupName} className="admin-panel-group">
               <div className="admin-panel-group__header">

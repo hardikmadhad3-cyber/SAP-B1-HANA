@@ -95,7 +95,7 @@ const appendVirtualMenus = (menuPayload = {}) => {
         { menuId: 'virtual-admin-menus', menuName: 'Menus', menuPath: '/admin/menus', sortOrder: 6 },
         { menuId: 'virtual-admin-report-menus', menuName: 'Report Menus', menuPath: '/admin/report-menus', sortOrder: 7 },
         { menuId: 'virtual-admin-role-rights', menuName: 'Role Rights', menuPath: '/admin/role-rights', sortOrder: 8 },
-        { menuId: 'virtual-admin-general-settings', menuName: 'General Settings', menuPath: '/general-settings', sortOrder: 9 },
+        { menuId: 'virtual-admin-general-settings', menuName: 'General Settings', menuPath: '/admin/general-settings', sortOrder: 9 },
       ],
     });
 
@@ -109,7 +109,7 @@ const appendVirtualMenus = (menuPayload = {}) => {
       '/admin/menus',
       '/admin/report-menus',
       '/admin/role-rights',
-      '/general-settings',
+      '/admin/general-settings',
     ];
 
     for (const path of adminPaths) {

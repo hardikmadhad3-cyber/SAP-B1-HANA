@@ -1,6 +1,8 @@
 import React from 'react';
+import TaxCodeLookup from '../../../components/TaxCodeLookup';
 
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 
 const MATRIX_COLS = [
   { key: 'itemNo', label: 'Item No.', minWidth: 160 },
@@ -40,6 +42,8 @@ export default function ContentsTab({
   onOpenItemModal,
   getBranchName,
 }) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
+
   return (
     <div className="so-tab-panel" style={{ overflow: 'visible', minWidth: 0, maxWidth: 'none' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -87,6 +91,9 @@ export default function ContentsTab({
                         className="so-grid__input"
                         style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
                         name="itemNo"
+              data-sap-lookup="item"
+              data-sap-row-index={i}
+              onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
                         value={line.itemNo}
                         onChange={e => onLineChange(i, e)}
                         placeholder="Item Code"
@@ -228,20 +235,14 @@ export default function ContentsTab({
 
                   {/* Tax Code */}
                   <td>
-                    <select
+                    <TaxCodeLookup
                       className="so-grid__input"
                       style={{ width: '100%', textAlign: 'left' }}
                       name="taxCode"
                       value={line.taxCode}
                       onChange={e => onLineChange(i, e)}
-                    >
-                      <option value="">Select</option>
-                      {effectiveTaxCodes.map(t => (
-                        <option key={t.Code} value={t.Code}>
-                          {fmtTaxLabel(t)}
-                        </option>
-                      ))}
-                    </select>
+                      taxCodes={effectiveTaxCodes}
+                    />
                   </td>
 
                   {/* Total Before Tax */}
@@ -326,7 +327,7 @@ export default function ContentsTab({
                       style={{ padding: '2px 8px', fontSize: 14 }}
                       onClick={() => onRemoveLine(i)}
                     >
-                      ×
+                      x
                     </button>
                   </td>
                 </tr>

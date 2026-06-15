@@ -21,6 +21,7 @@ import CopyToDropdown from '../../components/document/CopyToDropdown';
 import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -151,6 +152,7 @@ const getValidationTab = (errors) => {
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
+  requiredDate: '', quotedDate: '', requiredQty: '',
   sacCode: '', uomCode: '', stdDiscount: '', taxCode: '', total: '', totalLC: '', whse: '',
   distRule: '', cogsDistRule: '', countryOfOrigin: '', loc: '', branch: '',
   blanketAgreementNo: '', allowProcurementDoc: false,
@@ -158,6 +160,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   assessableValue: '', bedRate: '', bedAmount: '', rg23dNo: '',
   specialRebate: '', commission: '', sellerItem: '', sellerQty: '',
   sellerBrokeragePerQty: '',
+  unitPriceUdf: '',
   sellerBrokerage: '', buyerBrokerage: '',
   buyerDelivery: '', sellerDelivery: '',
   buyerPaymentTerms: '', sellerPaymentTerms: '',
@@ -167,7 +170,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   sellerBrokerageAmtPer: '', sellerBrokeragePercent: '',
   buyerBillDiscount: '', sellerBillDiscount: '', stcode: '',
   freightPurchase: '', freightSales: '', freightProvider: '', freightProviderName: '',
-  documentCreated: '', brokerageNumber: '',
+  documentCreated: today(), brokerageNumber: '',
   udf: createUdfState(rowUdfDefinitions),
 });
 
@@ -288,6 +291,8 @@ function SalesQuotation() {
   const dec = { ...DEC, ...(refData.decimal_settings || {}) };
   const numDec = {
     quantity: Number(dec.QtyDec), unitPrice: Number(dec.PriceDec),
+    requiredQty: Number(dec.QtyDec),
+    unitPriceUdf: Number(dec.PriceDec),
     sellerQty: Number(dec.QtyDec),
     sellerBrokeragePerQty: Number(dec.PriceDec),
     assessableValue: Number(dec.SumDec),
@@ -2255,6 +2260,14 @@ function SalesQuotation() {
                         ))}
                       </select>
                     </div>
+
+                    <DocumentCurrencySelect
+                      classPrefix="so"
+                      header={header}
+                      onHeaderChange={handleHeaderChange}
+                      businessPartners={refData.vendors || []}
+                      disabled={pageState.vendorLoading || !header.vendor || !!currentDocEntry}
+                    />
 
                     {/* Place of Supply */}
                     <div className="so-field">

@@ -6,8 +6,18 @@ const toInt = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const formatDate = (value) => (value ? String(value).split("T")[0] : "");
+const formatDate = (value) => {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const yyyy = value.getFullYear();
+    const mm = String(value.getMonth() + 1).padStart(2, "0");
+    const dd = String(value.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  return String(value).split("T")[0];
+};
 const yesNo = (value) => (String(value || "").toUpperCase() === "Y" ? "tYES" : "tNO");
+const toBool = (value) => value === true || Number(value) === 1 || String(value || "").toUpperCase() === "Y";
 
 const PRODUCTION_STATUS_TO_SL = {
   P: "boposPlanned",
@@ -17,8 +27,8 @@ const PRODUCTION_STATUS_TO_SL = {
 };
 
 const PRODUCTION_TYPE_TO_SL = {
-  P: "bopotStandard",
-  S: "bopotSpecial",
+  S: "bopotStandard",
+  P: "bopotSpecial",
   D: "bopotDisassemble",
 };
 
@@ -48,10 +58,58 @@ const queryOne = async (sql, params = {}) => {
   return rows[0] || null;
 };
 
+const tableColumnCache = new Map();
+
+const getTableColumns = async (tableName) => {
+  const key = String(tableName || "").toUpperCase();
+  if (!tableColumnCache.has(key)) {
+    tableColumnCache.set(
+      key,
+      queryRows(
+        `
+          SELECT COLUMN_NAME
+          FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_NAME = @tableName
+        `,
+        { tableName: key }
+      ).then((rows) => new Set(rows.map((row) => String(row.COLUMN_NAME || "").toUpperCase())))
+    );
+  }
+  return tableColumnCache.get(key);
+};
+
+const selectOptionalColumn = (columns, tableAlias, columnName, aliasName, fallback = "''") =>
+  columns.has(String(columnName).toUpperCase())
+    ? `${tableAlias}.${columnName} AS ${aliasName}`
+    : `${fallback} AS ${aliasName}`;
+
+const tableExists = async (tableName) => {
+  const rows = await queryRows(
+    `
+      SELECT 1 AS ExistsFlag
+      FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_NAME = @tableName
+    `,
+    { tableName: String(tableName || "").toUpperCase() }
+  );
+  return rows.length > 0;
+};
+
 const toProductionStatus = (value) => PRODUCTION_STATUS_TO_SL[String(value || "").toUpperCase()] || "boposPlanned";
 const toProductionType = (value) => PRODUCTION_TYPE_TO_SL[String(value || "").toUpperCase()] || "bopotStandard";
 const toIssueMethod = (value) => ISSUE_METHOD_TO_SL[String(value || "").toUpperCase()] || "im_Manual";
-const toItemType = (value) => ITEM_TYPE_TO_SL[Number(value)] || "pit_Item";
+const toItemType = (value) => {
+  if (typeof value === "string" && value.startsWith("pit_")) return value;
+  return ITEM_TYPE_TO_SL[Number(value)] || "pit_Item";
+};
+
+const toLinkedToValue = (value) => {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return "";
+  if (raw === "17" || raw === "S" || raw.includes("SALES")) return "sales_order";
+  if (raw === "202" || raw === "P" || raw.includes("PRODUCTION")) return "production_order";
+  return String(value || "").trim();
+};
 
 const pagingParams = (top, skip) => ({
   top: Math.max(1, toInt(top, 50)),
@@ -60,6 +118,7 @@ const pagingParams = (top, skip) => ({
 
 const mapSeriesRow = (row) => ({
   Series: row.Series,
+  SeriesName: row.SeriesName || `Series ${row.Series}`,
   Name: row.SeriesName || `Series ${row.Series}`,
   Indicator: row.Indicator || "",
   NextNumber: row.NextNumber ?? row.InitialNum ?? null,
@@ -67,22 +126,75 @@ const mapSeriesRow = (row) => ({
   EndStr: row.EndStr || "",
   Locked: yesNo(row.Locked),
   IsManual: yesNo(row.IsManual),
+  IsDefault: toBool(row.IsDefault),
+  isDefault: toBool(row.IsDefault),
+  IsCurrentPeriod: toBool(row.IsCurrentPeriod),
 });
 
+const getDefaultSeriesColumn = async () => {
+  try {
+    const rows = await queryRows(
+      `
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'ONNM'
+          AND COLUMN_NAME IN ('DfltSeries', 'DfltSerie')
+      `
+    );
+    const columns = new Set(rows.map((row) => String(row.COLUMN_NAME || "").toUpperCase()));
+    if (columns.has("DFLTSERIES")) return "DfltSeries";
+    if (columns.has("DFLTSERIE")) return "DfltSerie";
+  } catch (_) {
+    return "";
+  }
+  return "";
+};
+
 const lookupSeries = async (objectCode) => {
+  const defaultSeriesColumn = await getDefaultSeriesColumn();
+  const defaultSeriesJoin = defaultSeriesColumn
+    ? `LEFT JOIN ONNM T2 ON T2.ObjectCode = T0.ObjectCode AND T2.${defaultSeriesColumn} = T0.Series`
+    : "";
+  const defaultSeriesSelect = defaultSeriesColumn ? `CASE WHEN T2.${defaultSeriesColumn} IS NOT NULL THEN 1 ELSE 0 END` : "0";
+
   const rows = await queryRows(
     `
-      SELECT Series, SeriesName, Indicator, NextNumber, InitialNum, BeginStr, EndStr, Locked, IsManual
-      FROM NNM1
-      WHERE ObjectCode = @objectCode
-        AND Locked <> 'Y'
-      ORDER BY Series
+      SELECT
+        T0.Series,
+        T0.SeriesName,
+        T0.Indicator,
+        T0.NextNumber,
+        T0.InitialNum,
+        T0.BeginStr,
+        T0.EndStr,
+        T0.Locked,
+        T0.IsManual,
+        ${defaultSeriesSelect} AS IsDefault,
+        CASE WHEN T1.AbsEntry IS NOT NULL THEN 1 ELSE 0 END AS IsCurrentPeriod
+      FROM NNM1 T0
+      LEFT JOIN OFPR T1
+        ON T1.Indicator = T0.Indicator
+        AND CONVERT(date, GETDATE()) BETWEEN T1.F_RefDate AND T1.T_RefDate
+      ${defaultSeriesJoin}
+      WHERE T0.ObjectCode = @objectCode
+        AND T0.Locked <> 'Y'
+      ORDER BY
+        IsCurrentPeriod DESC,
+        IsDefault DESC,
+        CASE WHEN ISNULL(T0.Indicator, '') <> '' THEN 0 ELSE 1 END,
+        T0.Series
     `,
     { objectCode: String(objectCode) }
   );
 
   return rows.map(mapSeriesRow);
 };
+
+const pickDefaultSeries = (seriesRows = []) =>
+  seriesRows.find((row) => row.IsCurrentPeriod) ||
+  seriesRows.find((row) => row.IsDefault) ||
+  seriesRows[0] ||
+  null;
 
 const lookupProdWarehouses = async () => {
   const rows = await queryRows(`
@@ -175,28 +287,152 @@ const lookupCustomers = async (query = "") => {
   }));
 };
 
+const lookupUsers = async () => {
+  const userColumns = await getTableColumns("OUSR");
+  const lockedFilter = userColumns.has("LOCKED") ? "WHERE ISNULL(Locked, 'N') <> 'Y'" : "";
+  const rows = await queryRows(`
+    SELECT USERID, USER_CODE, U_NAME
+    FROM OUSR
+    ${lockedFilter}
+    ORDER BY USER_CODE
+  `);
+
+  return rows.map((row) => ({
+    UserID: row.USERID,
+    UserCode: row.USER_CODE || "",
+    UserName: row.U_NAME || row.USER_CODE || "",
+  }));
+};
+
+const lookupLinkedToOptions = async () => {
+  const [hasSalesOrders, hasProductionOrders] = await Promise.all([
+    tableExists("ORDR"),
+    tableExists("OWOR"),
+  ]);
+  const options = [];
+  if (hasProductionOrders) {
+    options.push({ value: "production_order", label: "Production Order", object_type: 202 });
+  }
+  if (hasSalesOrders) {
+    options.push({ value: "sales_order", label: "Sales Order", object_type: 17 });
+  }
+  return options;
+};
+
+const lookupLinkedOrders = async (linkedTo = "", query = "") => {
+  const type = toLinkedToValue(linkedTo);
+  const trimmed = String(query || "").trim();
+  const params = { query: trimmed, like: `%${trimmed}%` };
+
+  if (type === "sales_order") {
+    const rows = await queryRows(
+      `
+        SELECT TOP 50 T0.DocEntry, T0.DocNum, T0.CardCode, T0.CardName, T0.DocDate, T0.DocDueDate
+        FROM ORDR T0
+        WHERE ISNULL(T0.CANCELED, 'N') = 'N'
+          AND ISNULL(T0.DocStatus, 'O') = 'O'
+          AND (
+            @query = ''
+            OR CAST(T0.DocNum AS NVARCHAR(50)) LIKE @like
+            OR ISNULL(T0.CardCode, '') LIKE @like
+            OR ISNULL(T0.CardName, '') LIKE @like
+          )
+        ORDER BY T0.DocEntry DESC
+      `,
+      params
+    );
+
+    return rows.map((row) => ({
+      DocEntry: row.DocEntry,
+      DocNum: row.DocNum,
+      CardCode: row.CardCode || "",
+      CardName: row.CardName || "",
+      DocDate: formatDate(row.DocDate),
+      DueDate: formatDate(row.DocDueDate),
+      LinkedTo: "sales_order",
+    }));
+  }
+
+  if (type === "production_order") {
+    const rows = await queryRows(
+      `
+        SELECT TOP 50 DocEntry, DocNum, ItemCode, ProdName, PlannedQty, Status, DueDate
+        FROM OWOR
+        WHERE Status IN ('P', 'R')
+          AND (
+            @query = ''
+            OR CAST(DocNum AS NVARCHAR(50)) LIKE @like
+            OR ISNULL(ItemCode, '') LIKE @like
+            OR ISNULL(ProdName, '') LIKE @like
+          )
+        ORDER BY DocEntry DESC
+      `,
+      params
+    );
+
+    return rows.map((row) => ({
+      DocEntry: row.DocEntry,
+      DocNum: row.DocNum,
+      ItemNo: row.ItemCode || "",
+      ProductDescription: row.ProdName || "",
+      PlannedQuantity: row.PlannedQty ?? 0,
+      Status: toProductionStatus(row.Status),
+      DueDate: formatDate(row.DueDate),
+      LinkedTo: "production_order",
+    }));
+  }
+
+  return [];
+};
+
 const lookupProductionOrderItems = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(
     `
-      SELECT TOP 50 I.ItemCode, I.ItemName, I.InvntryUom, I.DfltWH AS DefaultWarehouse
+      SELECT TOP 50
+             T.Code AS TreeCode,
+             T.Name AS ProductDescription,
+             T.Qauntity AS BOMQuantity,
+             T.ToWH AS BOMWarehouse,
+             T.TreeType,
+             I.ItemCode,
+             I.ItemName,
+             I.InvntryUom,
+             I.DfltWH AS DefaultWarehouse,
+             CAST(ISNULL(I.OnHand, 0) AS DECIMAL(19, 6)) AS QuantityOnStock,
+             I.PrcrmntMtd AS ProcurementMethod
       FROM OITM I
       INNER JOIN OITT T ON T.Code = I.ItemCode
+        AND T.TreeType = 'P'
       WHERE (
         @query = ''
+        OR T.Code LIKE @like
+        OR T.Name LIKE @like
         OR I.ItemCode LIKE @like
         OR I.ItemName LIKE @like
       )
-      ORDER BY I.ItemCode
+        AND ISNULL(I.validFor, 'Y') = 'Y'
+        AND ISNULL(I.frozenFor, 'N') = 'N'
+      ORDER BY T.Code
     `,
     { query: trimmed, like: `%${trimmed}%` }
   );
 
   return rows.map((row) => ({
-    ItemCode: row.ItemCode,
-    ItemName: row.ItemName || "",
+    TreeCode: row.TreeCode,
+    ItemCode: row.TreeCode || row.ItemCode,
+    ProductDescription: row.ProductDescription || row.ItemName || "",
+    ItemName: row.ProductDescription || row.ItemName || "",
     InventoryUOM: row.InvntryUom || "",
+    UoMName: row.InvntryUom || "",
+    BOMQuantity: row.BOMQuantity ?? 1,
+    BOMWarehouse: row.BOMWarehouse || "",
+    Warehouse: row.BOMWarehouse || row.DefaultWarehouse || "",
     DefaultWarehouse: row.DefaultWarehouse || "",
+    TreeType: "iProductionTree",
+    QuantityOnStock: row.QuantityOnStock ?? 0,
+    InStock: row.QuantityOnStock ?? 0,
+    ProcurementMethod: row.ProcurementMethod || "",
   }));
 };
 
@@ -311,14 +547,25 @@ const getProductionOrders = async ({ query = "", top = 50, skip = 0, status = ""
 
 const getProductionOrderByDocEntry = async (docEntry) => {
   const entry = toInt(docEntry, 0);
+  const [oworColumns, wor1Columns] = await Promise.all([
+    getTableColumns("OWOR"),
+    getTableColumns("WOR1"),
+  ]);
+
   const row = await queryOne(
     `
       SELECT T0.DocEntry, T0.DocNum, T0.ItemCode, T0.ProdName, T0.PlannedQty, T0.CmpltQty, T0.RjctQty,
              T0.DueDate, T0.PostDate, T0.StartDate, T0.Status, T0.Type, T0.Warehouse, T0.OcrCode,
              T0.Project, T0.JrnlMemo, T0.Comments, T0.Series, T0.OriginNum, T0.CardCode,
-             BP.CardName
+             BP.CardName, I.InvntryUom AS UoMName, USR.USERID AS UserID, USR.USER_CODE AS UserCode, USR.U_NAME AS UserName,
+             ${selectOptionalColumn(oworColumns, "T0", "Priority", "Priority", "100")},
+             ${selectOptionalColumn(oworColumns, "T0", "OriginType", "OriginType", "''")},
+             ${selectOptionalColumn(oworColumns, "T0", "OriginAbs", "OriginAbs", "NULL")},
+             ${selectOptionalColumn(oworColumns, "T0", "BPLId", "BPLId", "NULL")}
       FROM OWOR T0
       LEFT JOIN OCRD BP ON BP.CardCode = T0.CardCode
+      LEFT JOIN OITM I ON I.ItemCode = T0.ItemCode
+      LEFT JOIN OUSR USR ON USR.USERID = T0.UserSign
       WHERE T0.DocEntry = @docEntry
     `,
     { docEntry: entry }
@@ -330,8 +577,13 @@ const getProductionOrderByDocEntry = async (docEntry) => {
     `
       SELECT T1.DocEntry, T1.LineNum, T1.ItemCode, T1.ItemName, T1.LineText, T1.BaseQty, T1.PlannedQty,
              T1.IssuedQty, T1.UomCode, T1.wareHouse, T1.IssueType, T1.OcrCode, T1.Project,
-             T1.AdditQty, T1.StageId, T1.ItemType, T1.VisOrder
+             T1.AdditQty, T1.StageId, T1.ItemType, T1.VisOrder,
+             I.InvntryUom AS UoMName, I.PrcrmntMtd AS ProcurementMethod,
+             CAST(ISNULL(W.OnHand, I.OnHand) - ISNULL(W.IsCommited, I.IsCommited) AS DECIMAL(19, 6)) AS AvailableQty,
+             ${selectOptionalColumn(wor1Columns, "T1", "WipActCode", "WipAccount", "''")}
       FROM WOR1 T1
+      LEFT JOIN OITM I ON I.ItemCode = T1.ItemCode
+      LEFT JOIN OITW W ON W.ItemCode = T1.ItemCode AND W.WhsCode = T1.wareHouse
       WHERE T1.DocEntry = @docEntry
       ORDER BY T1.LineNum
     `,
@@ -344,6 +596,7 @@ const getProductionOrderByDocEntry = async (docEntry) => {
       doc_num: row.DocNum,
       item_code: row.ItemCode || "",
       item_name: row.ProdName || "",
+      uom_name: row.UoMName || "",
       planned_qty: row.PlannedQty ?? 1,
       completed_qty: row.CmpltQty ?? 0,
       rejected_qty: row.RjctQty ?? 0,
@@ -354,15 +607,21 @@ const getProductionOrderByDocEntry = async (docEntry) => {
       status: toProductionStatus(row.Status),
       type: toProductionType(row.Type),
       warehouse: row.Warehouse || "",
-      priority: 100,
+      priority: row.Priority ?? 100,
+      routing_date_calc: "start",
+      procure_items: false,
       distribution_rule: row.OcrCode || "",
       project: row.Project || "",
       journal_remark: row.JrnlMemo || "",
       remarks: row.Comments || "",
       series: row.Series != null ? String(row.Series) : "",
       origin_num: row.OriginNum != null ? String(row.OriginNum) : "",
-      origin: "",
-      branch: "",
+      origin: row.OriginType || "Manual",
+      linked_to: toLinkedToValue(row.OriginType),
+      linked_order: row.OriginAbs != null ? String(row.OriginAbs) : "",
+      user_id: row.UserID != null ? String(row.UserID) : "",
+      user: row.UserCode || row.UserName || "",
+      branch: row.BPLId != null ? String(row.BPLId) : "",
       branch_name: "",
       customer_code: row.CardCode || "",
       customer_name: row.CardName || "",
@@ -373,15 +632,23 @@ const getProductionOrderByDocEntry = async (docEntry) => {
         item_name: line.ItemName || line.LineText || "",
         line_text: line.LineText || "",
         base_qty: line.BaseQty ?? 1,
+        base_ratio: row.PlannedQty ? Number(((line.BaseQty ?? 1) / row.PlannedQty).toFixed(6)) : (line.BaseQty ?? 1),
         planned_qty: line.PlannedQty ?? 1,
         issued_qty: line.IssuedQty ?? 0,
-        uom: line.UomCode || "",
+        available_qty: line.AvailableQty ?? 0,
+        uom: line.UomCode || line.UoMName || "",
+        uom_code: line.UomCode || line.UoMName || "",
+        uom_name: line.UoMName || line.UomCode || "",
         warehouse: line.wareHouse || "",
         issue_method: toIssueMethod(line.IssueType),
+        wip_account: line.WipAccount || "",
         distribution_rule: line.OcrCode || "",
         project: line.Project || "",
+        location: "",
         additional_qty: line.AdditQty ?? 0,
         stage_id: line.StageId ?? "",
+        route_sequence: line.StageId ?? "",
+        procurement_method: line.ProcurementMethod || "",
         component_type: toItemType(line.ItemType),
       })),
     },
@@ -396,83 +663,176 @@ const explodeBOM = async (itemCode, qty = 1) => {
     throw error;
   }
 
+  const stockRows = await queryRows(
+    `
+      SELECT L.ChildNum, L.Code, L.Warehouse,
+             CAST(ISNULL(W.OnHand, I.OnHand) - ISNULL(W.IsCommited, I.IsCommited) AS DECIMAL(19, 6)) AS AvailableQty,
+             I.InvntryUom AS UoMName,
+             I.PrcrmntMtd AS ProcurementMethod,
+             R.ResName AS ResourceName,
+             R.DfltWH AS ResourceWarehouse
+      FROM ITT1 L
+      LEFT JOIN OITM I ON I.ItemCode = L.Code
+      LEFT JOIN ORSC R ON R.ResCode = L.Code
+      LEFT JOIN OITW W
+        ON W.ItemCode = L.Code
+       AND W.WhsCode = COALESCE(NULLIF(L.Warehouse, ''), NULLIF(@warehouse, ''))
+      WHERE L.Father = @itemCode
+    `,
+    { itemCode, warehouse: bom.Warehouse || "" }
+  );
+  const detailByChild = new Map(
+    stockRows.map((row) => [`${row.ChildNum ?? ""}:${row.Code || ""}`, row])
+  );
+
   const factor = Number(qty) / (bom.Quantity || 1);
   return {
     item_code: bom.TreeCode,
     item_name: bom.ProductDescription || "",
     bom_qty: bom.Quantity ?? 1,
     warehouse: bom.Warehouse || "",
-    lines: (bom.ProductTreeLines || []).map((line, idx) => ({
-      _id: Date.now() + idx + Math.random(),
-      line_num: idx,
-      item_code: line.ItemCode || "",
-      item_name: line.ItemName || "",
-      line_text: line.Comment || "",
-      base_qty: line.Quantity ?? 1,
-      planned_qty: parseFloat((((line.Quantity ?? 1) * factor)).toFixed(6)),
-      issued_qty: 0,
-      uom: line.InventoryUOM || "",
-      warehouse: line.Warehouse || bom.Warehouse || "",
-      issue_method: line.IssueMethod || "im_Manual",
-      distribution_rule: line.DistributionRule || "",
-      project: line.Project || "",
-      additional_qty: 0,
-      stage_id: line.StageID ?? "",
-      component_type: line.ItemType || "pit_Item",
-    })),
+    uom_name: bom.InventoryUOM || "",
+    distribution_rule: bom.DistributionRule || "",
+    project: bom.Project || "",
+    lines: (bom.ProductTreeLines || []).map((line, idx) => {
+      const detail = detailByChild.get(`${line.ChildNum ?? ""}:${line.ItemCode || ""}`) || {};
+      const baseQty = line.Quantity ?? 1;
+      const additionalQty = line.AdditionalQuantity ?? 0;
+      const componentType = toItemType(line.ItemType);
+      const uom = line.InventoryUOM || detail.UoMName || "";
+      const plannedQty = (baseQty * factor) + Number(additionalQty || 0);
+      return {
+        _id: Date.now() + idx + Math.random(),
+        line_num: idx,
+        item_code: line.ItemCode || "",
+        item_name: line.ItemName || detail.ResourceName || "",
+        line_text: line.Comment || "",
+        base_qty: baseQty,
+        base_ratio: Number((baseQty / (bom.Quantity || 1)).toFixed(6)),
+        planned_qty: parseFloat(plannedQty.toFixed(6)),
+        issued_qty: 0,
+        available_qty: componentType === "pit_Item" ? (detail.AvailableQty ?? 0) : 0,
+        uom,
+        uom_code: uom,
+        uom_name: detail.UoMName || uom,
+        warehouse: line.Warehouse || detail.ResourceWarehouse || bom.Warehouse || "",
+        issue_method: line.IssueMethod || "im_Manual",
+        wip_account: line.WipAccount || "",
+        distribution_rule: line.DistributionRule || bom.DistributionRule || "",
+        project: line.Project || bom.Project || "",
+        location: "",
+        additional_qty: additionalQty,
+        stage_id: line.StageID ?? "",
+        route_sequence: line.RouteSequence || line.StageID || "",
+        procurement_method: detail.ProcurementMethod || "",
+        component_type: componentType,
+      };
+    }),
   };
 };
 
-const getProductionOrderReferenceData = async () => ({
-  warehouses: await lookupProdWarehouses(),
-  distribution_rules: await lookupDistributionRules(),
-  projects: await lookupProjects(),
-  series: await lookupSeries("202"),
-  branches: await lookupBranches(),
-  route_stages: await lookupRouteStages(""),
-  production_order_statuses: [
-    { value: "boposPlanned", label: "Planned" },
-    { value: "boposReleased", label: "Released" },
-    { value: "boposClosed", label: "Closed" },
-    { value: "boposCancelled", label: "Cancelled" },
-  ],
-  production_order_types: [
-    { value: "bopotStandard", label: "Standard" },
-    { value: "bopotSpecial", label: "Special" },
-    { value: "bopotDisassemble", label: "Disassemble" },
-  ],
-  production_order_priorities: PRODUCTION_PRIORITY_OPTIONS,
-  warnings: [],
-});
+const getProductionOrderReferenceData = async () => {
+  const [warehouses, distributionRules, projects, productionSeries, branches, routeStages, users, linkedToOptions] = await Promise.all([
+    lookupProdWarehouses(),
+    lookupDistributionRules(),
+    lookupProjects(),
+    lookupSeries("202"),
+    lookupBranches(),
+    lookupRouteStages(""),
+    lookupUsers(),
+    lookupLinkedToOptions(),
+  ]);
+  const defaultSeries = pickDefaultSeries(productionSeries);
 
-const lookupOpenProductionOrders = async (query = "", releasedOnly = false) => {
+  return {
+    warehouses,
+    distribution_rules: distributionRules,
+    projects,
+    series: productionSeries,
+    default_series: defaultSeries?.Series != null ? String(defaultSeries.Series) : "",
+    branches,
+    route_stages: routeStages,
+    users,
+    linked_to_options: linkedToOptions,
+    production_order_statuses: [
+      { value: "boposPlanned", label: "Planned" },
+      { value: "boposReleased", label: "Released" },
+      { value: "boposClosed", label: "Closed" },
+      { value: "boposCancelled", label: "Cancelled" },
+    ],
+    production_order_types: [
+      { value: "bopotStandard", label: "Standard" },
+      { value: "bopotSpecial", label: "Special" },
+      { value: "bopotDisassemble", label: "Disassemble" },
+    ],
+    production_order_priorities: PRODUCTION_PRIORITY_OPTIONS,
+    warnings: [],
+  };
+};
+
+const lookupOpenProductionOrders = async (query = "", releasedOnly = false, type = "", options = {}) => {
   const trimmed = String(query || "").trim();
+  const normalizedType = String(type || "").toLowerCase();
+  const typeCode = normalizedType === "disassembly" ? "D" : "";
+  const excludeDisassembly = normalizedType === "production" ? 1 : 0;
+  const issueableOnly = Boolean(options.issueableOnly);
+  const receiptOpenOnly = Boolean(options.receiptOpenOnly);
+  const issueableClause = issueableOnly
+    ? `
+        AND EXISTS (
+          SELECT 1
+          FROM WOR1 L
+          WHERE L.DocEntry = T0.DocEntry
+            AND ISNULL(L.IssueType, 'M') <> 'B'
+            AND CAST(ISNULL(L.PlannedQty, 0) - ISNULL(L.IssuedQty, 0) AS DECIMAL(19, 6)) > 0
+        )
+      `
+    : "";
+  const receiptOpenClause = receiptOpenOnly
+    ? "AND CAST(ISNULL(T0.PlannedQty, 0) - ISNULL(T0.CmpltQty, 0) AS DECIMAL(19, 6)) > 0"
+    : "";
+  const orderBy = issueableOnly || receiptOpenOnly
+    ? "ORDER BY T0.DueDate ASC, T0.DocNum ASC"
+    : "ORDER BY T0.DocEntry DESC";
   const rows = await queryRows(
     `
-      SELECT TOP 50 DocEntry, DocNum, ItemCode, ProdName, PlannedQty, CmpltQty, Status, Warehouse, DueDate
-      FROM OWOR
-      WHERE Status IN (${releasedOnly ? `'R'` : `'P','R'`})
+      SELECT TOP 50 T0.DocEntry, T0.DocNum, T0.ItemCode, T0.ProdName, T0.PlannedQty, T0.CmpltQty,
+             T0.Status, T0.Type, T0.Warehouse, T0.DueDate, T0.PostDate, T0.StartDate,
+             T0.Series, S.SeriesName
+      FROM OWOR T0
+      LEFT JOIN NNM1 S ON S.Series = T0.Series AND S.ObjectCode = '202'
+      WHERE T0.Status IN (${releasedOnly ? `'R'` : `'P','R'`})
+        AND (@typeCode = '' OR T0.Type = @typeCode)
+        AND (@excludeDisassembly = 0 OR ISNULL(T0.Type, '') <> 'D')
+        ${issueableClause}
+        ${receiptOpenClause}
         AND (
           @query = ''
-          OR ItemCode LIKE @like
-          OR ProdName LIKE @like
-          OR CAST(DocNum AS NVARCHAR(50)) LIKE @like
+          OR T0.ItemCode LIKE @like
+          OR T0.ProdName LIKE @like
+          OR S.SeriesName LIKE @like
+          OR CAST(T0.DocNum AS NVARCHAR(50)) LIKE @like
         )
-      ORDER BY DocEntry DESC
+      ${orderBy}
     `,
-    { query: trimmed, like: `%${trimmed}%` }
+    { query: trimmed, like: `%${trimmed}%`, typeCode, excludeDisassembly }
   );
 
   return rows.map((row) => ({
     DocEntry: row.DocEntry,
     DocNum: row.DocNum,
+    Series: row.Series,
+    SeriesName: row.SeriesName || "",
+    Type: toProductionType(row.Type),
     ItemNo: row.ItemCode || "",
     ProductDescription: row.ProdName || "",
     PlannedQuantity: row.PlannedQty ?? 0,
     CompletedQuantity: row.CmpltQty ?? 0,
     ProductionOrderStatus: toProductionStatus(row.Status),
     Warehouse: row.Warehouse || "",
-    DueDate: row.DueDate || null,
+    DueDate: formatDate(row.DueDate),
+    PostingDate: formatDate(row.PostDate),
+    StartDate: formatDate(row.StartDate),
   }));
 };
 
@@ -480,9 +840,12 @@ const getProductionOrderForIssue = async (docEntry) => {
   const entry = toInt(docEntry, 0);
   const row = await queryOne(
     `
-      SELECT DocEntry, DocNum, ItemCode, ProdName, PlannedQty, CmpltQty, Status, Warehouse, DueDate
-      FROM OWOR
-      WHERE DocEntry = @docEntry
+      SELECT T0.DocEntry, T0.DocNum, T0.ItemCode, T0.ProdName, T0.PlannedQty, T0.CmpltQty,
+             T0.Status, T0.Type, T0.Warehouse, T0.DueDate, T0.PostDate, T0.StartDate,
+             T0.Series, S.SeriesName
+      FROM OWOR T0
+      LEFT JOIN NNM1 S ON S.Series = T0.Series AND S.ObjectCode = '202'
+      WHERE T0.DocEntry = @docEntry
     `,
     { docEntry: entry }
   );
@@ -496,9 +859,12 @@ const getProductionOrderForIssue = async (docEntry) => {
     `
       SELECT T1.LineNum, T1.ItemCode, T1.ItemName, T1.PlannedQty, T1.IssuedQty, T1.UomCode, T1.wareHouse,
              T1.IssueType, T1.OcrCode, T1.Project,
-             I.ManBtchNum, I.ManSerNum
+             I.ManBtchNum, I.ManSerNum, I.AvgPrice, W.OnHand, L.Location AS LocationName
       FROM WOR1 T1
       LEFT JOIN OITM I ON I.ItemCode = T1.ItemCode
+      LEFT JOIN OITW W ON W.ItemCode = T1.ItemCode AND W.WhsCode = T1.wareHouse
+      LEFT JOIN OWHS WH ON WH.WhsCode = T1.wareHouse
+      LEFT JOIN OLCT L ON L.Code = WH.Location
       WHERE T1.DocEntry = @docEntry
       ORDER BY T1.LineNum
     `,
@@ -510,17 +876,25 @@ const getProductionOrderForIssue = async (docEntry) => {
   return {
     doc_entry: row.DocEntry,
     doc_num: row.DocNum,
+    series: row.Series != null ? String(row.Series) : "",
+    series_name: row.SeriesName || "",
     item_code: row.ItemCode || "",
     item_name: row.ProdName || "",
     planned_qty: row.PlannedQty ?? 1,
     completed_qty: row.CmpltQty ?? 0,
     status: toProductionStatus(row.Status),
+    type: toProductionType(row.Type),
     warehouse: row.Warehouse || "",
     due_date: formatDate(row.DueDate),
+    posting_date: formatDate(row.PostDate),
+    start_date: formatDate(row.StartDate),
     lines_total_count: lines.length,
     lines: manualLines.map((line) => ({
       _id: line.LineNum ?? Math.random(),
       line_num: line.LineNum ?? 0,
+      order_no: row.DocNum != null ? String(row.DocNum) : "",
+      series_no: row.SeriesName || "",
+      line_type: "Item",
       item_code: line.ItemCode || "",
       item_name: line.ItemName || "",
       planned_qty: line.PlannedQty ?? 0,
@@ -528,7 +902,13 @@ const getProductionOrderForIssue = async (docEntry) => {
       remaining_qty: Math.max(0, (line.PlannedQty ?? 0) - (line.IssuedQty ?? 0)),
       issue_qty: Math.max(0, (line.PlannedQty ?? 0) - (line.IssuedQty ?? 0)),
       uom: line.UomCode || "",
+      uom_name: line.UomCode || "",
       warehouse: line.wareHouse || row.Warehouse || "",
+      item_cost: line.AvgPrice ?? "",
+      available_qty: line.OnHand ?? "",
+      location: line.LocationName || "",
+      sauda_node_ref: "",
+      ap_inv_doc_key: "",
       issue_method: toIssueMethod(line.IssueType),
       distribution_rule: line.OcrCode || "",
       project: line.Project || "",
@@ -556,7 +936,16 @@ const getIssueList = async ({ query = "", top = 50, skip = 0 } = {}) => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(
     `
-      SELECT T0.DocEntry, T0.DocNum, T0.DocDate, T0.Comments, COUNT(T1.LineNum) AS TotalLines
+      SELECT
+        T0.DocEntry,
+        T0.DocNum,
+        T0.DocDate,
+        T0.TaxDate,
+        T0.Ref2,
+        T0.Comments,
+        T0.JrnlMemo,
+        MIN(T1.BaseRef) AS ProductionOrderNo,
+        COUNT(T1.LineNum) AS TotalLines
       FROM OIGE T0
       INNER JOIN IGE1 T1 ON T1.DocEntry = T0.DocEntry
       WHERE EXISTS (
@@ -569,8 +958,11 @@ const getIssueList = async ({ query = "", top = 50, skip = 0 } = {}) => {
           @query = ''
           OR CAST(T0.DocNum AS NVARCHAR(50)) LIKE @like
           OR ISNULL(T0.Comments, '') LIKE @like
+          OR ISNULL(T0.Ref2, '') LIKE @like
+          OR ISNULL(T0.JrnlMemo, '') LIKE @like
+          OR ISNULL(T1.BaseRef, '') LIKE @like
         )
-      GROUP BY T0.DocEntry, T0.DocNum, T0.DocDate, T0.Comments
+      GROUP BY T0.DocEntry, T0.DocNum, T0.DocDate, T0.TaxDate, T0.Ref2, T0.Comments, T0.JrnlMemo
       ORDER BY T0.DocEntry DESC
       OFFSET @skip ROWS FETCH NEXT @top ROWS ONLY
     `,
@@ -582,6 +974,10 @@ const getIssueList = async ({ query = "", top = 50, skip = 0 } = {}) => {
       doc_entry: row.DocEntry,
       doc_num: row.DocNum,
       posting_date: formatDate(row.DocDate),
+      document_date: formatDate(row.TaxDate),
+      ref_2: row.Ref2 || "",
+      journal_remark: row.JrnlMemo || "",
+      production_order_no: row.ProductionOrderNo || "",
       remarks: row.Comments || "",
       total_lines: row.TotalLines ?? 0,
     })),
@@ -603,7 +999,7 @@ const getIssueByDocEntry = async (docEntry) => {
 
   const lines = await queryRows(
     `
-      SELECT LineNum, ItemCode, Dscription, Quantity, UomCode, unitMsr, WhsCode, BaseEntry, BaseLine, BaseType, OcrCode, Project, AcctCode
+      SELECT LineNum, BaseRef, ItemCode, Dscription, Quantity, StockPrice, UomCode, unitMsr, WhsCode, BaseEntry, BaseLine, BaseType, OcrCode, Project, AcctCode, LocCode
       FROM IGE1
       WHERE DocEntry = @docEntry
       ORDER BY LineNum
@@ -627,11 +1023,20 @@ const getIssueByDocEntry = async (docEntry) => {
       lines: lines.map((line) => ({
         _id: line.LineNum ?? Math.random(),
         line_num: line.LineNum ?? 0,
+        order_no: line.BaseRef || "",
+        series_no: "",
+        line_type: "Item",
         item_code: line.ItemCode || "",
         item_name: line.Dscription || "",
         issue_qty: line.Quantity ?? 0,
+        item_cost: line.StockPrice ?? "",
         uom: line.UomCode || line.unitMsr || "",
+        uom_name: line.unitMsr || line.UomCode || "",
         warehouse: line.WhsCode || "",
+        available_qty: "",
+        location: line.LocCode || "",
+        sauda_node_ref: "",
+        ap_inv_doc_key: "",
         base_entry: line.BaseEntry ?? null,
         base_line: line.BaseLine ?? null,
         base_type: line.BaseType ?? 202,
@@ -648,12 +1053,13 @@ const getProductionOrderForReceipt = async (docEntry) => {
   const row = await queryOne(
     `
       SELECT T0.DocEntry, T0.DocNum, T0.ItemCode, T0.ProdName, T0.PlannedQty, T0.CmpltQty,
-             T0.Status, T0.Warehouse, T0.DueDate,
+             T0.Status, T0.Type, T0.Warehouse, T0.DueDate, T0.Series, S.SeriesName,
              I.InvntryUom, I.ManBtchNum, I.ManSerNum,
              W.BinActivat, W.RecBinEnab, W.DftBinAbs, W.AutoRecvMd
       FROM OWOR T0
       LEFT JOIN OITM I ON I.ItemCode = T0.ItemCode
       LEFT JOIN OWHS W ON W.WhsCode = T0.Warehouse
+      LEFT JOIN NNM1 S ON S.Series = T0.Series AND S.ObjectCode = '202'
       WHERE T0.DocEntry = @docEntry
     `,
     { docEntry: entry }
@@ -671,20 +1077,31 @@ const getProductionOrderForReceipt = async (docEntry) => {
 
   const lines = await queryRows(
     `
-      SELECT LineNum, ItemCode, ItemName, PlannedQty, IssuedQty, UomCode, wareHouse, IssueType
-      FROM WOR1
-      WHERE DocEntry = @docEntry
-      ORDER BY LineNum
+      SELECT T1.LineNum, T1.ItemCode, T1.ItemName, T1.PlannedQty, T1.IssuedQty, T1.UomCode, T1.wareHouse,
+             T1.IssueType, T1.OcrCode, T1.Project,
+             I.InvntryUom, I.ManBtchNum, I.ManSerNum, I.AvgPrice,
+             W.BinActivat, L.Location AS LocationName
+      FROM WOR1 T1
+      LEFT JOIN OITM I ON I.ItemCode = T1.ItemCode
+      LEFT JOIN OWHS W ON W.WhsCode = T1.wareHouse
+      LEFT JOIN OLCT L ON L.Code = W.Location
+      WHERE T1.DocEntry = @docEntry
+      ORDER BY T1.LineNum
     `,
     { docEntry: entry }
   );
 
   const backflushLines = lines.filter((line) => toIssueMethod(line.IssueType) === "im_Backflush");
   const manualLines = lines.filter((line) => toIssueMethod(line.IssueType) !== "im_Backflush");
+  const isDisassembly = String(row.Type || "").toUpperCase() === "D";
+  const receiptFactor = (row.PlannedQty ?? 0) > 0 ? remainingQty / (row.PlannedQty ?? 1) : 0;
 
   return {
     doc_entry: row.DocEntry,
     doc_num: row.DocNum,
+    series: row.Series != null ? String(row.Series) : "",
+    series_name: row.SeriesName || "",
+    type: toProductionType(row.Type),
     item_code: row.ItemCode || "",
     item_name: row.ProdName || "",
     planned_qty: row.PlannedQty ?? 1,
@@ -715,6 +1132,44 @@ const getProductionOrderForReceipt = async (docEntry) => {
       issue_method: "im_Backflush",
     })),
     manual_lines_count: manualLines.length,
+    receipt_lines: isDisassembly
+      ? lines.map((line, index) => ({
+          _id: line.LineNum ?? Math.random(),
+          line_num: line.LineNum ?? 0,
+          order_no: row.DocNum != null ? String(row.DocNum) : "",
+          series_no: row.SeriesName || "",
+          item_code: line.ItemCode || "",
+          item_name: line.ItemName || "",
+          trans_type: "Complete",
+          quantity: Math.max(0, (line.PlannedQty ?? 0) * receiptFactor),
+          unit_price: line.AvgPrice ?? 0,
+          value: 0,
+          item_cost: line.AvgPrice ?? 0,
+          planned: line.PlannedQty ?? 0,
+          completed: line.IssuedQty ?? 0,
+          inventory_uom: line.InvntryUom || line.UomCode || "",
+          uom_code: line.UomCode || line.InvntryUom || "",
+          uom_name: line.UomCode || line.InvntryUom || "",
+          items_per_unit: 1,
+          warehouse: line.wareHouse || row.Warehouse || "",
+          location: line.LocationName || "",
+          branch: "",
+          uom_group: "",
+          by_product: index > 0,
+          distribution_rule: line.OcrCode || "",
+          project: line.Project || "",
+          base_entry: row.DocEntry,
+          base_line: line.LineNum ?? 0,
+          base_type: 202,
+          manage_batch: String(line.ManBtchNum || "").toUpperCase() === "Y",
+          manage_serial: String(line.ManSerNum || "").toUpperCase() === "Y",
+          issue_primarily_by: "",
+          enable_bin_locations: String(line.BinActivat || "").toUpperCase() === "Y",
+          batch_numbers: [],
+          serial_numbers: [],
+          bin_allocations: [],
+        }))
+      : [],
   };
 };
 
@@ -779,13 +1234,20 @@ const getReceiptByDocEntry = async (docEntry) => {
 
   const lines = await queryRows(
     `
-      SELECT L.LineNum, L.ItemCode, L.Dscription, L.Quantity, L.UomCode, L.unitMsr, L.WhsCode,
+      SELECT L.LineNum, L.BaseRef, L.ItemCode, L.Dscription, L.Quantity, L.Price, L.LineTotal,
+             L.StockPrice, L.UomCode, L.unitMsr, L.WhsCode, L.LocCode,
              L.BaseEntry, L.BaseLine, L.BaseType, L.OcrCode, L.Project,
+             PO.Series AS ProductionSeries, PS.SeriesName AS ProductionSeriesName,
+             PL.PlannedQty, PL.IssuedQty,
              I.InvntryUom, I.ManBtchNum, I.ManSerNum,
-             W.BinActivat
+             W.BinActivat, LOC.Location AS LocationName
       FROM IGN1 L
+      LEFT JOIN OWOR PO ON PO.DocEntry = L.BaseEntry AND L.BaseType = 202
+      LEFT JOIN NNM1 PS ON PS.Series = PO.Series AND PS.ObjectCode = '202'
+      LEFT JOIN WOR1 PL ON PL.DocEntry = L.BaseEntry AND PL.LineNum = L.BaseLine AND L.BaseType = 202
       LEFT JOIN OITM I ON I.ItemCode = L.ItemCode
       LEFT JOIN OWHS W ON W.WhsCode = L.WhsCode
+      LEFT JOIN OLCT LOC ON LOC.Code = W.Location
       WHERE L.DocEntry = @docEntry
       ORDER BY L.LineNum
     `,
@@ -814,17 +1276,17 @@ const getReceiptByDocEntry = async (docEntry) => {
         item_name: line.Dscription || "",
         trans_type: "Complete",
         quantity: line.Quantity ?? 0,
-        unit_price: 0,
-        value: 0,
-        item_cost: 0,
-        planned: 0,
-        completed: 0,
+        unit_price: line.Price ?? 0,
+        value: line.LineTotal ?? 0,
+        item_cost: line.StockPrice ?? 0,
+        planned: line.PlannedQty ?? 0,
+        completed: line.IssuedQty ?? 0,
         inventory_uom: line.InvntryUom || "",
         uom_code: line.UomCode || line.unitMsr || "",
         uom_name: line.UomCode || line.unitMsr || "",
         items_per_unit: 1,
         warehouse: line.WhsCode || "",
-        location: "",
+        location: line.LocationName || line.LocCode || "",
         branch: "",
         uom_group: "",
         by_product: false,
@@ -833,8 +1295,8 @@ const getReceiptByDocEntry = async (docEntry) => {
         base_entry: line.BaseEntry ?? null,
         base_line: line.BaseLine ?? null,
         base_type: line.BaseType ?? 202,
-        order_no: "",
-        series_no: "",
+        order_no: line.BaseRef || "",
+        series_no: line.ProductionSeriesName || "",
         manage_batch: String(line.ManBtchNum || "").toUpperCase() === "Y",
         manage_serial: String(line.ManSerNum || "").toUpperCase() === "Y",
         issue_primarily_by: "",
@@ -895,6 +1357,9 @@ module.exports = {
   lookupProjects,
   lookupBranches,
   lookupCustomers,
+  lookupUsers,
+  lookupLinkedToOptions,
+  lookupLinkedOrders,
   lookupOpenProductionOrders,
   getProductionOrderForIssue,
   getIssueList,

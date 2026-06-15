@@ -4,13 +4,13 @@ import LookupField from "./LookupField";
 /**
  * Preferred Vendors tab — ItemPreferredVendors collection
  * props:
- *   vendors: [{ VendorCode, VendorName, Priority }]
+ *   vendors: [{ VendorCode, VendorName }]
  *   onChange(newVendors)
  *   fetchVendors(query) — lookup function
  */
 export default function PreferredVendorsTab({ vendors = [], onChange, fetchVendors }) {
   const addRow = () =>
-    onChange([...vendors, { VendorCode: "", VendorName: "", Priority: vendors.length + 1 }]);
+    onChange([...vendors, { VendorCode: "", VendorName: "" }]);
 
   const removeRow = (i) => onChange(vendors.filter((_, idx) => idx !== i));
 
@@ -40,7 +40,6 @@ export default function PreferredVendorsTab({ vendors = [], onChange, fetchVendo
                 <th>#</th>
                 <th>Vendor Code</th>
                 <th>Vendor Name</th>
-                <th className="im-grid__cell--num">Priority</th>
                 <th></th>
               </tr>
             </thead>
@@ -60,11 +59,6 @@ export default function PreferredVendorsTab({ vendors = [], onChange, fetchVendo
                     />
                   </td>
                   <td className="im-grid__cell--muted">{row.VendorName || "—"}</td>
-                  <td>
-                    <input className="im-grid__input im-grid__input--sm" type="number"
-                      value={row.Priority ?? i + 1}
-                      onChange={(e) => updateRow(i, "Priority", e.target.value)} />
-                  </td>
                   <td>
                     <button type="button" className="im-btn im-btn--danger"
                       style={{ padding: "1px 8px", fontSize: 11 }}

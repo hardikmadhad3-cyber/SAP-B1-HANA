@@ -4,6 +4,8 @@ const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
+const { getUdfDefinitions } = require('./udfMetadataService');
+const { isSapUdfKey, normalizeUdfValues } = require('./udfPayloadUtils');
 
 const PURCHASE_REQUEST_OBJECT_CODE = '1470000113';
 
@@ -20,6 +22,11 @@ const formatDocumentStatus = (value) => {
   return normalized;
 };
 
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
+};
+
 const toNumberOrUndefined = (value) => {
   if (value === '' || value === null || value === undefined) return undefined;
   const parsed = Number(value);
@@ -34,6 +41,7 @@ const cleanObject = (value) => {
   if (value && typeof value === 'object') {
     return Object.entries(value).reduce((acc, [key, nestedValue]) => {
       const cleanedValue = cleanObject(nestedValue);
+      const preserveNullUdf = isSapUdfKey(key) && cleanedValue === null;
       const isEmptyObject =
         cleanedValue &&
         typeof cleanedValue === 'object' &&
@@ -42,7 +50,7 @@ const cleanObject = (value) => {
 
       if (
         cleanedValue === undefined ||
-        cleanedValue === null ||
+        (cleanedValue === null && !preserveNullUdf) ||
         cleanedValue === '' ||
         isEmptyObject
       ) {
@@ -594,8 +602,8 @@ const getPurchaseRequestByDocEntry = async (docEntry) => {
 const buildDocumentLines = (lines = []) =>
   lines
     .filter((line) => String(line.itemNo || '').trim())
-    .map((line) =>
-      cleanObject({
+    .map((line) => {
+      const documentLine = cleanObject({
         ItemCode: line.itemNo,
         ItemDescription: line.itemDescription,
         Quantity: toNumberOrUndefined(line.quantity),
@@ -605,12 +613,13 @@ const buildDocumentLines = (lines = []) =>
         TaxCode: line.taxCode,
         WarehouseCode: line.whse,
         UoMCode: line.uomCode,
-        ...(line.udf || {}),
-      })
-    );
+      });
+      Object.assign(documentLine, normalizeUdfValues(line.udf));
+      return documentLine;
+    });
 
-const buildPurchaseRequestPayload = ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) =>
-  cleanObject({
+const buildPurchaseRequestPayload = async ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) => {
+  const sapPayload = cleanObject({
     CardCode: header.vendor,
     NumAtCard: header.salesContractNo,
     DocDate: header.postingDate || header.documentDate,
@@ -623,10 +632,14 @@ const buildPurchaseRequestPayload = ({ header = {}, lines = [], header_udfs = {}
     JournalMemo: header.journalRemark,
     Confirmed: header.confirmed ? 'tYES' : 'tNO',
     DiscountPercent: toNumberOrUndefined(header.discount),
-    ...header_udfs,
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
     DocumentLines: buildDocumentLines(lines),
   });
+
+  const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OPRQ');
+  Object.assign(sapPayload, normalizeUdfValues(header_udfs, null, headerUdfDefinitionsByKey));
+  return sapPayload;
+};
 
 const validatePurchaseRequestPayload = async ({ lines = [] }) => {
   const itemCodes = Array.from(
@@ -640,7 +653,7 @@ const validatePurchaseRequestPayload = async ({ lines = [] }) => {
 
 const submitPurchaseRequest = async (payload) => {
   await validatePurchaseRequestPayload(payload);
-  const purchaseRequestPayload = buildPurchaseRequestPayload(payload);
+  const purchaseRequestPayload = await buildPurchaseRequestPayload(payload);
 
   const response = await sapService.request({
     method: 'post',
@@ -658,7 +671,7 @@ const submitPurchaseRequest = async (payload) => {
 
 const updatePurchaseRequest = async (docEntry, payload) => {
   await validatePurchaseRequestPayload(payload);
-  const purchaseRequestPayload = buildPurchaseRequestPayload(payload);
+  const purchaseRequestPayload = await buildPurchaseRequestPayload(payload);
 
   const response = await sapService.request({
     method: 'patch',

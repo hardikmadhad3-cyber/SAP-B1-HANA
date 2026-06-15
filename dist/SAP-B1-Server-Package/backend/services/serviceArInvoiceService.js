@@ -3,6 +3,7 @@ const serviceArInvoiceDb = require('./serviceArInvoiceDbService');
 const arInvoiceService = require('./arInvoiceService');
 const hsnCodeDbService = require('./hsnCodeDbService');
 const { getUdfDefinitions } = require('./udfMetadataService');
+const { isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
 
 const parseNum = (value, fallback = 0) => {
   const parsed = Number(String(value ?? '').replace(/,/g, ''));
@@ -62,35 +63,36 @@ const resolveUdfOptionValue = (field, value) => {
   return text;
 };
 
-const coerceUdfValue = (field, value) => {
+const coerceUdfValue = (field, value, key = '') => {
   if (value === undefined || value === null) return undefined;
-  const optionValue = resolveUdfOptionValue(field, value);
-  if (String(optionValue).trim() === '') return undefined;
-
-  const maxLength = Number(field?.maxLength);
-  const shouldEnforceLength = !['number', 'date', 'time'].includes(String(field?.type || '').toLowerCase());
-  if (shouldEnforceLength && Number.isFinite(maxLength) && maxLength > 0 && String(optionValue).length > maxLength) {
-    return undefined;
-  }
-
-  return optionValue;
+  const normalizedValue = normalizeUdfValue(value, field, key || field?.key);
+  return normalizedValue === null ? undefined : normalizedValue;
 };
 
 const setUdfValue = (target, udfDefinitionsByKey, aliases, value) => {
-  if (value === undefined || value === null || String(value).trim() === '') return;
+  if (value === undefined) return;
 
   const normalizedAliases = aliases.map(normalizeKey);
   const matchedKey = Array.from(udfDefinitionsByKey.keys()).find((key) => normalizedAliases.includes(normalizeKey(key)));
   if (!matchedKey) return;
 
-  const coercedValue = coerceUdfValue(udfDefinitionsByKey.get(matchedKey), value);
+  if (isBlankUdfValue(value)) {
+    target[matchedKey] = null;
+    return;
+  }
+
+  const coercedValue = coerceUdfValue(udfDefinitionsByKey.get(matchedKey), value, matchedKey);
   if (coercedValue !== undefined) target[matchedKey] = coercedValue;
 };
 
 const applyExplicitUdfs = (target, values = {}, udfDefinitionsByKey) => {
   Object.entries(values || {}).forEach(([key, value]) => {
     if (!udfDefinitionsByKey.has(key)) return;
-    const coercedValue = coerceUdfValue(udfDefinitionsByKey.get(key), value);
+    if (isBlankUdfValue(value)) {
+      target[key] = null;
+      return;
+    }
+    const coercedValue = coerceUdfValue(udfDefinitionsByKey.get(key), value, key);
     if (coercedValue !== undefined) target[key] = coercedValue;
   });
 };
@@ -128,7 +130,7 @@ const LINE_UDF_ALIASES = {
 };
 
 const HEADER_UDF_ALIASES = {
-  transactionType: ['TransactionType', 'DocType'],
+  transactionType: ['TransactionType', 'TransType', 'DocumentType', 'DocType'],
   placeOfSupply: ['PlaceOfSupply', 'PlaceOfSupplyCode'],
   indicator: ['Indicator'],
   bFromDate: ['B_FromDate', 'BFromDate'],

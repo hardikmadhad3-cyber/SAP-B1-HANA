@@ -25,6 +25,7 @@ const buildSessionFromSelection = (selectionResult, pendingAuth) => ({
   company: selectionResult.company,
   roleId: selectionResult.roleId,
   roleName: selectionResult.roleName,
+  generalSettings: selectionResult.generalSettings || {},
   menus: selectionResult.menus || [],
   menuPaths: selectionResult.menuPaths || [],
 });

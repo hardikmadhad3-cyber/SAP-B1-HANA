@@ -51,3 +51,9 @@ export const fetchProdOrderBranches = () =>
 
 export const fetchProdOrderCustomers = (query = '') =>
   apiClient.get('/production-order/lookup/customers', { params: { query } }).then((r) => r.data);
+
+export const fetchProdOrderUsers = () =>
+  apiClient.get('/production-order/lookup/users').then((r) => r.data);
+
+export const fetchProdOrderLinkedOrders = (linkedTo = '', query = '') =>
+  apiClient.get('/production-order/lookup/linked-orders', { params: { linkedTo, query } }).then((r) => r.data);

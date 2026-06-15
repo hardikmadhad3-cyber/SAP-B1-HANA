@@ -65,7 +65,9 @@ const getItems = () => safe(db.query(`
     T0.ItemName,
     T0.BuyUnitMsr  AS PurchaseUnit,
     T0.InvntryUom  AS InventoryUOM,
-    T0.PUoMEntry   AS UoMGroupEntry,
+    T0.UgpEntry    AS UoMGroupEntry,
+    T0.PUoMEntry   AS PurchaseUomEntry,
+    T0.IUoMEntry   AS InventoryUomEntry,
     T0.DfltWH      AS DefaultWarehouse,
     CHP.ChapterID  AS HSNCode
   FROM OITM T0
@@ -84,7 +86,9 @@ const getItemsForModal = () => safe(db.query(`
     CAST(T0.OnHand AS DECIMAL(19,2)) AS InStock,
     T0.BuyUnitMsr      AS PurchaseUnit,
     T0.InvntryUom      AS InventoryUOM,
-    T0.PUoMEntry       AS UoMGroupEntry,
+    T0.UgpEntry        AS UoMGroupEntry,
+    T0.PUoMEntry       AS PurchaseUomEntry,
+    T0.IUoMEntry       AS InventoryUomEntry,
     T0.DfltWH          AS DefaultWarehouse,
     CHP.ChapterID      AS HSNCode,
     T0.ManBtchNum      AS BatchManaged,
@@ -151,6 +155,101 @@ const getUomGroups = () => safe(db.query(`
   ORDER  BY g.UgpEntry, d.LineNum
 `));
 
+const itemUomContextCache = new Map();
+
+const getItemUomContext = async (itemCode) => {
+  const normalizedItemCode = String(itemCode || '').trim();
+  if (!normalizedItemCode) return null;
+
+  if (!itemUomContextCache.has(normalizedItemCode)) {
+    itemUomContextCache.set(normalizedItemCode, safe(db.query(`
+      SELECT TOP 1
+        T0.ItemCode,
+        T0.UgpEntry,
+        T0.PUoMEntry,
+        T0.IUoMEntry,
+        T0.BuyUnitMsr,
+        T0.InvntryUom,
+        PU.UomCode AS PurchaseUomCode,
+        IU.UomCode AS InventoryUomCode
+      FROM OITM T0
+      LEFT JOIN OUOM PU ON PU.UomEntry = T0.PUoMEntry
+      LEFT JOIN OUOM IU ON IU.UomEntry = T0.IUoMEntry
+      WHERE T0.ItemCode = @itemCode
+    `, { itemCode: normalizedItemCode })).then((rows) => rows[0] || null));
+  }
+
+  return itemUomContextCache.get(normalizedItemCode);
+};
+
+const resolvePurchaseOrderLineUomEntry = async (itemCode, uomValue) => {
+  const item = await getItemUomContext(itemCode);
+  if (!item) return null;
+
+  const rawValue = uomValue == null ? '' : String(uomValue).trim();
+  const requestedUomEntry = Number(rawValue);
+  const requestedUomCode = rawValue.toUpperCase();
+  const ugpEntry = Number(item.UgpEntry);
+  const purchaseUomEntry = Number(item.PUoMEntry);
+  const inventoryUomEntry = Number(item.IUoMEntry);
+
+  const isUsableEntry = (value) => Number.isInteger(value) && value !== 0;
+
+  if (isUsableEntry(requestedUomEntry)) {
+    if (ugpEntry > 0) {
+      const rows = await safe(db.query(`
+        SELECT TOP 1 UomEntry
+        FROM UGP1
+        WHERE UgpEntry = @ugpEntry
+          AND UomEntry = @uomEntry
+      `, { ugpEntry, uomEntry: requestedUomEntry }));
+      return rows[0]?.UomEntry != null ? Number(rows[0].UomEntry) : null;
+    }
+
+    const rows = await safe(db.query(`
+      SELECT TOP 1 UomEntry
+      FROM OUOM
+      WHERE UomEntry = @uomEntry
+    `, { uomEntry: requestedUomEntry }));
+    return rows[0]?.UomEntry != null ? Number(rows[0].UomEntry) : requestedUomEntry;
+  }
+
+  if (requestedUomCode) {
+    if (ugpEntry > 0) {
+      const rows = await safe(db.query(`
+        SELECT TOP 1 U.UomEntry
+        FROM UGP1 G
+        INNER JOIN OUOM U ON U.UomEntry = G.UomEntry
+        WHERE G.UgpEntry = @ugpEntry
+          AND UPPER(LTRIM(RTRIM(U.UomCode))) = @uomCode
+      `, { ugpEntry, uomCode: requestedUomCode }));
+
+      return rows[0]?.UomEntry != null ? Number(rows[0].UomEntry) : null;
+    }
+
+    const rows = await safe(db.query(`
+      SELECT TOP 1 UomEntry
+      FROM OUOM
+      WHERE UPPER(LTRIM(RTRIM(UomCode))) = @uomCode
+      ORDER BY UomEntry
+    `, { uomCode: requestedUomCode }));
+
+    if (rows[0]?.UomEntry != null) {
+      return Number(rows[0].UomEntry);
+    }
+  }
+
+  if (isUsableEntry(purchaseUomEntry)) {
+    return purchaseUomEntry;
+  }
+
+  if (isUsableEntry(inventoryUomEntry)) {
+    return inventoryUomEntry;
+  }
+
+  return null;
+};
+
 const getDecimalSettings = () => safe(db.query(`
   SELECT TOP 1
     DecSep, ThousSep, DateSep, DateFormat,
@@ -170,6 +269,282 @@ const getCompanyInfo = () => safe(db.query(`
     State
   FROM OADM
 `));
+
+const PURCHASE_ORDER_FORM_ID = '142';
+const PURCHASE_ORDER_MATRIX_ITEM_ID = '38';
+
+const PURCHASE_ORDER_LINE_COLUMNS = [
+  { key: 'itemNo', label: 'Item No.', sapField: 'ItemCode', sapColumnIds: ['1', 'ItemCode', 'Item No.', 'ItemNo'], minWidth: 160 },
+  { key: 'itemDescription', label: 'Description', sapField: 'Dscription', sapColumnIds: ['3', 'Dscription', 'ItemDescription', 'Item Description'], minWidth: 220 },
+  { key: 'hsnCode', label: 'HSN', sapField: 'ChapterID', source: 'item-master', sapColumnIds: ['HSN', 'HSN/SAC', 'ChapterID', 'U_HSNCode', 'U_HSN'], minWidth: 115 },
+  { key: 'quantity', label: 'Qty', sapField: 'Quantity', sapColumnIds: ['11', 'Quantity', 'Qty'], minWidth: 80 },
+  { key: 'unitPrice', label: 'Price', sapField: 'Price', sapColumnIds: ['14', 'Price', 'UnitPrice', 'Unit Price'], minWidth: 95 },
+  { key: 'uomCode', label: 'UoM', sapField: 'unitMsr', alternativeFields: ['UomCode', 'UomEntry'], sapColumnIds: ['1470002145', 'unitMsr', 'UomCode', 'UoMCode', 'UoM'], minWidth: 85 },
+  { key: 'stdDiscount', label: 'Disc%', sapField: 'DiscPrcnt', sapColumnIds: ['15', 'DiscPrcnt', 'DiscountPercent', 'Discount %', 'Disc%'], minWidth: 85 },
+  { key: 'taxCode', label: 'Tax Code', sapField: 'TaxCode', sapColumnIds: ['160', 'TaxCode', 'Tax Code'], minWidth: 115 },
+  { key: 'totalBeforeTax', label: 'Total Before Tax', sapField: 'LineTotal', calculated: true, sapColumnIds: ['21', 'LineTotal', 'Total Before Tax'], minWidth: 135 },
+  { key: 'total', label: 'Total', sapField: 'LineTotal', calculated: true, sapColumnIds: ['17', 'GTotal', 'Total', 'Total (LC)', 'LineTotal'], minWidth: 105 },
+  { key: 'whse', label: 'Whse', sapField: 'WhsCode', sapColumnIds: ['24', 'WhsCode', 'WarehouseCode', 'Warehouse', 'Whse'], minWidth: 90 },
+  { key: 'loc', label: 'LOC', source: 'branch', sapColumnIds: ['LocCode', 'Location', 'LOC'], minWidth: 115 },
+  { key: 'branch', label: 'Branch', source: 'branch', sapColumnIds: ['BPLId', 'Branch'], minWidth: 115 },
+];
+
+const truthySapFlag = (value) => ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(
+  String(value ?? '').trim().toUpperCase(),
+);
+
+const falsySapFlag = (value) => ['N', 'NO', 'FALSE', '0', 'TNO'].includes(
+  String(value ?? '').trim().toUpperCase(),
+);
+
+const sapFlagToBoolean = (value, fallback = true) => {
+  if (truthySapFlag(value)) return true;
+  if (falsySapFlag(value)) return false;
+  return fallback;
+};
+
+const normalizePreferenceKey = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]/g, '');
+
+const getLineTableColumns = async () => {
+  const rows = await safe(db.query(`
+    SELECT
+      COLUMN_NAME,
+      DATA_TYPE,
+      CHARACTER_MAXIMUM_LENGTH,
+      NUMERIC_PRECISION,
+      NUMERIC_SCALE,
+      IS_NULLABLE,
+      ORDINAL_POSITION
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'POR1'
+    ORDER BY ORDINAL_POSITION
+  `));
+
+  return rows.reduce((acc, row) => {
+    const columnName = String(row.COLUMN_NAME || '').trim();
+    if (!columnName) return acc;
+    acc[columnName.toUpperCase()] = {
+      name: columnName,
+      dataType: String(row.DATA_TYPE || '').trim().toLowerCase(),
+      maxLength: row.CHARACTER_MAXIMUM_LENGTH,
+      precision: row.NUMERIC_PRECISION,
+      scale: row.NUMERIC_SCALE,
+      nullable: String(row.IS_NULLABLE || '').toUpperCase() === 'YES',
+      ordinal: Number(row.ORDINAL_POSITION || 0),
+    };
+    return acc;
+  }, {});
+};
+
+const resolveSapUserSign = async () => {
+  let sapUsername = '';
+
+  try {
+    const { getActiveCompanyConfig } = require('./companyConfigService');
+    const activeConfig = await getActiveCompanyConfig();
+    sapUsername = String(activeConfig.serviceLayer?.username || '').trim();
+  } catch (_error) {
+    sapUsername = '';
+  }
+
+  if (!sapUsername) return null;
+
+  const rows = await safe(db.query(`
+    SELECT TOP 1 USERID
+    FROM OUSR
+    WHERE USER_CODE = @sapUsername
+       OR U_NAME = @sapUsername
+    ORDER BY
+      CASE WHEN USER_CODE = @sapUsername THEN 0 ELSE 1 END,
+      USERID
+  `, { sapUsername }));
+
+  const userSign = Number(rows[0]?.USERID);
+  return Number.isFinite(userSign) ? userSign : null;
+};
+
+const getPurchaseOrderColumnPreferences = async () => {
+  const tableRows = await safe(db.query(`
+    SELECT TABLE_NAME
+    FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_NAME = 'CPRF'
+  `));
+
+  if (!tableRows.length) return { byKey: {}, rows: [], userSign: null };
+
+  const cprfColumns = await safe(db.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'CPRF'
+  `));
+  const columnSet = new Set(cprfColumns.map((row) => String(row.COLUMN_NAME || '').trim()));
+  const hasItemUid = columnSet.has('ItemUID');
+  const hasTableName = columnSet.has('TableName');
+  const userSign = await resolveSapUserSign();
+  if (userSign == null) return { byKey: {}, rows: [], userSign: null };
+
+  const rows = await safe(db.query(`
+    SELECT
+      FormID,
+      ItemID,
+      ColID,
+      Width,
+      VisInForm,
+      VisualIndx,
+      EditInForm,
+      VisInExpnd,
+      ExpandIndx,
+      EditInEXP,
+      UserSign,
+      TPLId
+      ${hasTableName ? ', TableName' : ", '' AS TableName"}
+      ${hasItemUid ? ', ItemUID' : ", '' AS ItemUID"}
+    FROM CPRF
+    WHERE FormID = @formId
+      AND (
+        ItemID = @itemId
+        ${hasItemUid ? 'OR ItemUID = @itemId' : ''}
+        ${hasTableName ? 'OR TableName = @tableName' : ''}
+      )
+      AND UserSign = @userSign
+    ORDER BY
+      CASE WHEN TPLId = 0 THEN 0 ELSE 1 END,
+      VisualIndx,
+      ColID
+  `, {
+    formId: PURCHASE_ORDER_FORM_ID,
+    itemId: PURCHASE_ORDER_MATRIX_ITEM_ID,
+    tableName: 'POR1',
+    userSign,
+  }));
+
+  const byKey = rows.reduce((acc, row) => {
+    [row.ColID, row.TableName, row.ItemUID]
+      .map(normalizePreferenceKey)
+      .filter(Boolean)
+      .forEach((key) => {
+        if (!acc[key]) acc[key] = row;
+      });
+
+    return acc;
+  }, {});
+
+  return { byKey, rows, userSign };
+};
+
+const findColumnPreference = (column, preferences = {}) => {
+  const candidates = [
+    column.key,
+    column.sapField,
+    ...(column.alternativeFields || []),
+    ...(column.sapColumnIds || []),
+  ].map(normalizePreferenceKey).filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (preferences[candidate]) return preferences[candidate];
+  }
+
+  return null;
+};
+
+const getColumnMetadata = (column, lineColumns = {}) => {
+  const candidates = [
+    column.sapField,
+    ...(column.alternativeFields || []),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const metadata = lineColumns[String(candidate).toUpperCase()];
+    if (metadata) return metadata;
+  }
+
+  return null;
+};
+
+const getPurchaseOrderLineFieldMetadata = async () => {
+  const [lineColumns, preferencesResult] = await Promise.all([
+    getLineTableColumns(),
+    getPurchaseOrderColumnPreferences(),
+  ]);
+
+  const matrixColumns = PURCHASE_ORDER_LINE_COLUMNS
+    .map((column, index) => {
+      const metadata = getColumnMetadata(column, lineColumns);
+      const exists = Boolean(metadata || column.calculated || column.source);
+      if (!exists) return null;
+
+      const preference = findColumnPreference(column, preferencesResult.byKey);
+      const visible = preference ? sapFlagToBoolean(preference.VisInForm, true) : true;
+      const active = preference ? sapFlagToBoolean(preference.EditInForm, true) : true;
+      const width = Number(preference?.Width);
+
+      return {
+        key: column.key,
+        label: column.label,
+        sapField: column.sapField || '',
+        source: column.source || (column.calculated ? 'calculated' : 'POR1'),
+        dataType: metadata?.dataType || '',
+        maxLength: metadata?.maxLength || undefined,
+        precision: metadata?.precision || undefined,
+        scale: metadata?.scale || undefined,
+        required: metadata ? !metadata.nullable : false,
+        readOnly: Boolean(column.calculated),
+        visible,
+        active,
+        minWidth: Number.isFinite(width) && width > 0
+          ? Math.max(width, column.minWidth || 125)
+          : (column.minWidth || 125),
+        order: Number.isFinite(Number(preference?.VisualIndx))
+          ? Number(preference.VisualIndx)
+          : index + 1,
+        sapColumnId: preference?.ColID || '',
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => (left.order || 0) - (right.order || 0));
+
+  return {
+    matrix_columns: matrixColumns,
+    sap_form: {
+      formId: PURCHASE_ORDER_FORM_ID,
+      matrixItemId: PURCHASE_ORDER_MATRIX_ITEM_ID,
+      userSign: preferencesResult.userSign,
+      preferenceRows: preferencesResult.rows.length,
+    },
+    _preferencesByKey: preferencesResult.byKey,
+  };
+};
+
+const applyLineColumnPreferencesToUdfs = (udfMetadata = {}, preferences = {}) => {
+  const rows = (udfMetadata.rows || []).map((field) => {
+    const preference = findColumnPreference({
+      key: field.key,
+      sapField: field.sapField,
+      sapColumnIds: [field.key, field.aliasId, field.label],
+    }, preferences);
+
+    if (!preference) return field;
+
+    return {
+      ...field,
+      visible: sapFlagToBoolean(preference.VisInForm, true),
+      active: sapFlagToBoolean(preference.EditInForm, true),
+      minWidth: Number(preference.Width) > 0 ? Number(preference.Width) : field.minWidth,
+      order: Number(preference.VisualIndx) || field.order,
+      sapColumnId: preference.ColID || field.sapColumnId,
+    };
+  });
+
+  return {
+    ...udfMetadata,
+    rows,
+  };
+};
 
 // ── VENDOR DETAILS ────────────────────────────────────────────────────────────
 
@@ -505,6 +880,7 @@ const getReferenceData = async () => {
     decimalRows,
     companyRows,
     udfMetadata,
+    lineFieldMetadata,
   ] = await Promise.all([
     getVendors(),
     getItems(),
@@ -519,7 +895,12 @@ const getReferenceData = async () => {
     getDecimalSettings(),
     getCompanyInfo(),
     getMarketingDocumentUdfs({ headerTable: 'OPOR', lineTable: 'POR1' }),
+    getPurchaseOrderLineFieldMetadata(),
   ]);
+  const effectiveUdfMetadata = applyLineColumnPreferencesToUdfs(
+    udfMetadata,
+    lineFieldMetadata._preferencesByKey || {},
+  );
 
   // Process UOM groups
   const uomGroupMap = {};
@@ -581,7 +962,11 @@ const getReferenceData = async () => {
     states,
     uom_groups,
     decimal_settings: decimalSettings,
-    udf_metadata: udfMetadata,
+    udf_metadata: effectiveUdfMetadata,
+    line_field_metadata: {
+      matrix_columns: lineFieldMetadata.matrix_columns || [],
+      sap_form: lineFieldMetadata.sap_form || {},
+    },
     warnings: [],
   };
 };
@@ -625,4 +1010,5 @@ module.exports = {
   getStateFromAddress,
   getStateFromWarehouse,
   getItemsForModal,
+  resolvePurchaseOrderLineUomEntry,
 };

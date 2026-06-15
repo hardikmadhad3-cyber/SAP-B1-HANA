@@ -19,6 +19,7 @@ import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import QualitySelectionModal from '../sales-order/components/QualitySelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
@@ -28,6 +29,7 @@ import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/ware
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
@@ -352,6 +354,15 @@ const INIT_HEADER = {
   billToAddress: '', billToCode: '', shipToAddress: '',
 };
 
+const createInitialHeader = (settings = readGeneralSettings()) => ({
+  ...INIT_HEADER,
+  warehouse: settings.sodaDeliveryWarehouse || DEFAULT_WAREHOUSE,
+  series: settings.sodaDeliverySeries || '',
+  postingDate: today(),
+  deliveryDate: today(),
+  documentDate: today(),
+});
+
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
   id: i + 1, targetPath: '', fileName: '', attachmentDate: '',
   freeText: '', copyToTargetDocument: '', documentType: '', atchDocDate: '', alert: '',
@@ -367,6 +378,7 @@ function SODADelivery() {
   const formRef = useRef(null);
   const isHydratingDocumentRef = useRef(false);
   const handledCopyFromRef = useRef('');
+  const generalSettingsRef = useRef(readGeneralSettings());
   const requestedEditDocEntry = isRouteStateForActiveCompany(location.state) ? (
     location.state?.sodaDeliveryDocEntry ||
     location.state?.document?.docEntry ||
@@ -379,7 +391,7 @@ function SODADelivery() {
   );
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
-  const [header, setHeader] = useState(INIT_HEADER);
+  const [header, setHeader] = useState(() => createInitialHeader(generalSettingsRef.current));
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
@@ -482,6 +494,13 @@ function SODADelivery() {
       : null;
 
     if (matchedSeries) return matchedSeries;
+
+    const preferredSeries = String(generalSettingsRef.current.sodaDeliverySeries || '').trim();
+    const settingsSeries = preferredSeries
+      ? seriesList.find((series) => String(series.Series) === preferredSeries)
+      : null;
+
+    if (settingsSeries) return settingsSeries;
 
     const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
     return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
@@ -3323,7 +3342,7 @@ function SODADelivery() {
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
-      initialHeader: INIT_HEADER,
+      initialHeader: createInitialHeader(generalSettingsRef.current),
       lines,
       createLine,
       rowUdfDefinitions,
@@ -3400,13 +3419,17 @@ function SODADelivery() {
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       setSnapshotPending(false);
       setIsDirty(false);
-      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+      const resetHeader = createInitialHeader(generalSettingsRef.current);
+      setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
       setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setValErrors({ header: {}, lines: {}, form: '' });
       
       if (refData.series.length > 0) {
-        handleSeriesChange(refData.series[0].Series);
+        const defaultSeries = resolvePreferredSeries(refData.series, resetHeader.postingDate);
+        if (defaultSeries?.Series != null) {
+          handleSeriesChange(defaultSeries.Series);
+        }
       }
       
       setPageState(p => ({ ...p, success: `${r.data.message || 'Sales order saved.'}${dn}` }));
@@ -3431,7 +3454,8 @@ function SODADelivery() {
   const resetForm = () => {
     setSnapshotPending(false);
     setIsDirty(false);
-    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+    const resetHeader = createInitialHeader(generalSettingsRef.current);
+    setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
     setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
@@ -3680,6 +3704,14 @@ function SODADelivery() {
                         ))}
                       </select>
                     </div>
+
+                    <DocumentCurrencySelect
+                      classPrefix="del"
+                      header={header}
+                      onHeaderChange={handleHeaderChange}
+                      businessPartners={refData.vendors || []}
+                      disabled={pageState.vendorLoading || !header.vendor || !!currentDocEntry}
+                    />
 
                     {/* Place of Supply */}
                     <div className="del-field">

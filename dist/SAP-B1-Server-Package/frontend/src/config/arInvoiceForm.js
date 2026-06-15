@@ -35,14 +35,17 @@ const getDefaultUdfValue = (field = {}) => {
   return field.defaultValue ?? '';
 };
 
+const getValidDefinitions = (definitions = []) =>
+  (definitions || []).filter((field) => field && field.key);
+
 const createUdfState = (definitions = []) =>
-  definitions.reduce((acc, field) => {
+  getValidDefinitions(definitions).reduce((acc, field) => {
     acc[field.key] = getDefaultUdfValue(field);
     return acc;
   }, {});
 
 const normalizeUdfState = (definitions = [], values = {}) =>
-  definitions.reduce((acc, field) => {
+  getValidDefinitions(definitions).reduce((acc, field) => {
     const currentValue = values[field.key];
     const shouldApplyDefault =
       currentValue === undefined ||
@@ -54,12 +57,17 @@ const normalizeUdfState = (definitions = [], values = {}) =>
   }, {});
 
 const buildVisibilitySettings = (definitions = []) =>
-  definitions.reduce((acc, field) => {
+  getValidDefinitions(definitions).reduce((acc, field) => {
     acc[field.key] = { visible: field.visible !== undefined ? field.visible : true, active: true };
     return acc;
   }, {});
 
-const createDefaultFormSettings = (headerUdfs = HEADER_UDF_DEFINITIONS, rowUdfs = ROW_UDF_DEFINITIONS) => ({
+const createDefaultFormSettings = (
+  headerUdfs = HEADER_UDF_DEFINITIONS,
+  rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = [],
+) => ({
+  matrixColumns: buildVisibilitySettings(matrixColumns),
   headerUdfs: buildVisibilitySettings(headerUdfs),
   rowUdfs: buildVisibilitySettings(rowUdfs),
 });
@@ -76,9 +84,10 @@ const mergeNestedSettings = (defaults, saved = {}) =>
 const readSavedFormSettings = (
   headerUdfs = HEADER_UDF_DEFINITIONS,
   rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = [],
   storageKey = FORM_SETTINGS_STORAGE_KEY,
 ) => {
-  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs);
+  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs, matrixColumns);
 
   try {
     const raw = localStorage.getItem(storageKey);

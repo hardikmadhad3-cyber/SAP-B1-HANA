@@ -9,6 +9,7 @@ router.get("/business-partners", outgoingPaymentsController.searchBusinessPartne
 router.get("/control-accounts", outgoingPaymentsController.lookupControlAccounts);
 router.get("/cash-accounts", outgoingPaymentsController.lookupCashAccounts);
 router.get("/documents", outgoingPaymentsController.searchOutgoingPayments);
+router.get("/documents/:docEntry", outgoingPaymentsController.getOutgoingPaymentByDocEntry);
 router.get("/open-invoices", outgoingPaymentsController.getOpenInvoices);
 
 module.exports = router;

@@ -1,5 +1,6 @@
 import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 import { filterSalesOrderRowUdfDefinitions } from '../../../config/sodaSalesOrderForm';
 
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
@@ -119,6 +120,7 @@ export default function ContentsTab({
   lines,
   onLineChange,
   onNumBlur,
+  lineItemOptions,
   onAddLine,
   onRemoveLine,
   getUomOptions,
@@ -135,6 +137,7 @@ export default function ContentsTab({
   rowUdfFields = [],
   onRowUdfChange,
 }) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
   const getTaxAmountDisplay = (line) => {
     if (String(line.taxAmount ?? '').trim()) return line.taxAmount;
     const totals = getLineTotalsForDisplay(line, effectiveTaxCodes);
@@ -222,6 +225,9 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
               name="itemNo"
+              data-sap-lookup="item"
+              data-sap-row-index={i}
+              onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
               value={line.itemNo}
               onChange={(e) => onLineChange(i, e)}
               placeholder="Item Code"
@@ -258,6 +264,7 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1 }}
               name="sellerQuality"
+              data-sap-row-index={i}
               value={line.sellerQuality || ''}
               onChange={(e) => onLineChange(i, e)}
             />
@@ -279,6 +286,7 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1 }}
               name="buyerQuality"
+              data-sap-row-index={i}
               value={line.buyerQuality || ''}
               onChange={(e) => onLineChange(i, e)}
             />
@@ -406,44 +414,24 @@ export default function ContentsTab({
       ),
       sellerPrice: () => (
         <td key="sellerPrice">
-          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-            <input
-              className="so-grid__input"
-              style={{ flex: 1 }}
-              name="sellerPrice"
-              value={line.sellerPrice || ''}
-              onChange={(e) => onLineChange(i, e)}
-            />
-            <button
-              type="button"
-              onClick={() => onOpenQualityModal && onOpenQualityModal('sellerPrice', i)}
-              style={pickerButtonStyle}
-              title="Select Seller Price"
-            >
-              ...
-            </button>
-          </div>
+          <input
+            className="so-grid__input"
+            name="sellerPrice"
+            data-sap-row-index={i}
+            value={line.sellerPrice || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
         </td>
       ),
       buyerPrice: () => (
         <td key="buyerPrice">
-          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-            <input
-              className="so-grid__input"
-              style={{ flex: 1 }}
-              name="buyerPrice"
-              value={line.buyerPrice || ''}
-              onChange={(e) => onLineChange(i, e)}
-            />
-            <button
-              type="button"
-              onClick={() => onOpenQualityModal && onOpenQualityModal('buyerPrice', i)}
-              style={pickerButtonStyle}
-              title="Select Buyer Price"
-            >
-              ...
-            </button>
-          </div>
+          <input
+            className="so-grid__input"
+            name="buyerPrice"
+            data-sap-row-index={i}
+            value={line.buyerPrice || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
         </td>
       ),
       sellerDelivery: () => (
@@ -788,6 +776,7 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1 }}
               name="buyerPaymentTerms"
+              data-sap-row-index={i}
               value={line.buyerPaymentTerms || ''}
               onChange={(e) => onLineChange(i, e)}
             />
@@ -809,6 +798,7 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1 }}
               name="sellerPaymentTerms"
+              data-sap-row-index={i}
               value={line.sellerPaymentTerms || ''}
               onChange={(e) => onLineChange(i, e)}
             />

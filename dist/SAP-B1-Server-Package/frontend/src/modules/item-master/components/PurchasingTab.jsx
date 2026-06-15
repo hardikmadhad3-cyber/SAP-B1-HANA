@@ -26,11 +26,15 @@ const WEIGHT_UNITS = [
   { value: "5", label: "lb" },
 ];
 
-export default function PurchasingTab({ form, onChange, fetchVendors }) {
+export default function PurchasingTab({ form, onChange, fetchVendors, customsGroups = [] }) {
   const handleVendorSelect = (row) => {
     onChange({ target: { name: "Mainsupplier",      value: row.code } });
     onChange({ target: { name: "DefaultVendorName", value: row.name } });
   };
+
+  const selectedCustomsGroup = String(form.CustomsGroupCode ?? "");
+  const hasSelectedCustomsGroup = selectedCustomsGroup !== ""
+    && customsGroups.some((group) => String(group.code) === selectedCustomsGroup);
 
   return (
     <div>
@@ -138,7 +142,22 @@ export default function PurchasingTab({ form, onChange, fetchVendors }) {
       <div className="im-field-grid">
         <div className="im-field">
           <label className="im-field__label">Customs Group</label>
-          <input className="im-field__input" name="CustomsGroupCode" value={form.CustomsGroupCode || ""} onChange={onChange} />
+          <select
+            className="im-field__select"
+            name="CustomsGroupCode"
+            value={selectedCustomsGroup}
+            onChange={onChange}
+          >
+            <option value="">Select customs group</option>
+            {!hasSelectedCustomsGroup && selectedCustomsGroup && (
+              <option value={selectedCustomsGroup}>{selectedCustomsGroup}</option>
+            )}
+            {customsGroups.map((group) => (
+              <option key={group.code} value={group.code}>
+                {group.name || group.code}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
     </div>

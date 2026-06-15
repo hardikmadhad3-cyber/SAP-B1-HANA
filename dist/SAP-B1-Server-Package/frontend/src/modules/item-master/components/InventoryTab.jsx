@@ -48,7 +48,7 @@ export default function InventoryTab({ form, onChange, stock = [], onWarehouseCh
         </div>
 
         <div className="im-field">
-          <label className="im-field__label">Default Warehouse <span style={{ color: "#d13438" }}>*</span></label>
+          <label className="im-field__label">Default Warehouse</label>
           <LookupField
             name="DefaultWarehouse"
             value={form.DefaultWarehouse || ""}

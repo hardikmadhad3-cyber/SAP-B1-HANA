@@ -1,4 +1,5 @@
 const db = require('../db/odbc');
+const { getHeaderUdfValues, getLineUdfValues } = require('./udfMetadataService');
 
 const safe = async (promise) => {
   try {
@@ -14,6 +15,20 @@ const buildAddressText = (row) =>
   [row.Street, row.Block, row.City, row.ZipCode, row.State, row.Country]
     .filter(Boolean)
     .join(', ');
+
+const getTableColumns = async (tableName) => {
+  const rows = await safe(
+    db.query(
+      `
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = @tableName
+      `,
+      { tableName }
+    )
+  );
+  return new Set(rows.map((row) => row.COLUMN_NAME));
+};
 
 const getItems = async () => {
   const [itemRows, priceRows] = await Promise.all([
@@ -70,14 +85,18 @@ const getItems = async () => {
   }));
 };
 
-const getWarehouses = async () =>
-  safe(
+const getWarehouses = async () => {
+  const warehouseColumns = await getTableColumns('OWHS');
+  const locationExpression = warehouseColumns.has('Location') ? '[Location]' : 'NULL';
+
+  return safe(
     db.query(`
       SELECT
         WhsCode,
         WhsName,
         City,
-        BPLId AS BranchId
+        BPLId AS BranchId,
+        ${locationExpression} AS LocationCode
       FROM OWHS
       WHERE ISNULL(Inactive, 'N') <> 'Y'
       ORDER BY WhsCode
@@ -88,8 +107,10 @@ const getWarehouses = async () =>
       whsName: row.WhsName,
       city: row.City || '',
       branchId: row.BranchId != null ? String(row.BranchId) : '',
+      locationCode: row.LocationCode != null ? String(row.LocationCode) : '',
     }))
   );
+};
 
 const getSeries = async () =>
   safe(
@@ -345,6 +366,10 @@ const getInventoryTransferRequest = async (docEntry) => {
       { docEntry }
     )
   );
+  const [headerUdfs, lineUdfsByLineNum] = await Promise.all([
+    getHeaderUdfValues({ tableId: 'OWTQ', keyValue: docEntry }),
+    getLineUdfValues({ tableId: 'WTQ1', keyValue: docEntry }),
+  ]);
 
   const itemCodes = [...new Set(lineRows.map((row) => row.ItemCode).filter(Boolean))];
   let itemMap = {};
@@ -381,6 +406,7 @@ const getInventoryTransferRequest = async (docEntry) => {
   return {
     docEntry: header.DocEntry,
     docNum: header.DocNum,
+    headerUdfs: headerUdfs || {},
     header: {
       number: header.DocNum != null ? String(header.DocNum) : 'Auto',
       series: header.Series != null ? String(header.Series) : '',
@@ -421,6 +447,7 @@ const getInventoryTransferRequest = async (docEntry) => {
         uomName: itemInfo.uomName || '',
         branch: header.BranchId != null ? String(header.BranchId) : '',
         assessableValue: Number(row.AssessableValue || 0).toFixed(2),
+        udf: lineUdfsByLineNum[row.LineNum] || {},
       };
     }),
   };

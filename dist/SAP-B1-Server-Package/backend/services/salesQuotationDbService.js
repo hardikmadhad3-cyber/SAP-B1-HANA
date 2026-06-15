@@ -520,10 +520,17 @@ const getSalesQuotationList = async ({
 // ── single quotation ──────────────────────────────────────────────────────────
 
 const getSalesQuotation = async (docEntry) => {
+  const lineFieldMetadata = await getTableFieldMetadata('QUT1');
+  const lineField = (columnName, alias, fallback = "NULL") => (
+    hasTableField(lineFieldMetadata, columnName)
+      ? `T1.${columnName} AS ${sqlAlias(alias)}`
+      : `${fallback} AS ${sqlAlias(alias)}`
+  );
+
   const rows = await safe(db.query(`
     SELECT
       T0.DocEntry, T0.DocNum, T0.CardCode, T0.CardName,
-      T0.DocDate, T0.DocDueDate, T0.TaxDate, T0.DocStatus,
+      T0.DocDate, T0.CreateDate AS DocumentCreated, T0.DocDueDate, T0.TaxDate, T0.DocStatus,
       T0.NumAtCard, T0.Comments AS Remarks, T0.DocTotal, T0.DocCur,
       T0.CntctCode, T0.BPLId, T0.GroupNum,
       T0.ShipToCode, T0.PayToCode, T0.Address, T0.Address2,
@@ -540,6 +547,8 @@ const getSalesQuotation = async (docEntry) => {
       ST.Name AS PlaceOfSupply,
       T1.LineNum, T1.ItemCode, T1.Dscription,
       T1.Quantity, T1.Price,
+      ${lineField('RequiredDate', 'RequiredDate')},
+      ${lineField('ShipDate', 'ShipDate')},
       T1.DiscPrcnt AS LineDiscPrcnt,
       T1.VatGroup AS TaxCode,
       T1.WhsCode, T1.unitMsr AS UomCode, T1.LineTotal,
@@ -644,10 +653,14 @@ const getSalesQuotation = async (docEntry) => {
         return {
           itemNo: line.ItemCode,
           itemDescription: line.Dscription || '',
+          requiredDate: firstUdfValue(lineUdf, ['U_Required_Date', 'U_ReqDate']) || formatSapDate(line.RequiredDate),
+          quotedDate: firstUdfValue(lineUdf, ['U_Quoted_Date', 'U_QuoteDate']) || formatSapDate(line.ShipDate),
+          requiredQty: firstUdfValue(lineUdf, ['U_Req_Qty', 'U_ReqQty']),
           hsnCode: firstUdfValue(lineUdf, ['U_HSNCode', 'U_HSN']) || line.HSNCode || '',
           sacCode: firstUdfValue(lineUdf, ['U_SACCode', 'U_SAC']),
           quantity: String(line.Quantity || 0),
           unitPrice: String(line.Price || 0),
+          unitPriceUdf: firstUdfValue(lineUdf, ['U_Unit_Price']) || String(line.Price || 0),
           uomCode: line.UomCode || '',
           stdDiscount: String(line.LineDiscPrcnt || ''),
           taxCode: line.TaxCode || '',
@@ -666,7 +679,7 @@ const getSalesQuotation = async (docEntry) => {
           buyerDelivery: firstUdfValue(lineUdf, ['U_Buyer_Delivery']),
           sellerDelivery: firstUdfValue(lineUdf, ['U_Seller_Delivery']),
           buyerPaymentTerms: firstUdfValue(lineUdf, ['U_Buyer_Payment_Terms']),
-          sellerPaymentTerms: firstUdfValue(lineUdf, ['U_Seller_Payment_Terms']),
+          sellerPaymentTerms: firstUdfValue(lineUdf, ['U_Seller_Payment_Term', 'U_Seller_Payment_Terms']),
           buyerQuality: firstUdfValue(lineUdf, ['U_Buyer_Quality']),
           sellerQuality: firstUdfValue(lineUdf, ['U_Seller_Quality']),
           buyerPrice: firstUdfValue(lineUdf, ['U_Buyer_Price']),
@@ -684,6 +697,7 @@ const getSalesQuotation = async (docEntry) => {
           freightSales: firstUdfValue(lineUdf, ['U_Freight_sales']),
           freightProvider: firstUdfValue(lineUdf, ['U_Fr_trans']),
           freightProviderName: firstUdfValue(lineUdf, ['U_Fr_trans_name']),
+          documentCreated: firstUdfValue(lineUdf, ['U_Document_Created', 'U_DocCreated']) || formatSapDate(line.DocumentCreated),
           brokerageNumber: firstUdfValue(lineUdf, ['U_BDNum']),
           batches: batchesByLine[line.LineNum] || [],
           udf: lineUdf,
@@ -824,6 +838,8 @@ const getSalesQuotationForCopy = async (docEntry) => {
 
       -- 🔥 IMPORTANT: USE OPEN QTY
       T0.OpenQty AS Quantity,
+      ${lineField('RequiredDate', 'RequiredDate')},
+      ${lineField('ShipDate', 'ShipDate')},
 
       COALESCE(T0.PriceBefDi, T0.Price) AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
@@ -855,12 +871,15 @@ const getSalesQuotationForCopy = async (docEntry) => {
       ${lineField('U_SPLRBT', 'SpecialRebate')},
       ${lineField('U_COMPRC', 'Commission')},
       ${lineField('U_S_BrokPerQty', 'SellerBrokeragePerQty')},
+      ${lineField('U_Req_Qty', 'RequiredQty')},
       ${lineField('U_Unit_Price', 'UnitPriceUdf', 'COALESCE(T0.PriceBefDi, T0.Price)')},
       ${lineField('U_Brok_Seller', 'SellerBrokerage')},
       ${lineField('U_Brok_Buyer', 'BuyerBrokerage')},
       ${lineField('U_Buyer_Delivery', 'BuyerDelivery')},
       ${lineField('U_Seller_Delivery', 'SellerDelivery')},
       ${lineField('U_Buyer_Payment_Terms', 'BuyerPaymentTerms')},
+      ${lineField('U_Seller_Payment_Term', 'SellerPaymentTerm')},
+      ${lineField('U_Seller_Payment_Terms', 'SellerPaymentTerms')},
       ${lineField('U_Buyer_Quality', 'BuyerQuality')},
       ${lineField('U_Seller_Quality', 'SellerQuality')},
       ${lineField('U_Buyer_Price', 'BuyerPrice')},
@@ -903,6 +922,7 @@ const getSalesQuotationForCopy = async (docEntry) => {
     const udf = lineUdfs[line.LineNum] || {};
     return {
       ...line,
+      DocumentCreated: formatSapDate(header.DocumentCreated),
       udf,
     };
   });

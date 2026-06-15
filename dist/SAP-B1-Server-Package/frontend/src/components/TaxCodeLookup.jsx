@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { focusNextSapField } from '../utils/sapTabNavigation';
 
 const normalize = (value) => String(value ?? '').trim().toLowerCase();
 
@@ -142,7 +143,8 @@ export default function TaxCodeLookup({
     optionRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' });
   }, [activeIndex, open]);
 
-  const commit = (code) => {
+  const commit = (code, { moveFocus = false, direction = 1 } = {}) => {
+    const origin = inputRef.current;
     onChange({
       target: {
         name,
@@ -150,6 +152,43 @@ export default function TaxCodeLookup({
       },
     });
     closeMenu();
+    if (moveFocus) {
+      window.setTimeout(() => focusNextSapField(origin, direction), 40);
+    }
+  };
+
+  const validateAndCommitForTab = (event) => {
+    const token = String(open ? search : inputRef.current?.value || value || '').trim();
+    if (!token) {
+      closeMenu();
+      focusNextSapField(inputRef.current, event.shiftKey ? -1 : 1);
+      return;
+    }
+
+    const exact = taxCodes.find((tax) => normalize(tax.Code) === normalize(token));
+    if (exact) {
+      commit(exact.Code, { moveFocus: true, direction: event.shiftKey ? -1 : 1 });
+      return;
+    }
+
+    if (options.length === 1) {
+      commit(options[0].Code, { moveFocus: true, direction: event.shiftKey ? -1 : 1 });
+      return;
+    }
+
+    if (options.length > 1) {
+      setOpen(true);
+      setSearch(token);
+      inputRef.current?.focus();
+      return;
+    }
+
+    inputRef.current?.setCustomValidity(`No tax code found for "${token}".`);
+    inputRef.current?.reportValidity?.();
+    inputRef.current?.focus();
+    window.setTimeout(() => {
+      inputRef.current?.setCustomValidity('');
+    }, 2500);
   };
 
   const canShowEmptyMessage = needle.length > 0;
@@ -174,13 +213,19 @@ export default function TaxCodeLookup({
 
     if (event.key === 'Enter' && open && options[activeIndex]) {
       event.preventDefault();
-      commit(options[activeIndex].Code);
+      commit(options[activeIndex].Code, { moveFocus: true });
       return;
     }
 
     if (event.key === 'Escape' && open) {
       event.preventDefault();
       closeMenu();
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      validateAndCommitForTab(event);
     }
   };
 
@@ -195,7 +240,7 @@ export default function TaxCodeLookup({
           type="button"
           onMouseDown={(event) => {
             event.preventDefault();
-            commit(tax.Code);
+            commit(tax.Code, { moveFocus: true });
           }}
           style={{
             display: 'block',

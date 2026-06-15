@@ -1,5 +1,10 @@
 /* ── Production Order Module — SAP B1 style ── */
 
+.po-page {
+  padding-bottom: 12px;
+  box-sizing: border-box;
+}
+
 .po-header-layout {
   display: flex;
   gap: 40px;
@@ -16,15 +21,119 @@
 
 .po-lbl   { flex: 0 0 150px !important; text-align: right; }
 .po-lbl-r { flex: 0 0 130px !important; text-align: right; }
+.po-uom-lbl { flex: 0 0 auto !important; margin-left: 8px; text-align: right; }
 
 .po-readonly { background: #f0f2f5 !important; color: #555; }
+
+.po-checkline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  font-size: 12px;
+  color: #1f2d3d;
+}
 
 /* ── Tab panel ── */
 .po-tab-panel {
   padding: 0 !important;
-  min-height: 380px;
+  min-height: 250px;
   display: flex;
   flex-direction: column;
+}
+
+.po-summary-panel,
+.po-attachments-panel {
+  padding: 12px 16px;
+  font-size: 12px;
+}
+
+.po-summary-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.po-summary-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 14px;
+}
+
+.po-summary-group {
+  min-width: 0;
+}
+
+.po-summary-group__title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #003366;
+  text-decoration: underline;
+}
+
+.po-summary-group__title--spaced {
+  margin-top: 12px;
+}
+
+.po-summary-field {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.po-summary-field label {
+  font-size: 12px;
+  color: #1f2d3d;
+  white-space: nowrap;
+}
+
+.po-summary-footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.po-summary-field--wide {
+  grid-template-columns: 130px minmax(0, 1fr);
+}
+
+.po-remarks-row {
+  margin: 0 12px 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 10px 14px 12px;
+  background: #fff;
+  border: 1px solid #c8d0da;
+  border-top: none;
+  border-radius: 0 0 3px 3px;
+}
+
+.po-remarks-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.po-remarks-field label {
+  flex: 0 0 120px;
+  text-align: right;
+  padding-top: 4px;
+}
+
+.po-remarks-field textarea {
+  width: 100%;
+  min-height: 46px;
+  font-size: 12px;
+  padding: 5px 6px;
+  border: 1px solid #c8d0da;
+  border-radius: 3px;
+  resize: vertical;
+  box-sizing: border-box;
 }
 
 /* ── Lines wrap ── */
@@ -39,7 +148,7 @@
   overflow-x: auto;
   overflow-y: auto;
   flex: 1;
-  max-height: 380px;
+  max-height: 330px;
 }
 
 .po-grid {
@@ -65,19 +174,26 @@
   text-overflow: ellipsis;
 }
 
-.po-th--type    { width: 60px;  }
+.po-th--rownum  { width: 38px;  }
+.po-th--type    { width: 70px;  }
 .po-th--no      { width: 120px; }
 .po-th--desc    { width: 160px; }
 .po-th--baseqty { width: 80px;  }
+.po-th--baseratio { width: 80px; }
 .po-th--planqty { width: 80px;  }
 .po-th--issued  { width: 80px;  }
-.po-th--uom     { width: 60px;  }
+.po-th--available { width: 80px; }
+.po-th--uom     { width: 80px;  }
+.po-th--uomname { width: 100px; }
 .po-th--wh      { width: 90px;  }
 .po-th--issue   { width: 90px;  }
+.po-th--wip     { width: 120px; }
 .po-th--dr      { width: 100px; }
+.po-th--location { width: 90px; }
 .po-th--proj    { width: 90px;  }
 .po-th--addqty  { width: 80px;  }
-.po-th--stage   { width: 60px;  }
+.po-th--route   { width: 120px; }
+.po-th--procure { width: 110px; }
 
 .po-grid__row:hover { background: #f5f8fc; }
 .po-grid__row:nth-child(even) { background: #fafbfc; }
@@ -244,4 +360,14 @@
 .po-list-toolbar input {
   flex: 1;
   max-width: 280px;
+}
+
+@media (max-width: 1200px) {
+  .po-summary-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .po-summary-footer {
+    grid-template-columns: 1fr;
+  }
 }

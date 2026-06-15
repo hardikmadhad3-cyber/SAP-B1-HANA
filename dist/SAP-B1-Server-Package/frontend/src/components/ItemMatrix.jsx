@@ -60,7 +60,7 @@ function ItemMatrix({
     const columnIndex = COLUMN_KEYS.indexOf(columnKey);
     if (columnIndex === -1) return;
 
-    if (event.key === 'ArrowRight' || event.key === 'Tab') {
+    if (event.key === 'ArrowRight') {
       event.preventDefault();
       const nextColumn = COLUMN_KEYS[columnIndex + 1];
       if (nextColumn) {

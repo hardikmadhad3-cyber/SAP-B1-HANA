@@ -4,6 +4,10 @@ export const fetchInventoryTransferMetadata = () => apiClient.get('/inventory-tr
 export const fetchInventoryTransferItems = () => apiClient.get('/inventory-transfer/items');
 export const fetchInventoryTransferWarehouses = () =>
   apiClient.get('/inventory-transfer/warehouses');
+export const fetchInventoryTransferDistributionRules = () =>
+  apiClient.get('/inventory-transfer/distribution-rules', {
+    params: { _: Date.now() },
+  });
 export const fetchInventoryTransferSeries = () => apiClient.get('/inventory-transfer/series');
 export const fetchInventoryTransferBusinessPartnerDetails = (cardCode) =>
   apiClient.get(`/inventory-transfer/business-partners/${encodeURIComponent(cardCode)}`);

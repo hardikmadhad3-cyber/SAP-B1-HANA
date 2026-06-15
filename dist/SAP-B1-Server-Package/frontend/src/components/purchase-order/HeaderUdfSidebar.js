@@ -74,11 +74,19 @@ const isBillToPartyCodeField = (field) => {
   return label === 'billtopartycode' ||
     label === 'billpartycode' ||
     label === 'partycode' ||
+    label === 'buyerscode2' ||
+    label === 'buyercode2' ||
     key === 'billtopartycode' ||
     key === 'billpartycode' ||
     key === 'partycode' ||
+    key === 'buyers2code' ||
+    key === 'buyerscode2' ||
+    key === 'buyercode2' ||
     identity.includes('billtopartycode') ||
-    identity.includes('billpartycode');
+    identity.includes('billpartycode') ||
+    identity.includes('buyers2code') ||
+    identity.includes('buyerscode2') ||
+    identity.includes('buyercode2');
 };
 
 const isBillToPartyNameField = (field) => {
@@ -89,11 +97,19 @@ const isBillToPartyNameField = (field) => {
   return label === 'billtopartyname' ||
     label === 'billpartyname' ||
     label === 'partyname' ||
+    label === 'buyersname2' ||
+    label === 'buyername2' ||
     key === 'billtopartyname' ||
     key === 'billpartyname' ||
     key === 'partyname' ||
+    key === 'buyers2name' ||
+    key === 'buyersname2' ||
+    key === 'buyername2' ||
     identity.includes('billtopartyname') ||
-    identity.includes('billpartyname');
+    identity.includes('billpartyname') ||
+    identity.includes('buyers2name') ||
+    identity.includes('buyersname2') ||
+    identity.includes('buyername2');
 };
 
 const isBillToPartyAddressIdField = (field) => {
@@ -104,12 +120,18 @@ const isBillToPartyAddressIdField = (field) => {
   return label === 'billtopartyaddressid' ||
     label === 'billtoaddressid' ||
     label === 'partyaddressid' ||
+    label === 'buyersaddressid' ||
+    label === 'buyeraddressid' ||
     key === 'billtopartyaddressid' ||
     key === 'billtoaddressid' ||
     key === 'partyaddressid' ||
+    key === 'buyersaddressid' ||
+    key === 'buyeraddressid' ||
     identity.includes('billtopartyaddressid') ||
     identity.includes('billtoaddressid') ||
-    identity.includes('partyaddressid');
+    identity.includes('partyaddressid') ||
+    identity.includes('buyersaddressid') ||
+    identity.includes('buyeraddressid');
 };
 
 const isBillToPartyAddressField = (field) => {
@@ -122,13 +144,19 @@ const isBillToPartyAddressField = (field) => {
     label === 'billtoaddressbillto' ||
     label === 'billpartyaddress' ||
     label === 'partyaddress' ||
+    label === 'buyersaddress2' ||
+    label === 'buyeraddress2' ||
     key === 'billtopartyaddress' ||
     key === 'billtoaddressbillto' ||
     key === 'billpartyaddress' ||
     key === 'partyaddress' ||
+    key === 'buyersaddress' ||
+    key === 'buyeraddress' ||
     identity.includes('billtopartyaddress') ||
     identity.includes('billtoaddressbillto') ||
-    identity.includes('billpartyaddress');
+    identity.includes('billpartyaddress') ||
+    identity.includes('buyersaddress') ||
+    identity.includes('buyeraddress');
 };
 
 const isSellerAddressField = (field) =>
@@ -414,8 +442,10 @@ const selectBusinessPartnerContactId = (bp = {}) => {
   return getContactDisplayValue(fallbackContact) || '';
 };
 
-function renderField(field, value, disabled, onChange, onLookup) {
-  if (field.type === 'checkbox') {
+function renderField(field = {}, value, disabled, onChange, onLookup) {
+  const fieldType = field?.type || 'text';
+
+  if (fieldType === 'checkbox') {
     const checked = ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase());
     return (
       <input
@@ -428,7 +458,7 @@ function renderField(field, value, disabled, onChange, onLookup) {
     );
   }
 
-  if (field.type === 'select') {
+  if (fieldType === 'select') {
     return (
       <select
         className="form-control form-control-sm"
@@ -451,7 +481,7 @@ function renderField(field, value, disabled, onChange, onLookup) {
     );
   }
 
-  if (field.type === 'textarea') {
+  if (fieldType === 'textarea') {
     return (
       <textarea
         rows={3}
@@ -465,7 +495,7 @@ function renderField(field, value, disabled, onChange, onLookup) {
 
   const input = (
     <input
-      type={field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'}
+      type={fieldType === 'date' ? 'date' : fieldType === 'number' ? 'number' : 'text'}
       className="form-control form-control-sm"
       value={value}
       disabled={disabled}
@@ -815,7 +845,7 @@ function HeaderUdfSidebar({
     );
   }, []);
 
-  const safeFields = Array.isArray(fields) ? fields : [];
+  const safeFields = Array.isArray(fields) ? fields.filter((field) => field && field.key) : [];
   const containerClass = orientation === 'horizontal'
     ? 'po-udf-sidebar-horizontal'
     : 'col-xl-3 col-lg-4 align-self-start';

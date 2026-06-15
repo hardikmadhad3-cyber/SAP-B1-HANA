@@ -78,12 +78,44 @@ const APP_MENU_DEFINITIONS = [
     icon: 'payments',
     sortOrder: 2,
   },
+  {
+    key: 'journal-entry',
+    parentKey: 'banking',
+    menuName: 'Journal Entry',
+    menuPath: '/journal-entry',
+    icon: 'document',
+    sortOrder: 3,
+  },
 
   { key: 'reports', menuName: 'Reports', icon: 'reports', sortOrder: 8 },
   { key: 'sales-analysis', parentKey: 'reports', menuName: 'Sales Analysis', menuPath: '/reports/sales/analysis', icon: 'report', sortOrder: 1 },
-  { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 2 },
-  { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 3 },
-  { key: 'report-layout-manager', menuName: 'Report Layout Manager', aliases: ['Report Studio'], menuPath: '/reportlayoutmanager', icon: 'reports', sortOrder: 9 },
+  { key: 'item-list-report', parentKey: 'reports', menuName: 'Item List', menuPath: '/reports/item-list', icon: 'report', sortOrder: 2 },
+  { key: 'inventory-in-warehouse-report', parentKey: 'reports', menuName: 'Inventory in Warehouse Report', menuPath: '/reports/inventory/in-warehouse', icon: 'report', sortOrder: 3 },
+
+  { key: 'inventory-audit-report', parentKey: 'reports', menuName: 'Inventory Audit Report', menuPath: '/reports/inventory/audit', icon: 'report', sortOrder: 4 },
+  { key: 'inventory-aging-report', parentKey: 'reports', menuName: 'Inventory Aging Report', menuPath: '/reports/inventory/aging', icon: 'report', sortOrder: 5 },
+  { key: 'inventory-posting-list-report', parentKey: 'reports', menuName: 'Inventory Posting List', menuPath: '/reports/inventory/posting-list', icon: 'report', sortOrder: 6 },
+  { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 7 },
+  { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 8 },
+  { key: 'reports-financial', parentKey: 'reports', menuName: 'Financial', icon: 'report', sortOrder: 9 },
+  { key: 'reports-financial-accounting', parentKey: 'reports-financial', menuName: 'Accounting', icon: 'accounts', sortOrder: 1 },
+  { key: 'gl-accounts-business-partners-report', parentKey: 'reports-financial-accounting', menuName: 'G/L Accounts and Business Partners', menuPath: '/reports/financial/accounting/gl-accounts-business-partners', icon: 'report', sortOrder: 1 },
+  { key: 'general-ledger-report', parentKey: 'reports-financial-accounting', menuName: 'General Ledger', menuPath: '/reports/financial/accounting/general-ledger', icon: 'report', sortOrder: 2 },
+  { key: 'accounting-aging-reports', parentKey: 'reports-financial-accounting', menuName: 'Aging', icon: 'report', sortOrder: 3 },
+  { key: 'customer-receivables-aging-report', parentKey: 'accounting-aging-reports', menuName: 'Customer Receivables Aging', menuPath: '/reports/financial/accounting/aging/customer-receivables', icon: 'report', sortOrder: 1 },
+  { key: 'vendor-liabilities-aging-report', parentKey: 'accounting-aging-reports', menuName: 'Vendor Liabilities Aging', menuPath: '/reports/financial/accounting/aging/vendor-liabilities', icon: 'report', sortOrder: 2 },
+  { key: 'transaction-journal-report', parentKey: 'reports-financial-accounting', menuName: 'Transaction Journal Report', menuPath: '/reports/financial/accounting/transaction-journal', icon: 'report', sortOrder: 4 },
+  { key: 'transaction-by-projects-report', parentKey: 'reports-financial-accounting', menuName: 'Transaction Report by Projects', menuPath: '/reports/financial/accounting/transaction-by-projects', icon: 'report', sortOrder: 5 },
+  { key: 'journal-transaction-amount-range-report', parentKey: 'reports-financial-accounting', menuName: 'Locate Journal Transaction by Amount Range', menuPath: '/reports/financial/accounting/journal-transaction-amount-range', icon: 'report', sortOrder: 6 },
+  { key: 'journal-transaction-fc-amount-range-report', parentKey: 'reports-financial-accounting', menuName: 'Locate Journal Transaction by FC Amount Range', menuPath: '/reports/financial/accounting/journal-transaction-fc-amount-range', icon: 'report', sortOrder: 7 },
+  { key: 'transactions-received-from-voucher-report', parentKey: 'reports-financial-accounting', menuName: 'Transactions Received from Voucher Report', menuPath: '/reports/financial/accounting/transactions-received-from-voucher', icon: 'report', sortOrder: 8 },
+  { key: 'document-journal-report', parentKey: 'reports-financial-accounting', menuName: 'Document Journal', menuPath: '/reports/financial/accounting/document-journal', icon: 'report', sortOrder: 9 },
+  { key: 'form-er-3-report', parentKey: 'reports-financial-accounting', menuName: 'Form ER-3', menuPath: '/reports/financial/accounting/form-er-3', icon: 'report', sortOrder: 10 },
+  { key: 'form-er-5-report', parentKey: 'reports-financial-accounting', menuName: 'Form ER-5', menuPath: '/reports/financial/accounting/form-er-5', icon: 'report', sortOrder: 11 },
+  { key: 'form-er-6-report', parentKey: 'reports-financial-accounting', menuName: 'Form ER-6', menuPath: '/reports/financial/accounting/form-er-6', icon: 'report', sortOrder: 12 },
+
+  { key: 'general-settings', menuName: 'General Settings', menuPath: '/general-settings', icon: 'settings', sortOrder: 9 },
+
 ];
 
 const normalizeText = (value) => String(value || '').trim();
@@ -242,6 +274,50 @@ const cloneRoleRightsForDuplicateMenu = async (db, sourceMenuId, targetMenuId) =
   return result.rowsAffected?.[0] || 0;
 };
 
+const deleteDeprecatedReportLayoutManagerMenu = async (db) => {
+  const rows = await db.queryRows(`
+    SELECT MenuId, ParentId
+    FROM dbo.Menus
+    WHERE (
+      LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) = '/reportlayoutmanager'
+      OR (
+        LOWER(LTRIM(RTRIM(COALESCE(MenuName, '')))) IN ('report layout manager', 'report studio')
+        AND LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) NOT LIKE '/reportlayoutmanager/menu/%'
+      )
+    )
+  `);
+
+  if (!rows.length) return 0;
+
+  let deleteCount = 0;
+  for (const row of rows) {
+    await db.query(`
+      UPDATE dbo.Menus
+      SET ParentId = @parentId
+      WHERE ParentId = @menuId
+    `, {
+      menuId: row.MenuId,
+      parentId: row.ParentId ?? null,
+    });
+
+    if (await hasRoleRightsTable(db)) {
+      await db.query(`
+        DELETE FROM dbo.RoleRights
+        WHERE MenuId = @menuId
+      `, { menuId: row.MenuId });
+    }
+
+    const result = await db.query(`
+      DELETE FROM dbo.Menus
+      WHERE MenuId = @menuId
+    `, { menuId: row.MenuId });
+
+    deleteCount += result.rowsAffected?.[0] || 0;
+  }
+
+  return deleteCount;
+};
+
 const syncApplicationSidebarMenus = async (db) => {
   if (!(await hasMenusTable(db))) {
     return 0;
@@ -305,6 +381,44 @@ const syncApplicationSidebarMenus = async (db) => {
     menuByKey.get('delivery')?.MenuId,
     menuByKey.get('soda-delivery')?.MenuId,
   );
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
+    menuByKey.get('sales-analysis')?.MenuId,
+    menuByKey.get('item-list-report')?.MenuId,
+  );
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
+    menuByKey.get('item-list-report')?.MenuId,
+    menuByKey.get('inventory-posting-list-report')?.MenuId,
+  );
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
+    menuByKey.get('sales-analysis')?.MenuId,
+    menuByKey.get('gl-accounts-business-partners-report')?.MenuId,
+  );
+  const financialAccountingReportKeys = [
+    'general-ledger-report',
+    'customer-receivables-aging-report',
+    'vendor-liabilities-aging-report',
+    'transaction-journal-report',
+    'transaction-by-projects-report',
+    'journal-transaction-amount-range-report',
+    'journal-transaction-fc-amount-range-report',
+    'transactions-received-from-voucher-report',
+    'document-journal-report',
+    'form-er-3-report',
+    'form-er-5-report',
+    'form-er-6-report',
+  ];
+
+  for (const reportKey of financialAccountingReportKeys) {
+    syncCount += await cloneRoleRightsForDuplicateMenu(
+      db,
+      menuByKey.get('gl-accounts-business-partners-report')?.MenuId,
+      menuByKey.get(reportKey)?.MenuId,
+    );
+  }
+  syncCount += await deleteDeprecatedReportLayoutManagerMenu(db);
 
   return syncCount;
 };

@@ -109,8 +109,11 @@ const isLookupCodeParameter = (parameter) => {
   return (
     identity.includes('item') ||
     identity.includes('product') ||
+    identity.includes('customer') ||
+    identity.includes('vendor') ||
     identity.includes('buyer') ||
     identity.includes('seller') ||
+    identity.includes('business partner') ||
     identity.includes('card code') ||
     identity.includes('cardcode')
   );

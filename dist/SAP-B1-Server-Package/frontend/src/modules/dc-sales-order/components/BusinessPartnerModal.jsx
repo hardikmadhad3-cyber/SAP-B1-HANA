@@ -11,12 +11,19 @@ export default function BusinessPartnerModal({
   businessPartners = [],
   title = 'List of Business Partners',
   variant = 'default',
+  initialQuery = '',
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRow, setSelectedRow] = useState(null);
   const [page, setPage] = useState(0);
   const [isTableReady, setIsTableReady] = useState(false);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const pendingQuery = initialQuery || window.__sapB1PendingLookupQuery || '';
+    window.__sapB1PendingLookupQuery = '';
+    if (pendingQuery) setSearchTerm(pendingQuery);
+  }, [isOpen, initialQuery]);
   useEffect(() => {
     if (!isOpen) {
       setSearchTerm('');
@@ -81,12 +88,12 @@ export default function BusinessPartnerModal({
 
   const handleChoose = () => {
     if (selectedRow === null || !filteredPartners[selectedRow]) return;
-    onSelect(filteredPartners[selectedRow]);
+    Promise.resolve(onSelect(filteredPartners[selectedRow])).finally(() => window.SapB1TabNavigation?.completeLookup?.());
     onClose();
   };
 
   const handleRowDoubleClick = (bp) => {
-    onSelect(bp);
+    Promise.resolve(onSelect(bp)).finally(() => window.SapB1TabNavigation?.completeLookup?.());
     onClose();
   };
 

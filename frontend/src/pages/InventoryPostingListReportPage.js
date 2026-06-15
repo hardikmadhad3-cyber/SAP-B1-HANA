@@ -568,6 +568,33 @@ function InventoryPostingListReportPage() {
     navigate("/dashboard");
   };
 
+  const handleOpenArInvoice = (row) => {
+    const docEntry = Number(row?.documentDocEntry || 0);
+    const transType = Number(row?.documentTransType || 0);
+    if (transType !== 13 || !docEntry) {
+      setStatusMessage("A/R Invoice drilldown is available only for A/R Invoice rows.");
+      return;
+    }
+
+    navigate("/ar-invoice", {
+      state: {
+        arInvoiceDocEntry: docEntry,
+      },
+    });
+  };
+
+  const handleOpenWarehouse = (whsCode) => {
+    const normalizedWhsCode = String(whsCode || "").trim();
+    if (!normalizedWhsCode) return;
+    navigate(`/warehouse?warehouseCode=${encodeURIComponent(normalizedWhsCode)}`);
+  };
+
+  const handleOpenBusinessPartner = (cardCode) => {
+    const normalizedCardCode = String(cardCode || "").trim();
+    if (!normalizedCardCode) return;
+    navigate(`/business-partner?cardCode=${encodeURIComponent(normalizedCardCode)}`);
+  };
+
   const selectAllWarehouses = () => {
     setNested("locationSelection", {
       warehouseCodes: warehouses.map((warehouse) => warehouse.code).filter(Boolean),
@@ -1140,6 +1167,10 @@ function InventoryPostingListReportPage() {
                     );
                   }
 
+                  const canOpenArInvoice = Number(row.documentTransType || 0) === 13 && Number(row.documentDocEntry || 0);
+                  const canOpenWarehouse = Boolean(String(row.whsCode || "").trim());
+                  const canOpenBusinessPartner = Boolean(String(row.glBpCode || "").trim());
+
                   return (
                     <tr
                       key={row.id}
@@ -1147,10 +1178,57 @@ function InventoryPostingListReportPage() {
                       onClick={() => setSelectedRowIndex(index)}
                     >
                       <td>{formatDate(row.postingDate)}</td>
-                      <td><span className="ipl-report-grid__arrow">-></span>{row.document}</td>
+                      <td>
+                        {canOpenArInvoice ? (
+                          <button
+                            type="button"
+                            className="ipl-report-grid__drill-link"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleOpenArInvoice(row);
+                            }}
+                          >
+                            <span className="ipl-report-grid__arrow" aria-hidden="true">-&gt;</span>
+                            <span className="ipl-report-grid__drill-text">{row.document}</span>
+                          </button>
+                        ) : (
+                          <>
+                            <span className="ipl-report-grid__arrow" aria-hidden="true">-&gt;</span>
+                            {row.document}
+                          </>
+                        )}
+                      </td>
                       <td>{row.docRow}</td>
-                      <td><span className="ipl-report-grid__arrow">-></span>{row.whsCode}</td>
-                      <td><span className="ipl-report-grid__arrow">-></span>{row.glBpCode}</td>
+                      <td>
+                        {canOpenWarehouse ? (
+                          <button
+                            type="button"
+                            className="ipl-report-grid__drill-link"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleOpenWarehouse(row.whsCode);
+                            }}
+                          >
+                            <span className="ipl-report-grid__arrow" aria-hidden="true">-&gt;</span>
+                            <span className="ipl-report-grid__drill-text">{row.whsCode}</span>
+                          </button>
+                        ) : null}
+                      </td>
+                      <td>
+                        {canOpenBusinessPartner ? (
+                          <button
+                            type="button"
+                            className="ipl-report-grid__drill-link"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleOpenBusinessPartner(row.glBpCode);
+                            }}
+                          >
+                            <span className="ipl-report-grid__arrow" aria-hidden="true">-&gt;</span>
+                            <span className="ipl-report-grid__drill-text">{row.glBpCode}</span>
+                          </button>
+                        ) : null}
+                      </td>
                       <td>{row.glBpName}</td>
                       <td className="is-numeric">{row.recQty ? formatQuantity(row.recQty) : ""}</td>
                       <td className="is-numeric">{row.issQty ? formatQuantity(row.issQty) : ""}</td>

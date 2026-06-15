@@ -84,8 +84,10 @@ const toIssueMethod = (value) => {
 };
 
 const toItemType = (value) => {
+  if (typeof value === "string" && value.startsWith("pit_")) return value;
   const map = {
     4: "pit_Item",
+    290: "pit_Resource",
   };
   return map[Number(value)] || "pit_Item";
 };
@@ -416,23 +418,33 @@ const mapBOMHeader = (row) => ({
   PlanAvgProdSize: row.PlAvgSize ?? 1,
 });
 
-const mapBOMLine = (row) => ({
-  ItemCode: row.Code || "",
-  ItemName: row.ItemName || "",
-  Quantity: row.Quantity ?? 1,
-  Warehouse: row.Warehouse || "",
-  Price: row.Price ?? 0,
-  PriceList: row.PriceList ?? "",
-  IssueMethod: toIssueMethod(row.IssueMthd),
-  ItemType: toItemType(row.Type),
-  DistributionRule: row.OcrCode || "",
-  Project: row.Project || "",
-  WipAccount: row.WipActCode || "",
-  Comment: row.Comment || row.LineText || "",
-  InventoryUOM: row.InvntryUom || "",
-  ChildNum: row.ChildNum ?? 0,
-  VisualOrder: row.VisOrder ?? 0,
-});
+const mapBOMLine = (row) => {
+  const hasItemCode = Boolean(String(row.Code || "").trim());
+  const lineText = row.Comment || row.LineText || "";
+
+  return {
+    ItemCode: row.Code || "",
+    ItemName: row.ItemName || row.ItemMasterName || "",
+    Quantity: row.Quantity ?? 1,
+    Warehouse: row.Warehouse || "",
+    Price: row.Price ?? 0,
+    PriceList: row.PriceList ?? "",
+    IssueMethod: toIssueMethod(row.IssueMthd),
+    ItemType: hasItemCode ? toItemType(row.Type) : "pit_Text",
+    DistributionRule: row.OcrCode || "",
+    Project: row.Project || "",
+    WipAccount: row.WipActCode || "",
+    Comment: lineText,
+    AdditionalQuantity: row.AddQuant ?? row.AdditionalQuantity ?? 0,
+    InventoryUOM: row.UoMName || row.InvntryUom || "",
+    UoMName: row.UoMName || row.InvntryUom || "",
+    ProductionStdCost: row.ProdStdCost ?? row.StdCost ?? row.Price ?? 0,
+    ChildNum: row.ChildNum ?? 0,
+    VisualOrder: row.VisOrder ?? 0,
+    StageID: row.StageId ?? row.StageID ?? "",
+    RouteSequence: row.StageId ?? row.StageID ?? row.VisOrder ?? 0,
+  };
+};
 
 const getBranch = async (bplid) => {
   const row = await queryOne(`
@@ -512,7 +524,7 @@ const searchWarehouses = async (query = "", top = 50, skip = 0) => {
   }));
 };
 
-const lookupCountries = async (query = "") => {
+const lookupCountries = async (query = "", options = {}) => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(`
     SELECT TOP 200 Code, Name
@@ -521,7 +533,7 @@ const lookupCountries = async (query = "") => {
       OR Code LIKE @like
       OR Name LIKE @like
     ORDER BY Code
-  `, { query: trimmed, like: `%${trimmed}%` });
+  `, { query: trimmed, like: `%${trimmed}%` }, options);
 
   return rows.map((row) => ({ code: row.Code, name: row.Name }));
 };
@@ -540,14 +552,14 @@ const getCountryByCode = async (code) => {
   return row ? { code: row.Code, name: row.Name || "" } : null;
 };
 
-const lookupStates = async (country = "") => {
+const lookupStates = async (country = "", options = {}) => {
   const trimmed = String(country || "").trim();
   const rows = await queryRows(`
     SELECT Code, Name, Country
     FROM OCST
     WHERE (@country = '' OR Country = @country)
     ORDER BY Country, Code
-  `, { country: trimmed });
+  `, { country: trimmed }, options);
 
   return rows.map((row) => ({ code: row.Code, name: row.Name, country: row.Country || "" }));
 };
@@ -1017,7 +1029,10 @@ const searchBP = async (query = "", type = "", top = 50, skip = 0, options = {})
     FROM OCRD
       WHERE (@query = ''
         OR CardCode LIKE @like
-        OR CardName LIKE @like)
+        OR CardName LIKE @like
+        OR CardFName LIKE @like
+        OR Phone1 LIKE @like
+        OR E_Mail LIKE @like)
         AND (@cardType = '' OR CardType = @cardType)
       ORDER BY CardName, CardCode
       OFFSET @skip ROWS FETCH NEXT @top ROWS ONLY
@@ -1398,9 +1413,14 @@ const getBOM = async (treeCode) => {
   if (!row) return null;
 
   const lines = await queryRows(`
-    SELECT L.*, I.InvntryUom
+    SELECT L.*,
+           COALESCE(NULLIF(I.ItemName, ''), NULLIF(R.ResName, '')) AS ItemMasterName,
+           I.InvntryUom,
+           COALESCE(NULLIF(I.InvntryUom, ''), NULLIF(U.UomCode, ''), NULLIF(U.UomName, '')) AS UoMName
     FROM ITT1 L
     LEFT JOIN OITM I ON I.ItemCode = L.Code
+    LEFT JOIN ORSC R ON R.ResCode = L.Code
+    LEFT JOIN OUOM U ON U.UomEntry = I.IUoMEntry
     WHERE L.Father = @treeCode
     ORDER BY L.ChildNum
   `, { treeCode });
@@ -1414,7 +1434,16 @@ const getBOM = async (treeCode) => {
 const lookupBOMItems = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(`
-    SELECT TOP 50 ItemCode, ItemName, InvntryUom AS InventoryUOM, PrchseItem AS PurchaseItem, SellItem AS SalesItem, InvntItem AS InventoryItem
+    SELECT TOP 5000
+      ItemCode,
+      ItemName,
+      InvntryUom AS InventoryUOM,
+      PrchseItem AS PurchaseItem,
+      SellItem AS SalesItem,
+      InvntItem AS InventoryItem,
+      OnHand AS QuantityOnStock,
+      ItmsGrpCod AS ItemsGroupCode,
+      WTLiable
     FROM OITM
     WHERE @query = ''
       OR ItemCode LIKE @like
@@ -1429,6 +1458,9 @@ const lookupBOMItems = async (query = "") => {
     PurchaseItem: toYesNo(row.PurchaseItem),
     SalesItem: toYesNo(row.SalesItem),
     InventoryItem: toYesNo(row.InventoryItem),
+    QuantityOnStock: row.QuantityOnStock ?? 0,
+    ItemsGroupCode: row.ItemsGroupCode ?? "",
+    WTaxLiable: toYesNo(row.WTLiable),
   }));
 };
 
@@ -1448,9 +1480,9 @@ const lookupBOMPriceLists = async () =>
 
 const lookupDistributionRules = async () =>
   queryRows(`
-    SELECT TOP 100 OcrCode AS FactorCode, OcrName AS FactorDescription
+    SELECT TOP 200 OcrCode AS FactorCode, OcrName AS FactorDescription
     FROM OOCR
-    WHERE Active <> 'N'
+    WHERE ISNULL(Active, 'Y') <> 'N'
     ORDER BY OcrCode
   `);
 

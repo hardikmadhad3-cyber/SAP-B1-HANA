@@ -1,4 +1,5 @@
 const db = require('../db/odbc');
+const { getHeaderUdfValues, getLineUdfValues } = require('./udfMetadataService');
 
 const safe = async (promise) => {
   try {
@@ -9,6 +10,23 @@ const safe = async (promise) => {
     return [];
   }
 };
+
+const getTableColumns = async (tableName) => {
+  const rows = await safe(
+    db.query(
+      `
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = @tableName
+      `,
+      { tableName }
+    )
+  );
+
+  return new Set(rows.map((row) => row.COLUMN_NAME));
+};
+
+const quoteSqlIdentifier = (identifier) => `[${String(identifier || '').replace(/]/g, ']]')}]`;
 
 const getItems = async () => {
   const [itemRows, priceRows] = await Promise.all([
@@ -97,13 +115,17 @@ const getBatchesByItem = async (itemCode, whsCode) => {
   return { batches: result };
 };
 
-const getWarehouses = async () =>
-  safe(
+const getWarehouses = async () => {
+  const warehouseColumns = await getTableColumns('OWHS');
+  const locationExpression = warehouseColumns.has('Location') ? '[Location]' : 'NULL';
+
+  return safe(
     db.query(`
       SELECT
         WhsCode,
         WhsName,
-        BPLId AS BranchId
+        BPLId AS BranchId,
+        ${locationExpression} AS LocationCode
       FROM OWHS
       WHERE ISNULL(Inactive, 'N') <> 'Y'
       ORDER BY WhsCode
@@ -113,8 +135,42 @@ const getWarehouses = async () =>
       whsCode: row.WhsCode,
       whsName: row.WhsName,
       branchId: row.BranchId != null ? String(row.BranchId) : '',
+      locationCode: row.LocationCode != null ? String(row.LocationCode) : '',
     }))
   );
+};
+
+const getDistributionRules = async () => {
+  const [ruleColumns, dimensionColumns] = await Promise.all([
+    getTableColumns('OOCR'),
+    getTableColumns('ODIM'),
+  ]);
+  const hasDimensionCode = ruleColumns.has('DimCode');
+  const dimensionCodeExpression = hasDimensionCode ? 'T0.DimCode' : '1';
+  const dimensionNameColumn = ['DimName', 'DimDesc', 'Name'].find((columnName) =>
+    dimensionColumns.has(columnName)
+  );
+  const dimensionJoin = dimensionColumns.has('DimCode')
+    ? `LEFT JOIN ODIM T1 ON T1.DimCode = ${dimensionCodeExpression}`
+    : '';
+  const dimensionNameExpression = dimensionNameColumn
+    ? `COALESCE(T1.${quoteSqlIdentifier(dimensionNameColumn)}, 'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10)))`
+    : `'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10))`;
+
+  return safe(
+    db.query(`
+      SELECT TOP 500
+        T0.OcrCode AS FactorCode,
+        T0.OcrName AS FactorDescription,
+        ${dimensionCodeExpression} AS DimensionCode,
+        ${dimensionNameExpression} AS DimensionName
+      FROM OOCR T0
+      ${dimensionJoin}
+      WHERE ISNULL(T0.Active, 'Y') <> 'N'
+      ORDER BY ${dimensionCodeExpression}, T0.OcrCode
+    `)
+  );
+};
 
 const getSeries = async () =>
   safe(
@@ -232,27 +288,53 @@ const getGoodsIssue = async (docEntry) => {
     throw new Error(`Goods Issue ${docEntry} not found.`);
   }
 
-  const lineRows = await safe(
-    db.query(
-      `
-        SELECT
-          T0.LineNum,
-          T0.ItemCode,
-          T0.Dscription AS ItemDescription,
-          CAST(ISNULL(T0.Quantity, 0) AS DECIMAL(19, 6)) AS Quantity,
-          CAST(ISNULL(T0.Price, 0) AS DECIMAL(19, 6)) AS UnitPrice,
-          CAST(ISNULL(T0.LineTotal, 0) AS DECIMAL(19, 6)) AS LineTotal,
-          T0.WhsCode AS WarehouseCode,
-          T0.unitMsr AS UoMCode,
-          T0.OcrCode AS DistributionRule,
-          T0.LocCode AS LocationCode
-        FROM IGE1 T0
-        WHERE T0.DocEntry = @docEntry
-        ORDER BY T0.LineNum
-      `,
-      { docEntry }
-    )
-  );
+  const [lineRows, headerUdfs, lineUdfsByLineNum, batchRows] = await Promise.all([
+    safe(
+      db.query(
+        `
+          SELECT
+            T0.LineNum,
+            T0.ItemCode,
+            T0.Dscription AS ItemDescription,
+            CAST(ISNULL(T0.Quantity, 0) AS DECIMAL(19, 6)) AS Quantity,
+            CAST(ISNULL(T0.Price, 0) AS DECIMAL(19, 6)) AS UnitPrice,
+            CAST(ISNULL(T0.LineTotal, 0) AS DECIMAL(19, 6)) AS LineTotal,
+            T0.WhsCode AS WarehouseCode,
+            T0.AcctCode AS AccountCode,
+            CAST(ISNULL(T0.StockPrice, 0) AS DECIMAL(19, 6)) AS ItemCost,
+            T0.UomCode AS UoMCode,
+            T0.unitMsr AS UoMName,
+            T0.OcrCode AS DistributionRule,
+            T0.OcrCode2 AS DistributionRule2,
+            T0.OcrCode3 AS DistributionRule3,
+            T0.OcrCode4 AS DistributionRule4,
+            T0.OcrCode5 AS DistributionRule5,
+            T0.LocCode AS LocationCode
+          FROM IGE1 T0
+          WHERE T0.DocEntry = @docEntry
+          ORDER BY T0.LineNum
+        `,
+        { docEntry }
+      )
+    ),
+    getHeaderUdfValues({ tableId: 'OIGE', keyValue: docEntry }),
+    getLineUdfValues({ tableId: 'IGE1', keyValue: docEntry }),
+    safe(
+      db.query(
+        `
+          SELECT
+            BaseLineNum,
+            BatchNum,
+            Quantity
+          FROM IBT1
+          WHERE BaseEntry = @docEntry
+            AND BaseType = 60
+          ORDER BY BaseLineNum, BatchNum
+        `,
+        { docEntry }
+      )
+    ),
+  ]);
 
   const itemCodes = [...new Set(lineRows.map((row) => row.ItemCode).filter(Boolean))];
   let itemMap = {};
@@ -292,22 +374,6 @@ const getGoodsIssue = async (docEntry) => {
     }, {});
   }
 
-  const batchRows = await safe(
-    db.query(
-      `
-        SELECT
-          BaseLineNum,
-          BatchNum,
-          Quantity
-        FROM IBT1
-        WHERE BaseEntry = @docEntry
-          AND BaseType = 60
-        ORDER BY BaseLineNum, BatchNum
-      `,
-      { docEntry }
-    )
-  );
-
   const batchesByLine = {};
   batchRows.forEach((row) => {
     if (!batchesByLine[row.BaseLineNum]) {
@@ -325,6 +391,7 @@ const getGoodsIssue = async (docEntry) => {
   return {
     docEntry: header.DocEntry,
     docNum: header.DocNum,
+    headerUdfs: headerUdfs || {},
     header: {
       number: header.DocNum != null ? String(header.DocNum) : 'Auto',
       series: header.Series != null ? String(header.Series) : '',
@@ -347,11 +414,15 @@ const getGoodsIssue = async (docEntry) => {
         unitPrice: String(Number(row.UnitPrice || 0)),
         total: Number(row.LineTotal || 0).toFixed(2),
         warehouse: row.WarehouseCode || '',
-        accountCode: itemInfo.accountCode || '',
-        itemCost: itemInfo.itemCost != null ? String(itemInfo.itemCost) : '',
+        accountCode: row.AccountCode || itemInfo.accountCode || '',
+        itemCost: row.ItemCost != null ? String(Number(row.ItemCost || 0)) : itemInfo.itemCost != null ? String(itemInfo.itemCost) : '',
         uomCode: row.UoMCode || '',
-        uomName: itemInfo.uomName || '',
+        uomName: row.UoMName || itemInfo.uomName || '',
         distributionRule: row.DistributionRule || '',
+        distributionRule2: row.DistributionRule2 || '',
+        distributionRule3: row.DistributionRule3 || '',
+        distributionRule4: row.DistributionRule4 || '',
+        distributionRule5: row.DistributionRule5 || '',
         location: row.LocationCode != null ? String(row.LocationCode) : '',
         branch: header.BranchId != null ? String(header.BranchId) : '',
         batchManaged: !!itemInfo.batchManaged,
@@ -363,6 +434,7 @@ const getGoodsIssue = async (docEntry) => {
         baseLine: null,
         baseType: null,
         lockedByCopy: false,
+        udf: lineUdfsByLineNum[row.LineNum] || {},
       };
     }),
   };
@@ -372,6 +444,7 @@ module.exports = {
   getItems,
   getBatchesByItem,
   getWarehouses,
+  getDistributionRules,
   getSeries,
   getPriceLists,
   getBranches,

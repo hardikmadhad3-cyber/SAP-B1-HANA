@@ -7,6 +7,7 @@
   grid-template-columns: minmax(140px, 180px) minmax(220px, 1fr) minmax(220px, 1fr);
   gap: 8px 12px;
   align-items: center;
+  padding: 14px;
 }
 
 .general-settings-page__table-head {
@@ -20,6 +21,10 @@
   color: #111827;
   font-size: 12px;
   font-weight: 600;
+}
+
+.general-settings-page__assignment .admin-form-grid {
+  max-width: 900px;
 }
 
 .general-settings-page__field {

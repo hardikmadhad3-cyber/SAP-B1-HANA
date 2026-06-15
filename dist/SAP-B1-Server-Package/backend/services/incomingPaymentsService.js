@@ -54,11 +54,14 @@ const searchBusinessPartners = async (query = "", bpType = "Customer") => {
   const trimmed = String(query || "").trim();
   const cardType = String(bpType || "").toLowerCase() === "vendor" ? "S" : "C";
   const rows = await queryRows(`
-    SELECT TOP 50
+    SELECT
       T0.CardCode,
       T0.CardName,
       T0.Currency,
       T0.Balance,
+      T0.CardType,
+      T0.ValidFor,
+      T0.FrozenFor,
       T0.DebPayAcct,
       T0.BillToDef,
       T0.Address,
@@ -70,7 +73,8 @@ const searchBusinessPartners = async (query = "", bpType = "Customer") => {
       T1.City AS AddressCity,
       T1.ZipCode AS AddressZipCode,
       T1.State AS AddressState,
-      T1.Country AS AddressCountry
+      T1.Country AS AddressCountry,
+      T1.GSTRegnNo AS GstRegistrationNumber
     FROM OCRD T0
     OUTER APPLY (
       SELECT TOP 1
@@ -81,7 +85,8 @@ const searchBusinessPartners = async (query = "", bpType = "Customer") => {
         City,
         ZipCode,
         State,
-        Country
+        Country,
+        GSTRegnNo
       FROM CRD1
       WHERE CardCode = T0.CardCode
         AND AdresType = 'B'
@@ -105,15 +110,49 @@ const searchBusinessPartners = async (query = "", bpType = "Customer") => {
     billToAddress: formatAddress(row) || row.Address || "",
     contactPerson: row.CntctPrsn || "",
     balance: toNumber(row.Balance),
+    bpType: row.CardType === "S" ? "Vendor" : row.CardType === "C" ? "Customer" : "Lead",
+    active: row.ValidFor === "N" || row.FrozenFor === "Y" ? "No" : "Yes",
+    inactive: row.FrozenFor === "Y" ? "Yes" : "No",
+    billToBlock: row.AddressBlock || "",
+    billToBuilding: row.AddressBuilding || "",
+    gstRegistrationNumber: row.GstRegistrationNumber || "",
   }));
 };
 
 const lookupControlAccounts = async (query = "") => {
-  const rows = await masterDataDbService.lookupGLAccounts(query, 100);
+  const trimmed = String(query || "").trim();
+  const rows = await queryRows(`
+    SELECT TOP 100 AcctCode, AcctName
+    FROM OACT
+    WHERE Postable = 'Y'
+      AND ISNULL(FrozenFor, 'N') <> 'Y'
+      AND (@query = ''
+        OR AcctCode LIKE @like
+        OR AcctName LIKE @like)
+    ORDER BY AcctCode
+  `, { query: trimmed, like: `%${trimmed}%` });
   return rows.map((row) => ({
-    code: row.code,
-    name: row.name,
+    code: row.AcctCode,
+    name: row.AcctName,
   }));
+};
+
+const assertPostableAccount = async (accountCode = "") => {
+  const rows = await queryRows(`
+    SELECT TOP 1 AcctCode, AcctName, Postable, FrozenFor
+    FROM OACT
+    WHERE AcctCode = @accountCode
+  `, { accountCode });
+  const account = rows[0];
+  if (!account) {
+    throw new Error(`G/L Account ${accountCode} was not found.`);
+  }
+  if (account.Postable !== "Y") {
+    throw new Error(`G/L Account ${accountCode} is a title account. Select a posting G/L account, same as SAP B1.`);
+  }
+  if (account.FrozenFor === "Y") {
+    throw new Error(`G/L Account ${accountCode} is frozen. Select an active posting G/L account.`);
+  }
 };
 
 const lookupCashAccounts = async (query = "") => {
@@ -180,20 +219,33 @@ const getDefaultCashAccount = async () => {
 const getPaymentSeries = async () => {
   const rows = await queryRows(`
     SELECT
-      Series,
-      SeriesName,
-      NextNumber
-    FROM NNM1
-    WHERE ObjectCode = '24'
-      AND Locked = 'N'
-    ORDER BY Series
+      T0.Series,
+      T0.SeriesName,
+      T0.Indicator,
+      T0.NextNumber,
+      CASE
+        WHEN T1.AbsEntry IS NOT NULL THEN 1
+        ELSE 0
+      END AS IsCurrentPeriod
+    FROM NNM1 T0
+    LEFT JOIN OFPR T1
+      ON T1.Indicator = T0.Indicator
+      AND CONVERT(date, GETDATE()) BETWEEN T1.F_RefDate AND T1.T_RefDate
+    WHERE T0.ObjectCode = '24'
+      AND T0.Locked = 'N'
+    ORDER BY
+      CASE WHEN T1.AbsEntry IS NOT NULL THEN 0 ELSE 1 END,
+      CASE WHEN ISNULL(T0.Indicator, '') <> '' THEN 0 ELSE 1 END,
+      T0.Series
   `);
 
   return rows.map((row, index) => ({
     code: String(row.Series || ""),
-    name: row.SeriesName || String(row.Series || ""),
+    name: row.Indicator || row.SeriesName || String(row.Series || ""),
+    seriesName: row.SeriesName || "",
+    indicator: row.Indicator || "",
     nextNumber: row.NextNumber ? String(row.NextNumber) : "",
-    isDefault: index === 0,
+    isDefault: row.IsCurrentPeriod === 1 || index === 0,
   }));
 };
 
@@ -243,11 +295,132 @@ const searchIncomingPayments = async (query = "") => {
   }));
 };
 
+const getIncomingPaymentByDocEntry = async (docEntry) => {
+  const docEntryNumber = Number(docEntry || 0);
+  if (!docEntryNumber) {
+    throw new Error("Incoming payment DocEntry is required.");
+  }
+
+  const headerRows = await queryRows(`
+    SELECT TOP 1
+      T0.DocEntry,
+      T0.DocNum,
+      T0.DocDate,
+      T0.TaxDate,
+      T0.CardCode,
+      T0.CardName,
+      T0.Address,
+      T0.CounterRef,
+      T0.TransId,
+      T0.BPLId,
+      T0.JrnlMemo,
+      T0.Comments,
+      T0.DocTotal,
+      T0.NoDocSum
+    FROM ORCT T0
+    WHERE T0.DocEntry = @docEntry
+  `, { docEntry: docEntryNumber });
+
+  const header = headerRows[0];
+  if (!header) {
+    throw new Error("Incoming payment was not found.");
+  }
+
+  const invoiceRows = await queryRows(`
+    SELECT
+      T1.DocEntry AS BaseDocEntry,
+      T1.InvType,
+      T1.InstId,
+      T1.SumApplied,
+      T2.DocNum,
+      T2.DocDate,
+      T2.DocDueDate,
+      T2.DocTotal,
+      T2.DocTotal - T2.PaidToDate AS BalanceDue,
+      T2.DocCur,
+      T2.Project,
+      T2.PaymentRef,
+      T2.BPLId,
+      T3.BPLName
+    FROM RCT2 T1
+    LEFT JOIN OINV T2 ON T2.DocEntry = T1.DocEntry AND T1.InvType = 13
+    LEFT JOIN OBPL T3 ON T3.BPLId = T2.BPLId
+    WHERE T1.DocNum = @docEntry
+    ORDER BY T1.DocEntry, T1.InvType, T1.InstId
+  `, { docEntry: docEntryNumber });
+
+  const accountRows = await queryRows(`
+    SELECT
+      T1.AcctCode,
+      T2.AcctName,
+      T1.Descrip,
+      T1.SumApplied,
+      T1.OcrCode,
+      T1.LocCode
+    FROM RCT4 T1
+    LEFT JOIN OACT T2 ON T2.AcctCode = T1.AcctCode
+    WHERE T1.DocNum = @docEntry
+    ORDER BY T1.AcctCode, T1.Descrip
+  `, { docEntry: docEntryNumber });
+
+  return {
+    code: String(header.DocNum || ""),
+    docEntry: header.DocEntry,
+    documentNo: String(header.DocNum || ""),
+    postingDate: toDateString(header.DocDate),
+    dueDate: toDateString(header.DocDate),
+    documentDate: toDateString(header.TaxDate || header.DocDate),
+    businessPartnerCode: header.CardCode || "",
+    businessPartnerName: header.CardName || "",
+    billToAddress: header.Address || "",
+    referenceNumber: header.CounterRef || "",
+    transactionNumber: header.TransId ? String(header.TransId) : "",
+    branch: header.BPLId ? String(header.BPLId) : "",
+    journalRemarks: header.JrnlMemo || "",
+    remarks: header.Comments || "",
+    totalAmount: toNumber(header.DocTotal),
+    paymentOnAccountAmount: toNumber(header.NoDocSum),
+    invoices: invoiceRows.map((row, index) => ({
+      id: `posted-${row.BaseDocEntry || index}-${index}`,
+      docEntry: row.BaseDocEntry,
+      documentNo: String(row.DocNum || row.BaseDocEntry || ""),
+      installment: row.InstId ? String(row.InstId) : "1",
+      documentType: row.InvType === 13 ? "A/R Invoice" : String(row.InvType || ""),
+      date: toDateString(row.DocDate),
+      dueDate: toDateString(row.DocDueDate),
+      total: toNumber(row.DocTotal || row.SumApplied),
+      balanceDue: toNumber(row.BalanceDue),
+      totalPayment: toNumber(row.SumApplied),
+      distributionRule: row.Project || "",
+      overdueDays: 0,
+      paymentOrderRun: row.PaymentRef || "",
+      branch: row.BPLId ? String(row.BPLId) : "",
+      branchName: row.BPLName || "",
+      branchDisplay: row.BPLId ? `${row.BPLId} - ${row.BPLName || ""}`.trim() : "",
+      currency: row.DocCur || "",
+      selected: true,
+      cashDiscountPercent: "0.00",
+    })),
+    accountRows: accountRows.map((row, index) => ({
+      id: `account-${row.AcctCode || index}-${index}`,
+      accountCode: row.AcctCode || "",
+      accountName: row.AcctName || "",
+      remarks: row.Descrip || "",
+      amount: toNumber(row.SumApplied),
+      distributionRule: row.OcrCode || "",
+      location: row.LocCode != null ? String(row.LocCode) : "",
+      branch: header.BPLId ? String(header.BPLId) : "",
+    })),
+  };
+};
+
 const getReferenceData = async () => {
-  const [branches, series, defaultCashAccount] = await Promise.all([
+  const [branches, series, defaultCashAccount, distributionRules, locations] = await Promise.all([
     masterDataDbService.lookupBusinessPlaces(),
     getPaymentSeries(),
     getDefaultCashAccount(),
+    masterDataDbService.lookupDistributionRules(),
+    masterDataDbService.lookupWarehouseLocations(),
   ]);
   const defaultSeries = series.find((item) => item.isDefault) || series[0] || null;
 
@@ -259,6 +432,11 @@ const getReferenceData = async () => {
     nextDocumentNumber: defaultSeries?.nextNumber || "",
     nextTransactionNumber: defaultSeries?.nextNumber || "",
     defaultCashAccount,
+    distributionRules: (distributionRules || []).map((rule) => ({
+      code: String(rule.code || rule.FactorCode || rule.OcrCode || ""),
+      name: rule.name || rule.FactorDescription || rule.OcrName || "",
+    })).filter((rule) => rule.code),
+    locations,
   };
 };
 
@@ -347,6 +525,9 @@ const createIncomingPayment = async (payload = {}) => {
   }
 
   const paymentOnAccountAmount = paymentOnAccount.enabled ? parseAmount(paymentOnAccount.amount) : 0;
+  const accountDistributionRule = String(paymentOnAccount.distributionRule || paymentOnAccount.distRule || "").trim();
+  const accountLocation = String(paymentOnAccount.location || paymentOnAccount.loc || paymentOnAccount.locCode || "").trim();
+  const accountLocationCode = Number(accountLocation);
   const appliedTotal = selectedInvoices.reduce((sum, invoice) => sum + invoice.appliedAmount, 0);
   const cashSum = appliedTotal + paymentOnAccountAmount;
   const isAccountPayment = header.bpType === "Account";
@@ -358,6 +539,9 @@ const createIncomingPayment = async (payload = {}) => {
   if (isAccountPayment && paymentOnAccountAmount <= 0) {
     throw new Error("Payment on Account amount is required for Account incoming payments.");
   }
+  if (isAccountPayment) {
+    await assertPostableAccount(cardCode);
+  }
 
   const sapPayload = {
     DocType: header.bpType === "Vendor" ? "rSupplier" : isAccountPayment ? "rAccount" : "rCustomer",
@@ -366,13 +550,13 @@ const createIncomingPayment = async (payload = {}) => {
     DueDate: toSapDate(header.dueDate || header.postingDate),
     TaxDate: toSapDate(header.documentDate || header.postingDate),
     VatDate: toSapDate(header.documentDate || header.postingDate),
-    DocCurrency: selectedInvoices.find((invoice) => invoice.currency)?.currency || undefined,
+    DocCurrency: isAccountPayment ? header.docCurrency || undefined : selectedInvoices.find((invoice) => invoice.currency)?.currency || undefined,
     PaymentType: "bopt_None",
     Series: header.seriesCode && header.seriesCode !== "Manual" ? Number(header.seriesCode) : undefined,
     DocNum: header.seriesCode === "Manual" && header.documentNumber ? Number(header.documentNumber) : undefined,
     BPLID: Number(header.branch) > 0 ? Number(header.branch) : undefined,
     CounterReference: header.referenceNumber || undefined,
-    ControlAccount: header.controlAccount || undefined,
+    ControlAccount: !isAccountPayment ? header.controlAccount || undefined : undefined,
     Remarks: payload.remarks || undefined,
     JournalRemarks: payload.journalRemarks || undefined,
     CashAccount: cashAccount,
@@ -382,12 +566,18 @@ const createIncomingPayment = async (payload = {}) => {
           DocEntry: Number(invoice.docEntry),
           InvoiceType: "it_Invoice",
           SumApplied: Number(invoice.appliedAmount.toFixed(2)),
+          DiscountPercent: parseAmount(invoice.cashDiscountPercent),
+          DistributionRule: String(invoice.distributionRule || "").trim() || undefined,
         }))
       : undefined,
-    AccountPayments: isAccountPayment
+    PaymentAccounts: isAccountPayment
       ? [{
           AccountCode: cardCode,
           SumPaid: Number(paymentOnAccountAmount.toFixed(2)),
+          GrossAmount: Number(paymentOnAccountAmount.toFixed(2)),
+          Decription: paymentOnAccount.remarks || payload.remarks || undefined,
+          ProfitCenter: accountDistributionRule || undefined,
+          LocationCode: accountLocation && Number.isFinite(accountLocationCode) ? accountLocationCode : undefined,
         }]
       : undefined,
   };
@@ -420,6 +610,7 @@ module.exports = {
   createIncomingPayment,
   getReferenceData,
   getOpenInvoices,
+  getIncomingPaymentByDocEntry,
   lookupCashAccounts,
   lookupControlAccounts,
   searchIncomingPayments,

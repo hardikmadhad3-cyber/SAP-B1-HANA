@@ -12,6 +12,8 @@ router.get('/lookup/distribution-rules', ctrl.lookupDistributionRules);
 router.get('/lookup/projects',           ctrl.lookupProjects);
 router.get('/lookup/branches',           ctrl.lookupBranches);
 router.get('/lookup/customers',          ctrl.lookupCustomers);
+router.get('/lookup/users',              ctrl.lookupUsers);
+router.get('/lookup/linked-orders',      ctrl.lookupLinkedOrders);
 
 // Reference data
 router.get('/reference-data', ctrl.getReferenceData);

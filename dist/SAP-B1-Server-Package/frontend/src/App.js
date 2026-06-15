@@ -1,5 +1,5 @@
 import { Suspense, useEffect } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import Layout from "./components/Layout";
 import LazyLoadErrorBoundary from "./components/LazyLoadErrorBoundary";
@@ -16,6 +16,7 @@ import Dashboard from "./pages/Dashboard";
 import AdminLoginPage from "./pages/AdminLoginPage";
 import LoginPage from "./pages/LoginPage";
 import lazyWithRetry from "./utils/lazyWithRetry";
+import { focusFirstSapField, installSapTabNavigation } from "./utils/sapTabNavigation";
 import "./App.css";
 import "./styles/auth.css";
 import "./styles/admin-panel.css";
@@ -23,8 +24,11 @@ import "./styles/sap-ui.css";
 import "./styles/route-loading.css";
 
 const ItemMaster = lazyWithRetry(() => import("./pages/ItemMaster"));
+const ItemMasterList = lazyWithRetry(() => import("./pages/ItemMasterList"));
 const BusinessPartner = lazyWithRetry(() => import("./pages/BusinessPartner"));
+const BusinessPartnerList = lazyWithRetry(() => import("./pages/BusinessPartnerList"));
 const Warehouse = lazyWithRetry(() => import("./pages/Warehouse"));
+const GeneralSettings = lazyWithRetry(() => import("./pages/GeneralSettings"));
 const PriceList = lazyWithRetry(() => import("./pages/PriceList"));
 const Delivery = lazyWithRetry(() => import("./pages/Delivery"));
 const DeliveryList = lazyWithRetry(() => import("./pages/DeliveryList"));
@@ -82,12 +86,24 @@ const ARCreditMemo = lazyWithRetry(() => import("./pages/ARCreditMemo"));
 const ARCreditMemoList = lazyWithRetry(() => import("./pages/ARCreditMemoList"));
 const IncomingPayments = lazyWithRetry(() => import("./pages/IncomingPayments"));
 const OutgoingPayments = lazyWithRetry(() => import("./pages/OutgoingPayments"));
+const JournalEntry = lazyWithRetry(() => import("./pages/JournalEntry"));
 const SalesQuotation = lazyWithRetry(() => import("./pages/SalesQuotation"));
 const SalesQuotationList = lazyWithRetry(() => import("./pages/SalesQuotationList"));
 const SalesAnalysisReportPage = lazyWithRetry(() => import("./pages/SalesAnalysisReportPage"));
+const ItemListReportPage = lazyWithRetry(() => import("./pages/ItemListReportPage"));
+const InventoryPostingListReportPage = lazyWithRetry(() => import("./pages/InventoryPostingListReportPage"));
+const InventoryInWarehouseReportPage = lazyWithRetry(() => import("./pages/InventoryInWarehouseReportPage"));
+const InventoryAuditReportPage = lazyWithRetry(() => import("./pages/InventoryAuditReportPage"));
+const InventoryAgingReportPage = lazyWithRetry(() => import("./pages/InventoryAgingReportPage"));
 const PurchaseAnalysisReport = lazyWithRetry(() => import("./pages/PurchaseAnalysisReport"));
 const PurchaseRequestReportPage = lazyWithRetry(() => import("./pages/PurchaseRequestReportPage"));
+const GLAccountsBusinessPartnersReportPage = lazyWithRetry(() => import("./pages/GLAccountsBusinessPartnersReportPage"));
+const GeneralLedgerReportPage = lazyWithRetry(() => import("./pages/GeneralLedgerReportPage"));
+const FinancialAccountingReportPage = lazyWithRetry(() => import("./pages/FinancialAccountingReportPage"));
+const CustomerReceivablesAgingReportPage = lazyWithRetry(() => import("./pages/CustomerReceivablesAgingReportPage"));
+const VendorLiabilitiesAgingReportPage = lazyWithRetry(() => import("./pages/VendorLiabilitiesAgingReportPage"));
 const ReportsStudioPage = lazyWithRetry(() => import("./pages/ReportsStudioPage"));
+const ReportRunnerPage = lazyWithRetry(() => import("./pages/ReportRunnerPage"));
 const AdminPanelHome = lazyWithRetry(() => import("./pages/AdminPanelHome"));
 const AdminPanelEntity = lazyWithRetry(() => import("./pages/AdminPanelEntity"));
 
@@ -115,11 +131,25 @@ function CompanyTitleManager() {
   return null;
 }
 
+function SapInitialFocusManager() {
+  const location = useLocation();
+
+  useEffect(() => {
+    focusFirstSapField(180);
+    focusFirstSapField(520);
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+
 function App() {
+  useEffect(() => installSapTabNavigation(), []);
+
   return (
     <BrowserRouter>
       <AuthProvider>
         <CompanyTitleManager />
+        <SapInitialFocusManager />
         <LazyLoadErrorBoundary>
           <Suspense fallback={<RouteLoadingFallback />}>
             <Routes>
@@ -147,8 +177,11 @@ function App() {
                   <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/item-master" element={<ItemMaster />} />
+                  <Route path="/item-master/find" element={<ItemMasterList />} />
                   <Route path="/business-partner" element={<BusinessPartner />} />
+                  <Route path="/business-partner/find" element={<BusinessPartnerList />} />
                   <Route path="/warehouse" element={<Warehouse />} />
+                  <Route path="/general-settings" element={<GeneralSettings />} />
                   <Route path="/price-list" element={<PriceList />} />
                   <Route path="/tax-code" element={<TaxCode />} />
                   <Route path="/uom-group" element={<UoMGroup />} />
@@ -197,13 +230,27 @@ function App() {
                   <Route path="/sales-quotation" element={<SalesQuotation />} />
                   <Route path="/sales-quotation/find" element={<SalesQuotationList />} />
                   <Route path="/reportlayoutmanager" element={<ReportsStudioPage />} />
-                  <Route path="/reportlayoutmanager/menu/:menuId" element={<ReportsStudioPage />} />
-                  <Route path="/reportlayoutmanager/report/:reportId" element={<ReportsStudioPage />} />
+                  <Route path="/reportlayoutmanager/menu/:menuId" element={<ReportRunnerPage />} />
+                  <Route path="/reportlayoutmanager/report/:reportId" element={<ReportRunnerPage />} />
+                  <Route path="/reports" element={<ReportsStudioPage />} />
+                  <Route path="/reports/menu/:menuId" element={<ReportRunnerPage />} />
+                  <Route path="/reports/report/:reportId" element={<ReportRunnerPage />} />
                   <Route path="/reports/sales/analysis" element={<SalesAnalysisReportPage />} />
+                  <Route path="/reports/item-list" element={<ItemListReportPage />} />
+                  <Route path="/reports/inventory/posting-list" element={<InventoryPostingListReportPage />} />
+                  <Route path="/reports/inventory/in-warehouse" element={<InventoryInWarehouseReportPage />} />
+                  <Route path="/reports/inventory/audit" element={<InventoryAuditReportPage />} />
+                  <Route path="/reports/inventory/aging" element={<InventoryAgingReportPage />} />
                   <Route path="/reports/purchasing/analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchase-analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchase/analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchasing/purchase-request-report" element={<PurchaseRequestReportPage />} />
+                  <Route path="/reports/financial/accounting/gl-accounts-business-partners" element={<GLAccountsBusinessPartnersReportPage />} />
+                  <Route path="/reports/financial/accounting/general-ledger" element={<GeneralLedgerReportPage />} />
+                  <Route path="/reports/financial/accounting/aging/customer-receivables" element={<CustomerReceivablesAgingReportPage />} />
+                  <Route path="/reports/financial/accounting/aging/vendor-liabilities" element={<VendorLiabilitiesAgingReportPage />} />
+                  <Route path="/reports/financial/accounting/aging/:agingReportKey" element={<FinancialAccountingReportPage />} />
+                  <Route path="/reports/financial/accounting/:reportKey" element={<FinancialAccountingReportPage />} />
                   <Route path="/bom" element={<BOM />} />
                   <Route path="/production-order" element={<ProductionOrder />} />
                   <Route path="/issue-for-production" element={<IssueForProduction />} />
@@ -222,6 +269,7 @@ function App() {
                   <Route path="/ap-credit-memo/find" element={<APCreditMemoList />} />
                   <Route path="/incoming-payments" element={<IncomingPayments />} />
                   <Route path="/outgoing-payments" element={<OutgoingPayments />} />
+                  <Route path="/journal-entry" element={<JournalEntry />} />
                 </Route>
               </Route>
 

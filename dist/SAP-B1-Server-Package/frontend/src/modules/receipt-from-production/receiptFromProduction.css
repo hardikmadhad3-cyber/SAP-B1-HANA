@@ -1,20 +1,31 @@
 /* ── Receipt from Production — SAP B1 style ── */
 
+.rfp-header-card {
+  min-height: 96px;
+}
+
 .rfp-header-layout {
   display: flex;
   gap: 40px;
   align-items: flex-start;
+  justify-content: space-between;
 }
 
-.rfp-header-left,
-.rfp-header-right {
+.rfp-header-left {
   flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 18px;
+}
+
+.rfp-header-right {
+  flex: 0 0 360px;
   display: flex;
   flex-direction: column;
   gap: 5px;
 }
 
-.rfp-lbl   { flex: 0 0 150px !important; text-align: right; }
+.rfp-lbl   { flex: 0 0 70px !important; text-align: right; }
 .rfp-lbl-r { flex: 0 0 130px !important; text-align: right; }
 
 .rfp-readonly { background: #f0f2f5 !important; color: #555; }
@@ -223,6 +234,98 @@
 .rfp-bottom-bar__total-val {
   font-weight: 700;
   color: #003366;
+}
+
+.rfp-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rfp-form-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 8px 12px 10px;
+  background: #fff;
+  border-left: 1px solid #d0d7de;
+  border-right: 1px solid #d0d7de;
+}
+
+.rfp-footer-left,
+.rfp-footer-right {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rfp-footer-field {
+  align-items: flex-start;
+}
+
+.rfp-footer-textarea {
+  width: 130px;
+  height: 40px;
+  resize: none;
+  border: 1px solid #c8d0da;
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.rfp-qr-input {
+  width: 130px;
+  height: 40px;
+}
+
+.rfp-attachment-panel {
+  display: grid;
+  grid-template-columns: 1fr 86px;
+  gap: 10px;
+  padding: 10px;
+  min-height: 360px;
+}
+
+.rfp-attachment-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+  padding-top: 12px;
+}
+
+.rfp-attachment-actions .im-btn:last-child {
+  margin-top: auto;
+}
+
+.rfp-edoc-panel {
+  padding: 18px 16px;
+  display: grid;
+  gap: 8px;
+  max-width: 620px;
+}
+
+.rfp-edoc-row {
+  display: grid;
+  grid-template-columns: 210px 1fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.rfp-edoc-title {
+  display: block;
+  font-weight: 700;
+  color: #003366;
+  margin-bottom: 4px;
+}
+
+.rfp-edoc-row input {
+  border: 1px solid #c8d0da;
+  height: 22px;
+  padding: 2px 6px;
+  font-size: 12px;
 }
 
 /* ── List view ── */

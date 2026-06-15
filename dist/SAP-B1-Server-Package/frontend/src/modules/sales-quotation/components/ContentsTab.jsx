@@ -1,10 +1,14 @@
 import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 import { BASE_MATRIX_COLUMNS } from '../../../config/salesQuotationForm';
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
 
 const COLUMN_WIDTHS = {
   itemNo: 160,
+  requiredDate: 125,
+  quotedDate: 125,
+  requiredQty: 110,
   quantity: 95,
   unitPrice: 110,
   stdDiscount: 90,
@@ -17,6 +21,7 @@ const COLUMN_WIDTHS = {
   loc: 115,
   blanketAgreementNo: 150,
   allowProcurementDoc: 140,
+  unitPriceUdf: 110,
   sellerBrokerageAmtPer: 160,
   sellerBrokeragePercent: 175,
   buyerPaymentTerms: 175,
@@ -61,6 +66,7 @@ export default function ContentsTab({
   effectiveWarehouses,
   valErrors,
   distributionRules = [],
+  countries = [],
   onOpenHSNModal,
   onOpenItemModal,
   onOpenQualityModal,
@@ -70,6 +76,7 @@ export default function ContentsTab({
   rowUdfFields = [],
   onRowUdfChange,
 }) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
   const fixedColumnLabels = new Set(BASE_MATRIX_COLUMNS.map((column) => compactLabel(column.label || column.key)));
   const visibleRowUdfFields = rowUdfFields.filter((field) => !fixedColumnLabels.has(compactLabel(field.label || field.key)));
   const matrixColumns = [
@@ -193,6 +200,9 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
               name="itemNo"
+              data-sap-lookup="item"
+              data-sap-row-index={i}
+              onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
               value={line.itemNo || ''}
               onChange={(e) => onLineChange(i, e)}
               placeholder="Item Code"
@@ -237,6 +247,10 @@ export default function ContentsTab({
         </td>
       ),
       stdDiscount: () => textInput('stdDiscount', { numeric: true }),
+      requiredDate: () => textInput('requiredDate', { type: 'date' }),
+      quotedDate: () => textInput('quotedDate', { type: 'date' }),
+      requiredQty: () => textInput('requiredQty', { numeric: true }),
+      unitPriceUdf: () => textInput('unitPriceUdf', { numeric: true }),
       distRule: () => (
         <td key="distRule">
           <select
@@ -296,6 +310,27 @@ export default function ContentsTab({
           </select>
         </td>
       ),
+      countryOfOrigin: () => (
+        <td key="countryOfOrigin">
+          <select
+            className="so-grid__input"
+            style={{ width: '100%', textAlign: 'left' }}
+            name="countryOfOrigin"
+            value={line.countryOfOrigin || ''}
+            onChange={(e) => onLineChange(i, e)}
+          >
+            <option value=""></option>
+            {countries.map((country) => (
+              <option key={country.Code} value={country.Code}>
+                {country.Code}{country.Name ? ` - ${country.Name}` : ''}
+              </option>
+            ))}
+            {line.countryOfOrigin && !countries.some((country) => String(country.Code) === String(line.countryOfOrigin)) && (
+              <option value={line.countryOfOrigin}>{line.countryOfOrigin}</option>
+            )}
+          </select>
+        </td>
+      ),
       loc: () => readonlyInput('loc', getBranchName ? getBranchName(line.branch) : line.loc),
       allowProcurementDoc: () => (
         <td key="allowProcurementDoc" style={{ textAlign: 'center' }}>
@@ -351,6 +386,8 @@ export default function ContentsTab({
     };
 
     const numericFields = new Set([
+      'requiredQty',
+      'unitPriceUdf',
       'sellerQty',
       'sellerBrokeragePerQty',
       'assessableValue',

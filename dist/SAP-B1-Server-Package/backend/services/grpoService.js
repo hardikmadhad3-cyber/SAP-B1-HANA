@@ -3,12 +3,19 @@ const grpoDb = require('./grpoDbService');
 const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { getUdfDefinitions } = require('./udfMetadataService');
+const { applyUdfValues } = require('./udfPayloadUtils');
 
 // ───────── HELPERS ─────────
 
 const formatDateForSAP = (value) => {
   if (!value) return null;
   return String(value).split('T')[0];
+};
+
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
 };
 
 // ───────── REFERENCE DATA (USING ODBC) ─────────
@@ -279,14 +286,8 @@ const submitGRPO = async (payload) => {
     if (header.salesEmployee !== '' && header.salesEmployee != null) sapPayload.SalesPersonCode = parseInt(header.salesEmployee, 10);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    // Add header UDFs if any
-    if (header_udfs && Object.keys(header_udfs).length > 0) {
-      Object.keys(header_udfs).forEach(key => {
-        if (header_udfs[key]) {
-          sapPayload[key] = header_udfs[key];
-        }
-      });
-    }
+    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OPDN');
+    applyUdfValues(sapPayload, header_udfs, null, headerUdfDefinitionsByKey);
 
    
 
@@ -329,14 +330,8 @@ const updateGRPO = async (docEntry, payload) => {
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
-    // Add header UDFs if any
-    if (header_udfs && Object.keys(header_udfs).length > 0) {
-      Object.keys(header_udfs).forEach(key => {
-        if (header_udfs[key]) {
-          sapPayload[key] = header_udfs[key];
-        }
-      });
-    }
+    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OPDN');
+    applyUdfValues(sapPayload, header_udfs, null, headerUdfDefinitionsByKey);
 
     await sapService.request({
       method: 'PATCH',

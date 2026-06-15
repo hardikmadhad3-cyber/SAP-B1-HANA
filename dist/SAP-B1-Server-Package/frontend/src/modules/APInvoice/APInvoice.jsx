@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import './styles/APInvoice.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/ap-invoice/FormSettingsPanel';
@@ -14,6 +14,8 @@ import TaxInfoModal from './components/TaxInfoModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import StateSelectionModal from './components/StateSelectionModal';
+import HSNCodeModal from './components/HSNCodeModal';
+import WithholdingTaxTableModal from './components/WithholdingTaxTableModal';
 import CopyFromModal from '../purchase-order/components/CopyFromModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
@@ -93,6 +95,8 @@ const getFirstValidationMessage = (errors) => {
   return 'Please correct the highlighted fields.';
 };
 
+const isYesValue = (value) => ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase());
+
 const normalizeState = (value) =>
   String(value || '')
     .trim()
@@ -136,6 +140,11 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
+const DEFAULT_TRANSACTION_TYPES = [
+  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
+  { value: 'Bill of Supply', label: 'Bill of Supply' },
+  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
+];
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
@@ -161,6 +170,7 @@ const INIT_HEADER = {
   name: '',
   contactPerson: '',
   salesContractNo: '',
+  transactionType: '',
   branch: '',
   docNo: '',
   status: 'Open',
@@ -288,6 +298,7 @@ function APInvoice() {
     warehouse_addresses: [],
     company_address: {},
     tax_codes: [],
+    withholding_tax_codes: [],
     payment_terms: [],
     shipping_types: [],
     branches: [],
@@ -297,6 +308,8 @@ function APInvoice() {
     warnings: [],
     series: [],
     states: [],
+    transaction_types: [],
+    transactionTypes: [],
   });
   const [pageState, setPageState] = useState({
     loading: false,
@@ -317,7 +330,15 @@ function APInvoice() {
   const [addressModal, setAddressModal] = useState(null);
   const [taxInfoModal, setTaxInfoModal] = useState(false);
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
+  const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1, fieldName: 'hsnCode', udfKey: '' });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
+  const [withholdingTax, setWithholdingTax] = useState({
+    open: false,
+    vendorSubject: false,
+    defaultCode: '',
+    allowedCodes: [],
+    rows: [],
+  });
   const [bpModal, setBpModal] = useState(false);
   const [stateModal, setStateModal] = useState(false);
   const [copyFromModal, setCopyFromModal] = useState(false);
@@ -458,11 +479,14 @@ function APInvoice() {
             warehouse_addresses: refDataRes.data.warehouse_addresses || [],
             company_address: refDataRes.data.company_address || {},
             tax_codes: refDataRes.data.tax_codes || [],
+            withholding_tax_codes: refDataRes.data.withholding_tax_codes || [],
             payment_terms: refDataRes.data.payment_terms || [],
             shipping_types: refDataRes.data.shipping_types || [],
             sales_employees: refDataRes.data.sales_employees || [],
             branches: refDataRes.data.branches || [],
             states: refDataRes.data.states || [],
+            transaction_types: refDataRes.data.transaction_types || [],
+            transactionTypes: refDataRes.data.transactionTypes || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
@@ -562,6 +586,7 @@ function APInvoice() {
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
     setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
     setFreightModal({ open: false, freightCharges: [], loading: false });
+    setWithholdingTax((prev) => ({ ...prev, open: false, rows: [] }));
     setValErrors({ header: {}, lines: {}, form: '' });
 
     if (normalizedHeader.vendor) {
@@ -628,6 +653,20 @@ function APInvoice() {
   const shipTypeOpts = refData.shipping_types.length
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
     : [{ value: 'Air', label: 'Air' }, { value: 'Sea', label: 'Sea' }, { value: 'Road', label: 'Road' }];
+
+  const transactionTypeOptions = useMemo(() => {
+    return DEFAULT_TRANSACTION_TYPES;
+  }, []);
+
+  useEffect(() => {
+    if (currentDocEntry || header.transactionType || !transactionTypeOptions.length) return;
+    const firstOption = transactionTypeOptions[0];
+    setHeader((prev) => ({
+      ...prev,
+      transactionType: firstOption.value,
+      indicator: firstOption.indicator || prev.indicator,
+    }));
+  }, [currentDocEntry, header.transactionType, transactionTypeOptions]);
 
   const lineItemOptions = lines.reduce((acc, line, i) => {
     const code = String(line.itemNo || '').trim();
@@ -714,6 +753,59 @@ function APInvoice() {
   };
 
   const totals = calcTotals();
+  const hasWTaxLiableLines = lines.some((line) => isYesValue(line.wtaxLiable || line.wTaxLiable));
+  const wtaxBaseAmount = totals.total;
+  const recalcWithholdingRows = useCallback((rows = withholdingTax.rows, baseAmount = wtaxBaseAmount) => (
+    (rows || []).map((row) => {
+      const rate = parseNum(row.rate);
+      return {
+        ...row,
+        baseAmount: roundTo(baseAmount, numDec.total),
+        taxableAmount: roundTo(baseAmount, numDec.total),
+        wtaxAmount: roundTo(baseAmount * rate / 100, numDec.tax),
+        category: row.category || 'Invoice',
+        baseType: row.baseType || 'Net',
+        criteria: row.criteria || 'Cash',
+        tdsType: row.tdsType || 'eTDS',
+      };
+    })
+  ), [numDec.tax, numDec.total, withholdingTax.rows, wtaxBaseAmount]);
+  const createDefaultWithholdingRows = useCallback((baseAmount = wtaxBaseAmount) => {
+    const allowedCodes = withholdingTax.allowedCodes || [];
+    const defaultCode = withholdingTax.defaultCode || allowedCodes[0]?.code || '';
+    const codeRow = allowedCodes.find((row) => String(row.code || '') === String(defaultCode || '')) || allowedCodes[0];
+    if (!codeRow) return [];
+
+    const rate = parseNum(codeRow.rate);
+    return [{
+      code: codeRow.code || '',
+      name: codeRow.name || '',
+      rate,
+      baseAmount: roundTo(baseAmount, numDec.total),
+      taxableAmount: roundTo(baseAmount, numDec.total),
+      wtaxAmount: roundTo(baseAmount * rate / 100, numDec.tax),
+      category: codeRow.taxCategory || 'Invoice',
+      baseType: 'Net',
+      criteria: 'Cash',
+      tdsType: 'eTDS',
+      tdsAccount: '',
+      surchargeAccount: '',
+      cessAccount: '',
+      hscAccount: '',
+      igstAccount: '',
+      cgstAccount: '',
+      sgstAccount: '',
+      utgstAccount: '',
+    }];
+  }, [numDec.tax, numDec.total, withholdingTax.allowedCodes, withholdingTax.defaultCode, wtaxBaseAmount]);
+  const wtaxRowsForTotals = hasWTaxLiableLines
+    ? recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows())
+    : [];
+  const withholdingModalRows = withholdingTax.open
+    ? recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows())
+    : wtaxRowsForTotals;
+  const wtaxAmount = roundTo(wtaxRowsForTotals.reduce((sum, row) => sum + parseNum(row.wtaxAmount), 0), numDec.tax);
+  const totalPaymentDueAfterWTax = roundTo(totals.total - wtaxAmount, numDec.totalPaymentDue);
   const derivedGstType = getDerivedGstType(header.vendorState, header.placeOfSupply);
   const inferredGstType = formatDerivedGstType(derivedGstType);
 
@@ -822,6 +914,7 @@ function APInvoice() {
     if (!code) {
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setHeader(prev => ({ ...prev, gstin: '', vendorState: '', gstType: '', allowGstOverride: false }));
+      setWithholdingTax({ open: false, vendorSubject: false, defaultCode: '', allowedCodes: [], rows: [] });
       return;
     }
 
@@ -836,6 +929,7 @@ function APInvoice() {
       const primaryTaxAddress = payToAddresses[0] || billToAddresses[0] || shipToAddresses[0] || contacts[0] || {};
       const gstin = String(r.data.gstin || primaryTaxAddress.GSTIN || primaryTaxAddress.gstin || '').trim();
       const vendorState = String(r.data.vendorState || primaryTaxAddress.State || primaryTaxAddress.state || '').trim();
+      const vendorWithholdingTax = r.data.withholding_tax || {};
       setRefData(p => ({
         ...p,
         contacts: contacts,
@@ -852,9 +946,17 @@ function APInvoice() {
         allowGstOverride: false,
         contactPerson: contacts.length > 0 ? contacts[0].CntctCode : '',
       }));
+      setWithholdingTax({
+        open: false,
+        vendorSubject: Boolean(vendorWithholdingTax.subject),
+        defaultCode: vendorWithholdingTax.defaultCode || '',
+        allowedCodes: vendorWithholdingTax.allowedCodes || [],
+        rows: [],
+      });
     } catch (err) {
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setHeader(prev => ({ ...prev, gstin: '', vendorState: '', gstType: '', allowGstOverride: false, contactPerson: '' }));
+      setWithholdingTax({ open: false, vendorSubject: false, defaultCode: '', allowedCodes: [], rows: [] });
     } finally {
       setPageState(p => ({ ...p, vendorLoading: false }));
     }
@@ -890,6 +992,16 @@ function APInvoice() {
 
     if (name === 'series') {
       handleSeriesChange(value);
+      return;
+    }
+
+    if (name === 'transactionType') {
+      const selectedOption = transactionTypeOptions.find((option) => String(option.value) === String(value));
+      setHeader((prev) => ({
+        ...prev,
+        transactionType: value,
+        indicator: selectedOption?.indicator || prev.indicator,
+      }));
       return;
     }
 
@@ -980,6 +1092,14 @@ function APInvoice() {
       next.total = fmtDec(calcLineTotal(next), numDec.total);
       return next;
     }));
+
+    if (name === 'wtaxLiable' && isYesValue(value) && withholdingTax.vendorSubject) {
+      setWithholdingTax((prev) => ({
+        ...prev,
+        open: true,
+        rows: prev.rows.length ? recalcWithholdingRows(prev.rows) : createDefaultWithholdingRows(),
+      }));
+    }
   };
 
   const handleNumBlur = (field, target = 'line', i = null) => {
@@ -1026,6 +1146,30 @@ function APInvoice() {
       ...prev,
       freight: fmtDec(summary.totalNet || 0, numDec.freight),
     }));
+  };
+
+  const openWithholdingTaxTable = useCallback(() => {
+    if (!header.vendor) {
+      setPageState((prev) => ({ ...prev, error: 'Select a vendor before opening withholding tax table.', success: '' }));
+      return;
+    }
+
+    if (!withholdingTax.vendorSubject) {
+      setPageState((prev) => ({ ...prev, error: 'Selected vendor does not have withholding tax setup.', success: '' }));
+      return;
+    }
+
+    setPageState((prev) => ({ ...prev, error: '', success: '' }));
+    setWithholdingTax((prev) => ({
+      ...prev,
+      open: true,
+      rows: prev.rows.length ? recalcWithholdingRows(prev.rows) : createDefaultWithholdingRows(),
+    }));
+  }, [createDefaultWithholdingRows, header.vendor, recalcWithholdingRows, withholdingTax.vendorSubject]);
+
+  const handleDocumentContextMenu = (event) => {
+    event.preventDefault();
+    openWithholdingTaxTable();
   };
 
   const addLine = () => {
@@ -1211,6 +1355,29 @@ function APInvoice() {
     closeItemModal();
   };
 
+  const openHSNModal = (lineIndex, fieldName = 'hsnCode', udfKey = '') => {
+    setHsnModal({ open: true, lineIndex, fieldName, udfKey });
+  };
+
+  const closeHSNModal = () => {
+    setHsnModal({ open: false, lineIndex: -1, fieldName: 'hsnCode', udfKey: '' });
+  };
+
+  const handleHSNSelect = (hsn) => {
+    const fieldName = hsnModal.fieldName || 'hsnCode';
+    const code = hsn.code || hsn.Code || '';
+    if (hsnModal.lineIndex >= 0) {
+      setLines(prev => prev.map((line, idx) =>
+        idx === hsnModal.lineIndex
+          ? hsnModal.udfKey
+            ? { ...line, udf: { ...(line.udf || {}), [hsnModal.udfKey]: code } }
+            : { ...line, [fieldName]: code }
+          : line
+      ));
+    }
+    closeHSNModal();
+  };
+
   // ── Business Partner Modal handlers ──────────────────────────────────────
   const openBpModal = () => setBpModal(true);
   const closeBpModal = () => setBpModal(false);
@@ -1268,6 +1435,7 @@ function APInvoice() {
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
     setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
     setFreightModal({ open: false, freightCharges: [], loading: false });
+    setWithholdingTax((prev) => ({ ...prev, open: false, rows: [] }));
 
     if (normalizedHeader.vendor) {
       loadVendorDetails(normalizedHeader.vendor);
@@ -1426,9 +1594,21 @@ function APInvoice() {
       }
     }
 
+    if (hasWTaxLiableLines) {
+      if (!withholdingTax.vendorSubject) {
+        e.form = 'Selected vendor does not have withholding tax setup.';
+        return e;
+      }
+
+      if (!wtaxRowsForTotals.some((row) => String(row.code || '').trim())) {
+        e.form = 'Select withholding tax code in the withholding tax table.';
+        return e;
+      }
+    }
+
     if (String(header.totalPaymentDue || '').trim()) {
       const enteredTotal = parseNum(header.totalPaymentDue);
-      if (Math.abs(enteredTotal - totals.total) > 0.01) {
+      if (Math.abs(enteredTotal - totalPaymentDueAfterWTax) > 0.01) {
         e.form = 'Document total mismatch';
         return e;
       }
@@ -1449,6 +1629,13 @@ function APInvoice() {
     if (e.form || Object.values(e.header).some(Boolean) || Object.values(e.lines).some(le => Object.values(le || {}).some(Boolean))) {
       setValErrors(e);
       setPageState(p => ({ ...p, error: getFirstValidationMessage(e), success: '' }));
+      if (hasWTaxLiableLines && withholdingTax.vendorSubject) {
+        setWithholdingTax((prev) => ({
+          ...prev,
+          open: true,
+          rows: prev.rows.length ? recalcWithholdingRows(prev.rows) : createDefaultWithholdingRows(),
+        }));
+      }
       return;
     }
 
@@ -1466,7 +1653,14 @@ function APInvoice() {
         ...line,
         udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
       }));
-      const payload = { company_id: PURCHASE_ORDER_COMPANY_ID, header: prep, lines: payloadLines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
+      const payload = {
+        company_id: PURCHASE_ORDER_COMPANY_ID,
+        header: prep,
+        lines: payloadLines,
+        freightCharges: freightModal.freightCharges,
+        withholdingTaxRows: wtaxRowsForTotals,
+        header_udfs: headerUdfs,
+      };
       const r = currentDocEntry ? await updateAPInvoice(currentDocEntry, payload) : await submitAPInvoice(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       const warningMsg = r.data.warning?.message ? ` Warning: ${r.data.warning.message}` : '';
@@ -1475,6 +1669,7 @@ function APInvoice() {
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
       setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [] }));
+      setWithholdingTax({ open: false, vendorSubject: false, defaultCode: '', allowedCodes: [], rows: [] });
       setValErrors({ header: {}, lines: {}, form: '' });
 
       if (refData.series.length > 0) {
@@ -1497,18 +1692,29 @@ function APInvoice() {
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
     setFreightModal({ open: false, freightCharges: [], loading: false });
+    setWithholdingTax({ open: false, vendorSubject: false, defaultCode: '', allowedCodes: [], rows: [] });
   };
 
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
-  const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
+  const visibleRowUdfs = rowUdfDefinitions
+    .filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false)
+    .map(f => ({
+      ...f,
+      active: formSettings.rowUdfs?.[f.key]?.active !== false && f.active !== false,
+    }));
 
   // Continue in next message with render...
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <form className={`po-page sap-document-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form
+      className={`po-page sap-document-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`}
+      onSubmit={handleSubmit}
+      onChangeCapture={markDirty}
+      onContextMenu={handleDocumentContextMenu}
+    >
 
       {/* ── Toolbar ── */}
       <div className="po-toolbar sap-document-toolbar">
@@ -1654,6 +1860,20 @@ function APInvoice() {
                     </select>
                   </div>
                   <div className="po-field">
+                    <label className="po-field__label">Transaction Type</label>
+                    <select
+                      name="transactionType"
+                      className="po-field__select"
+                      value={header.transactionType || ''}
+                      onChange={handleHeaderChange}
+                      disabled={!isDocumentEditable || !transactionTypeOptions.length}
+                    >
+                      {transactionTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="po-field">
                     <label className="po-field__label">Sales Contract No.</label>
                     <input name="salesContractNo" className="po-field__input" value={header.salesContractNo} onChange={handleHeaderChange} />
                   </div>
@@ -1759,9 +1979,11 @@ function APInvoice() {
                 fmtTaxLabel={fmtTaxLabel}
                 valErrors={valErrors}
                 branches={refData.branches}
-                onOpenHSNModal={(i) => {/* HSN modal not implemented in AP Invoice */}}
+                onOpenHSNModal={openHSNModal}
                 onOpenItemModal={openItemModal}
                 getBranchName={getBranchName}
+                matrixFields={BASE_MATRIX_COLUMNS}
+                formSettings={formSettings}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
               />
@@ -1875,9 +2097,25 @@ function APInvoice() {
                         <td style={{ fontWeight: 600 }}>Tax</td>
                         <td><input className="po-grid__input" value={fmtDec(totals.taxAmt, numDec.tax)} readOnly style={{ background: '#f5f8fc' }} /></td>
                       </tr>
+                      {hasWTaxLiableLines && (
+                        <tr>
+                          <td style={{ fontWeight: 600 }}>WTax Amount</td>
+                          <td style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <input className="po-grid__input" value={fmtDec(wtaxAmount, numDec.tax)} readOnly style={{ background: '#f5f8fc', flex: 1 }} />
+                            <button
+                              type="button"
+                              onClick={openWithholdingTaxTable}
+                              style={{ padding: '2px 8px', fontSize: 11, border: '1px solid #d0d7de', borderRadius: 3, background: 'linear-gradient(180deg, #f6f8fa 0%, #e9ecef 100%)', cursor: 'pointer', minWidth: 24 }}
+                              title="Open Withholding Tax Table"
+                            >
+                              ...
+                            </button>
+                          </td>
+                        </tr>
+                      )}
                       <tr className="po-grid__total">
-                        <td style={{ fontWeight: 700, color: '#003366', fontSize: 12 }}>Total</td>
-                        <td><input className="po-grid__input" value={fmtDec(totals.total, numDec.totalPaymentDue)} readOnly style={{ background: '#e8f4fc', fontWeight: 700, color: '#003366' }} /></td>
+                        <td style={{ fontWeight: 700, color: '#003366', fontSize: 12 }}>Total Payment Due</td>
+                        <td><input className="po-grid__input" value={fmtDec(totalPaymentDueAfterWTax, numDec.totalPaymentDue)} readOnly style={{ background: '#e8f4fc', fontWeight: 700, color: '#003366' }} /></td>
                       </tr>
                     </tbody>
                   </table>
@@ -2014,6 +2252,12 @@ function APInvoice() {
         loading={itemModal.loading}
       />
 
+      <HSNCodeModal
+        isOpen={hsnModal.open}
+        onClose={closeHSNModal}
+        onSelect={handleHSNSelect}
+      />
+
       {/* Business Partner Modal */}
       <BusinessPartnerModal
         isOpen={bpModal}
@@ -2046,6 +2290,18 @@ function APInvoice() {
         onClose={closeSalesEmployeeSetup}
         onSave={saveSalesEmployeeSetup}
         onUpdateRow={updateSalesEmployeeSetupRow}
+      />
+
+      <WithholdingTaxTableModal
+        isOpen={withholdingTax.open}
+        onClose={() => setWithholdingTax((prev) => ({ ...prev, open: false }))}
+        rows={withholdingModalRows}
+        allowedCodes={withholdingTax.allowedCodes.length ? withholdingTax.allowedCodes : refData.withholding_tax_codes}
+        baseAmount={wtaxBaseAmount}
+        onRowsChange={(rows) => setWithholdingTax((prev) => ({
+          ...prev,
+          rows: recalcWithholdingRows(rows),
+        }))}
       />
 
       <FreightChargesModal

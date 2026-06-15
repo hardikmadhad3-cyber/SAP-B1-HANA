@@ -15,5 +15,5 @@ export const fetchIssueByDocEntry = (docEntry) =>
 export const createIssue = (data) =>
   apiClient.post('/issue-for-production', data).then((r) => r.data);
 
-export const lookupProductionOrders = (query = '') =>
-  apiClient.get('/issue-for-production/lookup/production-orders', { params: { query } }).then((r) => r.data);
+export const lookupProductionOrders = (query = '', type = '') =>
+  apiClient.get('/issue-for-production/lookup/production-orders', { params: { query, type } }).then((r) => r.data);

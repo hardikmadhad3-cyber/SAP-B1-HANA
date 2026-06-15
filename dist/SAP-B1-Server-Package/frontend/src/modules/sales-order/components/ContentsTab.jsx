@@ -1,5 +1,6 @@
 import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 import { filterSalesOrderRowUdfDefinitions } from '../../../config/salesOrderForm';
 
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
@@ -74,10 +75,214 @@ const pickerButtonStyle = {
   borderRadius: '2px',
 };
 
+const DIST_RULE_FIELD_BY_DIMENSION = {
+  1: 'distRule',
+  2: 'distRule2',
+  3: 'distRule3',
+  4: 'distRule4',
+  5: 'distRule5',
+};
+
+const getRuleCode = (rule) => String(rule?.FactorCode || rule?.OcrCode || rule?.code || '').trim();
+const getRuleName = (rule) => String(rule?.FactorDescription || rule?.OcrName || rule?.name || '').trim();
+const getRuleDimensionCode = (rule) => String(rule?.DimensionCode || rule?.DimCode || rule?.dimensionCode || '1').trim() || '1';
+const getDimensionCode = (dimension) => String(dimension?.DimensionCode || dimension?.DimCode || dimension?.code || '1').trim() || '1';
+const getDimensionName = (dimension) => String(dimension?.DimensionName || dimension?.DimName || dimension?.DimDesc || dimension?.name || `Dimension ${getDimensionCode(dimension)}`).trim();
+const getLineRuleValue = (line, dimensionCode) => line?.[DIST_RULE_FIELD_BY_DIMENSION[Number(dimensionCode)]] || '';
+
+const buildDistributionDimensions = (dimensions = [], rules = []) => {
+  const map = new Map();
+
+  dimensions.forEach((dimension) => {
+    const code = getDimensionCode(dimension);
+    if (Number(code) >= 1 && Number(code) <= 5) {
+      map.set(code, { DimensionCode: code, DimensionName: getDimensionName(dimension) });
+    }
+  });
+
+  rules.forEach((rule) => {
+    const code = getRuleDimensionCode(rule);
+    if (Number(code) >= 1 && Number(code) <= 5 && !map.has(code)) {
+      map.set(code, { DimensionCode: code, DimensionName: rule.DimensionName || `Dimension ${code}` });
+    }
+  });
+
+  if (!map.size) {
+    map.set('1', { DimensionCode: '1', DimensionName: 'Distribution Rule' });
+  }
+
+  return [...map.values()].sort((a, b) => Number(a.DimensionCode) - Number(b.DimensionCode));
+};
+
+function DistributionRuleAssignmentModal({
+  isOpen,
+  line,
+  rules = [],
+  dimensions = [],
+  onClose,
+  onApply,
+}) {
+  const dimensionRows = React.useMemo(
+    () => buildDistributionDimensions(dimensions, rules),
+    [dimensions, rules]
+  );
+  const [draft, setDraft] = React.useState({});
+  const [activeDimensionCode, setActiveDimensionCode] = React.useState('');
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [selectedRuleIndex, setSelectedRuleIndex] = React.useState(-1);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const nextDraft = {};
+    dimensionRows.forEach((dimension) => {
+      const code = getDimensionCode(dimension);
+      nextDraft[code] = getLineRuleValue(line, code);
+    });
+    setDraft(nextDraft);
+    setActiveDimensionCode(dimensionRows[0] ? getDimensionCode(dimensionRows[0]) : '1');
+    setSearchQuery('');
+    setSelectedRuleIndex(-1);
+  }, [dimensionRows, isOpen, line]);
+
+  const activeDimension = dimensionRows.find((dimension) => getDimensionCode(dimension) === activeDimensionCode);
+  const activeRules = React.useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return rules
+      .filter((rule) => getRuleDimensionCode(rule) === activeDimensionCode)
+      .filter((rule) => {
+        if (!query) return true;
+        return getRuleCode(rule).toLowerCase().includes(query) || getRuleName(rule).toLowerCase().includes(query);
+      });
+  }, [activeDimensionCode, rules, searchQuery]);
+
+  React.useEffect(() => {
+    setSelectedRuleIndex(-1);
+  }, [activeDimensionCode, searchQuery]);
+
+  if (!isOpen) return null;
+
+  const selectRule = (rule) => {
+    setDraft((prev) => ({ ...prev, [activeDimensionCode]: getRuleCode(rule) }));
+  };
+
+  const chooseSelectedRule = () => {
+    if (selectedRuleIndex < 0 || !activeRules[selectedRuleIndex]) return;
+    selectRule(activeRules[selectedRuleIndex]);
+  };
+
+  const getSelectedRuleName = (dimensionCode) => {
+    const selectedCode = draft[dimensionCode];
+    if (!selectedCode) return '';
+    const selectedRule = rules.find((rule) => getRuleDimensionCode(rule) === dimensionCode && getRuleCode(rule) === selectedCode);
+    return selectedRule ? getRuleName(selectedRule) : '';
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.34)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div style={{ width: 940, maxWidth: '94vw', maxHeight: '86vh', background: 'var(--sap-surface)', border: '1px solid var(--sap-border-strong)', boxShadow: 'var(--sap-shadow-modal)', display: 'flex', flexDirection: 'column' }} onClick={(event) => event.stopPropagation()}>
+        <div style={{ padding: '8px 12px', borderBottom: '3px solid var(--sap-primary)', background: 'var(--sap-toolbar-bg)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Select Distr. Rule</h3>
+          <button type="button" onClick={onClose} style={{ border: '1px solid var(--sap-border-strong)', background: '#f5f6f7', width: 24, height: 22, cursor: 'pointer' }}>x</button>
+        </div>
+
+        <div style={{ padding: 12, overflow: 'auto', display: 'grid', gridTemplateColumns: 'minmax(360px, 1fr) minmax(360px, 1fr)', gap: 14 }}>
+          <div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: 'var(--sap-toolbar-bg)' }}>
+                  <th style={{ width: 42, padding: '6px', textAlign: 'left', border: '1px solid var(--sap-border)' }}>#</th>
+                  <th style={{ padding: '6px', textAlign: 'left', border: '1px solid var(--sap-border)' }}>Dimensions</th>
+                  <th style={{ padding: '6px', textAlign: 'left', border: '1px solid var(--sap-border)' }}>Distr. Rule Code</th>
+                  <th style={{ padding: '6px', textAlign: 'left', border: '1px solid var(--sap-border)' }}>Distr. Rule Name</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dimensionRows.map((dimension, index) => {
+                  const dimensionCode = getDimensionCode(dimension);
+                  const isActive = dimensionCode === activeDimensionCode;
+                  return (
+                    <tr
+                      key={dimensionCode}
+                      onClick={() => setActiveDimensionCode(dimensionCode)}
+                      style={{ background: isActive ? '#ffe999' : index % 2 ? 'var(--sap-row-even)' : 'var(--sap-surface)', cursor: 'pointer' }}
+                    >
+                      <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)' }}>{index + 1}</td>
+                      <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)', fontWeight: 600 }}>{getDimensionName(dimension)}</td>
+                      <td style={{ padding: 3, border: '1px solid var(--sap-border)' }}>
+                        <input
+                          readOnly
+                          value={draft[dimensionCode] || ''}
+                          onFocus={() => setActiveDimensionCode(dimensionCode)}
+                          style={{ width: 'calc(100% - 28px)', height: 22, border: '1px solid var(--sap-border-strong)', padding: '2px 5px', background: '#fff7bf' }}
+                        />
+                        <button type="button" onClick={() => setActiveDimensionCode(dimensionCode)} style={{ ...pickerButtonStyle, marginLeft: 2 }}>...</button>
+                      </td>
+                      <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)' }}>{getSelectedRuleName(dimensionCode)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ border: '1px solid var(--sap-border-strong)' }}>
+            <div style={{ padding: '8px 10px', borderBottom: '3px solid var(--sap-primary)', background: 'var(--sap-toolbar-bg)', fontWeight: 600, fontSize: 13 }}>
+              List of Distribution Rules
+            </div>
+            <div style={{ padding: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, minWidth: 32 }}>Find</label>
+              <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} style={{ flex: 1, height: 24, border: '1px solid var(--sap-border-strong)', padding: '2px 6px' }} />
+            </div>
+            <div style={{ padding: '0 8px 8px', fontSize: 12, color: 'var(--sap-text-muted)' }}>
+              {activeDimension ? getDimensionName(activeDimension) : ''}
+            </div>
+            <div style={{ maxHeight: 300, overflow: 'auto', padding: '0 8px 8px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: 'var(--sap-toolbar-bg)' }}>
+                    <th style={{ padding: '6px', textAlign: 'left', border: '1px solid var(--sap-border)' }}>Distribution Rule</th>
+                    <th style={{ padding: '6px', textAlign: 'left', border: '1px solid var(--sap-border)' }}>Distribution Rule Name</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeRules.length ? activeRules.map((rule, index) => (
+                    <tr
+                      key={`${getRuleCode(rule)}-${index}`}
+                      onClick={() => setSelectedRuleIndex(index)}
+                      onDoubleClick={() => selectRule(rule)}
+                      style={{ background: selectedRuleIndex === index ? '#ffe999' : index % 2 ? 'var(--sap-row-even)' : 'var(--sap-surface)', cursor: 'pointer' }}
+                    >
+                      <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)', fontWeight: 600 }}>{getRuleCode(rule)}</td>
+                      <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)' }}>{getRuleName(rule)}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={2} style={{ padding: 16, textAlign: 'center', color: 'var(--sap-text-muted)' }}>No distribution rules found</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: 8, borderTop: '1px solid var(--sap-border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button type="button" onClick={chooseSelectedRule} disabled={selectedRuleIndex < 0} style={{ ...pickerButtonStyle, height: 26, opacity: selectedRuleIndex >= 0 ? 1 : 0.6 }}>Choose</button>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: 12, borderTop: '1px solid var(--sap-border)', display: 'flex', justifyContent: 'flex-start', gap: 8 }}>
+          <button type="button" onClick={() => onApply(draft)} style={{ ...pickerButtonStyle, minWidth: 80, height: 26, background: 'linear-gradient(180deg, var(--sap-primary) 0%, var(--sap-primary-dark) 100%)', color: '#fff' }}>OK</button>
+          <button type="button" onClick={onClose} style={{ ...pickerButtonStyle, minWidth: 80, height: 26 }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ContentsTab({
   lines,
   onLineChange,
   onNumBlur,
+  lineItemOptions,
   onAddLine,
   onRemoveLine,
   getUomOptions,
@@ -86,6 +291,8 @@ export default function ContentsTab({
   fmtTaxLabel,
   valErrors,
   distributionRules = [],
+  distributionDimensions = [],
+  onDistributionRuleChange,
   onOpenHSNModal,
   onOpenItemModal,
   onOpenQualityModal,
@@ -94,6 +301,8 @@ export default function ContentsTab({
   rowUdfFields = [],
   onRowUdfChange,
 }) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
+  const [distributionRuleLineIndex, setDistributionRuleLineIndex] = React.useState(-1);
   const getTaxAmountDisplay = (line) => {
     if (String(line.taxAmount ?? '').trim()) return line.taxAmount;
     const totals = getLineTotalsForDisplay(line, effectiveTaxCodes);
@@ -181,6 +390,9 @@ export default function ContentsTab({
               className="so-grid__input"
               style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
               name="itemNo"
+              data-sap-lookup="item"
+              data-sap-row-index={i}
+              onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
               value={line.itemNo}
               onChange={(e) => onLineChange(i, e)}
               placeholder="Item Code"

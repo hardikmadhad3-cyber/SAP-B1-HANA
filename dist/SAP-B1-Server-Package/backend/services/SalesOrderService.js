@@ -3,10 +3,17 @@ const salesOrderDb = require('./salesOrderDbService');
 const hsnCodeDbService = require('./hsnCodeDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getActiveCompanyConfig } = require('./companyConfigService');
+const { getUdfDefinitions } = require('./udfMetadataService');
+const { isBlankUdfValue, normalizeUdfValues } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
   return normalized === '' ? -1 : Number(normalized);
+};
+
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
 };
 
 // ───────── HELPERS ─────────
@@ -288,7 +295,7 @@ const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
   { sapField: 'U_Seller_Delivery', getValue: (line) => line.sellerDelivery },
   { sapField: 'U_Buyer_Payment_Terms', getValue: (line) => line.buyerPaymentTerms },
-  { sapField: 'U_Seller_Payment_Terms', getValue: (line) => line.sellerPaymentTerms },
+  { sapField: 'U_Seller_Payment_Term', getValue: (line) => line.sellerPaymentTerms },
   { sapField: 'U_Buyer_Quality', getValue: (line) => line.buyerQuality },
   { sapField: 'U_Seller_Quality', getValue: (line) => line.sellerQuality },
   { sapField: 'U_Buyer_Price', getValue: (line) => line.buyerPrice },
@@ -318,6 +325,7 @@ const compactSapUdfFieldName = (value) => normalizeSapUdfFieldName(value).replac
 
 const GENERIC_LINE_UDF_SKIP_KEYS = new Set([
   ...SALES_ORDER_LINE_UDF_MAPPINGS.map((mapping) => normalizeSapUdfFieldName(mapping.sapField)),
+  'U_SELLER_PAYMENT_TERMS',
 ]);
 
 const GENERIC_LINE_UDF_SKIP_FRAGMENTS = [
@@ -382,6 +390,17 @@ const setValidatedRdr1Field = (target, fieldMetadata, fieldName, value) => {
   }
 };
 
+const setValidatedRdr1Udf = (target, fieldMetadata, fieldName, value) => {
+  if (!fieldMetadata?.[fieldName]) return;
+
+  if (isBlankUdfValue(value)) {
+    target[fieldName] = null;
+    return;
+  }
+
+  setValidatedRdr1Field(target, fieldMetadata, fieldName, value);
+};
+
 const buildDocumentLinePayload = async (line = {}, context = {}) => {
   const fieldMetadata = context.rdr1FieldMetadata || {};
   const documentLine = {
@@ -417,6 +436,18 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
   if (hasValue(line.distRule)) {
     documentLine.CostingCode = String(line.distRule).trim();
   }
+  if (hasValue(line.distRule2)) {
+    documentLine.CostingCode2 = String(line.distRule2).trim();
+  }
+  if (hasValue(line.distRule3)) {
+    documentLine.CostingCode3 = String(line.distRule3).trim();
+  }
+  if (hasValue(line.distRule4)) {
+    documentLine.CostingCode4 = String(line.distRule4).trim();
+  }
+  if (hasValue(line.distRule5)) {
+    documentLine.CostingCode5 = String(line.distRule5).trim();
+  }
 
   if (hasValue(line.freeText)) {
     documentLine.FreeText = String(line.freeText).trim();
@@ -439,12 +470,12 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
   }
 
   for (const mapping of SALES_ORDER_LINE_UDF_MAPPINGS) {
-    setValidatedRdr1Field(documentLine, fieldMetadata, mapping.sapField, mapping.getValue(line, context));
+    setValidatedRdr1Udf(documentLine, fieldMetadata, mapping.sapField, mapping.getValue(line, context));
   }
 
   Object.entries(line.udf || {}).forEach(([key, value]) => {
     if (normalizeSapUdfFieldName(key).startsWith('U_') && !shouldSkipGenericLineUdf(key)) {
-      setValidatedRdr1Field(documentLine, fieldMetadata, key, value);
+      setValidatedRdr1Udf(documentLine, fieldMetadata, key, value);
     }
   });
 
@@ -947,7 +978,8 @@ const submitSalesOrder = async (payload) => {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    Object.assign(sapPayload, payload.header_udfs || {});
+    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
+    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
 
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 SAP PAYLOAD TO BE SENT:");
@@ -1115,7 +1147,8 @@ const updateSalesOrder = async (docEntry, payload) => {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    Object.assign(sapPayload, payload.header_udfs || {});
+    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
+    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
 
     console.log("🔥 FINAL SAP PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 

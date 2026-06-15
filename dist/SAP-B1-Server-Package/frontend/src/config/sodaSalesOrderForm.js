@@ -61,7 +61,7 @@ const SODA_MATRIX_COLUMN_UDF_KEYS = {
   commissionAmountPerTon: 'U_S_BrokPerQty',
   sellerBrokeragePerQty: 'U_S_BrokPerQty',
   buyerPaymentTerms: 'U_Buyer_Payment_Terms',
-  sellerPaymentTerms: 'U_Seller_Payment_Terms',
+  sellerPaymentTerms: 'U_Seller_Payment_Term',
   freightPurchase: 'U_Freight_pur',
   freightSales: 'U_Freight_sales',
   freightProvider: 'U_Fr_trans',

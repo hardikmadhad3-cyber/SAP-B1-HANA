@@ -562,6 +562,149 @@
 }
 .po-grid__input--sm { width: 60px; }
 
+/* Purchase document contents tabs reuse the mature DC Sales Order grid classes. */
+.so-tab-panel {
+  margin: 0 12px 12px;
+  background: #fff;
+  border: 1px solid #c8d0da;
+  border-top: none;
+  border-radius: 0 0 3px 3px;
+  padding: 14px;
+  min-height: 260px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.so-grid-wrap {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+.so-grid-wrap--contents {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #d7dde5;
+  border-radius: 3px;
+  background: #fff;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.so-grid-wrap__scroller {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.so-grid-wrap__scroller--contents {
+  flex: 1;
+  max-height: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.so-grid-wrap__scroller--contents .so-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.so-grid {
+  border-collapse: collapse;
+  font-size: 11px;
+  table-layout: auto;
+}
+
+.so-grid th {
+  background: #e8edf2;
+  border: 1px solid #c8d0da;
+  padding: 3px 5px;
+  text-align: left;
+  font-weight: 700;
+  color: #003366;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.so-grid td {
+  border: 1px solid #e0e6ed;
+  padding: 2px 5px;
+  vertical-align: middle;
+  background: inherit;
+}
+
+.so-grid tbody tr:hover { background: #f5f8fc; }
+.so-grid tbody tr:nth-child(even) { background: #fafbfc; }
+.so-grid tbody tr:nth-child(even):hover { background: #f0f4f8; }
+
+.so-grid__cell--muted { color: #888; }
+
+.so-grid__input {
+  width: 100%;
+  height: 20px;
+  padding: 0 3px;
+  font-size: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 2px;
+  text-align: right;
+  box-sizing: border-box;
+}
+
+.so-grid__input:focus {
+  outline: none;
+  border-color: #0070c0;
+  background: #fff;
+}
+
+select.so-grid__input {
+  min-width: 0;
+  text-align: left;
+}
+
+.so-btn {
+  padding: 4px 14px;
+  font-size: 12px;
+  border: 1px solid #a0aab4;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
+  color: #1a1a1a;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.so-btn:hover { background: linear-gradient(180deg, #f0f4f8 0%, #dde3ea 100%); }
+
+.so-btn--primary {
+  background: linear-gradient(180deg, #0070c0 0%, #005a9e 100%);
+  color: #fff;
+  border-color: #004a80;
+}
+
+.so-btn--primary:hover { background: linear-gradient(180deg, #0080d0 0%, #0060aa 100%); }
+
+.so-btn--danger {
+  color: #c00;
+}
+
+.so-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #003366;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e0e6ed;
+}
+
 @media (max-width: 1199.98px) {
   .po-layout.is-sidebar-open {
     grid-template-columns: minmax(0, 1fr);
