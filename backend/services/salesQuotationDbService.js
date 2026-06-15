@@ -242,7 +242,7 @@ const getSalesEmployees = () => safe(db.query(`
 
 const getOwners = () => safe(db.query(`
   SELECT empID, firstName, lastName,
-         firstName + ' ' + ISNULL(lastName, '') AS FullName
+         CONCAT(CONCAT(COALESCE(firstName, ''), ' '), COALESCE(lastName, '')) AS FullName
   FROM   OHEM
   ORDER  BY firstName, lastName
 `));
@@ -539,7 +539,7 @@ const getSalesQuotation = async (docEntry) => {
       SLP.SlpName AS SalesEmployeeName,
       T0.OwnerCode,
       CASE WHEN EMP.empID IS NOT NULL
-        THEN EMP.firstName + ' ' + ISNULL(EMP.lastName,'')
+        THEN CONCAT(CONCAT(COALESCE(EMP.firstName, ''), ' '), COALESCE(EMP.lastName, ''))
         ELSE NULL
       END AS OwnerName,
       T0.TotalExpns AS Freight,
@@ -562,13 +562,22 @@ const getSalesQuotation = async (docEntry) => {
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '23' AND NNM.Series = T0.Series
     LEFT JOIN OHEM EMP ON EMP.empID = T0.OwnerCode
-    OUTER APPLY (
-      SELECT TOP 1 C.State, C.Country
+    LEFT JOIN (
+      SELECT
+        C.CardCode,
+        C.Address,
+        C.State,
+        C.Country,
+        ROW_NUMBER() OVER (
+          PARTITION BY C.CardCode, C.Address
+          ORDER BY C.LineNum
+        ) AS AddressRank
       FROM CRD1 C
-      WHERE C.CardCode = T0.CardCode
-        AND C.Address = T0.ShipToCode
-        AND C.AdresType = 'S'
+      WHERE C.AdresType = 'S'
     ) C
+      ON C.CardCode = T0.CardCode
+     AND C.Address = T0.ShipToCode
+     AND C.AddressRank = 1
     LEFT JOIN OCST ST ON ST.Code = C.State AND ST.Country = C.Country
     LEFT JOIN OITM ITM ON ITM.ItemCode = T1.ItemCode
     LEFT JOIN OCHP CHP ON CHP.AbsEntry = ITM.ChapterID
@@ -805,7 +814,7 @@ const getSalesQuotationForCopy = async (docEntry) => {
       SLP.SlpName AS SalesEmployeeName,
       T0.OwnerCode,
       CASE
-        WHEN EMP.empID IS NOT NULL THEN EMP.firstName + ' ' + ISNULL(EMP.lastName, '')
+        WHEN EMP.empID IS NOT NULL THEN CONCAT(CONCAT(COALESCE(EMP.firstName, ''), ' '), COALESCE(EMP.lastName, ''))
         ELSE NULL
       END AS OwnerName,
       ${placeOfSupplyExpression} AS PlaceOfSupply,
@@ -816,13 +825,22 @@ const getSalesQuotationForCopy = async (docEntry) => {
     FROM OQUT T0
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN OHEM EMP ON EMP.empID = T0.OwnerCode
-    OUTER APPLY (
-      SELECT TOP 1 C.State, C.Country
+    LEFT JOIN (
+      SELECT
+        C.CardCode,
+        C.Address,
+        C.State,
+        C.Country,
+        ROW_NUMBER() OVER (
+          PARTITION BY C.CardCode, C.Address
+          ORDER BY C.LineNum
+        ) AS AddressRank
       FROM CRD1 C
-      WHERE C.CardCode = T0.CardCode
-        AND C.Address = T0.ShipToCode
-        AND C.AdresType = 'S'
+      WHERE C.AdresType = 'S'
     ) C
+      ON C.CardCode = T0.CardCode
+     AND C.Address = T0.ShipToCode
+     AND C.AddressRank = 1
     LEFT JOIN OCST ST ON ST.Code = C.State AND ST.Country = C.Country
     WHERE T0.DocEntry = @DocEntry
       AND T0.DocStatus = 'O'

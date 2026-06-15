@@ -43,8 +43,8 @@ const getDuplicateSourceItemCode = (data = {}) =>
   ).trim();
 
 const validateItemCodeFormatValue = (itemCode) => {
-  if (!/^[a-zA-Z0-9\-_]+$/.test(itemCode)) {
-    return "Item Code can only contain letters, numbers, hyphens, and underscores.";
+  if (/[\u0000-\u001F\u007F]/.test(itemCode)) {
+    return "Item Code cannot contain control characters.";
   }
   if (itemCode.length < 3) {
     return "Item Code must be at least 3 characters long.";

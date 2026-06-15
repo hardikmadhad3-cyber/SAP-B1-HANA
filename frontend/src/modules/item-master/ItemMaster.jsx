@@ -59,6 +59,12 @@ const clonePlain = (value) => {
   return value;
 };
 
+const hasControlCharacters = (value) =>
+  Array.from(String(value || "")).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+
 const normalizeGSTMaterialType = (value) => {
   const raw = String(value ?? "").trim();
   if (!raw || raw === "-1") return "";
@@ -643,9 +649,8 @@ export default function ItemMaster() {
     // Item Code Format Validation
     const itemCode = String(form.ItemCode || "").trim();
     if (itemCode) {
-      // Check for valid characters (alphanumeric, hyphens, underscores)
-      if (!/^[a-zA-Z0-9\-_]+$/.test(itemCode)) {
-        errors.push("Item Code can only contain letters, numbers, hyphens, and underscores.");
+      if (hasControlCharacters(itemCode)) {
+        errors.push("Item Code cannot contain control characters.");
       }
       
       // Check minimum length

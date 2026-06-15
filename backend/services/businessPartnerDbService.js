@@ -2,13 +2,14 @@ const db = require('../db/odbc');
 
 const getBusinessPartnerGroups = async (query = '', options = {}) => {
   const trimmed = String(query || '').trim();
+  const groupType = String(options.bpType || '').trim() === 'cSupplier' ? 'S' : 'C';
   const result = await db.query(
     `
       SELECT TOP 200
         GroupCode,
         GroupName
       FROM OCRG
-      WHERE GroupType = 'C'
+      WHERE GroupType = @groupType
         AND (
           @query = ''
           OR CAST(GroupCode AS NVARCHAR(50)) LIKE @like
@@ -19,6 +20,7 @@ const getBusinessPartnerGroups = async (query = '', options = {}) => {
     {
       query: trimmed,
       like: `%${trimmed}%`,
+      groupType,
     },
     options,
   );

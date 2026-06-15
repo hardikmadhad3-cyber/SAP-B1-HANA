@@ -33,8 +33,10 @@ module.exports = {
   incomingPaymentCashAccount: process.env.INCOMING_PAYMENT_CASH_ACCOUNT || '',
   outgoingPaymentCashAccount: process.env.OUTGOING_PAYMENT_CASH_ACCOUNT || '',
   // Direct SQL Server
+  dbDialect:   process.env.DB_DIALECT   || 'sqlserver',
   dbServer:    process.env.DB_SERVER    || '',
   dbInstance:  process.env.DB_INSTANCE  || '',
+  dbPort:      Number(process.env.DB_PORT || 0),
   dbName:      process.env.DB_NAME      || '',
   authDbName:  process.env.AUTH_DB_NAME || 'henny_master',
   dbUser:      process.env.DB_USER      || '',

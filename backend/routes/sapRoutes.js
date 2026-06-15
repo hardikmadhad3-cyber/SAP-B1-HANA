@@ -64,7 +64,7 @@ router.patch('/items/:code', async (req, res) => {
   try {
     const response = await sapService.request({
       method: 'PATCH',
-      url: `/Items('${req.params.code}')`,
+      url: sapService.buildStringKeyPath('Items', req.params.code),
       data: req.body,
     });
     res.json(response.data);

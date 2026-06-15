@@ -602,12 +602,18 @@ const searchItems = async (query = '', top = 50, skip = 0) => {
         FROM OITM T0
         LEFT JOIN OITB T1
           ON T1.ItmsGrpCod = T0.ItmsGrpCod
-        OUTER APPLY (
-          SELECT TOP 1 Price
+        LEFT JOIN (
+          SELECT
+            PX.ItemCode,
+            PX.Price,
+            ROW_NUMBER() OVER (
+              PARTITION BY PX.ItemCode
+              ORDER BY CASE WHEN PX.PriceList = 1 THEN 0 ELSE 1 END, PX.PriceList
+            ) AS PriceRank
           FROM ITM1 PX
-          WHERE PX.ItemCode = T0.ItemCode
-          ORDER BY CASE WHEN PX.PriceList = 1 THEN 0 ELSE 1 END, PX.PriceList
         ) T2
+          ON T2.ItemCode = T0.ItemCode
+         AND T2.PriceRank = 1
         WHERE (@hasQuery = 0
           OR T0.ItemCode LIKE @query
           OR T0.ItemName LIKE @query)
@@ -795,7 +801,7 @@ const getItemGroups = async (query = '') => {
           ItmsGrpCod,
           ItmsGrpNam
         FROM OITB
-        WHERE Locked <> 'Y'
+        WHERE ISNULL(Locked, 'N') <> 'Y'
           AND (@hasQuery = 0
             OR CAST(ItmsGrpCod AS NVARCHAR(50)) LIKE @query
             OR ItmsGrpNam LIKE @query)
@@ -988,7 +994,7 @@ const getUoMGroups = async (query = '') => {
           UgpCode,
           UgpName
         FROM OUGP
-        WHERE Locked <> 'Y'
+        WHERE (UgpEntry = -1 OR ISNULL(Locked, 'N') <> 'Y')
           AND (@hasQuery = 0
             OR CAST(UgpEntry AS NVARCHAR(50)) LIKE @query
             OR UgpCode LIKE @query

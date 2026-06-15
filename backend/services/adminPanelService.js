@@ -20,8 +20,28 @@ const ENTITY_CONFIGS = [
     path: '/admin/companies',
     group: 'Core Setup',
     lookupLabelColumns: ['CompanyName', 'DbName'],
-    listColumns: ['CompanyId', 'CompanyName', 'DbName', 'DbServer', 'SapBaseUrl', 'ReportServiceBaseUrl', 'SalesOrderDefaultToVendorCode', 'SAPVersion', 'IsActive', 'CreatedAt'],
+    listColumns: ['CompanyId', 'CompanyName', 'DbDialect', 'DbName', 'DbServer', 'DbPort', 'SapBaseUrl', 'ReportServiceBaseUrl', 'SalesOrderDefaultToVendorCode', 'SAPVersion', 'IsActive', 'CreatedAt'],
     revealSensitiveColumns: ['SapPassword', 'ReportServicePassword', 'DbPassword'],
+    columnLabels: {
+      DbDialect: 'Database Type',
+      DbServer: 'Database Host / Server',
+      DbPort: 'Database Port',
+      DbName: 'Company DB / Schema',
+      DbEncrypt: 'Use Encryption / SSL',
+      DbTrustCert: 'Trust Server Certificate',
+    },
+    columnHelpText: {
+      DbDialect: 'Choose SQL Server for existing companies or HANA for SAP HANA company databases.',
+      DbServer: 'SQL Server host or SAP HANA host.',
+      DbPort: 'Optional. HANA commonly uses 30015; SQL Server can usually leave this blank when using an instance name.',
+      DbName: 'SQL Server database name or HANA schema/company database name.',
+    },
+    columnOptions: {
+      DbDialect: [
+        { value: 'sqlserver', label: 'SQL Server' },
+        { value: 'hana', label: 'SAP HANA' },
+      ],
+    },
     formSections: [
       {
         key: 'master-data',
@@ -51,9 +71,9 @@ const ENTITY_CONFIGS = [
         columns: ['SalesOrderDefaultToVendorCode'],
       },
       {
-        key: 'odbc-connection',
-        title: 'ODBC Connection',
-        columns: ['DbServer', 'DbName', 'DbUser', 'DbPassword', 'DbEncrypt', 'DbTrustCert'],
+        key: 'database-connection',
+        title: 'Database Connection',
+        columns: ['DbDialect', 'DbServer', 'DbPort', 'DbName', 'DbUser', 'DbPassword', 'DbEncrypt', 'DbTrustCert'],
       },
       {
         key: 'company-profile',
@@ -234,6 +254,7 @@ const buildEntitySchema = (config, schemaRows) => {
       ? ENTITY_CONFIG_BY_TABLE.get(String(row.referencedTable).toLowerCase())
       : null;
     const name = row.columnName;
+    const configuredOptions = config.columnOptions?.[name] || [];
     const isPrimaryKey = Boolean(row.isPrimaryKey);
     const isIdentity = Boolean(row.isIdentity);
     const isSensitive = SENSITIVE_FIELD_PATTERN.test(name);
@@ -243,7 +264,7 @@ const buildEntitySchema = (config, schemaRows) => {
 
     return {
       name,
-      label: prettifyLabel(name),
+      label: config.columnLabels?.[name] || prettifyLabel(name),
       dataType: String(row.dataType || '').toLowerCase(),
       nullable: String(row.isNullable || '').toUpperCase() === 'YES',
       maxLength: row.maxLength === null ? null : Number(row.maxLength),
@@ -257,17 +278,20 @@ const buildEntitySchema = (config, schemaRows) => {
       referencedEntityKey: referencedConfig?.key || null,
       readOnly: isIdentity,
       hidden: isHidden,
+      options: configuredOptions,
       canRevealSensitive: isSensitive && revealSensitiveColumnNames.has(String(name).toLowerCase()),
       multiSelect: isMultiSelect,
       editable: !isIdentity && !isHidden,
-      inputType: isMultiSelect ? 'multiselect' : '',
-      helpText: '',
+      inputType: configuredOptions.length ? 'select' : (isMultiSelect ? 'multiselect' : ''),
+      helpText: config.columnHelpText?.[name] || '',
       section: sectionByColumn.get(name) || '',
     };
   });
 
   for (const column of columns) {
-    column.inputType = column.multiSelect ? 'multiselect' : getInputType(column);
+    column.inputType = column.options?.length
+      ? 'select'
+      : (column.multiSelect ? 'multiselect' : getInputType(column));
 
     if (column.isSensitive) {
       column.helpText = column.isPrimaryKey
@@ -523,6 +547,16 @@ const applyAutomaticDefaults = (payload, schema, mode, authContext) => {
       isEmptyPayloadValue
     ) {
       nextPayload[column.name] = true;
+      continue;
+    }
+
+    if (
+      mode === 'create' &&
+      schema.tableName === 'Companies' &&
+      column.name === 'DbDialect' &&
+      isEmptyPayloadValue
+    ) {
+      nextPayload[column.name] = 'sqlserver';
       continue;
     }
 
