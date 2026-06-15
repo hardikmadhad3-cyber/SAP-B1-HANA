@@ -188,54 +188,7 @@ const getEntityConfig = (entityKey) => {
   return config;
 };
 
-const getSchemaRows = async (tableName) => authDbService.queryRows(`
-  SELECT
-    c.COLUMN_NAME AS columnName,
-    c.DATA_TYPE AS dataType,
-    c.IS_NULLABLE AS isNullable,
-    c.CHARACTER_MAXIMUM_LENGTH AS maxLength,
-    c.ORDINAL_POSITION AS ordinalPosition,
-    COLUMNPROPERTY(OBJECT_ID(c.TABLE_SCHEMA + '.' + c.TABLE_NAME), c.COLUMN_NAME, 'IsIdentity') AS isIdentity,
-    CASE WHEN pk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS isPrimaryKey,
-    fk.referencedTable,
-    fk.referencedColumn
-  FROM INFORMATION_SCHEMA.COLUMNS c
-  LEFT JOIN (
-    SELECT ku.TABLE_SCHEMA, ku.TABLE_NAME, ku.COLUMN_NAME
-    FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-    INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
-      ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
-      AND tc.TABLE_SCHEMA = ku.TABLE_SCHEMA
-      AND tc.TABLE_NAME = ku.TABLE_NAME
-    WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
-  ) pk
-    ON pk.TABLE_SCHEMA = c.TABLE_SCHEMA
-    AND pk.TABLE_NAME = c.TABLE_NAME
-    AND pk.COLUMN_NAME = c.COLUMN_NAME
-  LEFT JOIN (
-    SELECT
-      cu.TABLE_SCHEMA,
-      cu.TABLE_NAME,
-      cu.COLUMN_NAME,
-      pk.TABLE_NAME AS referencedTable,
-      pku.COLUMN_NAME AS referencedColumn
-    FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
-    INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE cu
-      ON rc.CONSTRAINT_NAME = cu.CONSTRAINT_NAME
-    INNER JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS pk
-      ON rc.UNIQUE_CONSTRAINT_NAME = pk.CONSTRAINT_NAME
-    INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE pku
-      ON pk.CONSTRAINT_NAME = pku.CONSTRAINT_NAME
-      AND pk.TABLE_SCHEMA = pku.TABLE_SCHEMA
-      AND cu.ORDINAL_POSITION = pku.ORDINAL_POSITION
-  ) fk
-    ON fk.TABLE_SCHEMA = c.TABLE_SCHEMA
-    AND fk.TABLE_NAME = c.TABLE_NAME
-    AND fk.COLUMN_NAME = c.COLUMN_NAME
-  WHERE c.TABLE_SCHEMA = 'dbo'
-    AND c.TABLE_NAME = @tableName
-  ORDER BY c.ORDINAL_POSITION ASC
-`, { tableName });
+const getSchemaRows = async (tableName) => authDbService.getTableSchemaRows(tableName);
 
 const sanitizeRecord = (columns, row) => {
   const sanitized = { ...row };

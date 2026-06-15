@@ -25,20 +25,7 @@ let ensureTablePromise = null;
 
 const ensureTable = async () => {
   if (!ensureTablePromise) {
-    ensureTablePromise = authDbService.query(`
-      IF OBJECT_ID('dbo.UserGeneralSettings', 'U') IS NULL
-      BEGIN
-        CREATE TABLE dbo.UserGeneralSettings (
-          UserGeneralSettingId INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-          UserId INT NOT NULL,
-          CompanyId INT NOT NULL,
-          SettingsJson NVARCHAR(MAX) NOT NULL,
-          CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_UserGeneralSettings_CreatedAt DEFAULT SYSUTCDATETIME(),
-          UpdatedAt DATETIME2 NOT NULL CONSTRAINT DF_UserGeneralSettings_UpdatedAt DEFAULT SYSUTCDATETIME(),
-          CONSTRAINT UQ_UserGeneralSettings_UserCompany UNIQUE (UserId, CompanyId)
-        );
-      END
-    `).catch((error) => {
+    ensureTablePromise = authDbService.ensureSchema().catch((error) => {
       ensureTablePromise = null;
       throw error;
     });
@@ -152,15 +139,11 @@ const saveAdminSettings = async (userIdValue, companyIdValue, settings) => {
 
   const normalizedSettings = normalizeSettings(settings);
   await authDbService.query(`
-    MERGE dbo.UserGeneralSettings WITH (HOLDLOCK) AS target
-    USING (SELECT @userId AS UserId, @companyId AS CompanyId) AS source
-    ON target.UserId = source.UserId
-      AND target.CompanyId = source.CompanyId
-    WHEN MATCHED THEN
-      UPDATE SET SettingsJson = @settingsJson, UpdatedAt = SYSUTCDATETIME()
-    WHEN NOT MATCHED THEN
-      INSERT (UserId, CompanyId, SettingsJson)
-      VALUES (@userId, @companyId, @settingsJson);
+    INSERT INTO UserGeneralSettings (UserId, CompanyId, SettingsJson, CreatedAt, UpdatedAt)
+    VALUES (@userId, @companyId, @settingsJson, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(UserId, CompanyId) DO UPDATE SET
+      SettingsJson = excluded.SettingsJson,
+      UpdatedAt = CURRENT_TIMESTAMP
   `, {
     userId,
     companyId,

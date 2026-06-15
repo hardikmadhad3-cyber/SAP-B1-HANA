@@ -4,6 +4,8 @@ const createHttpError = (statusCode, message) => {
   return error;
 };
 
+const authDbService = require('./authDbService');
+
 const APP_MENU_DEFINITIONS = [
   { key: 'dashboard', menuName: 'Dashboard', menuPath: '/dashboard', icon: 'dashboard', sortOrder: -1 },
   { key: 'sales', menuName: 'Sales', aliases: ['Sales - A/R', 'Sales A/R'], icon: 'sales', sortOrder: 1 },
@@ -123,19 +125,13 @@ const normalizeName = (value) => normalizeText(value).toLowerCase().replace(/[^a
 // Add new code-owned sidebar pages here. They will appear in Admin > Menus automatically,
 // but they will not show in the app sidebar until Role Rights grants CanView.
 const hasMenusTable = async (db) => {
-  const row = await db.queryOne(`
-    SELECT CASE WHEN OBJECT_ID(N'dbo.Menus', N'U') IS NULL THEN 0 ELSE 1 END AS hasMenus
-  `);
-
-  return Boolean(row?.hasMenus);
+  void db;
+  return authDbService.tableExists('Menus');
 };
 
 const hasRoleRightsTable = async (db) => {
-  const row = await db.queryOne(`
-    SELECT CASE WHEN OBJECT_ID(N'dbo.RoleRights', N'U') IS NULL THEN 0 ELSE 1 END AS hasRoleRights
-  `);
-
-  return Boolean(row?.hasRoleRights);
+  void db;
+  return authDbService.tableExists('RoleRights');
 };
 
 const getExistingMenus = async (db) => db.queryRows(`

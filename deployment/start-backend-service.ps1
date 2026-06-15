@@ -104,6 +104,7 @@ function Register-BackendAutoStart {
 $Port = Get-AppPort
 $LogDir = Join-Path $RootDir 'logs'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $BackendDir 'data') | Out-Null
 
 if ($InstallAutoStart) {
   Write-Host "[setup] Registering Windows auto-start task: $TaskName"
