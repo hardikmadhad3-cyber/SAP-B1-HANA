@@ -25,8 +25,11 @@ const sanitizeUser = (user) => ({
 const sanitizeCompany = (company) => ({
   companyId: company.CompanyId,
   companyName: company.CompanyName,
+  dbDialect: company.DbDialect || 'sqlserver',
   dbName: company.DbName,
-  serverName: company.ServerName,
+  dbServer: company.DbServer || '',
+  dbPort: company.DbPort || '',
+  serverName: company.ServerName || company.DbServer || '',
   licenseServer: company.LicenseServer || '',
   sapVersion: company.SAPVersion || '',
   isDefault: Boolean(company.IsDefault),

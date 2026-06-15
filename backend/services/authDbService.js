@@ -56,8 +56,22 @@ const ensureSchema = async () => {
 
   const database = getDb();
   database.exec(fs.readFileSync(SCHEMA_PATH, 'utf8'));
+  ensureCompanyColumns(database);
   schemaReady = true;
   console.log(`[AUTH_DB] SQLite connected to ${resolveSqlitePath()}`);
+};
+
+const ensureColumn = (database, tableName, columnName, definition) => {
+  const columns = database.prepare(`PRAGMA table_info([${tableName}])`).all();
+  const hasColumn = columns.some((column) => String(column.name).toLowerCase() === columnName.toLowerCase());
+  if (!hasColumn) {
+    database.exec(`ALTER TABLE [${tableName}] ADD COLUMN ${definition};`);
+  }
+};
+
+const ensureCompanyColumns = (database) => {
+  ensureColumn(database, 'Companies', 'DbDialect', "DbDialect TEXT NOT NULL DEFAULT 'sqlserver'");
+  ensureColumn(database, 'Companies', 'DbPort', 'DbPort INTEGER NULL');
 };
 
 const getCached = (key) => {
@@ -350,6 +364,7 @@ const ensureCompanyCredentialColumns = async () => ensureSchema();
 const COMPANY_SELECT_COLUMNS = `
     CompanyId,
     CompanyName,
+    DbDialect,
     DbName,
     DbUser,
     DbPassword,
@@ -373,6 +388,7 @@ const COMPANY_SELECT_COLUMNS = `
     ReportServiceRejectUnauthorized,
     SalesOrderDefaultToVendorCode,
     DbServer,
+    DbPort,
     DbEncrypt,
     DbTrustCert
 `;

@@ -41,7 +41,7 @@ const getDuplicateSourceItemCode = (payload = {}) =>
 const getServiceLayerItem = async (itemCode) => {
   const response = await sapService.request({
     method: 'GET',
-    url: `/Items('${encodeURIComponent(itemCode)}')`,
+    url: sapService.buildStringKeyPath('Items', itemCode),
   });
   return response.data || {};
 };
@@ -224,10 +224,14 @@ const createItem = async (payload) => {
 
 const updateItem = async (itemCode, payload) => {
   try {
+    const sanitizedPayload = sanitizeSapPayload(payload);
+    delete sanitizedPayload.ItemCode;
+    delete sanitizedPayload.Series;
+
     await sapService.request({
       method: 'PATCH',
-      url: `/Items('${encodeURIComponent(itemCode)}')`,
-      data: sanitizeSapPayload(payload),
+      url: sapService.buildStringKeyPath('Items', itemCode),
+      data: sanitizedPayload,
     });
 
     return getItem(itemCode);

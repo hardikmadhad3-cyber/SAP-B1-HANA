@@ -77,8 +77,10 @@ const searchBusinessPartners = async (query = "", bpType = "Vendor") => {
       T1.Country AS AddressCountry,
       T1.GSTRegnNo AS GstRegistrationNumber
     FROM OCRD T0
-    OUTER APPLY (
-      SELECT TOP 1
+    LEFT JOIN (
+      SELECT
+        CardCode,
+        AdresType,
         Address,
         Building,
         Street,
@@ -87,13 +89,23 @@ const searchBusinessPartners = async (query = "", bpType = "Vendor") => {
         ZipCode,
         State,
         Country,
-        GSTRegnNo
+        GSTRegnNo,
+        ROW_NUMBER() OVER (
+          PARTITION BY CardCode
+          ORDER BY LineNum
+        ) AS AddressRank,
+        ROW_NUMBER() OVER (
+          PARTITION BY CardCode, Address
+          ORDER BY LineNum
+        ) AS AddressMatchRank
       FROM CRD1
-      WHERE CardCode = T0.CardCode
-        AND AdresType = 'B'
-        AND (ISNULL(T0.BillToDef, '') = '' OR Address = T0.BillToDef)
-      ORDER BY CASE WHEN Address = T0.BillToDef THEN 0 ELSE 1 END, LineNum
+      WHERE AdresType = 'B'
     ) T1
+      ON T1.CardCode = T0.CardCode
+     AND (
+       (ISNULL(T0.BillToDef, '') <> '' AND T1.Address = T0.BillToDef AND T1.AddressMatchRank = 1)
+       OR (ISNULL(T0.BillToDef, '') = '' AND T1.AddressRank = 1)
+     )
     WHERE T0.CardType = @cardType
       AND T0.frozenFor <> 'Y'
       AND (@query = ''

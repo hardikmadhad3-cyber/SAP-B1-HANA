@@ -166,7 +166,7 @@ const getProductionOrderForReceipt = async (docEntry) => {
     po.ItemNo
       ? sapService.request({
           method: 'GET',
-          url: `/Items('${encodeURIComponent(po.ItemNo)}')`,
+          url: sapService.buildStringKeyPath('Items', po.ItemNo),
         })
       : Promise.resolve({ data: null }),
     po.Warehouse

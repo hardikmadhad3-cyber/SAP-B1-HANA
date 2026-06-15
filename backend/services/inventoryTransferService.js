@@ -27,7 +27,7 @@ const loadBusinessPartnerPayload = async (header = {}) => {
 
   const bpResponse = await sapService.request({
     method: 'GET',
-    url: `/BusinessPartners('${encodeURIComponent(cardCode)}')`,
+    url: sapService.buildStringKeyPath('BusinessPartners', cardCode),
   });
   const businessPartner = bpResponse.data || {};
   const documentBranch = String(header.fromBranch || '').trim();

@@ -4,6 +4,12 @@
  */
 
 // Field validation helpers
+const hasControlCharacters = (value) =>
+  Array.from(String(value || '')).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+
 export const validateRequired = (value, fieldName) => {
   if (!value || (typeof value === 'string' && !value.trim())) {
     return `${fieldName} is required.`;
@@ -47,9 +53,8 @@ export const validateItemCodeFormat = (itemCode) => {
   
   const code = itemCode.trim();
   
-  // Check for valid characters (alphanumeric, hyphens, underscores)
-  if (!/^[a-zA-Z0-9\-_]+$/.test(code)) {
-    return "Item Code can only contain letters, numbers, hyphens, and underscores.";
+  if (hasControlCharacters(code)) {
+    return "Item Code cannot contain control characters.";
   }
   
   // Check minimum length

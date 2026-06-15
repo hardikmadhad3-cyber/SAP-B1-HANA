@@ -449,6 +449,7 @@ function buildPayload(form) {
         GSTIN: a.GSTIN || undefined,
         GstType: a.GstType || undefined,
         U_GSTIN_No: a.U_GSTIN_No || undefined,
+        ...(a.BPCode ? { BPCode: a.BPCode } : {}),
         ...(a.RowNum != null && a.RowNum !== "" ? { RowNum: Number(a.RowNum) } : {}),
       }));
   }
@@ -482,6 +483,10 @@ function buildPayload(form) {
           BlockSendingMarketingContent: c.BlockSendingMarketingContent || "tNO",
         };
 
+        if (opt(c.CardCode)) contact.CardCode = c.CardCode;
+        if (opt(c.InternalCode) && !Number.isNaN(Number(c.InternalCode))) {
+          contact.InternalCode = Number(c.InternalCode);
+        }
         if (opt(c.EmailGroup) && !Number.isNaN(Number(c.EmailGroup))) {
           contact.EmailGroupCode = Number(c.EmailGroup);
         }
@@ -533,6 +538,7 @@ function buildPayload(form) {
       if (opt(row.UserNo2)) bankAccount.UserNo2 = row.UserNo2;
       if (opt(row.UserNo3)) bankAccount.UserNo3 = row.UserNo3;
       if (opt(row.UserNo4)) bankAccount.UserNo4 = row.UserNo4;
+      if (opt(row.BPCode)) bankAccount.BPCode = row.BPCode;
       if (opt(row.InternalKey) && !Number.isNaN(Number(row.InternalKey))) bankAccount.InternalKey = Number(row.InternalKey);
       return bankAccount;
     })
@@ -545,7 +551,11 @@ function buildPayload(form) {
   if ((form.BPPaymentDates || []).length > 0) {
     p.BPPaymentDates = form.BPPaymentDates
       .filter((row) => opt(row?.PaymentDate))
-      .map((row) => ({ PaymentDate: row.PaymentDate }));
+      .map((row) => ({
+        PaymentDate: row.PaymentDate,
+        ...(row.BPCode ? { BPCode: row.BPCode } : {}),
+        ...(row.RowNumber != null && row.RowNumber !== "" ? { RowNumber: Number(row.RowNumber) } : {}),
+      }));
   }
 
   const fiscalTaxRows = mergeTaxInfoIntoFiscalRows(form.BPFiscalTaxIDCollection, form.TaxInfo);
@@ -567,15 +577,18 @@ function buildPayload(form) {
       TaxId11: row.TaxId11 ?? null,
       TaxId12: row.TaxId12 ?? null,
       TaxId13: row.TaxId13 ?? null,
-      TaxId14: row.TaxId14 ?? null,
       AToRetrNFe: row.AToRetrNFe || "tNO",
+      ...(row.BPCode ? { BPCode: row.BPCode } : {}),
       ...(row.CNAECode != null ? { CNAECode: row.CNAECode } : {}),
     }));
   }
 
   p.BPWithholdingTaxCollection = (form.BPWithholdingTaxCollection || [])
     .filter((row) => opt(row?.WTCode))
-    .map((row) => ({ WTCode: row.WTCode }));
+    .map((row) => ({
+      WTCode: row.WTCode,
+      ...(row.BPCode ? { BPCode: row.BPCode } : {}),
+    }));
 
   return p;
 }
@@ -608,7 +621,10 @@ export default function BusinessPartnerModule() {
 
   // Load BP groups once
   useEffect(() => {
-    fetchBPGroups().then(setBpGroups).catch(() => {});
+    fetchBPGroups("", form.CardType).then(setBpGroups).catch(() => setBpGroups([]));
+  }, [form.CardType]);
+
+  useEffect(() => {
     fetchBPCompanyTypes().then((rows) => {
       if (Array.isArray(rows) && rows.length > 0) {
         setCompanyTypeOptions(rows);
@@ -764,7 +780,28 @@ export default function BusinessPartnerModule() {
     setForm((p) => {
       const nextValue = type === "checkbox" ? (checked ? "tYES" : "tNO") : value;
       if (name === "CardType" && nextValue !== p.CardType) {
-        return { ...p, CardType: nextValue, Series: "", CardCode: "" };
+        return {
+          ...p,
+          CardType: nextValue,
+          Series: "",
+          CardCode: "",
+          GroupCode: "",
+          GroupName: "",
+          PeymentMethodCode: "",
+          BPPaymentMethods: [],
+          DefaultAccount: "",
+          DebitorAccount: "",
+          DebitorAccountName: "",
+          DownPaymentClearAct: "",
+          DownPaymentClearActName: "",
+          DownPaymentInterimAccount: "",
+          DownPaymentInterimAccountName: "",
+          SubjectToWithholdingTax: "boNO",
+          WTCode: "",
+          WTCodeName: "",
+          WTTaxCategoryLabel: "",
+          BPWithholdingTaxCollection: [],
+        };
       }
       return { ...p, [name]: nextValue };
     });
@@ -893,6 +930,7 @@ export default function BusinessPartnerModule() {
   const handleAdd = useCallback(async () => {
     const cardCode = safeTrim(form.CardCode);
     if (!cardCode) { showAlert("error", "Card Code is required."); return; }
+    if (!safeTrim(form.CardName)) { showAlert("error", "Card Name is required."); return; }
     setLoading(true);
     try {
       const normalizedForm = await normalizeContactBirthCountries(form);
@@ -903,8 +941,13 @@ export default function BusinessPartnerModule() {
         payload.CardCode = cardCode;
         payload.CardType = normalizedForm.CardType || "cCustomer";
       }
-      await createBP(payload);
-      showAlert("success", `Business Partner "${cardCode}" created successfully.`);
+      const created = await createBP(payload);
+      const createdCardCode = safeTrim(created?.CardCode) || cardCode;
+      const createdData = createdCardCode ? await getBP(createdCardCode) : created;
+      if (createdData?.CardCode) {
+        setForm({ ...EMPTY_FORM, ...normalizeBP(createdData) });
+      }
+      showAlert("success", `Business Partner "${createdCardCode}" created successfully.`);
       setMode(MODES.UPDATE);
       setDuplicateSourceCardCode("");
     } catch (err) {
@@ -970,13 +1013,25 @@ export default function BusinessPartnerModule() {
 
     const sourceCardCode = safeTrim(form.CardCode);
     const sourceCardType = form.CardType || "cCustomer";
-    const duplicatedAddresses = (form.BPAddresses || []).map(({ RowNum, ...address }) => address);
-    const duplicatedBanks = (form.BPBankAccounts || []).map(({ InternalKey, ...bank }) => bank);
+    const duplicatedAddresses = (form.BPAddresses || []).map(({ BPCode, RowNum, ...address }) => address);
+    const duplicatedBanks = (form.BPBankAccounts || []).map(({ BPCode, InternalKey, ...bank }) => bank);
     const duplicatedContacts = (form.ContactEmployees || []).map(({ InternalCode, CardCode, ...contact }) => ({
       ...contact,
       PlaceOfBirth: safeTrim(contact.PlaceOfBirth),
       PlaceOfBirthName: safeText(contact.PlaceOfBirthName),
     }));
+    const duplicatedPaymentMethods = (form.BPPaymentMethods || []).map(
+      ({ BPCode, RowNumber, ...paymentMethod }) => paymentMethod
+    );
+    const duplicatedPaymentDates = (form.BPPaymentDates || []).map(
+      ({ BPCode, RowNumber, ...paymentDate }) => paymentDate
+    );
+    const duplicatedWithholdingTax = (form.BPWithholdingTaxCollection || []).map(
+      ({ BPCode, ...withholdingTax }) => withholdingTax
+    );
+    const duplicatedFiscalTax = (form.BPFiscalTaxIDCollection || []).map(
+      ({ BPCode, ...fiscalTax }) => fiscalTax
+    );
 
     const duplicateForm = {
       ...form,
@@ -985,6 +1040,10 @@ export default function BusinessPartnerModule() {
       BPAddresses: duplicatedAddresses,
       BPBankAccounts: duplicatedBanks,
       ContactEmployees: duplicatedContacts,
+      BPPaymentMethods: duplicatedPaymentMethods,
+      BPPaymentDates: duplicatedPaymentDates,
+      BPWithholdingTaxCollection: duplicatedWithholdingTax,
+      BPFiscalTaxIDCollection: duplicatedFiscalTax,
       PaymentBankInternalKey: "",
       PaymentBankSelectedIndex: duplicatedBanks.length > 0 ? 0 : -1,
     };
@@ -1030,6 +1089,7 @@ export default function BusinessPartnerModule() {
   const handleUpdate = useCallback(async () => {
     const cardCode = safeTrim(form.CardCode);
     if (!cardCode) { showAlert("error", "Card Code is required."); return; }
+    if (!safeTrim(form.CardName)) { showAlert("error", "Card Name is required."); return; }
     setLoading(true);
     try {
       const normalizedForm = await normalizeContactBirthCountries(form);

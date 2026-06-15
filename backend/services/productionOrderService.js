@@ -292,7 +292,7 @@ const createProductionOrder = async (body) => {
           try {
             const itemResp = await sapService.request({
               method: 'GET',
-              url: `/Items('${encodeURIComponent(line.ItemCode)}')`,
+              url: sapService.buildStringKeyPath('Items', line.ItemCode),
             });
             const item = itemResp.data;
             

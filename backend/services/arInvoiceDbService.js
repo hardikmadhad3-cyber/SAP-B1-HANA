@@ -1219,7 +1219,7 @@ const getARInvoice = async (docEntry) => {
       T0.SlpCode AS SalesEmployeeCode,
       SLP.SlpName AS SalesEmployeeName,
       CASE WHEN EMP.empID IS NOT NULL
-        THEN LTRIM(RTRIM(COALESCE(EMP.firstName, '') + ' ' + COALESCE(EMP.lastName, '')))
+        THEN LTRIM(RTRIM(CONCAT(CONCAT(COALESCE(EMP.firstName, ''), ' '), COALESCE(EMP.lastName, ''))))
         ELSE ''
       END AS OwnerName,
       CASE T0.DocStatus
@@ -1231,13 +1231,22 @@ const getARInvoice = async (docEntry) => {
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '13' AND NNM.Series = T0.Series
     LEFT JOIN OHEM EMP ON EMP.empID = ${hasTableField(headerFieldMetadata, 'OwnerCode') ? 'T0.OwnerCode' : 'NULL'}
-    OUTER APPLY (
-      SELECT TOP 1 C.State, C.Country
+    LEFT JOIN (
+      SELECT
+        C.CardCode,
+        C.Address,
+        C.State,
+        C.Country,
+        ROW_NUMBER() OVER (
+          PARTITION BY C.CardCode, C.Address
+          ORDER BY C.LineNum
+        ) AS AddressRank
       FROM CRD1 C
-      WHERE C.CardCode = T0.CardCode
-        AND C.Address = ${hasTableField(headerFieldMetadata, 'ShipToCode') ? 'T0.ShipToCode' : "''"}
-        AND C.AdresType = 'S'
+      WHERE C.AdresType = 'S'
     ) C
+      ON C.CardCode = T0.CardCode
+     AND C.Address = ${hasTableField(headerFieldMetadata, 'ShipToCode') ? 'T0.ShipToCode' : "''"}
+     AND C.AddressRank = 1
     LEFT JOIN OCST ST ON ST.Code = C.State AND ST.Country = C.Country
     WHERE T0.DocEntry = @docEntry
       AND T0.DocType = 'I'

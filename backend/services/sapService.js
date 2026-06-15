@@ -121,6 +121,13 @@ const buildUrl = (baseUrl, path) => {
   return `${baseUrl}${base}?${encodedQs}`;
 };
 
+const buildStringKeyPath = (entityName, value) => {
+  const escapedValue = String(value ?? '').replace(/'/g, "''");
+  // SAP Service Layer rejects encoded path separators (%2F) inside OData keys.
+  const encodedValue = encodeURIComponent(escapedValue).replace(/%2F/gi, '/');
+  return `/${entityName}('${encodedValue}')`;
+};
+
 const extractCookie = (header) => {
   if (!Array.isArray(header)) return header || '';
   return header.map((cookie) => String(cookie).split(';')[0]).filter(Boolean).join('; ');
@@ -492,12 +499,12 @@ const createItem = async (data) => {
 };
 
 const getItem = async (itemCode) => {
-  const res = await request({ method: 'GET', url: `/Items('${encodeURIComponent(itemCode)}')` });
+  const res = await request({ method: 'GET', url: buildStringKeyPath('Items', itemCode) });
   return res.data;
 };
 
 const updateItem = async (itemCode, data) => {
-  await request({ method: 'PATCH', url: `/Items('${encodeURIComponent(itemCode)}')`, data });
+  await request({ method: 'PATCH', url: buildStringKeyPath('Items', itemCode), data });
   return getItem(itemCode);
 };
 
@@ -533,6 +540,7 @@ module.exports = {
   login,
   ensureSession,
   request,
+  buildStringKeyPath,
   resolveCompanyDb,
   resolveServiceLayerConfig,
   clearServiceLayerSessions,

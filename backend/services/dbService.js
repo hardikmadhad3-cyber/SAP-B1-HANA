@@ -1,10 +1,11 @@
 /**
- * Direct SQL Server connection to SAP B1 company database.
- * Uses mssql (TDS protocol) and automatically resolves the
+ * Direct connection to SAP B1 company database.
+ * Supports SQL Server and SAP HANA, and automatically resolves the
  * active company database from the logged-in user's assignment.
  */
 const sql = require('mssql');
 const env = require('../config/env');
+const hanaDb = require('../db/hanaDb');
 const { getRequestContext } = require('./requestContextService');
 const { getActiveCompanyConfig, splitSqlServerName } = require('./companyConfigService');
 
@@ -14,6 +15,7 @@ const buildConfig = (connectionConfig) => {
   return {
     server: sqlServer.server,
     database: connectionConfig.database,
+    port: connectionConfig.port || undefined,
     options: {
       instanceName: sqlServer.instanceName,
       trustServerCertificate: connectionConfig.trustServerCertificate,
@@ -64,8 +66,10 @@ const resolveDatabaseName = async (options = {}) => {
 };
 
 const getPoolKey = (connectionConfig) => JSON.stringify({
+  dialect: connectionConfig.dialect || 'sqlserver',
   server: connectionConfig.server,
   instanceName: connectionConfig.instanceName || '',
+  port: connectionConfig.port || 0,
   database: connectionConfig.database,
   user: connectionConfig.user,
   password: connectionConfig.password,
@@ -106,6 +110,14 @@ const getPool = async (connectionConfig) => {
 
 const query = async (queryStr, params = {}, options = {}) => {
   const connectionConfig = await resolveSqlConnectionConfig(options);
+  if (connectionConfig.dialect === 'hana') {
+    return hanaDb.query(queryStr, params, {
+      ...options,
+      connectionConfig,
+      database: connectionConfig.database,
+    });
+  }
+
   const pool = await getPool(connectionConfig);
   const req = pool.request();
 
@@ -116,7 +128,13 @@ const query = async (queryStr, params = {}, options = {}) => {
   return req.query(queryStr);
 };
 
+const getDialect = async (options = {}) => {
+  const connectionConfig = await resolveSqlConnectionConfig(options);
+  return connectionConfig.dialect || 'sqlserver';
+};
+
 module.exports = {
+  getDialect,
   query,
   sql,
   getPool,

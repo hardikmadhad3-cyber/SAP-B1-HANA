@@ -3,6 +3,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS Companies (
   CompanyId INTEGER PRIMARY KEY AUTOINCREMENT,
   CompanyName TEXT NOT NULL,
+  DbDialect TEXT NOT NULL DEFAULT 'sqlserver',
   DbName TEXT NOT NULL,
   DbUser TEXT NULL,
   DbPassword TEXT NULL,
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS Companies (
   ReportServiceDefaultSchema TEXT NULL,
   ReportServiceRejectUnauthorized INTEGER NULL,
   DbServer TEXT NULL,
+  DbPort INTEGER NULL,
   DbEncrypt INTEGER NULL,
   DbTrustCert INTEGER NULL,
   SalesOrderDefaultToVendorCode TEXT NULL

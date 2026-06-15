@@ -742,14 +742,19 @@ const getVendorValidation = async (cardCode) => {
       GST.State,
       GST.GSTIN
     FROM OCRD T0
-    OUTER APPLY (
-      SELECT TOP 1
+    LEFT JOIN (
+      SELECT
+        T1.CardCode,
         T1.GSTRegnNo AS GSTIN,
-        T1.State
+        T1.State,
+        ROW_NUMBER() OVER (
+          PARTITION BY T1.CardCode
+          ORDER BY CASE WHEN T1.AdresType = 'B' THEN 0 ELSE 1 END, T1.Address
+        ) AS AddressRank
       FROM CRD1 T1
-      WHERE T1.CardCode = T0.CardCode
-      ORDER BY CASE WHEN T1.AdresType = 'B' THEN 0 ELSE 1 END, T1.Address
     ) GST
+      ON GST.CardCode = T0.CardCode
+     AND GST.AddressRank = 1
     WHERE T0.CardCode = @cardCode
   `, { cardCode }));
 
