@@ -60,8 +60,8 @@ const searchBusinessPartners = async (query = "", bpType = "Customer") => {
       T0.Currency,
       T0.Balance,
       T0.CardType,
-      T0.ValidFor,
-      T0.FrozenFor,
+      T0.validFor AS ValidFor,
+      T0.frozenFor AS FrozenFor,
       T0.DebPayAcct,
       T0.BillToDef,
       T0.Address,
@@ -242,7 +242,7 @@ const getPaymentSeries = async () => {
     FROM NNM1 T0
     LEFT JOIN OFPR T1
       ON T1.Indicator = T0.Indicator
-      AND CONVERT(date, GETDATE()) BETWEEN T1.F_RefDate AND T1.T_RefDate
+      AND CAST(CURRENT_TIMESTAMP AS DATE) BETWEEN T1.F_RefDate AND T1.T_RefDate
     WHERE T0.ObjectCode = '24'
       AND T0.Locked = 'N'
     ORDER BY
@@ -472,7 +472,7 @@ const getOpenInvoices = async (cardCode, branch = "") => {
       T0.JrnlMemo,
       T0.CtlAccount,
       T1.BPLName,
-      DATEDIFF(DAY, T0.DocDueDate, GETDATE()) AS OverdueDays
+      DATEDIFF(DAY, T0.DocDueDate, CURRENT_TIMESTAMP) AS OverdueDays
     FROM OINV T0
     LEFT JOIN OBPL T1 ON T1.BPLId = T0.BPLId
     WHERE T0.CardCode = @cardCode

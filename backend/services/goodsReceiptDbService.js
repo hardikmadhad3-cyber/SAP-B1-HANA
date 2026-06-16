@@ -153,9 +153,10 @@ const getDistributionRules = async () => {
   const dimensionJoin = dimensionColumns.has('DimCode')
     ? `LEFT JOIN ODIM T1 ON T1.DimCode = ${dimensionCodeExpression}`
     : '';
+  const dimensionFallbackExpression = `CONCAT('Dimension ', CAST(${dimensionCodeExpression} AS NVARCHAR(10)))`;
   const dimensionNameExpression = dimensionNameColumn
-    ? `COALESCE(T1.${quoteSqlIdentifier(dimensionNameColumn)}, 'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10)))`
-    : `'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10))`;
+    ? `COALESCE(T1.${quoteSqlIdentifier(dimensionNameColumn)}, ${dimensionFallbackExpression})`
+    : dimensionFallbackExpression;
 
   return safe(
     db.query(`
@@ -422,13 +423,13 @@ const getDocumentDetails = async ({
     db.query(
       `
         SELECT
-          BaseLineNum,
+          BaseLinNum AS BaseLineNum,
           BatchNum,
           Quantity
         FROM IBT1
         WHERE BaseEntry = @docEntry
           AND BaseType = 59
-        ORDER BY BaseLineNum, BatchNum
+        ORDER BY BaseLinNum, BatchNum
       `,
       { docEntry }
     )
@@ -739,11 +740,11 @@ const getGoodsReceipt = async (docEntry) => {
     getHeaderUdfValues({ tableId: 'OIGN', keyValue: docEntry }),
     getLineUdfValues({ tableId: 'IGN1', keyValue: docEntry }),
     safe(db.query(`
-      SELECT BaseLineNum, BatchNum, Quantity
+      SELECT BaseLinNum AS BaseLineNum, BatchNum, Quantity
       FROM IBT1
       WHERE BaseEntry = @docEntry
         AND BaseType = 59
-      ORDER BY BaseLineNum, BatchNum
+      ORDER BY BaseLinNum, BatchNum
     `, { docEntry })),
   ]);
 

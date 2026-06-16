@@ -492,7 +492,7 @@ const getItems = async () => {
 
 const getWarehouses = () => safe(db.query(`
   SELECT WhsCode, WhsName, Street, Block, Building,
-         City, County, State, ZipCode, Country, BPLId AS BranchID
+         City, County, State, ZipCode, Country, BPLid AS BranchID
   FROM   OWHS
   WHERE  Inactive <> 'Y'
   ORDER  BY WhsCode

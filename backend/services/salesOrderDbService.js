@@ -119,6 +119,13 @@ const resolveColumnName = (fieldMetadata = {}, candidateColumnName) => {
   );
 };
 
+const resolveTableColumnName = (fieldMetadata = {}, candidateColumnName) => {
+  const normalizedCandidate = String(candidateColumnName || '').trim().toLowerCase();
+  return Object.keys(fieldMetadata || {}).find(
+    (columnName) => String(columnName || '').trim().toLowerCase() === normalizedCandidate
+  );
+};
+
 const resolveSalesOrderSellerColumns = async () => {
   const [fieldMetadata, udfDefinitions] = await Promise.all([
     getTableFieldMetadata('ORDR'),
@@ -492,20 +499,21 @@ const getSalesOrderPrintLayouts = () => safe(db.query(`
     Language AS language_code,
     Status AS status_code,
     CASE
-      WHEN Category = 'C' THEN CAST(1 AS bit)
-      ELSE CAST(0 AS bit)
+      WHEN Category = 'C' THEN 1
+      ELSE 0
     END AS is_export_supported
   FROM RDOC
   WHERE TypeCode = 'RDR2'
     AND Status = 'A'
   ORDER BY
-    CONVERT(int, SUBSTRING(DocCode, 4, LEN(DocCode) - 3)),
+    CAST(SUBSTRING(DocCode, 4, LEN(DocCode) - 3) AS INT),
     DocCode
 `));
 
 const getBranches = () => safe(db.query(`
   SELECT BPLId, BPLName
-  FROM   OBPL where Disabled='N'
+  FROM   OBPL
+  WHERE  ISNULL(Disabled, 'N') <> 'Y'
   ORDER  BY BPLName
 `));
 
@@ -535,11 +543,14 @@ const getDistributionRules = async () => {
   const dimensionJoin = dimensionMetadata?.DimCode
     ? `LEFT JOIN ODIM T1 ON T1.DimCode = ${dimensionCodeExpression}`
     : '';
+  const dimensionFallbackExpression = `CONCAT('Dimension ', CAST(${dimensionCodeExpression} AS NVARCHAR(10)))`;
   const dimensionNameExpression = dimensionNameColumn
-    ? `COALESCE(T1.${quoteSqlIdentifier(dimensionNameColumn)}, 'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10)))`
-    : `'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10))`;
-  const activeDimensionFilter = dimensionMetadata?.Active
-    ? "AND (T1.Active IS NULL OR T1.Active <> 'N')"
+    ? `COALESCE(T1.${quoteSqlIdentifier(dimensionNameColumn)}, ${dimensionFallbackExpression})`
+    : dimensionFallbackExpression;
+  const activeDimensionColumn = ['Active', 'DimActive']
+    .find((columnName) => dimensionMetadata?.[columnName]);
+  const activeDimensionFilter = activeDimensionColumn
+    ? `AND (T1.${quoteSqlIdentifier(activeDimensionColumn)} IS NULL OR T1.${quoteSqlIdentifier(activeDimensionColumn)} <> 'N')`
     : '';
 
   return safe(db.query(`
@@ -550,7 +561,7 @@ const getDistributionRules = async () => {
       ${dimensionNameExpression} AS DimensionName
     FROM   OOCR T0
     ${dimensionJoin}
-    WHERE  T0.Active <> 'N'
+    WHERE  ISNULL(T0.Active, 'Y') <> 'N'
       ${activeDimensionFilter}
     ORDER  BY ${dimensionCodeExpression}, T0.OcrCode
   `));
@@ -601,7 +612,7 @@ const getUomGroups = () => safe(db.query(`
   FROM   OUGP g
   LEFT JOIN UGP1 d ON d.UgpEntry = g.UgpEntry
   LEFT JOIN OUOM u ON u.UomEntry = d.UomEntry
-  WHERE  g.Locked <> 'Y'
+  WHERE  ISNULL(g.Locked, 'N') <> 'Y'
   ORDER  BY g.UgpEntry, d.LineNum
 `));
 
@@ -687,8 +698,9 @@ const getSalesOrderLineFieldMetadata = async () => {
   return getTableFieldMetadata('RDR1');
 };
 
-const getSacLookupSqlParts = (lineAlias, sacAlias, sacFieldMetadata = {}) => {
+const getSacLookupSqlParts = (lineAlias, sacAlias, sacFieldMetadata = {}, lineFieldMetadata = {}) => {
   const hasOsacTable = Object.keys(sacFieldMetadata || {}).length > 0;
+  const sacEntryColumn = resolveTableColumnName(lineFieldMetadata, 'SACEntry');
   const serviceNameColumn = sacFieldMetadata.ServName
     ? `${sacAlias}.ServName`
     : sacFieldMetadata.ServiceName
@@ -699,10 +711,14 @@ const getSacLookupSqlParts = (lineAlias, sacAlias, sacFieldMetadata = {}) => {
     : sacFieldMetadata.ServiceCode
       ? `${sacAlias}.ServiceCode`
       : "''";
-  const sacEntryExpression = `CAST(${lineAlias}.SACEntry AS NVARCHAR(50))`;
+  const sacEntryExpression = sacEntryColumn
+    ? `CAST(${lineAlias}.${quoteSqlIdentifier(sacEntryColumn)} AS NVARCHAR(50))`
+    : "''";
 
   return {
-    joinSql: hasOsacTable ? `LEFT JOIN OSAC ${sacAlias} ON ${sacAlias}.AbsEntry = ${lineAlias}.SACEntry` : '',
+    joinSql: hasOsacTable && sacEntryColumn
+      ? `LEFT JOIN OSAC ${sacAlias} ON ${sacAlias}.AbsEntry = ${lineAlias}.${quoteSqlIdentifier(sacEntryColumn)}`
+      : '',
     serviceNameColumn,
     serviceCodeColumn,
     displayExpression: `COALESCE(NULLIF(LTRIM(RTRIM(${serviceNameColumn})), ''), NULLIF(LTRIM(RTRIM(${serviceCodeColumn})), ''), ${sacEntryExpression})`,
@@ -1629,10 +1645,12 @@ const getSalesOrder = async (docEntry) => {
   const hasSellerPaymentTermField = Boolean(lineFieldMetadata?.U_Seller_Payment_Term);
   const hasSellerPaymentTermsField = Boolean(lineFieldMetadata?.U_Seller_Payment_Terms);
   const hasRateField = Boolean(lineFieldMetadata?.U_Rate);
-  const sacSql = getSacLookupSqlParts('T1', 'SAC', sacFieldMetadata);
+  const sacSql = getSacLookupSqlParts('T1', 'SAC', sacFieldMetadata, lineFieldMetadata);
 
   // ✅ Get complete header and line data with Place of Supply and HSN Code
-  let rows = await safe(db.query(`
+  let rows;
+  try {
+    const result = await db.query(`
    SELECT 
     -- 🔹 HEADER
     T0.DocEntry,
@@ -1784,7 +1802,16 @@ ${sacSql.joinSql}
 WHERE T0.DocEntry = @DocEntry
 
 ORDER BY T1.LineNum
-  `, { DocEntry: resolvedDocEntry }));
+  `, { DocEntry: resolvedDocEntry });
+    rows = result.recordset || [];
+  } catch (error) {
+    console.error('[SalesOrderDB] getSalesOrder detail query failed:', {
+      requestedIdentifier: docEntry,
+      resolvedDocEntry,
+      message: error.message,
+    });
+    throw error;
+  }
 
   console.log('🔍 [Backend] Query returned', rows.length, 'rows for requested identifier', docEntry, 'resolved DocEntry', resolvedDocEntry);
 
@@ -1999,11 +2026,11 @@ ORDER BY T1.LineNum
 
   // ✅ Get batch numbers for each line (if any)
   const batchRows = await safe(db.query(`
-    SELECT BaseLineNum, BatchNum, Quantity
+    SELECT BaseLinNum AS BaseLineNum, BatchNum, Quantity
     FROM   IBT1
     WHERE  BaseEntry = @DocEntry
       AND  BaseType = 17
-    ORDER  BY BaseLineNum, BatchNum
+    ORDER  BY BaseLinNum, BatchNum
   `, { DocEntry: resolvedDocEntry }));
 
   // Group batches by line number
@@ -2235,7 +2262,7 @@ const getSalesOrderForCopy = async (docEntry) => {
       ? `T0.${columnName} AS ${sqlAlias(alias)}`
       : `${fallback} AS ${sqlAlias(alias)}`
   );
-  const sacSql = getSacLookupSqlParts('T0', 'SAC', sacFieldMetadata);
+  const sacSql = getSacLookupSqlParts('T0', 'SAC', sacFieldMetadata, lineFieldMetadata);
 
   const headerResult = await db.query(`
     SELECT
@@ -2339,11 +2366,11 @@ const getSalesOrderForCopy = async (docEntry) => {
     ...physicalHeaderUdfs,
   };
   const batchRows = await safe(db.query(`
-    SELECT BaseLineNum, BatchNum, Quantity
+    SELECT BaseLinNum AS BaseLineNum, BatchNum, Quantity
     FROM   IBT1
     WHERE  BaseEntry = @DocEntry
       AND  BaseType = 17
-    ORDER  BY BaseLineNum, BatchNum
+    ORDER  BY BaseLinNum, BatchNum
   `, { DocEntry: resolvedDocEntry }));
   const batchesByLine = {};
   batchRows.forEach((batch) => {
