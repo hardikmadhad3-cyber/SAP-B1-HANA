@@ -5,10 +5,14 @@ function SettingsSection({ title, fields, groupKey, formSettings, onSettingChang
     <div className="mb-4">
       <h6 className="border-bottom pb-1 mb-2">{title}</h6>
 
-      {fields.map((field) => (
+      {fields.map((field) => {
+        const setting = formSettings[groupKey]?.[field.key] || {};
+        const sapControlled = Boolean(field.sapControlled || setting.sapControlled);
+        return (
         <div
           key={field.key}
           className="d-flex justify-content-between align-items-center mb-2"
+          title={sapControlled ? 'Controlled by SAP Form Settings' : undefined}
         >
           <span className="small">{field.label}</span>
 
@@ -17,7 +21,8 @@ function SettingsSection({ title, fields, groupKey, formSettings, onSettingChang
               <input
                 type="checkbox"
                 className="form-check-input"
-                checked={formSettings[groupKey]?.[field.key]?.visible !== false}
+                checked={setting.visible !== false}
+                disabled={sapControlled}
                 onChange={(event) =>
                   onSettingChange(groupKey, field.key, 'visible', event.target.checked)
                 }
@@ -29,7 +34,8 @@ function SettingsSection({ title, fields, groupKey, formSettings, onSettingChang
               <input
                 type="checkbox"
                 className="form-check-input"
-                checked={formSettings[groupKey]?.[field.key]?.active !== false}
+                checked={setting.active !== false}
+                disabled={sapControlled}
                 onChange={(event) =>
                   onSettingChange(groupKey, field.key, 'active', event.target.checked)
                 }
@@ -38,7 +44,7 @@ function SettingsSection({ title, fields, groupKey, formSettings, onSettingChang
             </div>
           </div>
         </div>
-      ))}
+      );})}
     </div>
   );
 }

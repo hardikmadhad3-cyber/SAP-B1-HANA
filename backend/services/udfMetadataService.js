@@ -100,7 +100,6 @@ const getDefaultValue = (type, options, defaultValue) => {
 };
 
 const mapType = (row, options) => {
-  if (isYesNoOptions(options)) return 'checkbox';
   if (options.length > 0) return 'select';
   const typeId = String(row.TypeID || '').trim().toUpperCase();
   const subtypeId = String(row.SubType || row.SubTypeID || '').trim().toUpperCase();
@@ -127,6 +126,7 @@ const getUdfDefinitions = async (tableId) => {
   const selectSubType = cufdColumns.has('SubType') ? 'T0.SubType' : "'' AS SubType";
   const selectMandatoryAlt = cufdColumns.has('Mandatory') ? 'T0.Mandatory AS MandatoryAlt' : "'' AS MandatoryAlt";
   const selectEditable = cufdColumns.has('Editable') ? 'T0.Editable' : "'' AS Editable";
+  const selectLinkedTable = cufdColumns.has('LinkedTable') ? 'T0.LinkedTable' : "'' AS LinkedTable";
 
   const rows = await safe(db.query(`
     SELECT
@@ -140,6 +140,7 @@ const getUdfDefinitions = async (tableId) => {
       T0.NotNull AS Mandatory,
       ${selectMandatoryAlt},
       ${selectEditable},
+      ${selectLinkedTable},
       T0.Dflt,
       T1.FldValue,
       T1.Descr AS ValueDescr
@@ -169,6 +170,10 @@ const getUdfDefinitions = async (tableId) => {
         readOnly: String(row.Editable || '').toUpperCase() === 'N',
         maxLength: row.EditSize || undefined,
         options: [],
+        lookupTable: String(row.LinkedTable || '').trim() || undefined,
+        lookupSource: String(row.LinkedTable || '').trim()
+          ? `udf:${normalizedTableId}:${key}`
+          : undefined,
       });
     }
 
@@ -216,6 +221,10 @@ const getUdfDefinitions = async (tableId) => {
       fieldId: sourceRow.FieldID,
       aliasId: sourceRow.AliasID || field.key.replace(/^U_/, ''),
       sapField: field.key,
+      lookupTable: String(sourceRow.LinkedTable || '').trim() || undefined,
+      lookupSource: String(sourceRow.LinkedTable || '').trim()
+        ? `udf:${sourceRow.TableID || normalizedTableId}:${field.key}`
+        : field.lookupSource,
     };
   });
 };

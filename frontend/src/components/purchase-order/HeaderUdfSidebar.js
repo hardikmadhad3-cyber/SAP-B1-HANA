@@ -765,6 +765,7 @@ function HeaderUdfSidebar({
   billToPartyName = '',
   loadBillToPartyDetails,
   loadToVendorDetails,
+  onLoadLookupOptions,
 }) {
   const [sellerLookupOpen, setSellerLookupOpen] = useState(false);
   const [sellerPartners, setSellerPartners] = useState([]);
@@ -794,6 +795,13 @@ function HeaderUdfSidebar({
   const [termsLookupOptions, setTermsLookupOptions] = useState([]);
   const [termsLookupLoading, setTermsLookupLoading] = useState(false);
   const [termsLookupError, setTermsLookupError] = useState('');
+  const [dynamicLookup, setDynamicLookup] = useState({
+    open: false,
+    field: null,
+    options: [],
+    loading: false,
+    error: '',
+  });
   const valuesRef = useRef(values || {});
   const onFieldChangeRef = useRef(onFieldChange);
   const loadBillToPartyDetailsRef = useRef(loadBillToPartyDetails);
@@ -1201,6 +1209,42 @@ function HeaderUdfSidebar({
     return createdOption;
   };
 
+  const openDynamicUdfLookup = async (field) => {
+    if (!field?.lookupSource || typeof onLoadLookupOptions !== 'function') return;
+
+    setDynamicLookup({
+      open: true,
+      field,
+      options: [],
+      loading: true,
+      error: '',
+    });
+
+    try {
+      const options = await onLoadLookupOptions(field.lookupSource, field);
+      setDynamicLookup({
+        open: true,
+        field,
+        options: Array.isArray(options) ? options : [],
+        loading: false,
+        error: '',
+      });
+    } catch (error) {
+      setDynamicLookup({
+        open: true,
+        field,
+        options: [],
+        loading: false,
+        error: error?.response?.data?.detail || error?.message || 'Failed to load lookup values.',
+      });
+    }
+  };
+
+  const handleDynamicLookupSelect = (option) => {
+    if (!dynamicLookup.field?.key) return;
+    changeField(dynamicLookup.field.key, option?.value || '');
+  };
+
   const applySellerAddress = (seller) => {
     const selectedAddress = selectSellerAddress(seller?.BPAddresses, seller);
     changeField(SELLER_ADDRESS_ID_KEY, getAddressId(selectedAddress));
@@ -1507,7 +1551,9 @@ function HeaderUdfSidebar({
               const fieldValue = values[field.key];
               const fieldDisabled = disabled ||
                 (!termsOfSupplyField && field.readOnly) ||
-                formSettings.headerUdfs?.[field.key]?.active === false;
+                (field.sapControlled
+                  ? field.active === false
+                  : formSettings.headerUdfs?.[field.key]?.active === false);
               const currentToVendorAddressId = String(fieldValue || '');
               const currentBillToPartyAddressId = String(fieldValue || '');
               const fieldLookup = termsOfSupplyField
@@ -1524,7 +1570,9 @@ function HeaderUdfSidebar({
                         ? openToVendorAddressLookup
                         : isBillToPartyAddressIdField(field)
                           ? openBillToPartyAddressLookup
-                          : undefined;
+                          : field.lookupSource
+                            ? () => openDynamicUdfLookup(field)
+                            : undefined;
               const fieldControl = isToVendorAddressIdField(field)
                 ? renderLookupInputControl(
                   currentToVendorAddressId,
@@ -1655,6 +1703,16 @@ function HeaderUdfSidebar({
         columns={PREDEFINED_TEXT_COLUMNS}
         createValueLabel="Text Code"
         createDescriptionLabel="Text"
+      />
+      <LineValueLookupModal
+        isOpen={dynamicLookup.open}
+        onClose={() => setDynamicLookup((prev) => ({ ...prev, open: false }))}
+        onSelect={handleDynamicLookupSelect}
+        options={dynamicLookup.options}
+        title={`List of ${dynamicLookup.field?.label || 'Values'}`}
+        searchPlaceholder="Search values"
+        emptyMessage={dynamicLookup.loading ? 'Loading values...' : (dynamicLookup.error || 'No values found')}
+        allowCreate={false}
       />
     </>
   );

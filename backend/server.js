@@ -112,6 +112,7 @@ const performanceRoutes          = require('./routes/performanceRoutes');
 const formSettingsRoutes         = require('./routes/formSettings');
 const generalSettingsRoutes      = require('./routes/generalSettingsRoutes');
 const predefinedTextRoutes       = require('./routes/predefinedTextRoutes');
+const sapDocumentLayoutRoutes    = require('./routes/sapDocumentLayout');
 
 const app = express();
 
@@ -323,6 +324,7 @@ app.use('/api/performance',        performanceRoutes);
 app.use('/api/form-settings',      formSettingsRoutes);
 app.use('/api/general-settings',   generalSettingsRoutes);
 app.use('/api/predefined-texts',   predefinedTextRoutes);
+app.use('/api/sap/layout',         sapDocumentLayoutRoutes);
 app.use('/api',                    sapRoutes);
 
 // Health check
