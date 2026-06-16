@@ -60,7 +60,7 @@ const getItemsForModal = () => safe(db.query(`
 
 const getWarehouses = () => safe(db.query(`
   SELECT WhsCode, WhsName, Street, Block,
-         City, County, State, ZipCode, Country, BPLId AS BranchID
+         City, County, State, ZipCode, Country, BPLid AS BranchID
   FROM   OWHS
   WHERE  Inactive <> 'Y'
   ORDER  BY WhsCode
@@ -114,11 +114,11 @@ const getUomGroups = () => safe(db.query(`
 
 const getDecimalSettings = () => safe(db.query(`
   SELECT TOP 1
-    PriceDP AS PriceDec,
-    QuantityDP AS QtyDec,
-    RateDP AS RateDec,
-    PercentDP AS PercentDec,
-    SumDP AS SumDec
+    PriceDec,
+    QtyDec,
+    RateDec,
+    PercentDec,
+    SumDec
   FROM OADM
 `));
 
@@ -580,7 +580,7 @@ INNER JOIN OFPR T1
     ON T0.Indicator = T1.Indicator
 WHERE T0.ObjectCode = '19'
     AND T0.Locked = 'N'
-    AND GETDATE() BETWEEN T1.F_RefDate AND T1.T_RefDate
+    AND CAST(CURRENT_TIMESTAMP AS DATE) BETWEEN T1.F_RefDate AND T1.T_RefDate
 ORDER BY T0.SeriesName
   `));
 

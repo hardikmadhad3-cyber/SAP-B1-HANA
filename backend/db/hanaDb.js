@@ -37,6 +37,7 @@ const SQL_KEYWORDS = new Set([
   'LEFT',
   'LENGTH',
   'LIKE',
+  'LIKE_REGEXPR',
   'LIMIT',
   'LOWER',
   'MAX',
@@ -65,6 +66,9 @@ const isReadQuery = (sqlText) => /^\s*(SELECT|WITH)\b/i.test(sqlText);
 
 const quoteIdentifier = (value) =>
   `"${String(value || '').replace(/"/g, '""')}"`;
+
+const HANA_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const HANA_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
 
 const isIdentifierChar = (char = '') => /[A-Za-z0-9_]/.test(char);
 
@@ -237,6 +241,168 @@ const replaceInformationSchemaViews = (sqlText) =>
         WHERE SCHEMA_NAME = CURRENT_SCHEMA)`,
       ));
 
+const splitTopLevelArgs = (text) => {
+  const args = [];
+  let current = '';
+  let inString = false;
+  let depth = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (char === "'") {
+      current += char;
+      if (inString && text[index + 1] === "'") {
+        current += text[index + 1];
+        index += 1;
+        continue;
+      }
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (char === '(') depth += 1;
+      if (char === ')') depth = Math.max(0, depth - 1);
+      if (char === ',' && depth === 0) {
+        args.push(current.trim());
+        current = '';
+        continue;
+      }
+    }
+
+    current += char;
+  }
+
+  if (current.trim()) args.push(current.trim());
+  return args;
+};
+
+const buildNestedConcat = (args) => {
+  const normalizedArgs = args.map((arg) => replaceConcatCalls(arg));
+  if (normalizedArgs.length <= 2) return `CONCAT(${normalizedArgs.join(', ')})`;
+  return normalizedArgs
+    .slice(1)
+    .reduce((expression, arg) => `CONCAT(${expression}, ${arg})`, normalizedArgs[0]);
+};
+
+const replaceConcatCalls = (sqlText) => {
+  let output = '';
+  let index = 0;
+  let inString = false;
+
+  while (index < sqlText.length) {
+    const char = sqlText[index];
+
+    if (char === "'") {
+      output += char;
+      if (inString && sqlText[index + 1] === "'") {
+        output += sqlText[index + 1];
+        index += 2;
+        continue;
+      }
+      inString = !inString;
+      index += 1;
+      continue;
+    }
+
+    if (inString) {
+      output += char;
+      index += 1;
+      continue;
+    }
+
+    const rest = sqlText.slice(index);
+    const match = rest.match(/^CONCAT\s*\(/i);
+    const previous = sqlText[index - 1] || '';
+    if (!match || isIdentifierChar(previous)) {
+      output += char;
+      index += 1;
+      continue;
+    }
+
+    const openParen = index + match[0].length - 1;
+    let depth = 0;
+    let nestedString = false;
+    let closeParen = -1;
+
+    for (let cursor = openParen; cursor < sqlText.length; cursor += 1) {
+      const cursorChar = sqlText[cursor];
+      if (cursorChar === "'") {
+        if (nestedString && sqlText[cursor + 1] === "'") {
+          cursor += 1;
+          continue;
+        }
+        nestedString = !nestedString;
+        continue;
+      }
+      if (nestedString) continue;
+      if (cursorChar === '(') depth += 1;
+      if (cursorChar === ')') {
+        depth -= 1;
+        if (depth === 0) {
+          closeParen = cursor;
+          break;
+        }
+      }
+    }
+
+    if (closeParen === -1) {
+      output += char;
+      index += 1;
+      continue;
+    }
+
+    const args = splitTopLevelArgs(sqlText.slice(openParen + 1, closeParen));
+    output += buildNestedConcat(args);
+    index = closeParen + 1;
+  }
+
+  return output;
+};
+
+const replaceIsNumericCalls = (sqlText) =>
+  withSqlSegments(sqlText, (segment) => {
+    let output = '';
+    let index = 0;
+
+    while (index < segment.length) {
+      const match = segment.slice(index).match(/\bISNUMERIC\s*\(/i);
+      if (!match) {
+        output += segment.slice(index);
+        break;
+      }
+
+      const start = index + match.index;
+      const openParen = start + match[0].length - 1;
+      let depth = 0;
+      let closeParen = -1;
+
+      for (let cursor = openParen; cursor < segment.length; cursor += 1) {
+        if (segment[cursor] === '(') depth += 1;
+        if (segment[cursor] === ')') {
+          depth -= 1;
+          if (depth === 0) {
+            closeParen = cursor;
+            break;
+          }
+        }
+      }
+
+      if (closeParen === -1) {
+        output += segment.slice(index);
+        break;
+      }
+
+      const expression = segment.slice(openParen + 1, closeParen).trim();
+      output += segment.slice(index, start);
+      output += `(CASE WHEN CAST(${expression} AS NVARCHAR(5000)) LIKE_REGEXPR '^[+-]?[0-9]+([.][0-9]+)?$' THEN 1 ELSE 0 END)`;
+      index = closeParen + 1;
+    }
+
+    return output;
+  });
+
 const normalizeSql = (sqlText) => {
   let sql = String(sqlText || '')
     .replace(/\bdbo\./gi, '')
@@ -251,6 +417,8 @@ const normalizeSql = (sqlText) => {
     .replace(/\bCONVERT\s*\(\s*VARCHAR\s*\(\s*10\s*\)\s*,\s*([^)]+?)\s*,\s*23\s*\)/gi, "TO_VARCHAR($1, 'YYYY-MM-DD')");
 
   sql = replaceInformationSchemaViews(sql);
+  sql = replaceConcatCalls(sql);
+  sql = replaceIsNumericCalls(sql);
   sql = applyTopLimit(sql);
   sql = quoteAliasColumns(sql);
   sql = quoteTables(sql);
@@ -321,6 +489,20 @@ const exec = (connection, sqlText, values = []) => new Promise((resolve, reject)
   });
 });
 
+const normalizeDateValue = (value) => {
+  if (typeof value !== 'string') return value;
+  if (HANA_DATE_PATTERN.test(value)) return new Date(`${value}T00:00:00.000Z`);
+  if (HANA_TIMESTAMP_PATTERN.test(value)) return new Date(`${value.replace(' ', 'T')}Z`);
+  return value;
+};
+
+const normalizeRowValues = (row) => {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [key, normalizeDateValue(value)]),
+  );
+};
+
 const disconnect = (connection) => {
   try {
     connection.disconnect();
@@ -341,8 +523,9 @@ const query = async (queryStr, params = {}, options = {}) => {
     }
 
     const rows = await exec(connection, sql, values);
+    const recordset = isReadQuery(sql) ? rows.map(normalizeRowValues) : [];
     return {
-      recordset: isReadQuery(sql) ? rows : [],
+      recordset,
       rowsAffected: isReadQuery(sql) ? [0] : [rows?.length || 0],
     };
   } finally {

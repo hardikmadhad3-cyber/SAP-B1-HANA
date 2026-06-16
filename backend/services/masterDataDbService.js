@@ -767,7 +767,7 @@ const queryDocumentTaxCodes = async (query = "", documentType = "", top = 500, s
         ELSE 'OTHER'
       END AS GSTType,
       '' AS Category,
-      STRING_AGG(CONCAT(ISNULL(T1.STACode, ''), ':', CAST(ISNULL(T1.EfctivRate, 0) AS NVARCHAR(50))), ', ') AS Components
+      STRING_AGG(CONCAT(CONCAT(ISNULL(T1.STACode, ''), ':'), CAST(ISNULL(T1.EfctivRate, 0) AS NVARCHAR(50))), ', ') AS Components
     FROM OSTC T0
     INNER JOIN STC1 T1
       ON T0.Code = T1.STCCode

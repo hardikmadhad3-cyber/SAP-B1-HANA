@@ -286,8 +286,8 @@ const getLayoutsQuery = (config) => {
       Language AS language_code,
       Status AS status_code,
       CASE
-        WHEN Category = 'C' THEN CAST(1 AS bit)
-        ELSE CAST(0 AS bit)
+        WHEN Category = 'C' THEN 1
+        ELSE 0
       END AS is_export_supported
     FROM RDOC
     WHERE TypeCode = @typeCode
@@ -319,8 +319,8 @@ const getLayoutsQuery = (config) => {
       Language AS language_code,
       Status AS status_code,
       CASE
-        WHEN Category = 'C' THEN CAST(1 AS bit)
-        ELSE CAST(0 AS bit)
+        WHEN Category = 'C' THEN 1
+        ELSE 0
       END AS is_export_supported
     FROM RDOC
     WHERE Status = 'A'

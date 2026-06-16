@@ -594,11 +594,11 @@ const getSalesQuotation = async (docEntry) => {
   ]);
 
   const batchRows = await safe(db.query(`
-    SELECT BaseLineNum, BatchNum, Quantity
+    SELECT BaseLinNum AS BaseLineNum, BatchNum, Quantity
     FROM   IBT1
     WHERE  BaseEntry = @docEntry
       AND  BaseType = 23
-    ORDER  BY BaseLineNum, BatchNum
+    ORDER  BY BaseLinNum, BatchNum
   `, { docEntry }));
 
   const batchesByLine = {};

@@ -174,7 +174,7 @@ const lookupSeries = async (objectCode) => {
       FROM NNM1 T0
       LEFT JOIN OFPR T1
         ON T1.Indicator = T0.Indicator
-        AND CONVERT(date, GETDATE()) BETWEEN T1.F_RefDate AND T1.T_RefDate
+        AND CAST(CURRENT_TIMESTAMP AS DATE) BETWEEN T1.F_RefDate AND T1.T_RefDate
       ${defaultSeriesJoin}
       WHERE T0.ObjectCode = @objectCode
         AND T0.Locked <> 'Y'

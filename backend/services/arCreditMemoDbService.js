@@ -48,7 +48,7 @@ const getItems = () => safe(db.query(`
 
 const getWarehouses = () => safe(db.query(`
   SELECT WhsCode, WhsName, Street, Block,
-         City, County, State, ZipCode, Country, BPLId AS BranchID
+         City, County, State, ZipCode, Country, BPLid AS BranchID
   FROM   OWHS
   WHERE  Inactive <> 'Y'
   ORDER  BY WhsCode
@@ -105,12 +105,12 @@ const getUomGroups = () => safe(db.query(`
 const getDecimalSettings = () => safe(db.query(`
   SELECT TOP 1
     DecSep, ThousSep, DateSep, DateFormat,
-    PriceDP AS PriceDec,
-    QuantityDP AS QtyDec,
-    RateDP AS RateDec,
-    PercentDP AS PercentDec,
-    MeasurDP AS MeasurDec,
-    SumDP AS SumDec
+    PriceDec,
+    QtyDec,
+    RateDec,
+    PercentDec,
+    MeasureDec AS MeasurDec,
+    SumDec
   FROM OADM
 `));
 
@@ -357,11 +357,11 @@ const getARCreditMemo = async (docEntry) => {
 
   // Fetch batch allocations for this credit memo
   const batchRows = await safe(db.query(`
-    SELECT BaseLineNum, BatchNum, Quantity
+    SELECT BaseLinNum AS BaseLineNum, BatchNum, Quantity
     FROM   IBT1
     WHERE  BaseEntry = @docEntry
       AND  BaseType = 14
-    ORDER  BY BaseLineNum, BatchNum
+    ORDER  BY BaseLinNum, BatchNum
   `, { docEntry }));
 
   const batchesByLine = {};

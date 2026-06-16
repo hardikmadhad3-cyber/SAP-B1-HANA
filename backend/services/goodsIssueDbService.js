@@ -153,9 +153,10 @@ const getDistributionRules = async () => {
   const dimensionJoin = dimensionColumns.has('DimCode')
     ? `LEFT JOIN ODIM T1 ON T1.DimCode = ${dimensionCodeExpression}`
     : '';
+  const dimensionFallbackExpression = `CONCAT('Dimension ', CAST(${dimensionCodeExpression} AS NVARCHAR(10)))`;
   const dimensionNameExpression = dimensionNameColumn
-    ? `COALESCE(T1.${quoteSqlIdentifier(dimensionNameColumn)}, 'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10)))`
-    : `'Dimension ' + CAST(${dimensionCodeExpression} AS NVARCHAR(10))`;
+    ? `COALESCE(T1.${quoteSqlIdentifier(dimensionNameColumn)}, ${dimensionFallbackExpression})`
+    : dimensionFallbackExpression;
 
   return safe(
     db.query(`
@@ -323,13 +324,13 @@ const getGoodsIssue = async (docEntry) => {
       db.query(
         `
           SELECT
-            BaseLineNum,
+            BaseLinNum AS BaseLineNum,
             BatchNum,
             Quantity
           FROM IBT1
           WHERE BaseEntry = @docEntry
             AND BaseType = 60
-          ORDER BY BaseLineNum, BatchNum
+          ORDER BY BaseLinNum, BatchNum
         `,
         { docEntry }
       )
