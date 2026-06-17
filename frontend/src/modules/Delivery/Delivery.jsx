@@ -53,6 +53,7 @@ import {
   DELIVERY_LAYOUT_DOCUMENT_TYPE,
   buildSalesOrderMatrixColumnsFromLayout,
 } from '../sales-order/documentLayout';
+import { hydrateWorkbookDocumentLine } from '../../utils/workbookLineHydration';
 import {
   fetchDeliveryReferenceData,
   fetchDeliveryByDocEntry,
@@ -542,10 +543,16 @@ function Delivery() {
           }))
       : [];
     const batchManaged = line?.batchManaged != null ? !!line.batchManaged : isBatchManaged(item);
+    const workbookLine = hydrateWorkbookDocumentLine({
+      line,
+      createLine,
+      rowUdfDefinitions,
+      normalizeUdfState,
+      items: refData.items,
+    });
 
     return {
-      ...createLine(rowUdfDefinitions),
-      ...line,
+      ...workbookLine,
       itemNo: itemCode,
       itemDescription: line?.itemDescription || line?.ItemDescription || line?.Dscription || item?.ItemName || '',
       hsnCode: line?.hsnCode || line?.HSNCode || item?.HSNCode || item?.SWW || item?.U_HSNCode || '',

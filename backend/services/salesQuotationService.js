@@ -2,7 +2,7 @@ const sapService = require('./sapService');
 const salesQuotationDb = require('./salesQuotationDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
-const { normalizeUdfValue, normalizeUdfValues } = require('./udfPayloadUtils');
+const { normalizeUdfValue, normalizeUdfValues, applyUdfsRobust } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
@@ -378,8 +378,14 @@ const submitSalesQuotation = async (payload) => {
 
     // Add header UDFs if any
     if (payload.header_udfs && Object.keys(payload.header_udfs).length > 0) {
-      const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OQUT');
-      Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
+      try {
+        const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OQUT');
+        applyUdfsRobust(sapPayload, payload.header_udfs, headerUdfDefinitionsByKey, false);
+        console.log('[Sales Quotation] Header UDFs applied successfully');
+      } catch (error) {
+        console.error('[Sales Quotation] Error applying header UDFs:', error.message);
+        // Continue even if UDF processing fails - don't block document creation
+      }
     }
 
     console.log('🔥 SAP Quotation Payload:', JSON.stringify(sapPayload, null, 2));
@@ -398,13 +404,28 @@ const submitSalesQuotation = async (payload) => {
       DocEntry: response.data?.DocEntry,
     };
   } catch (error) {
-    console.error('❌ SAP Quotation Error:', error.response?.data || error.message);
+    // Log comprehensive error information for debugging
+    console.error('❌ SAP Quotation Error:', {
+      message: error.message,
+      sapErrorData: error.response?.data,
+      statusCode: error.response?.status,
+      errorStack: error.stack,
+    });
+
+    // Extract meaningful error message
     let errorMessage = 'Sales quotation submission failed.';
-    if (error.response?.data?.error?.message?.value) errorMessage = error.response.data.error.message.value;
-    else if (error.response?.data?.error?.message) errorMessage = error.response.data.error.message;
-    else if (error.message) errorMessage = error.message;
+    if (error.response?.data?.error?.message?.value) {
+      errorMessage = error.response.data.error.message.value;
+    } else if (error.response?.data?.error?.message) {
+      errorMessage = error.response.data.error.message;
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+
+    // Create enriched error for client
     const sapError = new Error(errorMessage);
     sapError.response = error.response;
+    sapError.statusCode = error.response?.status || 500;
     throw sapError;
   }
 };
@@ -451,8 +472,14 @@ const updateSalesQuotation = async (docEntry, payload) => {
 
     // Add header UDFs if any
     if (payload.header_udfs && Object.keys(payload.header_udfs).length > 0) {
-      const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OQUT');
-      Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
+      try {
+        const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OQUT');
+        applyUdfsRobust(sapPayload, payload.header_udfs, headerUdfDefinitionsByKey, false);
+        console.log('[Sales Quotation Update] Header UDFs applied successfully');
+      } catch (error) {
+        console.error('[Sales Quotation Update] Error applying header UDFs:', error.message);
+        // Continue even if UDF processing fails - don't block document update
+      }
     }
 
     await sapService.request({
@@ -463,8 +490,28 @@ const updateSalesQuotation = async (docEntry, payload) => {
 
     return { message: 'Sales quotation updated successfully', doc_entry: docEntry };
   } catch (error) {
-    console.error('❌ SAP Quotation Update Error:', error.response?.data || error.message);
-    throw error;
+    console.error('❌ SAP Quotation Update Error:', {
+      message: error.message,
+      sapErrorData: error.response?.data,
+      statusCode: error.response?.status,
+      errorStack: error.stack,
+    });
+
+    // Extract meaningful error message
+    let errorMessage = 'Sales quotation update failed.';
+    if (error.response?.data?.error?.message?.value) {
+      errorMessage = error.response.data.error.message.value;
+    } else if (error.response?.data?.error?.message) {
+      errorMessage = error.response.data.error.message;
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+
+    // Create enriched error for client
+    const sapError = new Error(errorMessage);
+    sapError.response = error.response;
+    sapError.statusCode = error.response?.status || 500;
+    throw sapError;
   }
 };
 

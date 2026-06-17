@@ -67,6 +67,25 @@ const getLineFieldValue = (line = {}, key = '') => {
   return line[key] || '';
 };
 
+const getColumnValueKey = (column = {}) => column.valueKey || column.rendererKey || column.key || '';
+
+const getColumnIdentity = (column = {}) => {
+  const valueKey = getColumnValueKey(column);
+  return compactLabel(valueKey || column.label || column.key);
+};
+
+const dedupeColumns = (columns = []) => {
+  const seen = new Set();
+  return columns.filter((column) => {
+    if (!column?.key) return false;
+    const identity = getColumnIdentity(column);
+    if (!identity) return false;
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+};
+
 export default function ContentsTab({
   lines,
   onLineChange,
@@ -91,13 +110,35 @@ export default function ContentsTab({
   onRowUdfChange,
 }) {
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
-  const sourceMatrixFields = Array.isArray(matrixFields) && matrixFields.length ? matrixFields : BASE_MATRIX_COLUMNS;
+  const validMatrixFields = Array.isArray(matrixFields) ? matrixFields.filter((field) => field && field.key) : [];
+  const safeRowUdfFields = Array.isArray(rowUdfFields) ? rowUdfFields.filter((field) => field && field.key) : [];
+  const sourceMatrixFields = validMatrixFields.length ? validMatrixFields : BASE_MATRIX_COLUMNS;
   const usesMetadataDrivenMatrix = sourceMatrixFields.some((field) => field?.sapControlled || field?.importedLayout);
   const fixedColumnLabels = new Set(BASE_MATRIX_COLUMNS.map((column) => compactLabel(column.label || column.key)));
   const visibleRowUdfFields = usesMetadataDrivenMatrix
     ? []
-    : rowUdfFields.filter((field) => !fixedColumnLabels.has(compactLabel(field.label || field.key)));
-  const rowUdfByKey = new Map((rowUdfFields || []).map((field) => [field.key, field]));
+    : safeRowUdfFields.filter((field) => !fixedColumnLabels.has(compactLabel(field.label || field.key)));
+  const rowUdfByKey = new Map(safeRowUdfFields.map((field) => [field.key, field]));
+  const rowUdfByCompactKey = new Map();
+  safeRowUdfFields.forEach((field) => {
+    [field.key, field.sapField, field.aliasId, field.label]
+      .map(compactLabel)
+      .filter(Boolean)
+      .forEach((key) => {
+        if (!rowUdfByCompactKey.has(key)) rowUdfByCompactKey.set(key, field);
+      });
+  });
+  const getGenericUdfField = (column = {}) => {
+    const key = column.valueKey || column.rendererKey || column.key;
+    if (!String(key || '').startsWith('U_')) return column.field;
+    return rowUdfByCompactKey.get(compactLabel(key)) || column.field || {
+      key,
+      label: column.label || key,
+      type: column.type || (column.numeric ? 'number' : 'text'),
+      options: column.options || [],
+      readOnly: column.readOnly,
+    };
+  };
   const matrixColumns = [
     ...sourceMatrixFields.map((column, index) => ({
       ...(BASE_MATRIX_COLUMNS.find((base) => base.key === (column.rendererKey || column.valueKey || column.key)) || {}),
@@ -107,7 +148,9 @@ export default function ContentsTab({
       valueKey: column.valueKey || column.rendererKey || column.key,
       minWidth: column.minWidth || column.width || COLUMN_WIDTHS[column.rendererKey || column.valueKey || column.key] || 125,
       order: Number(column.order ?? column.columnOrder ?? index + 1),
-      field: column.isUdf ? (rowUdfByKey.get(column.valueKey || column.key) || rowUdfByKey.get(column.key) || column.field) : column.field,
+      field: column.isUdf
+        ? (rowUdfByKey.get(column.valueKey || column.key) || rowUdfByKey.get(column.key) || getGenericUdfField(column))
+        : column.field,
     })),
     ...visibleRowUdfFields.map((field) => ({
       key: field.key,
@@ -118,7 +161,7 @@ export default function ContentsTab({
     })),
   ];
 
-  const visibleColumns = matrixColumns.filter((column) => {
+  const visibleColumns = dedupeColumns(matrixColumns).filter((column) => {
     if (column.sapControlled || column.importedLayout) return column.visible !== false;
     if (column.isUdf) return formSettings.rowUdfs?.[column.key]?.visible !== false;
     return formSettings.matrixColumns?.[column.key]?.visible !== false;
@@ -187,6 +230,7 @@ export default function ContentsTab({
 
   const renderCell = (column, line, i, uomOpts, lineTotals) => {
     const rendererKey = column.rendererKey || column.valueKey || column.key;
+    const valueKey = column.valueKey || rendererKey;
 
     const textInput = (key, options = {}) => (
       <td key={column.key || key}>
@@ -319,7 +363,7 @@ export default function ContentsTab({
         </td>
       ),
       taxCode: () => (
-        <td key="taxCode">
+        <td key={column.key}>
           <TaxCodeLookup
             className="so-grid__input"
             style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.taxCode ? '1px solid #c00' : undefined }}
@@ -453,7 +497,7 @@ export default function ContentsTab({
 
     if (cellRenderers[rendererKey]) return cellRenderers[rendererKey]();
     if (column.isUdf && column.field) return renderUdfCell(column.field, line, i);
-    return textInput(rendererKey, { numeric: numericFields.has(rendererKey) });
+    return textInput(valueKey, { numeric: numericFields.has(valueKey) });
   };
 
   return (

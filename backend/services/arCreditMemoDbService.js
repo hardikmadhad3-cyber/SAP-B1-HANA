@@ -20,6 +20,43 @@ const safe = async (promise) => {
   }
 };
 
+const tableFieldMetadataPromises = new Map();
+
+const getTableFieldMetadata = async (tableName) => {
+  const normalizedTableName = String(tableName || '').trim();
+  if (!normalizedTableName) return {};
+
+  const databaseName = await db.resolveDatabaseName().catch(() => '');
+  const cacheKey = `${databaseName || 'default'}:${normalizedTableName}`;
+
+  if (!tableFieldMetadataPromises.has(cacheKey)) {
+    tableFieldMetadataPromises.set(cacheKey, safe(db.query(`
+      SELECT COLUMN_NAME, DATA_TYPE
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_NAME = @tableName
+    `, { tableName: normalizedTableName })).then((rows) => rows.reduce((acc, row) => {
+      acc[row.COLUMN_NAME] = row.DATA_TYPE;
+      return acc;
+    }, {})));
+  }
+
+  return tableFieldMetadataPromises.get(cacheKey);
+};
+
+const hasTableField = (metadata, columnName) => {
+  const normalizedColumnName = String(columnName || '').trim().toLowerCase();
+  if (!metadata || !normalizedColumnName) return false;
+  return Object.keys(metadata).some((fieldName) => fieldName.toLowerCase() === normalizedColumnName);
+};
+
+const sqlAlias = (alias) => `[${String(alias || '').replace(/]/g, ']]')}]`;
+
+const optionalColumn = (metadata, tableAlias, columnName, alias, fallback = 'NULL') => (
+  hasTableField(metadata, columnName)
+    ? `${tableAlias}.[${columnName}] AS ${sqlAlias(alias)}`
+    : `${fallback} AS ${sqlAlias(alias)}`
+);
+
 // ── REFERENCE DATA QUERIES ────────────────────────────────────────────────────
 
 const getCustomers = () => safe(db.query(`
@@ -305,6 +342,17 @@ const getARCreditMemo = async (docEntry) => {
   }
 
   const header = headerRows[0];
+  const lineFieldMetadata = await getTableFieldMetadata('RIN1');
+  const lineTaxExpression = hasTableField(lineFieldMetadata, 'TaxCode')
+    ? 'T0.TaxCode'
+    : hasTableField(lineFieldMetadata, 'VatGroup')
+      ? 'T0.VatGroup'
+      : "''";
+  const lineUomExpression = hasTableField(lineFieldMetadata, 'unitMsr')
+    ? 'T0.unitMsr'
+    : hasTableField(lineFieldMetadata, 'UomCode')
+      ? 'T0.UomCode'
+      : "''";
   const [headerUdfs, lineUdfsByLineNum] = await Promise.all([
     getHeaderUdfValues({ tableId: 'ORIN', keyValue: docEntry }),
     getLineUdfValues({ tableId: 'RIN1', keyValue: docEntry }),
@@ -318,10 +366,20 @@ const getARCreditMemo = async (docEntry) => {
       T0.Quantity,
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
-      T0.TaxCode,
+      ${lineTaxExpression} AS TaxCode,
       T0.LineTotal,
+      ${optionalColumn(lineFieldMetadata, 'T0', 'WTLiable', 'WTLiable', "'N'")},
       T0.WhsCode AS Warehouse,
-      T0.unitMsr AS UoMCode,
+      ${lineUomExpression} AS UoMCode,
+      ${optionalColumn(lineFieldMetadata, 'T0', 'AcctCode', 'GLAccount', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode', 'DistributionRule', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'CogsOcrCod', 'COGSDistributionRule', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'CountryOrg', 'CountryOfOrigin', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'LocCode', 'Loc', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'EnSetCost', 'EnableSettingCost', "'N'")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'RetCost', 'ReturnCost', '0')},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'AgrNo', 'BlanketAgreementNo', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'StockPrice', 'ItemCost', '0')},
       T0.BaseEntry,
       T0.BaseType,
       T0.BaseLine
@@ -423,8 +481,19 @@ const getARCreditMemo = async (docEntry) => {
           stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
           taxCode: l.TaxCode || '',
           total: l.LineTotal != null ? String(l.LineTotal) : '',
+          wTaxLiable: String(l.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
           whse: l.Warehouse || '',
+          glAccount: l.GLAccount || '',
+          distRule: l.DistributionRule || '',
+          cogsDistRule: l.COGSDistributionRule || l.DistributionRule || '',
+          countryOfOrigin: l.CountryOfOrigin || '',
+          loc: l.Loc || '',
           uomCode: l.UoMCode || '',
+          uomName: l.UoMCode || '',
+          enableSettingCost: String(l.EnableSettingCost || '').toUpperCase() === 'Y' ? 'Y' : 'N',
+          returnCost: l.ReturnCost != null ? String(l.ReturnCost) : '',
+          blanketAgreementNo: l.BlanketAgreementNo != null ? String(l.BlanketAgreementNo) : '',
+          itemCost: l.ItemCost != null ? String(l.ItemCost) : '',
           batchManaged: itemInfo.batchManaged,
           batches: batchesByLine[l.LineNum] || [],
           udf: lineUdfsByLineNum[l.LineNum] || {},

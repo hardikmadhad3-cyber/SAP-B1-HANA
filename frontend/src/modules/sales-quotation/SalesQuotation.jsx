@@ -47,6 +47,7 @@ import {
   SALES_QUOTATION_LAYOUT_DOCUMENT_TYPE,
   buildSalesOrderMatrixColumnsFromLayout,
 } from '../sales-order/documentLayout';
+import { hydrateWorkbookDocumentLine } from '../../utils/workbookLineHydration';
 import {
   fetchSalesQuotationByDocEntry,
   fetchSalesQuotationCustomerDetails,
@@ -680,23 +681,13 @@ function SalesQuotation() {
         setHeader(newHeader);
         setLines(
           Array.isArray(so.lines) && so.lines.length
-            ? so.lines.map((l, index) => {
-                // If HSN is empty, try to get it from item master
-                let hsnCode = l.hsnCode || '';
-                if (!hsnCode && l.itemNo) {
-                  const item = refData.items.find(it => String(it.ItemCode) === String(l.itemNo));
-                  if (item) {
-                    hsnCode = item.SWW || item.HSNCode || '';
-                  }
-                }
-                
-                return { 
-                  ...createLine(rowUdfDefinitions), 
-                  ...l, 
-                  hsnCode: hsnCode,
-                  udf: normalizeUdfState(rowUdfDefinitions, l.udf || {})
-                };
-              })
+            ? so.lines.map((line) => hydrateWorkbookDocumentLine({
+                line,
+                createLine,
+                rowUdfDefinitions,
+                normalizeUdfState,
+                items: refData.items,
+              }))
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));

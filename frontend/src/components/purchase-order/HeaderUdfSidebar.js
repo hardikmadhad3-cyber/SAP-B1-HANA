@@ -1546,7 +1546,7 @@ function HeaderUdfSidebar({
           </div>
 
           <div className="po-udf-sidebar-body">
-            {orderedFields.map((field) => {
+            {orderedFields.filter((field) => field && field.key).map((field) => {
               const termsOfSupplyField = isTermsOfSupplyField(field);
               const fieldValue = values[field.key];
               const fieldDisabled = disabled ||
@@ -1618,7 +1618,7 @@ function HeaderUdfSidebar({
               return (
                 <div
                   key={field.key}
-                  className={`mb-3 po-udf-sidebar-field po-udf-sidebar-field--${field.type || 'text'}`}
+                  className={`mb-3 po-udf-sidebar-field po-udf-sidebar-field--${field?.type || 'text'}`}
                 >
                   <label className="form-label mb-1">
                     {field.label}{field.required ? ' *' : ''}

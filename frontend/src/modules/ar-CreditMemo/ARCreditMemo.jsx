@@ -43,6 +43,7 @@ import {
   AR_CREDIT_MEMO_LAYOUT_DOCUMENT_TYPE,
   buildSalesOrderMatrixColumnsFromLayout,
 } from '../sales-order/documentLayout';
+import { hydrateWorkbookDocumentLine } from '../../utils/workbookLineHydration';
 import {
   fetchARCreditMemoReferenceData,
   fetchARCreditMemoCustomerDetails,
@@ -595,7 +596,14 @@ function ARCreditMemo() {
         
         setLines(
           Array.isArray(so.lines) && so.lines.length
-            ? so.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, udf: normalizeUdfState(rowUdfDefinitions, l.udf || {}) }))
+            ? so.lines.map((line) => hydrateWorkbookDocumentLine({
+                line,
+                createLine,
+                rowUdfDefinitions,
+                normalizeUdfState,
+                items: refData.items,
+                fallbackWarehouse: so.header?.warehouse || DEFAULT_WAREHOUSE_CODE,
+              }))
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));

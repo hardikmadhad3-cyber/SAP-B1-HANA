@@ -2,38 +2,12 @@ import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
 import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
+import { AR_CREDIT_MEMO_WORKBOOK_COLUMNS } from '../../../config/workbookMatrixColumns';
 
-const MATRIX_COLS = [
-  { key: 'itemNo', label: 'Item No.', minWidth: 160 },
-  { key: 'itemDescription', label: 'Item Description', minWidth: 220 },
-  { key: 'quantity', label: 'Qty', minWidth: 80 },
-  { key: 'noOfPackages', label: 'No. of Packages', minWidth: 120 },
-  { key: 'unitPrice', label: 'Unit Price', minWidth: 95 },
-  { key: 'stdDiscount', label: 'Disc%', minWidth: 85 },
-  { key: 'taxCode', label: 'Tax Code', minWidth: 115 },
-  { key: 'wTaxLiable', label: 'WTax Liable', minWidth: 100, type: 'yesNo' },
-  { key: 'totalLC', label: 'Total (LC)', minWidth: 110, readOnly: true },
-  { key: 'totalBeforeTax', label: 'Total Before Tax', minWidth: 135, readOnly: true },
-  { key: 'total', label: 'Total', minWidth: 105, readOnly: true },
-  { key: 'whse', label: 'Whse', minWidth: 90 },
-  { key: 'glAccount', label: 'G/L Account', minWidth: 135 },
-  { key: 'distRule', label: 'Distr. Rule', minWidth: 105 },
-  { key: 'taxLiable', label: 'Tax Liable', minWidth: 95, type: 'checkbox' },
-  { key: 'weight', label: 'Weight', minWidth: 95 },
-  { key: 'taxAmount', label: 'Tax Amount (LC)', minWidth: 125, readOnly: true },
-  { key: 'uomCode', label: 'UoM Code', minWidth: 105 },
-  { key: 'uomName', label: 'UoM Name', minWidth: 120, readOnly: true },
-  { key: 'cogsDistRule', label: 'COGS Distr. Rule', minWidth: 135 },
-  { key: 'countryOfOrigin', label: 'Country/Region of Origin', minWidth: 185 },
-  { key: 'loc', label: 'Loc.', minWidth: 115, readOnly: true },
-  { key: 'branch', label: 'Branch', minWidth: 115, readOnly: true },
-  { key: 'enableSettingCost', label: 'Enable Setting Cost', minWidth: 140, type: 'checkbox' },
-  { key: 'returnCost', label: 'Return Cost (LC)', minWidth: 125 },
-  { key: 'blanketAgreementNo', label: 'Blanket Agreement No.', minWidth: 170 },
-  { key: 'hsnCode', label: 'HSN', minWidth: 115 },
-  { key: 'sacCode', label: 'SAC', minWidth: 95 },
-];
-const KNOWN_MATRIX_RENDERER_KEYS = new Set(MATRIX_COLS.map((column) => column.key));
+const MATRIX_COLS = AR_CREDIT_MEMO_WORKBOOK_COLUMNS;
+const KNOWN_MATRIX_RENDERER_KEYS = new Set(
+  MATRIX_COLS.filter((column) => !column.isUdf).map((column) => column.key)
+);
 
 const INDEX_COL_WIDTH = 42;
 const ACTION_COL_WIDTH = 48;
@@ -97,6 +71,26 @@ export default function ContentsTab({
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
   const standardColumnByKey = new Map(MATRIX_COLS.map((column) => [column.key, column]));
   const standardColumnOrderByKey = new Map(MATRIX_COLS.map((column, index) => [column.key, index + 1]));
+  const rowUdfByNormalizedKey = new Map();
+  (rowUdfFields || []).forEach((field) => {
+    [field.key, field.sapField, field.aliasId, field.label]
+      .map(normalizeUdfKey)
+      .filter(Boolean)
+      .forEach((key) => {
+        if (!rowUdfByNormalizedKey.has(key)) rowUdfByNormalizedKey.set(key, field);
+      });
+  });
+  const getColumnUdfField = (column) => {
+    if (!column?.isUdf) return column?.field;
+    const key = column.valueKey || column.rendererKey || column.key;
+    return rowUdfByNormalizedKey.get(normalizeUdfKey(key)) || column.field || {
+      key,
+      label: column.label || key,
+      type: column.type || (column.numeric ? 'number' : 'text'),
+      options: column.options || [],
+      readOnly: column.readOnly,
+    };
+  };
   const hasLiveMatrixFields = Array.isArray(matrixFields) && matrixFields.length > 0;
   const usesMetadataDrivenMatrix = hasLiveMatrixFields && matrixFields.some((field) => field?.sapControlled || field?.importedLayout);
   const standardColumns = hasLiveMatrixFields
@@ -107,12 +101,14 @@ export default function ContentsTab({
             ...(standardColumnByKey.get(field.key) || {}),
             ...field,
             order: Number.isFinite(Number(field.order)) ? Number(field.order) : fallbackOrder,
+            field: getColumnUdfField(field),
           };
         })
         .filter((column) => column.key)
     : MATRIX_COLS.map((column, index) => ({
         ...column,
         order: index + 1,
+        field: getColumnUdfField(column),
       }));
 
   const udfColumns = usesMetadataDrivenMatrix ? [] : rowUdfFields
@@ -273,7 +269,7 @@ export default function ContentsTab({
     const disabled = isStandardDisabled(column);
     const lineErrors = valErrors.lines[i] || {};
 
-    switch (column.key) {
+    switch (column.rendererKey || column.valueKey || column.key) {
       case 'itemNo':
         return (
           <td key="itemNo">
@@ -384,7 +380,7 @@ export default function ContentsTab({
         );
       case 'taxCode':
         return (
-          <td key="taxCode">
+          <td key={column.key}>
             <TaxCodeLookup
               className="del-grid__input"
               style={{ textAlign: 'left', height: '20px', padding: '0 4px' }}
@@ -500,12 +496,12 @@ export default function ContentsTab({
           <td key={column.key}>
             <input
               className={`del-grid__input${lineErrors[column.key] ? ' del-field__input--error' : ''}`}
-              name={column.key}
-              value={line[column.key] || ''}
+              name={column.valueKey || column.rendererKey || column.key}
+              value={line[column.valueKey || column.rendererKey || column.key] || ''}
               onChange={(event) => onLineChange(i, event)}
               disabled={disabled}
               readOnly={column.readOnly}
-              title={String(line[column.key] || '')}
+              title={String(line[column.valueKey || column.rendererKey || column.key] || '')}
             />
           </td>
         );
