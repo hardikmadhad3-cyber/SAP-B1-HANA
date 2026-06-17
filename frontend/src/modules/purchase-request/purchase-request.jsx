@@ -24,6 +24,8 @@ import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
+import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
 import {
   fetchPurchaseRequestByDocEntry,
   fetchPurchaseRequestReferenceData,
@@ -193,14 +195,15 @@ function PurchaseRequest() {
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
+  const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(BASE_MATRIX_COLUMNS);
   const [lines, setLines] = useState([createLine()]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => createUdfState(HEADER_UDF_DEFINITIONS));
-  const [formSettings, setFormSettings] = useCompanyScopedFormSettings(
+  const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
-    [HEADER_UDF_DEFINITIONS, ROW_UDF_DEFINITIONS, BASE_MATRIX_COLUMNS],
+    [HEADER_UDF_DEFINITIONS, ROW_UDF_DEFINITIONS, matrixColumnDefinitions],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
@@ -306,13 +309,41 @@ function PurchaseRequest() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const [refDataRes, seriesRes, hsnRes] = await Promise.all([
+        const [refDataRes, seriesRes, hsnRes, layoutRes] = await Promise.all([
           fetchPurchaseRequestReferenceData(PURCHASE_ORDER_COMPANY_ID),
           fetchPurchaseRequestDocumentSeries(),
           fetchHSNCodes(),
+          getDocumentLayout({ documentType: 'PURCHASE_REQUEST' }).catch((error) => ({
+            data: {
+              success: false,
+              columns: [],
+              warning: getErrMsg(error, 'Failed to load SAP layout.'),
+            },
+          })),
         ]);
 
         if (!ignore) {
+          const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+            ? refDataRes.data.line_field_metadata.matrix_columns
+            : BASE_MATRIX_COLUMNS;
+          const nextMatrixColumns = buildMatrixColumnsFromSapLayout({
+            baseColumns: liveMatrixColumns,
+            layoutColumns: layoutRes?.data?.columns || [],
+            fallbackColumns: BASE_MATRIX_COLUMNS,
+          });
+          const hasSapMatrixPreferences = Boolean(
+            Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) ||
+            ((layoutRes?.data?.columns || []).length && layoutRes?.data?.source !== 'fallback')
+          );
+          setMatrixColumnDefinitions(nextMatrixColumns);
+          const nextDefaults = readSavedFormSettings(
+            HEADER_UDF_DEFINITIONS,
+            ROW_UDF_DEFINITIONS,
+            nextMatrixColumns,
+            formSettingsStorageKey,
+          );
+          setFormSettings((prev) => mergeLiveMatrixSettings(nextDefaults, prev, hasSapMatrixPreferences));
+
           setRefData({
             company: refDataRes.data.company || '',
             company_state: refDataRes.data.company_state || '',
@@ -331,7 +362,15 @@ function PurchaseRequest() {
             states: refDataRes.data.states || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
-            warnings: refDataRes.data.warnings || [],
+            line_field_metadata: {
+              ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+              matrix_columns: nextMatrixColumns,
+              imported_layout: layoutRes?.data || null,
+            },
+            warnings: [
+              ...(refDataRes.data.warnings || []),
+              ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+            ],
             series: seriesRes.data.series || [],
           });
 
@@ -351,7 +390,7 @@ function PurchaseRequest() {
     };
     load();
     return () => { ignore = true; };
-  }, []);
+  }, [formSettingsStorageKey]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -1601,6 +1640,8 @@ function PurchaseRequest() {
                 getBranchName={getBranchName}
                 branches={refData.branches || []}
                 hsnCodes={refData.hsn_codes || []}
+                formSettings={formSettings}
+                matrixFields={matrixColumnDefinitions}
                 valErrors={valErrors}
               />
             )}
@@ -1754,7 +1795,7 @@ function PurchaseRequest() {
             className="po-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
-            matrixFields={BASE_MATRIX_COLUMNS}
+            matrixFields={matrixColumnDefinitions}
             headerUdfFields={HEADER_UDF_DEFINITIONS}
             rowUdfFields={ROW_UDF_DEFINITIONS}
             formSettings={formSettings}

@@ -357,6 +357,8 @@ export default function ContentsTab({
     () => new Set(liveMatrixFields.map((field) => field.key)),
     [liveMatrixFields]
   );
+  const getColumnValueKey = (column = {}) => column.valueKey || column.rendererKey || column.key;
+  const getColumnRendererKey = (column = {}) => column.rendererKey || column.valueKey || column.key;
   const isSapControlledColumn = (column = {}) => Boolean(column.sapControlled);
   const getColumnVisibility = (column = {}) => {
     if (isSapControlledColumn(column)) return column.visible !== false;
@@ -373,7 +375,7 @@ export default function ContentsTab({
 
   const matrixColumns = [
     ...liveMatrixFields.map((field, index) => {
-      const rendererColumn = rendererColumnMap.get(field.key) || {};
+      const rendererColumn = rendererColumnMap.get(field.rendererKey || field.valueKey || field.key) || {};
       return {
         ...rendererColumn,
         ...field,
@@ -440,13 +442,15 @@ export default function ContentsTab({
 
   const handleDynamicUdfLookupSelect = (option) => {
     if (!dynamicUdfLookup.field?.key || dynamicUdfLookup.rowIndex < 0) return;
-    onRowUdfChange && onRowUdfChange(dynamicUdfLookup.rowIndex, dynamicUdfLookup.field.key, option?.value || '');
+    const valueKey = getColumnValueKey(dynamicUdfLookup.field);
+    onRowUdfChange && onRowUdfChange(dynamicUdfLookup.rowIndex, valueKey, option?.value || '');
   };
 
   const isUdfMatrixColumn = (column = {}) => (
     Boolean(column.isUdf)
     || column.source === 'RDR1_UDF'
     || String(column.key || '').startsWith('U_')
+    || String(column.valueKey || '').startsWith('U_')
   );
 
   const getMatrixColumnSetting = (column = {}) => (
@@ -460,27 +464,30 @@ export default function ContentsTab({
   );
 
   const handleGenericMatrixValueChange = (rowIndex, column, nextValue) => {
+    const valueKey = getColumnValueKey(column);
     if (isUdfMatrixColumn(column)) {
-      onRowUdfChange && onRowUdfChange(rowIndex, column.key, nextValue);
+      onRowUdfChange && onRowUdfChange(rowIndex, valueKey, nextValue);
       return;
     }
 
     if (typeof onLineChange !== 'function') return;
-    onLineChange(rowIndex, { target: { name: column.key, value: nextValue } });
+    onLineChange(rowIndex, { target: { name: valueKey, value: nextValue } });
   };
 
   const renderGenericMatrixCell = (column, line, i) => {
     const setting = getMatrixColumnSetting(column);
     const disabled = column.readOnly || setting.active === false;
+    const valueKey = getColumnValueKey(column);
     const value = isUdfMatrixColumn(column)
-      ? (line.udf?.[column.key] || '')
-      : (line[column.key] ?? '');
+      ? (line.udf?.[valueKey] || '')
+      : (line[valueKey] ?? '');
 
     const inputType = column.type === 'date'
       ? 'date'
       : (column.type === 'number' || column.numeric ? 'number' : 'text');
 
-    if (column.type === 'select' || Array.isArray(column.options)) {
+    const hasSelectOptions = Array.isArray(column.options) && column.options.length > 0;
+    if (hasSelectOptions) {
       return (
         <td key={column.key}>
           <select
@@ -573,6 +580,8 @@ export default function ContentsTab({
   // Create a map of column renderers
   const renderCell = (column, line, i, uomOpts, lineTotals) => {
     const columnKey = column.key;
+    const rendererKey = getColumnRendererKey(column);
+    const valueKey = getColumnValueKey(column);
     if (columnKey === SALES_ORDER_LINE_NUMBER_KEY) {
       return (
         <td key={columnKey} className="so-grid__cell--muted" style={{ textAlign: 'center', fontSize: 11 }}>
@@ -581,8 +590,11 @@ export default function ContentsTab({
       );
     }
 
+    const matchedUdfColumn = isUdfMatrixColumn(column)
+      ? visibleRowUdfFields.find((field) => field.key === valueKey)
+      : null;
     const udfColumn = isUdfMatrixColumn(column)
-      ? (visibleRowUdfFields.find((field) => field.key === columnKey) || column)
+      ? (matchedUdfColumn ? { ...matchedUdfColumn, ...column, valueKey } : column)
       : null;
     if (udfColumn) return renderGenericMatrixCell(udfColumn, line, i);
 
@@ -1231,7 +1243,11 @@ export default function ContentsTab({
       ),
     };
 
-    return cellRenderers[columnKey] ? cellRenderers[columnKey]() : undefined;
+    if (!cellRenderers[rendererKey]) return undefined;
+    const rendered = cellRenderers[rendererKey]();
+    return React.isValidElement(rendered)
+      ? React.cloneElement(rendered, { key: columnKey })
+      : rendered;
   };
 
   return (

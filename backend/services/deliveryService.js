@@ -732,6 +732,13 @@ const getBatchesByItem = async (itemCode, whsCode) => {
 
 const submitDelivery = async (payload) => {
   try {
+    const validationResult = await validateDeliveryDocument({ ...payload, _isUpdate: true });
+    if (!validationResult.isValid) {
+      const error = new Error(validationResult.errors.join('\n'));
+      error.statusCode = 400;
+      throw error;
+    }
+
     const { company_id, lines, header_udfs } = payload;
     const header = normalizeHeaderBranch(payload.header);
     const customerCode =
@@ -854,6 +861,13 @@ console.log("SAP Payload:", sapPayload);
 
 const updateDelivery = async (docEntry, payload) => {
   try {
+    const validationResult = await validateDeliveryDocument(payload);
+    if (!validationResult.isValid) {
+      const error = new Error(validationResult.errors.join('\n'));
+      error.statusCode = 400;
+      throw error;
+    }
+
     const { lines, header_udfs } = payload;
     const header = normalizeHeaderBranch(payload.header);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
@@ -977,6 +991,8 @@ const getUomConversionFactor = async (itemCode, uomCode) => {
 const validateDeliveryDocument = async (payload) => {
   const header = normalizeHeaderBranch(payload.header);
   const { lines } = payload;
+  const isUpdate = Boolean(payload._isUpdate);
+  const documentLines = (lines || []).filter((line) => hasValue(line.itemNo));
   const errors = [];
   
   // 1. Mandatory fields validation
@@ -989,7 +1005,7 @@ const validateDeliveryDocument = async (payload) => {
   if (!header.documentDate) {
     errors.push('Document Date is required');
   }
-  if (!lines || lines.length === 0) {
+  if (!documentLines.length) {
     errors.push('At least one document line is required');
   }
   
@@ -1006,13 +1022,15 @@ const validateDeliveryDocument = async (payload) => {
   }
   
   // 3. Series validation
-  const seriesResult = await deliveryDb.validateSeries(header.series, header.branch);
-  if (!seriesResult.isValid) {
-    errors.push(...seriesResult.errors);
+  if (!isUpdate || hasValue(header.series)) {
+    const seriesResult = await deliveryDb.validateSeries(header.series, header.branch);
+    if (!seriesResult.isValid) {
+      errors.push(...seriesResult.errors);
+    }
   }
   
   // 4. Warehouse-Branch validation for all lines
-  for (const line of lines) {
+  for (const line of documentLines) {
     if (line.whse && header.branch) {
       const whResult = await deliveryDb.validateWarehouseBranch(line.whse, header.branch);
       if (!whResult.isValid) {
@@ -1020,21 +1038,32 @@ const validateDeliveryDocument = async (payload) => {
       }
     }
   }
+
+  // 5. SAP B1 live master-data validation for item, UoM, HSN, warehouse, price and tax.
+  const masterDataResult = await deliveryDb.validateLineMasterData(documentLines);
+  if (!masterDataResult.isValid) {
+    errors.push(...masterDataResult.errors);
+  }
+
+  const udfResult = await deliveryDb.validateLineUdfValues(documentLines);
+  if (!udfResult.isValid) {
+    errors.push(...udfResult.errors);
+  }
   
-  // 5. Tax code validation
-  const taxResult = deliveryDb.validateTaxCodes(lines);
+  // 6. Tax code validation
+  const taxResult = deliveryDb.validateTaxCodes(documentLines);
   if (!taxResult.isValid) {
     errors.push(...taxResult.errors);
   }
   
-  // 6. Stock validation
-  const stockResult = await deliveryDb.validateStockAvailability(lines);
+  // 7. Stock validation
+  const stockResult = await deliveryDb.validateStockAvailability(documentLines);
   if (!stockResult.isValid) {
     errors.push(...stockResult.errors);
   }
   
-  // 7. Batch validation
-  const batchResult = await deliveryDb.validateBatchSelection(lines);
+  // 8. Batch validation
+  const batchResult = await deliveryDb.validateBatchSelection(documentLines);
   if (!batchResult.isValid) {
     errors.push(...batchResult.errors);
   }

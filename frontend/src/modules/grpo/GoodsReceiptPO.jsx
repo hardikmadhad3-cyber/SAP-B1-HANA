@@ -62,6 +62,8 @@ import {
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { consumeCopyToState } from '../../utils/copyToState';
 import useValidationHighlights from '../../utils/useValidationHighlights';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
+import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
@@ -253,6 +255,7 @@ function GoodsReceiptPO() {
   const [header, setHeader] = useState(INIT_HEADER);
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(BASE_MATRIX_COLUMNS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
@@ -260,7 +263,7 @@ function GoodsReceiptPO() {
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
-    [headerUdfDefinitions, rowUdfDefinitions],
+    [headerUdfDefinitions, rowUdfDefinitions, matrixColumnDefinitions],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
@@ -343,7 +346,7 @@ function GoodsReceiptPO() {
 
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, []);
+  }, [formSettingsStorageKey]);
 
   // decimal config
   const dec = { ...DEC, ...(refData.decimal_settings || {}) };
@@ -406,34 +409,43 @@ function GoodsReceiptPO() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const [refDataRes, seriesRes] = await Promise.all([
+        const [refDataRes, seriesRes, layoutRes] = await Promise.all([
           fetchGRPOReferenceData(PURCHASE_ORDER_COMPANY_ID),
           fetchDocumentSeries(),
+          getDocumentLayout({ documentType: 'GRPO' }).catch((error) => ({
+            data: {
+              success: false,
+              columns: [],
+              warning: getErrMsg(error, 'Failed to load SAP layout.'),
+            },
+          })),
         ]);
 
         if (!ignore) {
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
           const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+            ? refDataRes.data.line_field_metadata.matrix_columns
+            : BASE_MATRIX_COLUMNS;
+          const nextMatrixColumns = buildMatrixColumnsFromSapLayout({
+            baseColumns: liveMatrixColumns,
+            layoutColumns: layoutRes?.data?.columns || [],
+            fallbackColumns: BASE_MATRIX_COLUMNS,
+          });
+          const hasSapMatrixPreferences = Boolean(
+            Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) ||
+            ((layoutRes?.data?.columns || []).length && layoutRes?.data?.source !== 'fallback')
+          );
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
+          setMatrixColumnDefinitions(nextMatrixColumns);
           setHeaderUdfs((prev) => createUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
             ...line,
             udf: createUdfState(nextRowUdfs, line.udf || {}),
           })));
-          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, formSettingsStorageKey);
-          setFormSettings((prev) => ({
-            ...nextDefaults,
-            ...prev,
-            headerUdfs: {
-              ...nextDefaults.headerUdfs,
-              ...(prev.headerUdfs || {}),
-            },
-            rowUdfs: {
-              ...nextDefaults.rowUdfs,
-              ...(prev.rowUdfs || {}),
-            },
-          }));
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
+          setFormSettings((prev) => mergeLiveMatrixSettings(nextDefaults, prev, hasSapMatrixPreferences));
 
           setRefData({
             company: refDataRes.data.company || '',
@@ -456,7 +468,15 @@ function GoodsReceiptPO() {
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
-            warnings: refDataRes.data.warnings || [],
+            line_field_metadata: {
+              ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+              matrix_columns: nextMatrixColumns,
+              imported_layout: layoutRes?.data || null,
+            },
+            warnings: [
+              ...(refDataRes.data.warnings || []),
+              ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+            ],
             series: seriesRes.data.series || [],
           });
 
@@ -476,7 +496,7 @@ function GoodsReceiptPO() {
     };
     load();
     return () => { ignore = true; };
-  }, []);
+  }, [formSettingsStorageKey]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -1592,7 +1612,7 @@ function GoodsReceiptPO() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
-  const visibleColumns = BASE_MATRIX_COLUMNS.filter(c => formSettings.matrixColumns?.[c.key]?.visible !== false);
+  const visibleColumns = matrixColumnDefinitions.filter(c => formSettings.matrixColumns?.[c.key]?.visible !== false);
   const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
 
   // Continue in next message with render...
@@ -2065,7 +2085,7 @@ function GoodsReceiptPO() {
             className="po-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
-            matrixFields={BASE_MATRIX_COLUMNS}
+            matrixFields={matrixColumnDefinitions}
             headerUdfFields={headerUdfDefinitions}
             rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}

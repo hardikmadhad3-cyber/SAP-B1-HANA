@@ -721,6 +721,7 @@ const SALES_ORDER_MATRIX_COLUMN_DEFS = [
   { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', minWidth: 130, sapField: 'U_Buyer_Bill_Disc', sapColumnIds: ['U_Buyer_Bill_Disc', 'Buyer Bill Discount'] },
   { key: 'sellerBillDiscount', label: 'Seller Bill Discount', minWidth: 130, sapField: 'U_Seller_Bill_Disc', sapColumnIds: ['U_Seller_Bill_Disc', 'Seller Bill Discount'] },
   { key: 'deliveredQty', label: 'Delivered Qty', minWidth: 110, calculated: true, readOnly: true, sapColumnIds: ['Delivered Qty', 'DelivrdQty'] },
+  { key: 'forRate', label: 'FOR Rate', minWidth: 110, numeric: true, sapField: 'Rate', alternativeFields: ['U_ForRate', 'U_FORRATE', 'U_FOR_RATE', 'U_For_Rate', 'U_FORRate'], sapColumnIds: ['U_ForRate', 'U_FORRATE', 'U_FOR_RATE', 'U_For_Rate', 'Rate', 'FOR Rate', 'FORRATE'] },
   { key: 'stdDiscount', label: 'Discount %', minWidth: 90, numeric: true, sapField: 'DiscPrcnt', sapColumnIds: ['15', 'DiscPrcnt', 'DiscountPercent', 'Disc%', 'Discount %'] },
   { key: 'stcode', label: 'STCODE', minWidth: 110, sapField: 'U_SELLTCODE', sapColumnIds: ['U_SELLTCODE', 'STCODE'] },
   { key: 'taxCode', label: 'Tax Code', minWidth: 110, sapField: 'TaxCode', sapColumnIds: ['160', '234000377', 'TaxCode', 'Tax Code'] },

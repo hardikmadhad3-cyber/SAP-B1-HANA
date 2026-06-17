@@ -47,6 +47,12 @@ import {
   sumBatchQty,
 } from '../../utils/batchQuantity';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
+import { useAuth } from '../../auth/AuthContext';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
+import {
+  DELIVERY_LAYOUT_DOCUMENT_TYPE,
+  buildSalesOrderMatrixColumnsFromLayout,
+} from '../sales-order/documentLayout';
 import {
   fetchDeliveryReferenceData,
   fetchDeliveryByDocEntry,
@@ -73,7 +79,6 @@ import {
 } from '../../api/deliveryApi';
 import { fetchSalesOrderByDocEntry } from '../../api/salesOrderApi';
 import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
-import { SALES_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { deliveryCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, BASE_TYPE } from '../../api/copyFromApi';
 import {
   FORM_SETTINGS_STORAGE_KEY,
@@ -88,10 +93,12 @@ import {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
-  const d = e?.response?.data?.detail;
+  const body = e?.response?.data || {};
+  const d = body.detail || body.details;
   if (typeof d === 'string' && d.trim()) return d;
   if (d?.error?.message) return d.error.message;
   if (d?.message) return d.message;
+  if (body.message) return d?.hint ? `${body.message} ${d.hint}` : body.message;
   return e?.message || fb;
 };
 const today = () => new Date().toISOString().split('T')[0];
@@ -307,6 +314,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   freightPurchase: '', freightSales: '', freightProvider: '', freightProviderName: '',
   brokerageNumber: '',
   uomCode: '', stdDiscount: '', stcode: '', taxCode: '', total: '', taxAmount: '', whse: '',
+  uomName: '', price: '', priceAfterDiscount: '', itemCost: '', binLocationAllocation: '',
   distRule: '', freeText: '', countryOfOrigin: '', sacCode: '',
   openQty: '', deliveredQty: '', documentCreated: '',
   loc: '', branch: '', lineNum: undefined, baseEntry: null, baseType: null, baseLine: null,
@@ -347,6 +355,9 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 function Delivery() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { company } = useAuth();
+  const activeCompanyId = company?.companyId || '';
+  const activeCompanyDb = company?.dbName || '';
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const formRef = useRef(null);
   const isHydratingDocumentRef = useRef(false);
@@ -368,13 +379,15 @@ function Delivery() {
   const [header, setHeader] = useState(() => createInitialHeader(generalSettingsRef.current));
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(BASE_MATRIX_COLUMNS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
-  const [formSettings, setFormSettings] = useCompanyScopedFormSettings(
+  const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
+    [headerUdfDefinitions, rowUdfDefinitions, matrixColumnDefinitions],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -385,6 +398,7 @@ function Delivery() {
     payment_terms: [], shipping_types: [], branches: [], uom_groups: [],
     distribution_rules: [], sales_employees: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
     decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
+    line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
@@ -538,6 +552,11 @@ function Delivery() {
       quantity: String(line?.quantity ?? line?.Quantity ?? ''),
       openQty: String(line?.openQty ?? line?.OpenQuantity ?? line?.OpenQty ?? ''),
       unitPrice: String(line?.unitPrice ?? line?.UnitPrice ?? line?.Price ?? ''),
+      uomName: line?.uomName || line?.UoMName || line?.unitMsr || rawUomCode,
+      price: String(line?.price ?? line?.Price ?? line?.unitPrice ?? line?.UnitPrice ?? ''),
+      priceAfterDiscount: String(line?.priceAfterDiscount ?? line?.PriceAfterDiscount ?? ''),
+      itemCost: String(line?.itemCost ?? line?.ItemCost ?? item?.ItemCost ?? item?.AvgPrice ?? ''),
+      binLocationAllocation: line?.binLocationAllocation || line?.BinLocationAllocation || '',
       sellerPrice: String(line?.sellerPrice ?? line?.SellerPrice ?? ''),
       buyerPrice: String(line?.buyerPrice ?? line?.BuyerPrice ?? ''),
       sellerDelivery: line?.sellerDelivery || line?.SellerDelivery || '',
@@ -599,30 +618,64 @@ function Delivery() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const refDataRes = await fetchDeliveryReferenceData(SALES_ORDER_COMPANY_ID);
+        if (!activeCompanyId) {
+          setHeaderUdfDefinitions([]);
+          setRowUdfDefinitions([]);
+          setMatrixColumnDefinitions(BASE_MATRIX_COLUMNS);
+          setHeaderUdfs({});
+          setLines([createLine([])]);
+          setRefData(prev => ({
+            ...prev,
+            company: '',
+            vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [],
+            items: [], warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [],
+            payment_terms: [], shipping_types: [], branches: [], states: [], uom_groups: [],
+            distribution_rules: [], sales_employees: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
+            udf_metadata: { header: [], rows: [] },
+            line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
+          }));
+          return;
+        }
+
+        setMatrixColumnDefinitions([]);
+
+        const [refDataRes, layoutRes] = await Promise.all([
+          fetchDeliveryReferenceData(activeCompanyId),
+          getDocumentLayout({
+            companyDb: activeCompanyDb || undefined,
+            documentType: DELIVERY_LAYOUT_DOCUMENT_TYPE,
+            objectType: '15',
+          }).catch((error) => ({
+            data: {
+              success: false,
+              columns: [],
+              warning: getErrMsg(error, 'Failed to load SAP layout.'),
+            },
+          })),
+        ]);
         
         if (!ignore) {
           const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
           const nextRowUdfs = filterDeliveryRowUdfDefinitions(refDataRes.data.udf_metadata?.rows || []);
+          const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+            ? refDataRes.data.line_field_metadata.matrix_columns
+            : BASE_MATRIX_COLUMNS;
+          const nextMatrixColumns = buildSalesOrderMatrixColumnsFromLayout({
+            layoutColumns: layoutRes?.data?.columns || [],
+            liveMatrixColumns,
+            rowUdfFields: nextRowUdfs,
+            includeLineNumber: false,
+          });
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
+          setMatrixColumnDefinitions(nextMatrixColumns);
           setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
             ...line,
             udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
           })));
-          setFormSettings((prev) => ({
-            ...prev,
-            headerUdfs: {
-              ...nextHeaderUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
-              ...(prev.headerUdfs || {}),
-            },
-            rowUdfs: {
-              ...nextRowUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
-              ...(prev.rowUdfs || {}),
-            },
-          }));
+          setFormSettings(readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey));
           setRefData(prev => ({
             ...prev,
             company: refDataRes.data.company || '',
@@ -646,8 +699,16 @@ function Delivery() {
             quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
             price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
-            warnings: refDataRes.data.warnings || [],
+            warnings: [
+              ...(refDataRes.data.warnings || []),
+              ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+            ],
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
+            line_field_metadata: {
+              ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+              matrix_columns: nextMatrixColumns,
+              imported_layout: layoutRes?.data || null,
+            },
             series: Array.isArray(prev.series) ? prev.series : [],
           }));
         }
@@ -659,7 +720,7 @@ function Delivery() {
     };
     load();
     return () => { ignore = true; };
-  }, []);
+  }, [activeCompanyDb, activeCompanyId, formSettingsStorageKey]);
 
   useEffect(() => {
     if (currentDocEntry || requestedEditDocEntry || isHydratingDocumentRef.current) return;
@@ -1608,6 +1669,9 @@ function Delivery() {
             // Step 1: Set Item Details
             next.itemDescription = item.ItemName || next.itemDescription;
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
+            next.uomName = next.uomCode;
+            next.itemCost = item.ItemCost != null ? String(item.ItemCost) : (item.AvgPrice != null ? String(item.AvgPrice) : next.itemCost || '');
+            next.price = next.unitPrice || next.price || '';
             
             // Step 2: Set HSN Code from API response (OCHP.ChapterID via JOIN)
             next.hsnCode = hsnData.hsnCode || hsnData.hsn_sww || '';
@@ -1680,6 +1744,9 @@ function Delivery() {
           if (item) {
             next.itemDescription = item.ItemName || next.itemDescription;
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
+            next.uomName = next.uomCode;
+            next.itemCost = item.ItemCost != null ? String(item.ItemCost) : (item.AvgPrice != null ? String(item.AvgPrice) : next.itemCost || '');
+            next.price = next.unitPrice || next.price || '';
             next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
           }
           next.total = fmtDec(calcLineTotal(next), numDec.total);
@@ -2422,10 +2489,14 @@ function Delivery() {
               side: 'sales',
               hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
               fallbackWarehouse: header.warehouse,
+              syncUnitPriceUdf: false,
               calcLineTotal,
               formatTotal: (value) => fmtDec(value, numDec.total),
             }),
             uomCode: displayUoM, // Use the validated UoM for display
+            uomName: displayUoM,
+            itemCost: mergedItem.ItemCost != null ? String(mergedItem.ItemCost) : (mergedItem.AvgPrice != null ? String(mergedItem.AvgPrice) : ''),
+            price: line.unitPrice || '',
             batches: [],
             batchManaged: itemIsBatchManaged,
             hasBatchesAvailable: itemIsBatchManaged ? hasBatchesAvailable : false,
@@ -2508,10 +2579,14 @@ function Delivery() {
               side: 'sales',
               hsnCode: mergedItem.HSNCode || '',
               fallbackWarehouse: header.warehouse,
+              syncUnitPriceUdf: false,
               calcLineTotal,
               formatTotal: (value) => fmtDec(value, numDec.total),
             }),
             uomCode: selectedUoM,
+            uomName: selectedUoM,
+            itemCost: mergedItem.ItemCost != null ? String(mergedItem.ItemCost) : (mergedItem.AvgPrice != null ? String(mergedItem.AvgPrice) : ''),
+            price: line.unitPrice || '',
             batches: [],
             batchManaged: itemIsBatchManaged,
             hasBatchesAvailable: itemIsBatchManaged ? hasBatchesAvailable : false,
@@ -2834,13 +2909,19 @@ function Delivery() {
         lines: lines.filter(l => String(l.itemNo || '').trim()).map(l => ({
           itemNo: l.itemNo,
           quantity: l.quantity,
+          unitPrice: l.unitPrice,
+          hsnCode: l.hsnCode,
           whse: l.whse,
           taxCode: l.taxCode,
           uomCode: l.uomCode,
           uomFactor: l.uomFactor,
           inventoryUOM: l.inventoryUOM,
+          baseEntry: l.baseEntry,
+          baseType: l.baseType,
+          baseLine: l.baseLine,
           batchManaged: l.batchManaged,
-          batches: l.batches || []
+          batches: l.batches || [],
+          udf: l.udf || {},
         }))
       };
 
@@ -3253,7 +3334,7 @@ function Delivery() {
       };
       
       const payload = {
-        company_id: SALES_ORDER_COMPANY_ID,
+        company_id: activeCompanyId,
         header: prep,
         lines: lines.map((line) => ({
           ...line,
@@ -3732,6 +3813,7 @@ function Delivery() {
                 onOpenQualityModal={openQualityModal}
                 onOpenPaymentTermsModal={openPaymentTermsModal}
                 formSettings={formSettings}
+                matrixFields={matrixColumnDefinitions}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
               />
@@ -3990,7 +4072,7 @@ function Delivery() {
             className="del-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
-            matrixFields={BASE_MATRIX_COLUMNS}
+            matrixFields={matrixColumnDefinitions}
             headerUdfFields={headerUdfDefinitions}
             rowUdfFields={filterDeliveryRowUdfDefinitions(rowUdfDefinitions)}
             formSettings={formSettings}

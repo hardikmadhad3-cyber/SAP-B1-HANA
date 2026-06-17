@@ -13,6 +13,8 @@ import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarCon
 import { createActiveCompanyScopedRouteState } from '../../utils/companyStorageScope';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
+import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
 import { BASE_TYPE, normaliseDocumentHeader, unwrapCopyFromDocument } from '../../api/copyFromApi';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
 import StateSelectionModal from '../sales-order/components/StateSelectionModal';
@@ -382,12 +384,13 @@ function ServiceARInvoicePage() {
   const [header, setHeader] = useState(INIT_HEADER);
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(CONTENT_COLUMNS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
-    [headerUdfDefinitions, rowUdfDefinitions, CONTENT_COLUMNS],
+    [headerUdfDefinitions, rowUdfDefinitions, matrixColumnDefinitions],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
@@ -711,9 +714,16 @@ function ServiceARInvoicePage() {
     const load = async () => {
       setPageState((prev) => ({ ...prev, loading: true, error: '' }));
       try {
-        const [refRes, seriesRes] = await Promise.all([
+        const [refRes, seriesRes, layoutRes] = await Promise.all([
           fetchServiceARInvoiceReferenceData(),
           fetchServiceARInvoiceSeries(header.postingDate),
+          getDocumentLayout({ documentType: 'SERVICE_AR_INVOICE' }).catch((error) => ({
+            data: {
+              success: false,
+              columns: [],
+              warning: error.response?.data?.message || error.message || 'Failed to load SAP layout.',
+            },
+          })),
         ]);
         if (ignore) return;
 
@@ -737,31 +747,34 @@ function ServiceARInvoicePage() {
           }
         }
         const nextRowUdfs = applyServiceRowUdfDefaults(nextRefData.udf_metadata?.rows || []);
-        const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, CONTENT_COLUMNS, formSettingsStorageKey);
+        const nextMatrixColumns = buildMatrixColumnsFromSapLayout({
+          baseColumns: CONTENT_COLUMNS,
+          layoutColumns: layoutRes?.data?.columns || [],
+          fallbackColumns: CONTENT_COLUMNS,
+        });
+        const hasSapMatrixPreferences = Boolean((layoutRes?.data?.columns || []).length && layoutRes?.data?.source !== 'fallback');
+        const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
         setHeaderUdfDefinitions(nextHeaderUdfs);
         setRowUdfDefinitions(nextRowUdfs);
+        setMatrixColumnDefinitions(nextMatrixColumns);
         setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
         setLines((prev) => prev.map((line) => ({
           ...line,
           udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
         })));
-        setFormSettings((prev) => ({
-          ...nextDefaults,
-          ...prev,
-          matrixColumns: {
-            ...nextDefaults.matrixColumns,
-            ...(prev.matrixColumns || {}),
+        setFormSettings((prev) => mergeLiveMatrixSettings(nextDefaults, prev, hasSapMatrixPreferences));
+        setRefData({
+          ...nextRefData,
+          line_field_metadata: {
+            ...(nextRefData.line_field_metadata || { sap_form: {} }),
+            matrix_columns: nextMatrixColumns,
+            imported_layout: layoutRes?.data || null,
           },
-          headerUdfs: {
-            ...nextDefaults.headerUdfs,
-            ...(prev.headerUdfs || {}),
-          },
-          rowUdfs: {
-            ...nextDefaults.rowUdfs,
-            ...(prev.rowUdfs || {}),
-          },
-        }));
-        setRefData(nextRefData);
+          warnings: [
+            ...(nextRefData.warnings || []),
+            ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+          ],
+        });
         const defaultIndicator = liveTransactionTypes[0]?.indicator || '';
         const firstSeries = pickFirstSeries(nextRefData.series || [], defaultTransactionType);
         if (!requestedDocEntry) {
@@ -1664,7 +1677,7 @@ function ServiceARInvoicePage() {
   const visibleHeaderUdfs = headerUdfDefinitions.filter((field) => formSettings.headerUdfs?.[field.key]?.visible !== false);
   const configurableRowUdfs = rowUdfDefinitions.filter((field) => !isFixedServiceMatrixField(field));
   const visibleRowUdfs = configurableRowUdfs.filter((field) => formSettings.rowUdfs?.[field.key]?.visible !== false);
-  const visibleContentColumns = CONTENT_COLUMNS.filter((column) => formSettings.matrixColumns?.[column.key]?.visible !== false);
+  const visibleContentColumns = matrixColumnDefinitions.filter((column) => formSettings.matrixColumns?.[column.key]?.visible !== false);
   const visibleLineColumns = [
     ...visibleContentColumns,
     ...visibleRowUdfs.map((field) => ({
@@ -2012,7 +2025,7 @@ function ServiceARInvoicePage() {
             className="so-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
-            matrixFields={CONTENT_COLUMNS}
+            matrixFields={matrixColumnDefinitions}
             headerUdfFields={headerUdfDefinitions}
             rowUdfFields={configurableRowUdfs}
             formSettings={formSettings}

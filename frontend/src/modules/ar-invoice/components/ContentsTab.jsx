@@ -204,7 +204,13 @@ const getNumericOrder = (value, fallback) => {
 };
 
 const getLineValue = (line, column, boundUdf) => (
-  boundUdf ? line.udf?.[boundUdf.key] ?? '' : line[column.key] ?? ''
+  boundUdf
+    ? line.udf?.[boundUdf.key] ?? ''
+    : column.key === 'itemNo'
+      ? line.itemNo || line.ItemCode || line.itemCode || ''
+    : column.key === 'itemDescription'
+      ? line.itemDescription || line.ItemDescription || line.Dscription || line.description || line.itemName || ''
+      : line[column.key] ?? ''
 );
 
 const getLineChangeHandler = (i, column, boundUdf, onLineChange, onRowUdfChange) => (event) => {
@@ -240,6 +246,7 @@ export default function ContentsTab({
   const effectiveRowUdfFields = (rowUdfFields || []).filter((field) => !isSuppressedUdf(field));
   const matrixFieldByKey = new Map((matrixFields || []).map((field) => [field.key, field]));
   const hasLiveMatrixFields = matrixFieldByKey.size > 0;
+  const usesMetadataDrivenMatrix = hasLiveMatrixFields && (matrixFields || []).some((field) => field?.sapControlled || field?.importedLayout);
   const standardColumnByKey = new Map(SAP_CONTENT_COLUMNS.map((column) => [column.key, column]));
   const sourceColumns = hasLiveMatrixFields
     ? matrixFields
@@ -258,7 +265,7 @@ export default function ContentsTab({
     return !hasLiveMatrixFields || matrixFieldByKey.has(column.key);
   });
   const boundUdfKeys = new Set(boundColumns.map((column) => column.boundUdf?.key).filter(Boolean));
-  const extraUdfColumns = rowUdfFields
+  const extraUdfColumns = usesMetadataDrivenMatrix ? [] : rowUdfFields
     .filter((field) => !isSuppressedUdf(field))
     .filter((field) => !boundUdfKeys.has(field.key))
     .map((field, index) => {
@@ -284,6 +291,7 @@ export default function ContentsTab({
     }))
     .sort((left, right) => left.order - right.order);
   const matrixCols = mergedColumns.filter((column) => {
+    if (column.sapControlled || column.importedLayout) return column.visible !== false;
     if (column.boundUdf || column.isExtraUdf) {
       return formSettings.rowUdfs?.[column.boundUdf?.key]?.visible !== false;
     }
@@ -401,7 +409,7 @@ export default function ContentsTab({
       );
     }
 
-    if (fieldType === 'select' && Array.isArray(boundUdf?.options)) {
+    if (fieldType === 'select' && Array.isArray(boundUdf?.options) && boundUdf.options.length > 0) {
       return (
         <td key={column.key}>
           <select
@@ -464,7 +472,7 @@ export default function ContentsTab({
               data-sap-lookup="item"
               data-sap-row-index={i}
               onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
-                value={line.itemNo}
+                value={getLineValue(line, { key: 'itemNo' }, null)}
                 onChange={(event) => onLineChange(i, event)}
                 placeholder="Item Code"
                 disabled={!isEditable}

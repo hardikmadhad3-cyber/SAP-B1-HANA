@@ -118,9 +118,13 @@ const buildVisibilitySettings = (definitions = []) =>
     return acc;
   }, {});
 
-const createDefaultFormSettings = (headerUdfs = HEADER_UDF_DEFINITIONS, rowUdfs = ROW_UDF_DEFINITIONS) => ({
+const createDefaultFormSettings = (
+  headerUdfs = HEADER_UDF_DEFINITIONS,
+  rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = BASE_MATRIX_COLUMNS,
+) => ({
   headerUdfs: buildVisibilitySettings(headerUdfs),
-  matrixColumns: buildVisibilitySettings(BASE_MATRIX_COLUMNS),
+  matrixColumns: buildVisibilitySettings(Array.isArray(matrixColumns) ? matrixColumns : BASE_MATRIX_COLUMNS),
   rowUdfs: buildVisibilitySettings(rowUdfs),
 });
 
@@ -136,12 +140,15 @@ const mergeNestedSettings = (defaults, saved = {}) =>
 const readSavedFormSettings = (
   headerUdfs = HEADER_UDF_DEFINITIONS,
   rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = BASE_MATRIX_COLUMNS,
   storageKey = FORM_SETTINGS_STORAGE_KEY,
 ) => {
-  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs);
+  const effectiveMatrixColumns = Array.isArray(matrixColumns) ? matrixColumns : BASE_MATRIX_COLUMNS;
+  const effectiveStorageKey = typeof matrixColumns === 'string' ? matrixColumns : storageKey;
+  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs, effectiveMatrixColumns);
 
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = localStorage.getItem(effectiveStorageKey);
     if (!raw) return defaults;
     return mergeNestedSettings(defaults, JSON.parse(raw));
   } catch (_error) {

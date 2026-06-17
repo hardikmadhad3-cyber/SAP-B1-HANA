@@ -87,6 +87,7 @@ const getItems = () => safe(db.query(`
          SalUnitMsr  AS SalesUnit,
          InvntryUom  AS InventoryUOM,
          SUoMEntry   AS UoMGroupEntry,
+         AvgPrice    AS ItemCost,
          CountryOrg  AS ItemCountryOrg,
          SACEntry    AS SACEntry,
          VatGourpSa  AS TaxCodeAR,
@@ -195,6 +196,133 @@ const getTableFieldMetadata = async (tableName) => {
 };
 
 const getDeliveryLineFieldMetadata = () => getTableFieldMetadata('DLN1');
+
+const DELIVERY_MATRIX_COLUMN_DEFS = [
+  { key: 'itemNo', label: 'Item No.', minWidth: 160, sapField: 'ItemCode', sapColumnIds: ['1', 'ItemCode', 'Item No.', 'ItemNo'] },
+  { key: 'itemDescription', label: 'Item Description', minWidth: 240, sapField: 'Dscription', sapColumnIds: ['3', 'Dscription', 'ItemDescription', 'Item Description'] },
+  { key: 'quantity', label: 'Quantity', minWidth: 90, numeric: true, sapField: 'Quantity', sapColumnIds: ['11', 'Quantity', 'Qty'] },
+  { key: 'uomName', label: 'UoM Name', minWidth: 120, readOnly: true, sapField: 'unitMsr', alternativeFields: ['UomCode', 'UomEntry'], sapColumnIds: ['1470002145', 'unitMsr', 'UomName', 'UoM Name'] },
+  { key: 'hsnCode', label: 'HSN', minWidth: 95, readOnly: true, source: 'OITM', sapColumnIds: ['254000391', 'HsnEntry', 'HsnCode', 'HSN', 'HSN/SAC'] },
+  { key: 'unitPrice', label: 'Unit Price', minWidth: 110, numeric: true, sapField: 'Price', alternativeFields: ['PriceBefDi'], sapColumnIds: ['14', 'Price', 'PriceBefDi', 'Unit Price'] },
+  { key: 'taxCode', label: 'Tax Code', minWidth: 110, sapField: 'TaxCode', sapColumnIds: ['160', '234000377', 'TaxCode', 'Tax Code'] },
+  { key: 'U_PackingType', label: 'Packing-Type', minWidth: 140, sapField: 'U_PackingType', sapColumnIds: ['U_PackingType', 'U_PACKINGTYPE', 'U_PACKING_TYPE', 'Packing-Type'], isUdf: true },
+  { key: 'U_GrossWt', label: 'GrossWt', minWidth: 110, numeric: true, sapField: 'U_GrossWt', sapColumnIds: ['U_GrossWt', 'U_GROSSWT', 'U_GROSS_WT', 'GrossWt'], isUdf: true },
+  { key: 'U_TotalPackage', label: 'Total-Package', minWidth: 130, numeric: true, sapField: 'U_TotalPackage', sapColumnIds: ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_TOTAL_PACKAGE', 'Total-Package'], isUdf: true },
+  { key: 'totalLC', label: 'Total (LC)', minWidth: 115, readOnly: true, numeric: true, sapField: 'LineTotal', sapColumnIds: ['17', 'LineTotal', 'GTotal', 'Total', 'Total (LC)'] },
+  { key: 'whse', label: 'Whse', minWidth: 85, sapField: 'WhsCode', sapColumnIds: ['174', 'WhsCode', 'Warehouse', 'Whse'] },
+  { key: 'binLocationAllocation', label: 'Bin Location Allocation', minWidth: 160, readOnly: true, source: 'calculated', sapColumnIds: ['Bin Location Allocation'] },
+  { key: 'priceAfterDiscount', label: 'Price after Discount', minWidth: 130, readOnly: true, numeric: true, source: 'calculated', sapColumnIds: ['Price after Discount'] },
+  { key: 'itemCost', label: 'Item Cost', minWidth: 110, readOnly: true, numeric: true, source: 'OITM', sapColumnIds: ['Item Cost'] },
+  { key: 'taxCodeRepeat', label: 'TaxCode', minWidth: 110, readOnly: true, source: 'calculated', sapColumnIds: ['TaxCode'] },
+  { key: 'price', label: 'Price', minWidth: 95, readOnly: true, numeric: true, source: 'calculated', sapColumnIds: ['Price'] },
+  { key: 'sellerBrokerage', label: 'Seller Brokerage', minWidth: 125, numeric: true, sapField: 'U_Brok_Seller', isUdfBacked: true },
+  { key: 'buyerBrokerage', label: 'Buyer Brokerage', minWidth: 125, numeric: true, sapField: 'U_Brok_Buyer', isUdfBacked: true },
+  { key: 'buyerDelivery', label: 'Buyer - Delivery', minWidth: 135, sapField: 'U_Buyer_Delivery', isUdfBacked: true },
+  { key: 'sellerDelivery', label: 'Seller - Delivery', minWidth: 135, sapField: 'U_Seller_Delivery', isUdfBacked: true },
+  { key: 'buyerPaymentTerms', label: 'Buyer - Terms of payment', minWidth: 180, sapField: 'U_Buyer_Payment_Terms', isUdfBacked: true },
+  { key: 'sellerPaymentTerms', label: 'Seller - Terms of Payment', minWidth: 180, sapField: 'U_Seller_Payment_Terms', alternativeFields: ['U_Seller_Payment_Term'], isUdfBacked: true },
+  { key: 'buyerQuality', label: 'Buyer - Quality', minWidth: 155, sapField: 'U_Buyer_Quality', isUdfBacked: true },
+  { key: 'sellerQuality', label: 'Seller - Quality', minWidth: 155, sapField: 'U_Seller_Quality', isUdfBacked: true },
+  { key: 'buyerPrice', label: 'Buyer - Price', minWidth: 135, sapField: 'U_Buyer_Price', isUdfBacked: true },
+  { key: 'sellerPrice', label: 'Seller - Price', minWidth: 135, sapField: 'U_Seller_Price', isUdfBacked: true },
+  { key: 'buyerSpecialInstruction', label: 'Buyer - Special Instruction', minWidth: 190, sapField: 'U_Buyer_SPINS', isUdfBacked: true },
+  { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', minWidth: 190, sapField: 'U_Seller_SPINS', isUdfBacked: true },
+  { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', minWidth: 165, sapField: 'U_Sel_Brok_AP', isUdfBacked: true },
+  { key: 'sellerBrokeragePercent', label: 'Seller Brokerage in Percentage', minWidth: 180, numeric: true, sapField: 'U_Seller_Brok_Per', isUdfBacked: true },
+  { key: 'stcode', label: 'STCODE', minWidth: 110, sapField: 'U_SELLTCODE', isUdfBacked: true },
+  { key: 'sellerItem', label: 'S_Item', minWidth: 125, sapField: 'U_S_Item', isUdfBacked: true },
+  { key: 'sellerQty', label: 'S_Qty', minWidth: 110, numeric: true, sapField: 'U_S_Qty', isUdfBacked: true },
+  { key: 'specialRebate', label: 'Special Rebate', minWidth: 120, numeric: true, sapField: 'U_SPLRBT', isUdfBacked: true },
+  { key: 'commission', label: 'Commision', minWidth: 110, numeric: true, sapField: 'U_COMPRC', isUdfBacked: true },
+  { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', minWidth: 115, numeric: true, sapField: 'U_S_BrokPerQty', isUdfBacked: true },
+  { key: 'U_Fix_Brock_B', label: 'FIX Brok BUYER', minWidth: 135, numeric: true, sapField: 'U_Fix_Brock_B', alternativeFields: ['U_Fix_Brok_B', 'U_FIXBROKBUYER', 'U_FixBrokBuyer'], isUdf: true },
+  { key: 'U_Fix_Brock_S', label: 'Fix Brock Seller', minWidth: 140, numeric: true, sapField: 'U_Fix_Brock_S', alternativeFields: ['U_Fix_Brok_S', 'U_FIXBROCKSELLER', 'U_FIXBROKSELLER', 'U_FixBrockSeller'], isUdf: true },
+  { key: 'stdDiscount', label: 'Discount %', minWidth: 95, numeric: true, sapField: 'DiscPrcnt', visible: false },
+  { key: 'taxAmount', label: 'Tax Amount (LC)', minWidth: 125, readOnly: true, numeric: true, sapField: 'VatSum', visible: false },
+  { key: 'deliveredQty', label: 'Qty to Ship', minWidth: 110, readOnly: true, sapField: 'DelivrdQty', visible: false },
+  { key: 'openQty', label: 'Ordered Qty', minWidth: 95, readOnly: true, sapField: 'OpenQty', visible: false },
+  { key: 'uomCode', label: 'UoM', minWidth: 105, sapField: 'UomCode', alternativeFields: ['unitMsr', 'UomEntry'], visible: false },
+  { key: 'distRule', label: 'Distr. Rule', minWidth: 105, sapField: 'OcrCode', visible: false },
+  { key: 'countryOfOrigin', label: 'Country/Region of Origin', minWidth: 185, sapField: 'CountryOrg', visible: false },
+  { key: 'loc', label: 'Loc.', minWidth: 115, readOnly: true, sapField: 'LocCode', visible: false },
+  { key: 'sacCode', label: 'SAC', minWidth: 95, sapField: 'SACEntry', visible: false },
+];
+
+const getColumnMetadata = (column, columns = {}) => {
+  const candidates = [
+    column.sapField,
+    ...(column.alternativeFields || []),
+    column.key,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const metadata = columns[String(candidate).toUpperCase()];
+    if (metadata) return metadata;
+  }
+
+  return null;
+};
+
+const buildDeliveryLineUiMetadata = async (rowUdfDefinitions = []) => {
+  const [lineFieldMetadata] = await Promise.all([
+    getDeliveryLineFieldMetadata(),
+  ]);
+  const lineColumns = Object.entries(lineFieldMetadata || {}).reduce((acc, [name, dataType]) => {
+    acc[String(name || '').toUpperCase()] = { name, dataType };
+    return acc;
+  }, {});
+  const rowUdfByKey = new Map((rowUdfDefinitions || []).map((field) => [normalizeUdfNameForMatch(field.key || field.sapField), field]));
+  const findUdfFieldForColumn = (column = {}) => {
+    const candidates = [
+      column.sapField,
+      ...(column.alternativeFields || []),
+      column.key,
+      column.label,
+    ].map(normalizeUdfNameForMatch).filter(Boolean);
+
+    return candidates.map((candidate) => rowUdfByKey.get(candidate)).find(Boolean) || null;
+  };
+
+  const matrixColumns = DELIVERY_MATRIX_COLUMN_DEFS.map((column, index) => {
+    const metadata = getColumnMetadata(column, lineColumns);
+    const udfField = findUdfFieldForColumn(column);
+    const exists = Boolean(metadata || column.source || column.isUdf || column.isUdfBacked || udfField);
+    if (!exists) return null;
+    const effectiveKey = column.isUdf && udfField?.key ? udfField.key : column.key;
+
+    return {
+      ...column,
+      key: effectiveKey,
+      valueKey: effectiveKey,
+      rendererKey: effectiveKey,
+      label: column.label || udfField?.label || effectiveKey,
+      sapField: column.sapField || '',
+      dataType: metadata?.dataType || udfField?.dataType || '',
+      required: column.key === 'whse',
+      readOnly: Boolean(column.readOnly || udfField?.readOnly),
+      visible: column.visible !== false,
+      active: udfField?.active !== false,
+      order: index + 1,
+      type: udfField?.type || column.type,
+      options: udfField?.options || undefined,
+      lookupSource: udfField?.lookupSource || undefined,
+      lookupTable: udfField?.lookupTable || undefined,
+      isUdf: Boolean(column.isUdf),
+      field: column.isUdf ? (udfField || undefined) : undefined,
+      sapControlled: true,
+    };
+  }).filter(Boolean);
+
+  return {
+    matrix_columns: matrixColumns,
+    row_udfs: rowUdfDefinitions,
+    sap_form: {
+      formId: '140',
+      matrixItemId: '38',
+      preferenceRows: 0,
+    },
+  };
+};
 
 const getDeliverySellerExpressions = async () => {
   try {
@@ -1036,6 +1164,7 @@ const getDelivery = async (docEntry) => {
     hasDln1Column('NumPerMsr') ? 'T0.NumPerMsr AS UomFactor' : 'CAST(1 AS DECIMAL(19, 6)) AS UomFactor',
     hasDln1Column('UomEntry') ? 'T0.UomEntry AS UoMEntry' : 'NULL AS UoMEntry',
     hasDln1Column('unitMsr') ? "COALESCE(UOM.UomCode, NULLIF(LTRIM(RTRIM(T0.unitMsr)), ''), '') AS UoMCode" : "COALESCE(UOM.UomCode, '') AS UoMCode",
+    hasDln1Column('unitMsr') ? "COALESCE(NULLIF(LTRIM(RTRIM(T0.unitMsr)), ''), UOM.UomCode, '') AS UoMName" : "COALESCE(UOM.UomCode, '') AS UoMName",
     hasDln1Column('OcrCode') ? 'T0.OcrCode AS DistributionRule' : "'' AS DistributionRule",
     hasDln1Column('FreeTxt') ? 'T0.FreeTxt AS [FreeText]' : "'' AS [FreeText]",
     hasDln1Column('CountryOrg') ? 'T0.CountryOrg AS CountryOfOrigin' : "'' AS CountryOfOrigin",
@@ -1051,7 +1180,7 @@ const getDelivery = async (docEntry) => {
       SELECT
         T0.LineNum,
         T0.ItemCode,
-        T0.Dscription AS ItemDescription,
+        COALESCE(NULLIF(LTRIM(RTRIM(T0.Dscription)), ''), ITM.ItemName, '') AS ItemDescription,
         T0.Quantity,
         COALESCE(T0.PriceBefDi, T0.Price) AS UnitPrice,
         T0.DiscPrcnt AS DiscountPercent,
@@ -1060,6 +1189,7 @@ const getDelivery = async (docEntry) => {
         ${optionalLineSelects.join(',\n        ')},
         CHP.ChapterID AS HSNCode,
         ITM.ManBtchNum AS BatchManaged,
+        ITM.AvgPrice AS ItemCost,
         '' AS Branch,
         '' AS Loc
       FROM DLN1 T0
@@ -1079,7 +1209,7 @@ const getDelivery = async (docEntry) => {
       SELECT
         T0.LineNum,
         T0.ItemCode,
-        T0.Dscription AS ItemDescription,
+        COALESCE(NULLIF(LTRIM(RTRIM(T0.Dscription)), ''), ITM.ItemName, '') AS ItemDescription,
         T0.Quantity,
         T0.OpenQty AS OpenQuantity,
         COALESCE(T0.PriceBefDi, T0.Price) AS UnitPrice,
@@ -1097,6 +1227,7 @@ const getDelivery = async (docEntry) => {
         '' AS CountryOfOrigin,
         CHP.ChapterID AS HSNCode,
         ITM.ManBtchNum AS BatchManaged,
+        ITM.AvgPrice AS ItemCost,
         NULL AS BaseEntry,
         NULL AS BaseType,
         NULL AS BaseLine,
@@ -1280,8 +1411,15 @@ const getDelivery = async (docEntry) => {
           quantity: l.Quantity != null ? String(l.Quantity) : '',
           openQty: l.OpenQuantity != null ? String(l.OpenQuantity) : '',
           unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
+          uomName: l.UoMName || l.UoMCode || '',
+          price: l.UnitPrice != null ? String(l.UnitPrice) : '',
+          priceAfterDiscount: discountPercent != null && l.UnitPrice != null
+            ? String(Number(l.UnitPrice || 0) * (1 - (Number(discountPercent || 0) / 100)))
+            : '',
+          itemCost: l.ItemCost != null ? String(l.ItemCost) : '',
+          binLocationAllocation: '',
           discountAmount: discountAmount != null && String(discountAmount).trim() !== '' ? String(discountAmount) : '',
-          unitPriceUdf: lineUdf.U_Unit_Price != null && lineUdf.U_Unit_Price !== '' ? String(lineUdf.U_Unit_Price) : String(l.UnitPrice || 0),
+          unitPriceUdf: lineUdf.U_Unit_Price != null && lineUdf.U_Unit_Price !== '' ? String(lineUdf.U_Unit_Price) : '',
           sellerQuality: lineUdf.U_Seller_Quality || '',
           buyerQuality: lineUdf.U_Buyer_Quality || '',
           sellerPrice: lineUdf.U_Seller_Price || l.SellerPrice || '',
@@ -1522,6 +1660,7 @@ const getReferenceData = async () => {
     getLookupValues('U_Seller_Price'),
     getMarketingDocumentUdfs({ headerTable: 'ODLN', lineTable: 'DLN1' }),
   ]);
+  const lineFieldMetadata = await buildDeliveryLineUiMetadata(udfMetadata.rows || []);
 
   const uomGroupMap = {};
   uomGroupsRaw.forEach(row => {
@@ -1611,6 +1750,11 @@ const getReferenceData = async () => {
     },
     decimal_settings: decimalSettings,
     udf_metadata: udfMetadata,
+    matrix_columns: lineFieldMetadata.matrix_columns || [],
+    line_field_metadata: {
+      matrix_columns: lineFieldMetadata.matrix_columns || [],
+      sap_form: lineFieldMetadata.sap_form || {},
+    },
     warnings: [],
   };
 };
@@ -1702,6 +1846,7 @@ const getItemsForModal = (whsCode = '') => {
     T0.SalUnitMsr AS SalesUnit,
     T0.InvntryUom AS InventoryUOM,
     T0.SUoMEntry AS UoMGroupEntry,
+    T0.AvgPrice AS ItemCost,
     CHP.ChapterID AS HSNCode,
     T0.CountryOrg AS ItemCountryOrg,
     T0.SACEntry AS SACEntry,
@@ -1853,6 +1998,7 @@ const parseBatchQtyNumber = (value) => {
 };
 
 const isSapYes = (value) => SAP_YES_VALUES.has(String(value || '').trim().toUpperCase());
+const isBlank = (value) => value === undefined || value === null || String(value).trim() === '';
 
 const getLineUomFactor = (line = {}) => {
   const explicitFactor = parseBatchQtyNumber(line.uomFactor);
@@ -1869,6 +2015,159 @@ const getLineUomFactor = (line = {}) => {
 
 const getRequiredBatchQty = (line = {}) =>
   parseBatchQtyNumber(line.quantity) * getLineUomFactor(line);
+
+const validateLineMasterData = async (lines = []) => {
+  const errors = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] || {};
+    const lineNo = i + 1;
+    const itemCode = String(line.itemNo || '').trim();
+    const whsCode = String(line.whse || '').trim();
+    const taxCode = String(line.taxCode || '').trim();
+    const uomCode = String(line.uomCode || '').trim();
+    const hsnCode = String(line.hsnCode || '').trim();
+    const quantity = Number(line.quantity);
+    const unitPrice = Number(line.unitPrice);
+    const isBaseDocumentLine = !isBlank(line.baseEntry) && !isBlank(line.baseType) && !isBlank(line.baseLine);
+
+    if (!itemCode) {
+      errors.push(`Line ${lineNo}: Item No. is required`);
+      continue;
+    }
+
+    const itemRows = await safe(db.query(`
+      SELECT TOP 1
+        T0.ItemCode,
+        T0.ItemName,
+        T0.SellItem,
+        T0.validFor,
+        T0.frozenFor,
+        T0.InvntItem,
+        T0.SalUnitMsr,
+        T0.InvntryUom,
+        T0.SUoMEntry,
+        T0.VatGourpSa,
+        COALESCE(CHP.ChapterID, T0.SWW, '') AS HSNCode
+      FROM OITM T0
+      LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID
+      WHERE T0.ItemCode = @ItemCode
+    `, { ItemCode: itemCode }));
+
+    const item = itemRows[0];
+    if (!item) {
+      errors.push(`Line ${lineNo}: Item ${itemCode} does not exist in SAP B1`);
+      continue;
+    }
+
+    if (!isSapYes(item.SellItem) || String(item.validFor || '').toUpperCase() === 'N' || String(item.frozenFor || '').toUpperCase() === 'Y') {
+      errors.push(`Line ${lineNo}: Item ${itemCode} is not an active sales item in SAP B1`);
+    }
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      errors.push(`Line ${lineNo}: Quantity must be greater than 0`);
+    }
+
+    if (!isBaseDocumentLine && (!Number.isFinite(unitPrice) || unitPrice <= 0)) {
+      errors.push(`Line ${lineNo}: Unit Price must be greater than 0`);
+    }
+
+    const effectiveHsnCode = hsnCode || String(item.HSNCode || '').trim();
+    if (!effectiveHsnCode) {
+      errors.push(`Line ${lineNo}: HSN is required for item ${itemCode}`);
+    }
+
+    if (!uomCode) {
+      errors.push(`Line ${lineNo}: UoM Name is required for item ${itemCode}`);
+    } else {
+      const numericUomFactor = Number(uomCode);
+      const isNumericUomFactor = Number.isFinite(numericUomFactor) && numericUomFactor > 0;
+      const directUomMatches = [item.SalUnitMsr, item.InvntryUom]
+        .map((value) => String(value || '').trim().toUpperCase())
+        .filter(Boolean)
+        .includes(uomCode.toUpperCase());
+
+      if (!isNumericUomFactor && !directUomMatches) {
+        const uomRows = await safe(db.query(`
+          SELECT TOP 1 UOM.UomCode
+          FROM OITM ITM
+          INNER JOIN UGP1 UGP ON UGP.UgpEntry = ITM.SUoMEntry
+          INNER JOIN OUOM UOM ON UOM.UomEntry = UGP.UomEntry
+          WHERE ITM.ItemCode = @ItemCode
+            AND UPPER(LTRIM(RTRIM(UOM.UomCode))) = @UomCode
+        `, {
+          ItemCode: itemCode,
+          UomCode: uomCode.toUpperCase(),
+        }));
+
+        if (!uomRows.length) {
+          errors.push(`Line ${lineNo}: UoM ${uomCode} is not valid for item ${itemCode}`);
+        }
+      }
+    }
+
+    if (!whsCode) {
+      errors.push(`Line ${lineNo}: Whse is required`);
+    } else {
+      const warehouseRows = await safe(db.query(`
+        SELECT TOP 1 WhsCode, Inactive
+        FROM OWHS
+        WHERE WhsCode = @WhsCode
+      `, { WhsCode: whsCode }));
+
+      if (!warehouseRows.length) {
+        errors.push(`Line ${lineNo}: Warehouse ${whsCode} does not exist in SAP B1`);
+      } else if (String(warehouseRows[0].Inactive || '').toUpperCase() === 'Y') {
+        errors.push(`Line ${lineNo}: Warehouse ${whsCode} is inactive`);
+      }
+    }
+
+    if (!taxCode || taxCode.toUpperCase() === 'SELECT') {
+      errors.push(`Line ${lineNo}: Tax Code is required`);
+    } else {
+      const taxRows = await safe(db.query(`
+        SELECT TOP 1 Code
+        FROM OSTC
+        WHERE UPPER(LTRIM(RTRIM(Code))) = @TaxCode
+          AND ISNULL(Lock, 'N') <> 'Y'
+      `, { TaxCode: taxCode.toUpperCase() }));
+
+      if (!taxRows.length) {
+        errors.push(`Line ${lineNo}: Tax Code ${taxCode} is not active in SAP B1`);
+      }
+    }
+  }
+
+  return { errors, isValid: errors.length === 0 };
+};
+
+const validateLineUdfValues = async (lines = []) => {
+  const errors = [];
+  const definitions = await getUdfDefinitions('DLN1').catch(() => []);
+  const validUdfKeys = new Set(definitions.map((field) => field.key));
+  const fixedValueFields = definitions.filter((field) => Array.isArray(field.options) && field.options.length > 0);
+  const fixedValuesByKey = new Map(fixedValueFields.map((field) => [
+    field.key,
+    new Set(field.options.map((option) => String((typeof option === 'object' ? option.value : option) ?? '').trim()).filter(Boolean)),
+  ]));
+
+  (lines || []).forEach((line, index) => {
+    Object.entries(line?.udf || {}).forEach(([key, value]) => {
+      if (!String(key || '').startsWith('U_') || isBlank(value)) return;
+      if (!validUdfKeys.has(key)) {
+        errors.push(`Line ${index + 1}: ${key} is not defined for Delivery rows in SAP B1`);
+        return;
+      }
+
+      const fixedValues = fixedValuesByKey.get(key);
+      if (fixedValues && fixedValues.size && !fixedValues.has(String(value).trim())) {
+        errors.push(`Line ${index + 1}: ${key} value '${value}' is not valid in SAP B1`);
+      }
+    });
+  });
+
+  return { errors, isValid: errors.length === 0 };
+};
 
 // Validate batch selection only for inventory items that are batch-managed in SAP B1.
 const validateBatchSelection = async (lines) => {
@@ -2122,6 +2421,8 @@ module.exports = {
   resolveDeliveryLineUomEntry,
   // Validation functions
   validateBatchSelection,
+  validateLineMasterData,
+  validateLineUdfValues,
   validateTaxCodes,
   validateStockAvailability,
   validateBranch,

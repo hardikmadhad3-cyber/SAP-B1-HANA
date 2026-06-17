@@ -289,51 +289,62 @@ const ROW_UDF_DEFINITIONS = [
 const BASE_MATRIX_COLUMNS = [
   { key: 'itemNo', label: 'Item No.', visible: true },
   { key: 'itemDescription', label: 'Item Description', visible: true },
-  { key: 'sellerQuality', label: 'Seller - Quality', visible: true },
-  { key: 'buyerQuality', label: 'Buyer - Quality', visible: true },
-  { key: 'sellerPrice', label: 'Seller - Price', visible: true },
-  { key: 'buyerPrice', label: 'Buyer - Price', visible: true },
-  { key: 'buyerDelivery', label: 'Buyer - Delivery', visible: true },
-  { key: 'sellerDelivery', label: 'Seller - Delivery', visible: true },
-  { key: 'sellerBrokerage', label: 'Seller Brokerage', visible: true },
-  { key: 'buyerBrokerage', label: 'Buyer Brokerage', visible: true },
-  { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', visible: true },
-  { key: 'buyerSpecialInstruction', label: 'Buyer - Special Instruction', visible: true },
   { key: 'quantity', label: 'Quantity', visible: true },
-  { key: 'deliveredQty', label: 'Qty to Ship', visible: true },
-  { key: 'openQty', label: 'Ordered Qty', visible: true },
+  { key: 'uomName', label: 'UoM Name', visible: true },
+  { key: 'hsnCode', label: 'HSN', visible: true },
   { key: 'unitPrice', label: 'Unit Price', visible: true },
-  { key: 'stdDiscount', label: 'Discount %', visible: true },
   { key: 'taxCode', label: 'Tax Code', visible: true },
-  { key: 'taxAmount', label: 'Tax Amount (LC)', visible: true },
+  { key: 'U_PackingType', label: 'Packing-Type', visible: true },
+  { key: 'U_GrossWt', label: 'GrossWt', visible: true },
+  { key: 'U_TotalPackage', label: 'Total-Package', visible: true },
   { key: 'totalLC', label: 'Total (LC)', visible: true },
   { key: 'whse', label: 'Whse', visible: true },
-  { key: 'countryOfOrigin', label: 'Country/Region of Origin', visible: true },
-  { key: 'loc', label: 'Loc.', visible: true },
-  { key: 'hsnCode', label: 'HSN', visible: true },
-  { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', visible: true },
-  { key: 'sellerBrokeragePercent', label: 'Seller Brokerage in Percentage', visible: true },
-  { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', visible: true },
-  { key: 'sellerBillDiscount', label: 'Seller Bill Discount', visible: true },
-  { key: 'sacCode', label: 'SAC', visible: true },
-  { key: 'stcode', label: 'STCODE', visible: true },
+  { key: 'binLocationAllocation', label: 'Bin Location Allocation', visible: true },
+  { key: 'priceAfterDiscount', label: 'Price after Discount', visible: true },
+  { key: 'itemCost', label: 'Item Cost', visible: true },
+  { key: 'taxCodeRepeat', label: 'TaxCode', visible: true },
+  { key: 'price', label: 'Price', visible: true },
+  { key: 'sellerBrokerage', label: 'Seller Brokerage', visible: true },
+  { key: 'buyerBrokerage', label: 'Buyer Brokerage', visible: true },
+  { key: 'buyerDelivery', label: 'Buyer - Delivery', visible: true },
+  { key: 'sellerDelivery', label: 'Seller - Delivery', visible: true },
   { key: 'buyerPaymentTerms', label: 'Buyer - Terms of payment', visible: true },
   { key: 'sellerPaymentTerms', label: 'Seller - Terms of Payment', visible: true },
-  { key: 'freightPurchase', label: 'Freight Purchase', visible: true },
-  { key: 'freightSales', label: 'Freight Sales', visible: true },
-  { key: 'freightProvider', label: 'Freight Provider', visible: true },
-  { key: 'freightProviderName', label: 'Freight Provider Name', visible: true },
-  { key: 'documentCreated', label: 'Document Created', visible: true },
-  { key: 'brokerageNumber', label: 'Brokerage Number', visible: true },
+  { key: 'buyerQuality', label: 'Buyer - Quality', visible: true },
+  { key: 'sellerQuality', label: 'Seller - Quality', visible: true },
+  { key: 'buyerPrice', label: 'Buyer - Price', visible: true },
+  { key: 'sellerPrice', label: 'Seller - Price', visible: true },
+  { key: 'buyerSpecialInstruction', label: 'Buyer - Special Instruction', visible: true },
+  { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', visible: true },
+  { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', visible: true },
+  { key: 'sellerBrokeragePercent', label: 'Seller Brokerage in Percentage', visible: true },
+  { key: 'stcode', label: 'STCODE', visible: true },
+  { key: 'sellerItem', label: 'S_Item', visible: true },
+  { key: 'sellerQty', label: 'S_Qty', visible: true },
+  { key: 'specialRebate', label: 'Special Rebate', visible: true },
+  { key: 'commission', label: 'Commision', visible: true },
+  { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', visible: true },
+  { key: 'U_Fix_Brock_B', label: 'FIX Brok BUYER', visible: true },
+  { key: 'U_Fix_Brock_S', label: 'Fix Brock Seller', visible: true },
+  { key: 'stdDiscount', label: 'Discount %', visible: false },
+  { key: 'taxAmount', label: 'Tax Amount (LC)', visible: false },
+  { key: 'deliveredQty', label: 'Qty to Ship', visible: false },
+  { key: 'openQty', label: 'Ordered Qty', visible: false },
+  { key: 'countryOfOrigin', label: 'Country/Region of Origin', visible: false },
+  { key: 'loc', label: 'Loc.', visible: false },
+  { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', visible: false },
+  { key: 'sellerBillDiscount', label: 'Seller Bill Discount', visible: false },
+  { key: 'sacCode', label: 'SAC', visible: false },
+  { key: 'freightPurchase', label: 'Freight Purchase', visible: false },
+  { key: 'freightSales', label: 'Freight Sales', visible: false },
+  { key: 'freightProvider', label: 'Freight Provider', visible: false },
+  { key: 'freightProviderName', label: 'Freight Provider Name', visible: false },
+  { key: 'documentCreated', label: 'Document Created', visible: false },
+  { key: 'brokerageNumber', label: 'Brokerage Number', visible: false },
   { key: 'uomCode', label: 'UoM', visible: false },
   { key: 'distRule', label: 'Distr. Rule', visible: false },
   { key: 'branch', label: 'Branch', visible: false },
   { key: 'unitPriceRepeat', label: 'Unit Price', visible: false },
-  { key: 'specialRebate', label: 'Special Rebate', visible: false },
-  { key: 'commission', label: 'Commision', visible: false },
-  { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', visible: false },
-  { key: 'sellerItem', label: 'S_Item', visible: false },
-  { key: 'sellerQty', label: 'S_Qty', visible: false },
   { key: 'batch', label: 'Batch', visible: true },
 ];
 
@@ -393,10 +404,14 @@ const buildVisibilitySettings = (definitions) =>
     return acc;
   }, {});
 
-const createDefaultFormSettings = () => ({
-  headerUdfs: buildVisibilitySettings(HEADER_UDF_DEFINITIONS),
-  matrixColumns: buildVisibilitySettings(BASE_MATRIX_COLUMNS),
-  rowUdfs: buildVisibilitySettings(ROW_UDF_DEFINITIONS),
+const createDefaultFormSettings = (
+  headerUdfs = HEADER_UDF_DEFINITIONS,
+  rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = BASE_MATRIX_COLUMNS,
+) => ({
+  headerUdfs: buildVisibilitySettings(headerUdfs),
+  matrixColumns: buildVisibilitySettings(matrixColumns),
+  rowUdfs: buildVisibilitySettings(rowUdfs),
 });
 
 const mergeNestedSettings = (defaults, saved = {}) =>
@@ -408,8 +423,19 @@ const mergeNestedSettings = (defaults, saved = {}) =>
     return acc;
   }, {});
 
-const readSavedFormSettings = (storageKey = FORM_SETTINGS_STORAGE_KEY) => {
-  const defaults = createDefaultFormSettings();
+const readSavedFormSettings = (
+  headerUdfs = HEADER_UDF_DEFINITIONS,
+  rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = BASE_MATRIX_COLUMNS,
+  storageKey = FORM_SETTINGS_STORAGE_KEY,
+) => {
+  if (typeof headerUdfs === 'string') {
+    storageKey = headerUdfs;
+    headerUdfs = HEADER_UDF_DEFINITIONS;
+    rowUdfs = ROW_UDF_DEFINITIONS;
+    matrixColumns = BASE_MATRIX_COLUMNS;
+  }
+  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs, matrixColumns);
 
   try {
     const raw = localStorage.getItem(storageKey);

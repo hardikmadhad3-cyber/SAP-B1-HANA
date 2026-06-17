@@ -24,6 +24,8 @@ const isCacheableGet = (url = '') => {
 
   return (
     normalized.includes('/reference-data') ||
+    normalized.includes('/sap/layout/document') ||
+    pathOnly.endsWith('/hsn-codes') ||
     normalized.includes('/lookup/') ||
     pathOnly.endsWith('/series') ||
     normalized.includes('/items-modal') ||

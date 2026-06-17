@@ -31,6 +31,7 @@ export const hydrateDocumentLineFromItem = (line = {}, item = {}, {
   headerBranch = '',
   preservePrice = false,
   preserveQuantity = true,
+  syncUnitPriceUdf = true,
   calcLineTotal,
   formatTotal,
 } = {}) => {
@@ -88,7 +89,9 @@ export const hydrateDocumentLineFromItem = (line = {}, item = {}, {
   if (!preservePrice || !hasValue(next.unitPrice)) {
     if (hasValue(itemPrice)) {
       next.unitPrice = itemPrice;
-      next.unitPriceUdf = line.unitPriceUdf || itemPrice;
+      if (syncUnitPriceUdf) {
+        next.unitPriceUdf = line.unitPriceUdf || itemPrice;
+      }
     }
   }
 

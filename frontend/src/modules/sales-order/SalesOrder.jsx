@@ -75,10 +75,12 @@ import {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
-    const d = e?.response?.data?.detail;
+    const body = e?.response?.data || {};
+    const d = body.detail || body.details;
     if (typeof d === 'string' && d.trim()) return d;
     if (d?.error?.message) return d.error.message;
     if (d?.message) return d.message;
+    if (body.message) return d?.hint ? `${body.message} ${d.hint}` : body.message;
     return e?.message || fb;
 };
 
@@ -233,10 +235,9 @@ const buildVisibleHeaderUdfPayload = (definitions = [], values = {}, settings = 
 function SalesOrder() {
     const location = useLocation();
     const navigate = useNavigate();
-    const { company, user } = useAuth();
+    const { company } = useAuth();
     const activeCompanyId = company?.companyId || '';
     const activeCompanyDb = company?.dbName || '';
-    const activeUsername = user?.username || '';
     const { removeTask, upsertTask } = useSapWindowTaskbarActions();
     const formRef = useRef(null);
     const handledCopyFromRef = useRef('');
@@ -469,9 +470,15 @@ function SalesOrder() {
                     fetchHSNCodes(),
                     getDocumentLayout({
                         companyDb: activeCompanyDb || undefined,
-                        userCode: activeUsername || undefined,
                         documentType: SALES_ORDER_LAYOUT_DOCUMENT_TYPE,
-                    }),
+                        objectType: '17',
+                    }).catch((error) => ({
+                        data: {
+                            success: false,
+                            columns: [],
+                            warning: getErrMsg(error, 'Failed to load SAP layout.'),
+                        },
+                    })),
                 ]);
 
                 // ═══ LOGGING: Reference Data ═══
@@ -605,7 +612,7 @@ function SalesOrder() {
         };
         load();
         return () => { ignore = true; };
-    }, [activeCompanyDb, activeCompanyId, activeUsername, formSettingsStorageKey, setFormSettings]);
+    }, [activeCompanyDb, activeCompanyId, formSettingsStorageKey]);
 
     // ── load existing order ───────────────────────────────────────────────────
     useEffect(() => {

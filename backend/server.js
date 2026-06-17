@@ -134,6 +134,8 @@ const isReusableLookupRequest = (req) => {
 
   return (
     path.endsWith('/reference-data') ||
+    path === '/api/sap/layout/document' ||
+    path.startsWith('/api/hsn-codes') ||
     path.includes('/lookup/') ||
     path.endsWith('/metadata') ||
     path.endsWith('/series') ||
@@ -404,6 +406,7 @@ app.use((err, req, res, next) => {
   res.status(err.statusCode || 500).json({
     success: false,
     message: err.message || 'Internal Server Error',
+    details: err.details || undefined,
     error: process.env.NODE_ENV === 'development' ? err.stack : undefined,
   });
 });
