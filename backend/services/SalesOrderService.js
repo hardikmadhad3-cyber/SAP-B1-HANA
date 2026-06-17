@@ -16,6 +16,24 @@ const getUdfDefinitionsByKey = async (tableId) => {
   return new Map(definitions.map((field) => [field.key, field]));
 };
 
+const validateRequiredBranchAndWarehouse = (payload = {}, options = {}) => {
+  const header = payload.header || {};
+  if (options.branchesEnabled && !String(header.branch || '').trim()) {
+    throw new Error('Branch is required.');
+  }
+
+  if (!String(header.warehouse || '').trim()) {
+    throw new Error('Warehouse is required.');
+  }
+
+  const lines = (payload.lines || []).filter((line) => String(line.itemNo || '').trim());
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!String(lines[index].whse || header.warehouse || '').trim()) {
+      throw new Error(`Line ${index + 1}: Warehouse is required.`);
+    }
+  }
+};
+
 // ───────── HELPERS ─────────
 
 /**
@@ -689,6 +707,7 @@ const getReferenceData = async (companyId) => {
       payment_terms: [],
       shipping_types: [],
       branches: [],
+      branches_enabled: false,
       countries: [],
       distribution_rules: [],
       tax_codes: [],
@@ -865,6 +884,10 @@ const getSalesOrder = async (docEntry) => {
 
 const submitSalesOrder = async (payload) => {
   try {
+    const refData = await salesOrderDb.getReferenceData();
+    const branchesEnabled = Boolean(refData.branches_enabled ?? (refData.branches || []).length > 0);
+    validateRequiredBranchAndWarehouse(payload, { branchesEnabled });
+
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 CREATE - RECEIVED PAYLOAD FROM FRONTEND:");
     console.log("  salesEmployee:", payload.header.salesEmployee);
@@ -875,7 +898,6 @@ const submitSalesOrder = async (payload) => {
     // ═══════════════════════════════════════════════════════════════
     // STEP 1: Load ODBC Master Data
     // ═══════════════════════════════════════════════════════════════
-    const refData = await salesOrderDb.getReferenceData();
     const salesEmployees = refData.sales_employees || [];
     const owners = refData.owners || [];
     
@@ -950,8 +972,10 @@ const submitSalesOrder = async (payload) => {
       ContactPersonCode: payload.header.contactPerson ? Number(payload.header.contactPerson) : undefined,
       
       // ✅ Branch mapping - try multiple field names
-      BPLId: normalizeBranchId(payload.header.branch),
-      BPL_IDAssignedToInvoice: normalizeBranchId(payload.header.branch),
+      ...(branchesEnabled && payload.header.branch ? {
+        BPLId: normalizeBranchId(payload.header.branch),
+        BPL_IDAssignedToInvoice: normalizeBranchId(payload.header.branch),
+      } : {}),
 
       PaymentGroupCode: payload.header.paymentTerms ? Number(payload.header.paymentTerms) : undefined,
 
@@ -974,12 +998,13 @@ const submitSalesOrder = async (payload) => {
     };
 
     // ✅ Only add U_PlaceOfSupply if it has a value (optional UDF)
-    if (payload.header.placeOfSupply) {
+    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
+    const allowedHeaderUdfKeys = new Set(headerUdfDefinitionsByKey.keys());
+    if (payload.header.placeOfSupply && allowedHeaderUdfKeys.has('U_PlaceOfSupply')) {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
-    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
+    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, allowedHeaderUdfKeys, headerUdfDefinitionsByKey));
 
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 SAP PAYLOAD TO BE SENT:");
@@ -1034,6 +1059,10 @@ const submitSalesOrder = async (payload) => {
 
 const updateSalesOrder = async (docEntry, payload) => {
   try {
+    const refData = await salesOrderDb.getReferenceData();
+    const branchesEnabled = Boolean(refData.branches_enabled ?? (refData.branches || []).length > 0);
+    validateRequiredBranchAndWarehouse(payload, { branchesEnabled });
+
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 UPDATE - RECEIVED PAYLOAD FROM FRONTEND:");
     console.log("  DocEntry:", docEntry);
@@ -1045,7 +1074,6 @@ const updateSalesOrder = async (docEntry, payload) => {
     // ═══════════════════════════════════════════════════════════════
     // STEP 1: Load ODBC Master Data
     // ═══════════════════════════════════════════════════════════════
-    const refData = await salesOrderDb.getReferenceData();
     const salesEmployees = refData.sales_employees || [];
     const owners = refData.owners || [];
     
@@ -1123,9 +1151,9 @@ const updateSalesOrder = async (docEntry, payload) => {
         ? Number(payload.header.contactPerson)
         : undefined,
 
-      BPL_IDAssignedToInvoice: payload.header.branch
-        ? Number(payload.header.branch)
-        : undefined,
+      ...(branchesEnabled && payload.header.branch
+        ? { BPL_IDAssignedToInvoice: Number(payload.header.branch) }
+        : {}),
 
       PaymentGroupCode: payload.header.paymentTerms
         ? Number(payload.header.paymentTerms)
@@ -1143,12 +1171,13 @@ const updateSalesOrder = async (docEntry, payload) => {
     // =========================
     // ✅ OPTIONAL UDF
     // =========================
-    if (payload.header.placeOfSupply) {
+    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
+    const allowedHeaderUdfKeys = new Set(headerUdfDefinitionsByKey.keys());
+    if (payload.header.placeOfSupply && allowedHeaderUdfKeys.has('U_PlaceOfSupply')) {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
-    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
+    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, allowedHeaderUdfKeys, headerUdfDefinitionsByKey));
 
     console.log("🔥 FINAL SAP PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
@@ -1262,6 +1291,15 @@ const createLookupValue = async ({ field, value, description }) => {
   return { option, options };
 };
 
+const getLookupOptions = async (source, { query = '', limit = 50 } = {}) => {
+  try {
+    return await salesOrderDb.getUdfLinkedTableLookupOptions(source, query, limit);
+  } catch (error) {
+    console.error('[Sales Order Service] Failed to load lookup options:', error);
+    return { options: [] };
+  }
+};
+
 module.exports = {
   getReferenceData,
   getCustomerDetails,
@@ -1278,6 +1316,7 @@ module.exports = {
   getFreightCharges,
   getSalesOrderPrintLayouts,
   createLookupValue,
+  getLookupOptions,
   getOpenSalesOrders:          async (customerCode = '') => { try { return { documents: await salesOrderDb.getOpenSalesOrders(customerCode) }; } catch(e) { return { documents: [] }; } },
   getSalesOrderForCopy:        async (d) => salesOrderDb.getSalesOrderForCopy(d),
   getOpenSalesQuotations:      async (customerCode = '') => { try { const sq = require('./salesQuotationDbService'); return { documents: await sq.getOpenSalesQuotations(customerCode) }; } catch(e) { return { documents: [] }; } },

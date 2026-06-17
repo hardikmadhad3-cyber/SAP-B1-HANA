@@ -382,7 +382,8 @@ const createUdfState = (definitions) =>
     return acc;
   }, {});
 
-const normalizeUdfState = (definitions, values = {}) => {
+const normalizeUdfState = (definitions, values = {}, options = {}) => {
+    const preserveExtra = Boolean(options.preserveExtra);
     const normalized = definitions.reduce((acc, field) => {
         const currentValue = values[field.key];
         const shouldApplyDefault =
@@ -393,6 +394,8 @@ const normalizeUdfState = (definitions, values = {}) => {
         acc[field.key] = shouldApplyDefault ? getDefaultUdfValue(field) : currentValue;
     return acc;
   }, {});
+
+    if (!preserveExtra) return normalized;
 
     Object.entries(values || {}).forEach(([key, value]) => {
         if (String(key || '').startsWith('U_') && !Object.prototype.hasOwnProperty.call(normalized, key)) {
@@ -405,39 +408,61 @@ const normalizeUdfState = (definitions, values = {}) => {
 
 const buildVisibilitySettings = (definitions) =>
   definitions.reduce((acc, field) => {
-    acc[field.key] = { visible: field.visible !== undefined ? field.visible : true, active: true };
-    return acc;
-  }, {});
-
-const createDefaultFormSettings = () => ({
-  headerUdfs: buildVisibilitySettings(HEADER_UDF_DEFINITIONS),
-  matrixColumns: buildVisibilitySettings(BASE_MATRIX_COLUMNS),
-  rowUdfs: buildVisibilitySettings(ROW_UDF_DEFINITIONS),
-});
-
-const mergeNestedSettings = (defaults, saved = {}) =>
-  Object.keys(defaults).reduce((acc, groupKey) => {
-    acc[groupKey] = {
-      ...defaults[groupKey],
-      ...(saved[groupKey] || {}),
+    acc[field.key] = {
+      visible: field.visible !== undefined ? field.visible : true,
+      active: field.active !== undefined ? field.active : true,
+      sapControlled: Boolean(field.sapControlled),
+      order: field.order,
+      minWidth: field.minWidth,
     };
     return acc;
   }, {});
 
-const readSavedFormSettings = (storageKey = FORM_SETTINGS_STORAGE_KEY) => {
-  const defaults = createDefaultFormSettings();
+const createDefaultFormSettings = (
+  headerUdfDefinitions = HEADER_UDF_DEFINITIONS,
+  rowUdfDefinitions = ROW_UDF_DEFINITIONS,
+  matrixColumns = BASE_MATRIX_COLUMNS,
+) => ({
+  headerUdfs: buildVisibilitySettings(headerUdfDefinitions),
+  matrixColumns: buildVisibilitySettings(matrixColumns),
+  rowUdfs: buildVisibilitySettings(rowUdfDefinitions),
+});
+
+const mergeNestedSettings = (defaults, saved = {}) =>
+  Object.keys(defaults).reduce((acc, groupKey) => {
+    const savedGroup = saved[groupKey] || {};
+    acc[groupKey] = Object.keys(defaults[groupKey] || {}).reduce((group, fieldKey) => {
+      const defaultEntry = defaults[groupKey][fieldKey] || {};
+      const savedEntry = savedGroup[fieldKey] || {};
+      group[fieldKey] = defaultEntry.sapControlled
+        ? { ...savedEntry, ...defaultEntry }
+        : { ...defaultEntry, ...savedEntry };
+      return group;
+    }, {});
+    return acc;
+  }, {});
+
+const readSavedFormSettings = (...args) => {
+  let headerUdfDefinitions = HEADER_UDF_DEFINITIONS;
+  let rowUdfDefinitions = ROW_UDF_DEFINITIONS;
+  let matrixColumns = BASE_MATRIX_COLUMNS;
+  let storageKey = FORM_SETTINGS_STORAGE_KEY;
+
+  if (typeof args[0] === 'string' || args.length <= 1) {
+    storageKey = args[0] || FORM_SETTINGS_STORAGE_KEY;
+  } else {
+    headerUdfDefinitions = args[0] || HEADER_UDF_DEFINITIONS;
+    rowUdfDefinitions = args[1] || ROW_UDF_DEFINITIONS;
+    matrixColumns = args[2] || BASE_MATRIX_COLUMNS;
+    storageKey = args[3] || FORM_SETTINGS_STORAGE_KEY;
+  }
+
+  const defaults = createDefaultFormSettings(headerUdfDefinitions, rowUdfDefinitions, matrixColumns);
 
   try {
     const raw = localStorage.getItem(storageKey);
     if (!raw) return defaults;
-    const merged = mergeNestedSettings(defaults, JSON.parse(raw));
-    if (merged.matrixColumns?.sellerQty) {
-      merged.matrixColumns.sellerQty = {
-        ...merged.matrixColumns.sellerQty,
-        visible: true,
-      };
-    }
-    return merged;
+    return mergeNestedSettings(defaults, JSON.parse(raw));
   } catch (error) {
     return defaults;
   }

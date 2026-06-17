@@ -103,7 +103,7 @@ const submitDelivery = async (req, res) => {
     const result = await deliveryService.submitDelivery(req.body);
     res.json(result);
   } catch (error) {
-    res.status(500).json(getErrorPayload(error, 'Failed to submit Delivery.'));
+    res.status(error.statusCode || error.response?.status || 500).json(getErrorPayload(error, 'Failed to submit Delivery.'));
   }
 };
 
@@ -112,7 +112,7 @@ const updateDelivery = async (req, res) => {
     const result = await deliveryService.updateDelivery(req.params.docEntry, req.body);
     res.json(result);
   } catch (error) {
-    res.status(500).json(getErrorPayload(error, 'Failed to update Delivery.'));
+    res.status(error.statusCode || error.response?.status || 500).json(getErrorPayload(error, 'Failed to update Delivery.'));
   }
 };
 

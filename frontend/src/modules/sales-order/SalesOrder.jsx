@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import '../../modules/item-master/styles/itemMaster.css';
 import './styles/salesOrder.css';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../auth/AuthContext';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import ContentsTab from './components/ContentsTab';
@@ -41,6 +42,7 @@ import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
 import {
     fetchSalesOrderByDocEntry,
     fetchSalesOrderCustomerDetails,
@@ -52,9 +54,9 @@ import {
     fetchItemsForModal,
     fetchFreightCharges,
     createSalesOrderLookupValue,
+    fetchSalesOrderLookupOptions,
 } from '../../api/salesOrderApi';
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
-import { SALES_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { salesOrderCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
     FORM_SETTINGS_STORAGE_KEY,
@@ -66,13 +68,19 @@ import {
     normalizeUdfState,
     readSavedFormSettings,
 } from '../../config/salesOrderForm';
+import {
+    buildSalesOrderMatrixColumnsFromLayout,
+    SALES_ORDER_LAYOUT_DOCUMENT_TYPE,
+} from './documentLayout';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
-    const d = e?.response?.data?.detail;
+    const body = e?.response?.data || {};
+    const d = body.detail || body.details;
     if (typeof d === 'string' && d.trim()) return d;
     if (d?.error?.message) return d.error.message;
     if (d?.message) return d.message;
+    if (body.message) return d?.hint ? `${body.message} ${d.hint}` : body.message;
     return e?.message || fb;
 };
 
@@ -194,10 +202,42 @@ const closeDocumentDropdowns = () => {
     document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
 };
 
+const buildHeaderFieldMap = (fields = []) =>
+    (fields || []).reduce((acc, field) => {
+        if (field?.key) acc[field.key] = field;
+        return acc;
+    }, {});
+
+const getHeaderFieldLabel = (fieldMap, key, fallback, forceRequired = false) => {
+    const field = fieldMap[key] || {};
+    const label = field.label || fallback;
+    return (forceRequired || field.required) ? `${label} *` : label;
+};
+
+const buildVisibleHeaderUdfPayload = (definitions = [], values = {}, settings = {}) => {
+    const normalized = normalizeUdfState(definitions, values);
+    return (definitions || []).reduce((acc, field) => {
+        const key = field.key;
+        if (!key) return acc;
+        const fieldSettings = settings?.headerUdfs?.[key] || {};
+        const visible = field.sapControlled
+            ? field.visible !== false
+            : (field.visible !== false && fieldSettings.visible !== false);
+        const active = field.sapControlled
+            ? field.active !== false
+            : (field.active !== false && fieldSettings.active !== false);
+        if (visible && active) acc[key] = normalized[key];
+        return acc;
+    }, {});
+};
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 function SalesOrder() {
     const location = useLocation();
     const navigate = useNavigate();
+    const { company } = useAuth();
+    const activeCompanyId = company?.companyId || '';
+    const activeCompanyDb = company?.dbName || '';
     const { removeTask, upsertTask } = useSapWindowTaskbarActions();
     const formRef = useRef(null);
     const handledCopyFromRef = useRef('');
@@ -208,11 +248,13 @@ function SalesOrder() {
     const [header, setHeader] = useState(() => createInitialHeader(generalSettingsRef.current));
     const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
     const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+    const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(BASE_MATRIX_COLUMNS);
+    const [headerFieldDefinitions, setHeaderFieldDefinitions] = useState([]);
     const [lines, setLines] = useState([createLine()]);
     const [attachments] = useState(INIT_ATTACH);
     const [activeTab, setActiveTab] = useState('Contents');
     const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
-    const [formSettings, setFormSettings] = useCompanyScopedFormSettings(
+    const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
         FORM_SETTINGS_STORAGE_KEY,
         readSavedFormSettings,
     );
@@ -221,9 +263,10 @@ function SalesOrder() {
     const [refData, setRefData] = useState({
         company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
         warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
-        payment_terms: [], shipping_types: [], branches: [], uom_groups: [], sales_employees: [], owners: [],
+        payment_terms: [], shipping_types: [], branches: [], branches_enabled: false, uom_groups: [], sales_employees: [], owners: [],
         countries: [], distribution_rules: [], distribution_dimensions: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
         decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
+        header_field_metadata: { fields: [] }, line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} }, lookup_sources: {},
     });
     const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
     const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
@@ -241,6 +284,10 @@ function SalesOrder() {
     const [copyFromModal, setCopyFromModal] = useState(false);
     const [copyFromMode, setCopyFromMode] = useState(false);
     const [copyFromDocType, setCopyFromDocType] = useState('quotation'); // 'quotation' or 'blanket'
+    const headerFieldMap = useMemo(
+        () => buildHeaderFieldMap(headerFieldDefinitions),
+        [headerFieldDefinitions],
+    );
     useValidationHighlights(valErrors, { enabled: !copyFromMode, rootRef: formRef });
     const [addressForm, setAddressForm] = useState({
         shipToCode: '', shipToAddress: '', billToCode: '', billToAddress: '',
@@ -362,17 +409,76 @@ function SalesOrder() {
         }
     }, [currentDocEntry]);
 
+    const loadDynamicUdfLookupOptions = useCallback(async (source) => {
+        if (!source) return [];
+        const response = await fetchSalesOrderLookupOptions(source, { limit: 200 });
+        return response.data?.options || [];
+    }, []);
+
     // Continue in next part...
 
     // ── load reference data ───────────────────────────────────────────────────
     useEffect(() => {
         let ignore = false;
+        const pendingRouteDocEntry =
+            location.state?.salesOrderDocEntry ||
+            location.state?.docEntry ||
+            location.state?.document?.docEntry ||
+            location.state?.document?.DocEntry;
         const load = async () => {
             setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
             try {
-                const [refDataRes, hsnRes] = await Promise.all([
-                    fetchSalesOrderReferenceData(SALES_ORDER_COMPANY_ID),
+                if (!activeCompanyId) {
+                    setHeaderUdfDefinitions([]);
+                    setRowUdfDefinitions([]);
+                    setMatrixColumnDefinitions(BASE_MATRIX_COLUMNS);
+                    setHeaderFieldDefinitions([]);
+                    setHeaderUdfs({});
+                    setLines([createLine([])]);
+                    defaultWarehouseAppliedRef.current = false;
+                    setRefData(prev => ({
+                        ...prev,
+                        company: '',
+                        vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [],
+                        items: [], warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
+                        payment_terms: [], shipping_types: [], branches: [], branches_enabled: false, uom_groups: [], sales_employees: [], owners: [],
+                        countries: [], distribution_rules: [], distribution_dimensions: [], quality_options: { buyer: [], seller: [] },
+                        price_options: { buyer: [], seller: [] }, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
+                        header_field_metadata: { fields: [] }, line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
+                        lookup_sources: {},
+                    }));
+                    return;
+                }
+
+                setMatrixColumnDefinitions([]);
+
+                if (!pendingRouteDocEntry) {
+                    const resetHeader = createInitialHeader(generalSettingsRef.current);
+                    setCurrentDocEntry(null);
+                    setSnapshotPending(false);
+                    setIsDirty(false);
+                    defaultWarehouseAppliedRef.current = false;
+                    setHeader(resetHeader);
+                    setHeaderUdfs({});
+                    setLines([createLine([])]);
+                    setFreightModal({ open: false, freightCharges: [], loading: false });
+                    setValErrors({ header: {}, lines: {}, form: '' });
+                }
+
+                const [refDataRes, hsnRes, layoutRes] = await Promise.all([
+                    fetchSalesOrderReferenceData(activeCompanyId),
                     fetchHSNCodes(),
+                    getDocumentLayout({
+                        companyDb: activeCompanyDb || undefined,
+                        documentType: SALES_ORDER_LAYOUT_DOCUMENT_TYPE,
+                        objectType: '17',
+                    }).catch((error) => ({
+                        data: {
+                            success: false,
+                            columns: [],
+                            warning: getErrMsg(error, 'Failed to load SAP layout.'),
+                        },
+                    })),
                 ]);
 
                 // ═══ LOGGING: Reference Data ═══
@@ -414,37 +520,55 @@ function SalesOrder() {
 
                 if (!ignore) {
                     const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
-                    const nextRowUdfs = filterSalesOrderRowUdfDefinitions(refDataRes.data.udf_metadata?.rows || []);
+                    const usesSapMatrixOrder = Boolean(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows);
+                    const nextRowUdfs = usesSapMatrixOrder
+                        ? (refDataRes.data.udf_metadata?.rows || [])
+                        : filterSalesOrderRowUdfDefinitions(refDataRes.data.udf_metadata?.rows || []);
+                    const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+                        ? refDataRes.data.line_field_metadata.matrix_columns
+                        : BASE_MATRIX_COLUMNS;
+                    const nextMatrixColumns = buildSalesOrderMatrixColumnsFromLayout({
+                        layoutColumns: layoutRes?.data?.columns || [],
+                        liveMatrixColumns,
+                        rowUdfFields: nextRowUdfs,
+                    });
+                    const nextHeaderFields = refDataRes.data.header_field_metadata?.fields || [];
                     const nextUdfMetadata = {
                         ...(refDataRes.data.udf_metadata || {}),
                         rows: nextRowUdfs,
                     };
                     setHeaderUdfDefinitions(nextHeaderUdfs);
                     setRowUdfDefinitions(nextRowUdfs);
-                    setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
-                    setLines((prev) => prev.map((line) => ({
-                        ...line,
-                        udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
-                    })));
-                    setFormSettings((prev) => ({
-                        ...prev,
-                        headerUdfs: {
-                            ...nextHeaderUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
-                            ...(prev.headerUdfs || {}),
-                        },
-                        rowUdfs: {
-                            ...nextRowUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
-                            ...(prev.rowUdfs || {}),
-                        },
-                    }));
+                    setMatrixColumnDefinitions(nextMatrixColumns);
+                    setHeaderFieldDefinitions(nextHeaderFields);
+                    setHeaderUdfs((prev) => pendingRouteDocEntry
+                        ? normalizeUdfState(nextHeaderUdfs, prev)
+                        : createUdfState(nextHeaderUdfs));
+                    setLines((prev) => {
+                        const hasLoadedLines = pendingRouteDocEntry && (prev || []).some((line) =>
+                            String(line.itemNo || '').trim() || line.lineNum !== undefined
+                        );
+                        return hasLoadedLines
+                            ? prev.map((line) => ({
+                                ...line,
+                                udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
+                            }))
+                            : [createLine(nextRowUdfs)];
+                    });
+                    setFormSettings(readSavedFormSettings(
+                        nextHeaderUdfs,
+                        nextRowUdfs,
+                        nextMatrixColumns,
+                        formSettingsStorageKey,
+                    ));
                     setRefData(prev => ({
                         ...prev,
                         company: refDataRes.data.company || '',
                         vendors: refDataRes.data.vendors || [],
-                        contacts: prev.contacts?.length ? prev.contacts : (refDataRes.data.contacts || []),
-                        pay_to_addresses: prev.pay_to_addresses?.length ? prev.pay_to_addresses : (refDataRes.data.pay_to_addresses || []),
-                        ship_to_addresses: prev.ship_to_addresses?.length ? prev.ship_to_addresses : (refDataRes.data.ship_to_addresses || []),
-                        bill_to_addresses: prev.bill_to_addresses?.length ? prev.bill_to_addresses : (refDataRes.data.bill_to_addresses || []),
+                        contacts: refDataRes.data.contacts || [],
+                        pay_to_addresses: refDataRes.data.pay_to_addresses || [],
+                        ship_to_addresses: refDataRes.data.ship_to_addresses || [],
+                        bill_to_addresses: refDataRes.data.bill_to_addresses || [],
                         items: refDataRes.data.items || [],
                         warehouses: refDataRes.data.warehouses || [],
                         warehouse_addresses: refDataRes.data.warehouse_addresses || [],
@@ -454,6 +578,7 @@ function SalesOrder() {
                         payment_terms: refDataRes.data.payment_terms || [],
                         shipping_types: refDataRes.data.shipping_types || [],
                         branches: refDataRes.data.branches || [],
+                        branches_enabled: Boolean(refDataRes.data.branches_enabled ?? (refDataRes.data.branches || []).length > 0),
                         states: refDataRes.data.states || [],
                         uom_groups: refDataRes.data.uom_groups || [],
                         sales_employees: refDataRes.data.sales_employees || [],
@@ -464,8 +589,18 @@ function SalesOrder() {
                         quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
                         price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
                         decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
-                        warnings: refDataRes.data.warnings || [],
+                        warnings: [
+                            ...(refDataRes.data.warnings || []),
+                            ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+                        ],
                         udf_metadata: nextUdfMetadata,
+                        header_field_metadata: refDataRes.data.header_field_metadata || { fields: nextHeaderFields },
+                        line_field_metadata: {
+                            ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+                            matrix_columns: nextMatrixColumns,
+                            imported_layout: layoutRes?.data || null,
+                        },
+                        lookup_sources: refDataRes.data.lookup_sources || {},
                     }));
                 }
             } catch (e) {
@@ -477,7 +612,7 @@ function SalesOrder() {
         };
         load();
         return () => { ignore = true; };
-    }, []);
+    }, [activeCompanyDb, activeCompanyId, formSettingsStorageKey]);
 
     // ── load existing order ───────────────────────────────────────────────────
     useEffect(() => {
@@ -718,7 +853,10 @@ function SalesOrder() {
     const vendorBillToAddresses = refData.bill_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
     const vendorEffectiveShipToAddresses = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
     const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
-    const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
+    const branchesEnabled = Boolean(refData.branches_enabled ?? (refData.branches || []).length > 0);
+    const selectedBranch = branchesEnabled
+        ? refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''))
+        : null;
     const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
 
     const effectiveTaxCodes = refData.tax_codes || [];
@@ -726,7 +864,26 @@ function SalesOrder() {
     const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
 
     // Filter warehouses by selected branch
-    const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
+    const branchFilteredWarehouses = branchesEnabled
+        ? filterWarehousesByBranch(effectiveWarehouses, header.branch)
+        : effectiveWarehouses;
+
+    useEffect(() => {
+        if (branchesEnabled || !header.branch) return;
+        setHeader((prev) => prev.branch ? { ...prev, branch: '' } : prev);
+        setLines((prev) => prev.map((line) => (
+            line.branch ? { ...line, branch: '', loc: resolveLineLocation(line.whse || header.warehouse, '') } : line
+        )));
+    }, [branchesEnabled, header.branch, header.warehouse]);
+
+    useEffect(() => {
+        if (!branchesEnabled) return;
+        if (currentDocEntry || copyFromMode || isCopyFromClick || header.branch) return;
+        if ((refData.branches || []).length !== 1) return;
+        const onlyBranch = refData.branches[0];
+        if (!onlyBranch?.BPLId && onlyBranch?.BPLId !== 0) return;
+        setHeader((prev) => prev.branch ? prev : { ...prev, branch: String(onlyBranch.BPLId) });
+    }, [branchesEnabled, copyFromMode, currentDocEntry, header.branch, isCopyFromClick, refData.branches]);
 
     useEffect(() => {
         if (currentDocEntry || copyFromMode || isCopyFromClick || defaultWarehouseAppliedRef.current) return;
@@ -749,10 +906,12 @@ function SalesOrder() {
             return {
                 ...prev,
                 warehouse: prev.warehouse || defaultWarehouse,
-                branch: prev.branch || (warehouseBranch !== '' ? String(warehouseBranch) : ''),
+                branch: branchesEnabled
+                    ? prev.branch || (warehouseBranch !== '' ? String(warehouseBranch) : '')
+                    : '',
             };
         });
-    }, [copyFromMode, currentDocEntry, effectiveWarehouses, isCopyFromClick]);
+    }, [branchesEnabled, copyFromMode, currentDocEntry, effectiveWarehouses, isCopyFromClick]);
 
     const payTermOpts = refData.payment_terms.length
         ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
@@ -1502,7 +1661,11 @@ function SalesOrder() {
         setHeaderUdfs(p => ({ ...p, [k]: v }));
     };
     const handleRowUdfChange = (i, k, v) => setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
-    const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...(p[g] || {}), [k]: { ...((p[g] || {})[k] || {}), [prop]: val } } }));
+    const updateFormSetting = (g, k, prop, val) => setFormSettings((p) => {
+        const current = ((p[g] || {})[k] || {});
+        if (current.sapControlled) return p;
+        return { ...p, [g]: { ...(p[g] || {}), [k]: { ...current, [prop]: val } } };
+    });
     const toggleHeaderUdfs = () => {
         setFormSettingsOpen(false);
         setSidebarOpen(p => !p);
@@ -2061,7 +2224,12 @@ function SalesOrder() {
             }
         }
 
-        // Validate Warehouse (always required)
+        if (branchesEnabled && !String(header.branch || '').trim()) {
+            e.header.branch = 'Branch is required.';
+            e.form = 'Please correct the highlighted fields.';
+            return e;
+        }
+
         if (!String(header.warehouse || '').trim()) {
             e.header.warehouse = 'Warehouse is required.';
             e.form = 'Please correct the highlighted fields.';
@@ -2260,11 +2428,11 @@ function SalesOrder() {
             }));
 
             const payload = {
-                company_id: SALES_ORDER_COMPANY_ID,
+                company_id: activeCompanyId,
                 header: prep,
                 lines: cleanedLines,
                 freightCharges: freightModal.freightCharges,
-                header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
+                header_udfs: buildVisibleHeaderUdfPayload(headerUdfDefinitions, headerUdfs, formSettings),
             };
 
             // ═══ LOGGING: Payload Before Submit ═══
@@ -2319,8 +2487,16 @@ function SalesOrder() {
         }
     };
 
-    const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
-    const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
+    const visHdrUdfs = headerUdfDefinitions.filter((field) => (
+        field.sapControlled
+            ? field.visible !== false
+            : (field.visible !== false && formSettings.headerUdfs?.[field.key]?.visible !== false)
+    ));
+    const visibleRowUdfs = rowUdfDefinitions.filter((field) => (
+        field.sapControlled
+            ? field.visible !== false
+            : (field.visible !== false && formSettings.rowUdfs?.[field.key]?.visible !== false)
+    ));
     const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
 
     useEffect(() => {
@@ -2515,7 +2691,7 @@ function SalesOrder() {
 
                                         {/* Buyer's Code */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Buyer's Code *</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'vendor', "Buyer's Code", true)}</label>
                                             <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
                                                 <input
                                                     name="vendor"
@@ -2547,7 +2723,7 @@ function SalesOrder() {
 
                                         {/* Buyer's Name */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Buyer's Name</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'name', "Buyer's Name")}</label>
                                             <input name="name" className="so-field__input" value={header.name} readOnly />
                                         </div>
 
@@ -2558,7 +2734,7 @@ function SalesOrder() {
                                         >
                                         {/* Contact Person */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Contact Person</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'contactPerson', 'Contact Person')}</label>
                                             <select
                                                 name="contactPerson"
                                                 className="so-field__select"
@@ -2585,7 +2761,7 @@ function SalesOrder() {
 
                                         {/* Place of Supply */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Place of Supply *</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'placeOfSupply', 'Place of Supply', true)}</label>
                                             <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
                                                 <input
                                                     name="placeOfSupply"
@@ -2615,7 +2791,7 @@ function SalesOrder() {
 
                                         {/* Payment Terms */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Payment Terms</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'paymentTerms', 'Payment Terms')}</label>
                                             <select name="paymentTerms" className="so-field__select" value={header.paymentTerms} onChange={handleHeaderChange}>
                                                 <option value="">Select</option>
                                                 {payTermOpts.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
@@ -2623,37 +2799,41 @@ function SalesOrder() {
                                         </div>
 
                                         {/* Branch */}
-                                        <div className="so-field">
-                                            <label className="so-field__label">Branch</label>
-                                            <select
-                                                name="branch"
-                                                className="so-field__select"
-                                                value={header.branch || ''}
-                                                onChange={handleHeaderChange}
-                                                style={{ border: (!copyFromMode && valErrors.header.branch) ? '1px solid #c00' : undefined }}
-                                            >
-                                                <option value="">Select Branch</option>
-                                                {refData.branches.map(b => (
-                                                    <option key={b.BPLId} value={b.BPLId}>
-                                                        {b.BPLName}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            {!copyFromMode && valErrors.header.branch && (
-                                                <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.header.branch}</div>
-                                            )}
-                                        </div>
+                                        {branchesEnabled && (
+                                            <div className="so-field">
+                                                <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'branch', 'Branch', true)}</label>
+                                                <select
+                                                    name="branch"
+                                                    className="so-field__select"
+                                                    value={header.branch || ''}
+                                                    onChange={handleHeaderChange}
+                                                    style={{ border: (!copyFromMode && valErrors.header.branch) ? '1px solid #c00' : undefined }}
+                                                >
+                                                    <option value="">Select Branch</option>
+                                                    {refData.branches.map(b => (
+                                                        <option key={b.BPLId} value={b.BPLId}>
+                                                            {b.BPLName}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                                {!copyFromMode && valErrors.header.branch && (
+                                                    <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.header.branch}</div>
+                                                )}
+                                            </div>
+                                        )}
 
                                         {/* Warehouse */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Warehouse *</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'warehouse', 'Warehouse', true)}</label>
                                             <select
                                                 name="warehouse"
                                                 className="so-field__select"
                                                 value={header.warehouse || ''}
                                                 onChange={handleHeaderChange}
                                                 style={{ border: (!copyFromMode && valErrors.header.warehouse) ? '1px solid #c00' : undefined }}
-                                                title={header.branch ? `Showing warehouses for selected branch` : 'Select a branch first to filter warehouses'}
+                                                title={branchesEnabled
+                                                    ? (header.branch ? 'Showing warehouses for selected branch' : 'Select a branch first to filter warehouses')
+                                                    : 'Showing warehouses for selected company'}
                                             >
                                                 <option value="">Select Warehouse</option>
                                                 {branchFilteredWarehouses.map(w => (
@@ -2683,7 +2863,7 @@ function SalesOrder() {
 
                                         {/* Series */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Series</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'series', 'Series')}</label>
                                             <select
                                                 name="series"
                                                 className="so-field__select"
@@ -2702,7 +2882,7 @@ function SalesOrder() {
 
                                         {/* Auto Number */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Number</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'nextNumber', 'Number')}</label>
                                             <input
                                                 name="nextNumber"
                                                 className="so-field__input"
@@ -2714,31 +2894,31 @@ function SalesOrder() {
 
                                         {/* Customer Ref. No. */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Customer Ref. No.</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'customerRefNo', 'Customer Ref. No.')}</label>
                                             <input name="customerRefNo" className="so-field__input" value={header.customerRefNo || header.salesContractNo || ''} onChange={handleHeaderChange} />
                                         </div>
 
                                         {/* Status */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Status</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'status', 'Status')}</label>
                                             <input name="status" className="so-field__input" value={header.status} readOnly style={{ background: '#f0f2f5', color: header.status === 'Open' ? '#1a7a30' : '#c00', fontWeight: 600 }} />
                                         </div>
 
                                         {/* Posting Date */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Posting Date *</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'postingDate', 'Posting Date', true)}</label>
                                             <input type="date" name="postingDate" className="so-field__input" value={header.postingDate} onChange={handleHeaderChange} />
                                         </div>
 
                                         {/* Delivery Date */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Delivery Date</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'deliveryDate', 'Delivery Date')}</label>
                                             <input type="date" name="deliveryDate" className="so-field__input" value={header.deliveryDate} onChange={handleHeaderChange} />
                                         </div>
 
                                         {/* Document Date */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Document Date *</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'documentDate', 'Document Date', true)}</label>
                                             <input
                                                 type="date"
                                                 name="documentDate"
@@ -2791,6 +2971,7 @@ function SalesOrder() {
                                 effectiveWarehouses={branchFilteredWarehouses}
                                 fmtTaxLabel={fmtTaxLabel}
                                 valErrors={valErrors}
+                                loading={pageState.loading}
                                 branches={refData.branches}
                                 distributionRules={refData.distribution_rules || []}
                                 distributionDimensions={refData.distribution_dimensions || []}
@@ -2803,8 +2984,11 @@ function SalesOrder() {
                                 getBranchName={getBranchName}
                                 copyFromMode={copyFromMode}
                                 formSettings={formSettings}
+                                matrixFields={matrixColumnDefinitions}
+                                useSapMatrixOrder={Boolean(refData.line_field_metadata?.sap_form?.preferenceRows)}
                                 rowUdfFields={visibleRowUdfs}
                                 onRowUdfChange={handleRowUdfChange}
+                                onLoadLookupOptions={loadDynamicUdfLookupOptions}
                             />
                         )}
 
@@ -3082,6 +3266,7 @@ function SalesOrder() {
                         values={headerUdfs}
                         disabled={!hasBuyerCode}
                         onFieldChange={handleHeaderUdfChange}
+                        onLoadLookupOptions={loadDynamicUdfLookupOptions}
                         onClose={() => setSidebarOpen(false)}
                     />
                     <FormSettingsPanel
@@ -3089,7 +3274,7 @@ function SalesOrder() {
                         className="so-layout__sidebar"
                         isOpen={formSettingsOpen}
                         onClose={() => setFormSettingsOpen(false)}
-                        matrixFields={BASE_MATRIX_COLUMNS}
+                        matrixFields={matrixColumnDefinitions}
                         headerUdfFields={headerUdfDefinitions}
                         rowUdfFields={rowUdfDefinitions}
                         formSettings={formSettings}

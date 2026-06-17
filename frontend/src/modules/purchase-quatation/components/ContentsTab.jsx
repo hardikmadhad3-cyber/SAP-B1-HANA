@@ -76,12 +76,13 @@ export default function ContentsTab({
   onOpenItemModal,
   getBranchName,
   formSettings = {},
+  matrixFields = BASE_MATRIX_COLUMNS,
   rowUdfFields = [],
   onRowUdfChange,
 }) {
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
   const matrixColumns = [
-    ...BASE_MATRIX_COLUMNS.map((column) => ({
+    ...(Array.isArray(matrixFields) && matrixFields.length ? matrixFields : BASE_MATRIX_COLUMNS).map((column) => ({
       ...column,
       minWidth: COLUMN_WIDTHS[column.key] || 125,
     })),

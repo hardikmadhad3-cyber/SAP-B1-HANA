@@ -33,6 +33,7 @@ const MATRIX_COLS = [
   { key: 'hsnCode', label: 'HSN', minWidth: 115 },
   { key: 'sacCode', label: 'SAC', minWidth: 95 },
 ];
+const KNOWN_MATRIX_RENDERER_KEYS = new Set(MATRIX_COLS.map((column) => column.key));
 
 const INDEX_COL_WIDTH = 42;
 const ACTION_COL_WIDTH = 48;
@@ -58,6 +59,16 @@ const pickerButtonStyle = {
 
 const isCheckedValue = (value) =>
   ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase());
+
+const getLineFieldValue = (line = {}, key = '') => {
+  if (key === 'itemNo') {
+    return line.itemNo || line.ItemCode || line.itemCode || '';
+  }
+  if (key === 'itemDescription') {
+    return line.itemDescription || line.ItemDescription || line.Dscription || line.description || line.itemName || '';
+  }
+  return line[key] || '';
+};
 
 const normalizeUdfKey = (value) =>
   String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
@@ -87,6 +98,7 @@ export default function ContentsTab({
   const standardColumnByKey = new Map(MATRIX_COLS.map((column) => [column.key, column]));
   const standardColumnOrderByKey = new Map(MATRIX_COLS.map((column, index) => [column.key, index + 1]));
   const hasLiveMatrixFields = Array.isArray(matrixFields) && matrixFields.length > 0;
+  const usesMetadataDrivenMatrix = hasLiveMatrixFields && matrixFields.some((field) => field?.sapControlled || field?.importedLayout);
   const standardColumns = hasLiveMatrixFields
     ? matrixFields
         .map((field) => {
@@ -103,7 +115,7 @@ export default function ContentsTab({
         order: index + 1,
       }));
 
-  const udfColumns = rowUdfFields
+  const udfColumns = usesMetadataDrivenMatrix ? [] : rowUdfFields
     .filter((field) => {
       const fieldKeys = [field.key, field.sapField, field.aliasId, field.label]
         .map(normalizeUdfKey)
@@ -121,6 +133,7 @@ export default function ContentsTab({
 
   const matrixCols = [...standardColumns, ...udfColumns]
     .filter((column) => {
+      if (column.sapControlled || column.importedLayout) return column.visible !== false;
       if (column.isUdf) {
         return formSettings.rowUdfs?.[column.field.key]?.visible !== false;
       }
@@ -167,6 +180,13 @@ export default function ContentsTab({
   };
 
   const renderUdfCell = (field, line, i) => {
+    if (!field?.key) {
+      return (
+        <td>
+          <input className="del-grid__input" value="" readOnly />
+        </td>
+      );
+    }
     const disabled = !isEditable || field.readOnly || formSettings.rowUdfs?.[field.key]?.active === false;
     const value = line.udf?.[field.key] || '';
     const isSellerItem = normalizeUdfKey(field.key || field.aliasId || field.label) === 'SITEM';
@@ -196,7 +216,7 @@ export default function ContentsTab({
       );
     }
 
-    if (field.type === 'select') {
+    if (field.type === 'select' && Array.isArray(field.options) && field.options.length > 0) {
       return (
         <td key={field.key}>
           <select
@@ -246,7 +266,9 @@ export default function ContentsTab({
   };
 
   const renderCell = (column, line, i, uomOpts, lineTotals) => {
-    if (column.isUdf) return renderUdfCell(column.field, line, i);
+    if (column.isUdf && column.field && !KNOWN_MATRIX_RENDERER_KEYS.has(column.rendererKey || column.valueKey || column.key)) {
+      return renderUdfCell(column.field, line, i);
+    }
 
     const disabled = isStandardDisabled(column);
     const lineErrors = valErrors.lines[i] || {};
@@ -263,7 +285,7 @@ export default function ContentsTab({
                 data-sap-lookup="item"
                 data-sap-row-index={i}
                 onKeyDown={(event) => sapItemTab.handleItemCodeTab(event, i)}
-                value={line.itemNo}
+                value={getLineFieldValue(line, 'itemNo')}
                 onChange={(event) => onLineChange(i, event)}
                 placeholder="Item Code"
                 disabled={disabled}
@@ -290,9 +312,9 @@ export default function ContentsTab({
               className="del-grid__input"
               style={{ textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
               name="itemDescription"
-              value={line.itemDescription}
+              value={getLineFieldValue(line, 'itemDescription')}
               onChange={(event) => onLineChange(i, event)}
-              title={line.itemDescription}
+              title={getLineFieldValue(line, 'itemDescription')}
               disabled={disabled}
             />
           </td>

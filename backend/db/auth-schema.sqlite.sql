@@ -170,6 +170,39 @@ CREATE TABLE IF NOT EXISTS UserGeneralSettings (
   UNIQUE (UserId, CompanyId)
 );
 
+CREATE TABLE IF NOT EXISTS sap_form_layout_columns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  companyDb TEXT NOT NULL,
+  userCode TEXT NOT NULL,
+  documentType TEXT NOT NULL,
+  formType TEXT NOT NULL,
+  matrixId TEXT NOT NULL,
+  tableName TEXT NOT NULL,
+  columnUid TEXT NOT NULL,
+  fieldName TEXT,
+  columnTitle TEXT NOT NULL,
+  visible INTEGER NOT NULL DEFAULT 1,
+  editable INTEGER NOT NULL DEFAULT 1,
+  columnOrder INTEGER NOT NULL DEFAULT 0,
+  width INTEGER DEFAULT 120,
+  dataType TEXT,
+  isUdf INTEGER DEFAULT 0,
+  source TEXT DEFAULT 'manual',
+  createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sap_form_layout_sync_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  companyDb TEXT NOT NULL,
+  userCode TEXT NOT NULL,
+  documentType TEXT NOT NULL,
+  status TEXT NOT NULL,
+  message TEXT,
+  startedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completedAt TEXT
+);
+
 CREATE TABLE IF NOT EXISTS ReportLayoutMenuEntries (
   MenuEntryID INTEGER PRIMARY KEY AUTOINCREMENT,
   MenuCode TEXT NOT NULL UNIQUE,
@@ -225,3 +258,9 @@ CREATE INDEX IF NOT EXISTS IX_ReportParameters_Report
   ON ReportParameters (ReportId, SortOrder, ParamId);
 CREATE INDEX IF NOT EXISTS IX_Reports_CompanyOwner
   ON Reports (CompanyId, CreatedBy, IsPublic, ReportMenuId, ReportName);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_sap_form_layout_columns_scope
+  ON sap_form_layout_columns (companyDb, userCode, documentType, formType, matrixId, columnUid);
+CREATE INDEX IF NOT EXISTS IX_sap_form_layout_columns_lookup
+  ON sap_form_layout_columns (companyDb, userCode, documentType, formType, matrixId, columnOrder, id);
+CREATE INDEX IF NOT EXISTS IX_sap_form_layout_sync_runs_lookup
+  ON sap_form_layout_sync_runs (companyDb, userCode, documentType, startedAt);

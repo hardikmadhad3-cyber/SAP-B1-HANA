@@ -199,6 +199,18 @@ const createLookupValue = async (req, res) => {
   }
 };
 
+const getLookupOptions = async (req, res) => {
+  try {
+    const data = await salesOrderService.getLookupOptions(req.params.source, {
+      query: req.query.q || req.query.query || '',
+      limit: parseTopParam(req.query.limit) || parseTopParam(req.query.top) || 50,
+    });
+    res.json(data);
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error, 'Failed to load lookup options.'));
+  }
+};
+
 module.exports = {
   getReferenceData,
   getCustomerDetails,
@@ -215,6 +227,7 @@ module.exports = {
   getFreightCharges,
   getSalesOrderPrintLayouts,
   createLookupValue,
+  getLookupOptions,
   getOpenSalesOrders:          async (req, res) => { try { res.json(await salesOrderService.getOpenSalesOrders(req.query.customerCode)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
   getSalesOrderForCopy:        async (req, res) => { try { res.json(await salesOrderService.getSalesOrderForCopy(req.params.docEntry)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
   getOpenSalesQuotations:      async (req, res) => { try { res.json(await salesOrderService.getOpenSalesQuotations(req.query.customerCode)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },

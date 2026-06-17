@@ -8,6 +8,21 @@ const TABLE_MIN_WIDTH = 4800;
 const MATRIX_COLS = [
   { key: 'itemNo', label: 'Item No.', minWidth: 160 },
   { key: 'itemDescription', label: 'Item Description', minWidth: 240 },
+  { key: 'quantity', label: 'Quantity', minWidth: 85 },
+  { key: 'uomName', label: 'UoM Name', minWidth: 120 },
+  { key: 'hsnCode', label: 'HSN', minWidth: 95 },
+  { key: 'unitPrice', label: 'Unit Price', minWidth: 110 },
+  { key: 'taxCode', label: 'Tax Code', minWidth: 110 },
+  { key: 'U_PackingType', label: 'Packing-Type', minWidth: 140, isUdf: true },
+  { key: 'U_GrossWt', label: 'GrossWt', minWidth: 110, isUdf: true, numeric: true },
+  { key: 'U_TotalPackage', label: 'Total-Package', minWidth: 130, isUdf: true, numeric: true },
+  { key: 'totalLC', label: 'Total (LC)', minWidth: 115 },
+  { key: 'whse', label: 'Whse', minWidth: 75 },
+  { key: 'binLocationAllocation', label: 'Bin Location Allocation', minWidth: 160 },
+  { key: 'priceAfterDiscount', label: 'Price after Discount', minWidth: 130 },
+  { key: 'itemCost', label: 'Item Cost', minWidth: 110 },
+  { key: 'taxCodeRepeat', label: 'TaxCode', minWidth: 110 },
+  { key: 'price', label: 'Price', minWidth: 95 },
   { key: 'sellerQuality', label: 'Seller - Quality', minWidth: 170 },
   { key: 'buyerQuality', label: 'Buyer - Quality', minWidth: 170 },
   { key: 'sellerPrice', label: 'Seller - Price', minWidth: 110 },
@@ -18,18 +33,12 @@ const MATRIX_COLS = [
   { key: 'buyerBrokerage', label: 'Buyer Brokerage', minWidth: 120 },
   { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', minWidth: 180 },
   { key: 'buyerSpecialInstruction', label: 'Buyer - Special Instruction', minWidth: 180 },
-  { key: 'quantity', label: 'Quantity', minWidth: 85 },
   { key: 'deliveredQty', label: 'Qty to Ship', minWidth: 95 },
   { key: 'openQty', label: 'Ordered Qty', minWidth: 95 },
-  { key: 'unitPrice', label: 'Unit Price', minWidth: 110 },
   { key: 'stdDiscount', label: 'Discount %', minWidth: 90 },
-  { key: 'taxCode', label: 'Tax Code', minWidth: 110 },
   { key: 'taxAmount', label: 'Tax Amount (LC)', minWidth: 115 },
-  { key: 'totalLC', label: 'Total (LC)', minWidth: 115 },
-  { key: 'whse', label: 'Whse', minWidth: 75 },
   { key: 'countryOfOrigin', label: 'Country/Region of Origin', minWidth: 175 },
   { key: 'loc', label: 'Loc.', minWidth: 120 },
-  { key: 'hsnCode', label: 'HSN', minWidth: 95 },
   { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', minWidth: 155 },
   { key: 'sellerBrokeragePercent', label: 'Seller Brokerage in Percentage', minWidth: 170 },
   { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', minWidth: 130 },
@@ -51,9 +60,14 @@ const MATRIX_COLS = [
   { key: 'specialRebate', label: 'Special Rebate', minWidth: 110 },
   { key: 'commission', label: 'Commision', minWidth: 100 },
   { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', minWidth: 100 },
+  { key: 'U_Fix_Brock_B', label: 'FIX Brok BUYER', minWidth: 135, isUdf: true, numeric: true },
+  { key: 'U_Fix_Brock_S', label: 'Fix Brock Seller', minWidth: 140, isUdf: true, numeric: true },
   { key: 'sellerItem', label: 'S_Item', minWidth: 110 },
   { key: 'sellerQty', label: 'S_Qty', minWidth: 90 },
 ];
+const KNOWN_MATRIX_RENDERER_KEYS = new Set(
+  MATRIX_COLS.filter((column) => !column.isUdf).map((column) => column.key)
+);
 
 const parseNumber = (value) => {
   const parsed = Number(value);
@@ -76,6 +90,36 @@ const pickerButtonStyle = {
   borderRadius: '2px',
 };
 
+const getLineFieldValue = (line = {}, key = '') => {
+  if (key === 'itemNo') {
+    return line.itemNo || line.ItemCode || line.itemCode || '';
+  }
+  if (key === 'itemDescription') {
+    return line.itemDescription || line.ItemDescription || line.Dscription || line.description || line.itemName || '';
+  }
+  return line[key] || '';
+};
+
+const getPriceAfterDiscount = (line = {}) => {
+  const unitPrice = parseNumber(line.unitPrice);
+  const discountPercent = parseNumber(line.stdDiscount);
+  if (!unitPrice) return '';
+  return (unitPrice * (1 - (discountPercent / 100))).toFixed(2);
+};
+
+const getGenericUdfField = (column = {}) => {
+  const key = column.valueKey || column.rendererKey || column.key;
+  if (!String(key || '').startsWith('U_')) return null;
+
+  return {
+    key,
+    label: column.label || key,
+    type: column.type || (column.numeric ? 'number' : 'text'),
+    options: column.options,
+    readOnly: column.readOnly,
+  };
+};
+
 export default function ContentsTab({
   lines,
   onLineChange,
@@ -96,6 +140,7 @@ export default function ContentsTab({
   valErrors,
   distributionRules = [],
   formSettings = {},
+  matrixFields = MATRIX_COLS,
   rowUdfFields = [],
   onRowUdfChange,
 }) {
@@ -107,24 +152,41 @@ export default function ContentsTab({
     return (parseNumber(totals.total) - parseNumber(totals.beforeTax)).toFixed(2);
   };
 
+  const sourceMatrixFields = Array.isArray(matrixFields) && matrixFields.length ? matrixFields : MATRIX_COLS;
+  const usesMetadataDrivenMatrix = sourceMatrixFields.some((field) => field?.sapControlled || field?.importedLayout);
+  const rowUdfByKey = new Map((rowUdfFields || []).map((field) => [field.key, field]));
+  const baseColumnByKey = new Map(MATRIX_COLS.map((field) => [field.key, field]));
   const matrixColumns = [
-    ...MATRIX_COLS,
-    ...rowUdfFields.map((field) => ({
+    ...sourceMatrixFields.map((field, index) => {
+      const rendererKey = field.rendererKey || field.valueKey || field.key;
+      return {
+        ...(baseColumnByKey.get(rendererKey) || {}),
+        ...field,
+        key: field.key,
+        rendererKey,
+        valueKey: field.valueKey || rendererKey,
+        minWidth: field.minWidth || field.width || baseColumnByKey.get(rendererKey)?.minWidth || 125,
+        order: Number(field.order ?? field.columnOrder ?? index + 1),
+        field: field.isUdf ? (rowUdfByKey.get(field.valueKey || field.key) || rowUdfByKey.get(field.key) || field.field) : field.field,
+      };
+    }),
+    ...(usesMetadataDrivenMatrix ? [] : rowUdfFields.map((field) => ({
       key: field.key,
       label: field.label || field.key,
       minWidth: field.type === 'textarea' ? 180 : 125,
       isUdf: true,
       field,
-    })),
+    }))),
   ];
 
   const visibleColumns = matrixColumns.filter((col) => {
+    if (col.sapControlled || col.importedLayout) return col.visible !== false;
     const setting = formSettings.matrixColumns?.[col.key];
     if (col.isUdf) {
       return formSettings.rowUdfs?.[col.key]?.visible !== false;
     }
     return setting?.visible !== false;
-  });
+  }).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
 
   const isColumnVisible = (columnKey) => {
     const setting = formSettings.matrixColumns?.[columnKey];
@@ -190,15 +252,19 @@ export default function ContentsTab({
     );
   };
 
-  const renderCell = (columnKey, line, i, uomOpts, lineTotals) => {
-    const udfColumn = rowUdfFields.find((field) => field.key === columnKey);
-    if (udfColumn) {
+  const renderCell = (column, line, i, uomOpts, lineTotals) => {
+    const columnKey = typeof column === 'object' ? column.key : column;
+    const rendererKey = typeof column === 'object' ? (column.rendererKey || column.valueKey || column.key) : column;
+    const udfColumn = typeof column === 'object' && column.isUdf
+      ? (column.field || rowUdfFields.find((field) => field.key === (column.valueKey || column.key)) || getGenericUdfField(column))
+      : rowUdfFields.find((field) => field.key === columnKey);
+    if (udfColumn && !KNOWN_MATRIX_RENDERER_KEYS.has(rendererKey)) {
       const disabled = udfColumn.readOnly || formSettings.rowUdfs?.[udfColumn.key]?.active === false;
       const value = line.udf?.[udfColumn.key] || '';
 
       return (
         <td key={udfColumn.key}>
-          {udfColumn.type === 'select' ? (
+          {udfColumn.type === 'select' && Array.isArray(udfColumn.options) && udfColumn.options.length > 0 ? (
             <select
               className="del-grid__input"
               value={value}
@@ -248,7 +314,7 @@ export default function ContentsTab({
               data-sap-lookup="item"
               data-sap-row-index={i}
               onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
-              value={line.itemNo}
+              value={getLineFieldValue(line, 'itemNo')}
               onChange={(e) => onLineChange(i, e)}
               placeholder="Item Code"
             />
@@ -271,7 +337,7 @@ export default function ContentsTab({
           <input
             className="del-grid__input"
             name="itemDescription"
-            value={line.itemDescription || ''}
+            value={getLineFieldValue(line, 'itemDescription')}
             onChange={(e) => onLineChange(i, e)}
           />
         </td>
@@ -366,6 +432,16 @@ export default function ContentsTab({
               <option value={line.uomCode}>{line.uomCode}</option>
             )}
           </select>
+        </td>
+      ),
+      uomName: () => (
+        <td key="uomName">
+          <input
+            className="del-grid__input"
+            value={line.uomName || line.uomCode || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
         </td>
       ),
       sellerPrice: () => (
@@ -515,6 +591,56 @@ export default function ContentsTab({
             onChange={(e) => onLineChange(i, e)}
             taxCodes={effectiveTaxCodes}
             error={Boolean(valErrors.lines[i]?.taxCode)}
+          />
+        </td>
+      ),
+      taxCodeRepeat: () => (
+        <td key="taxCodeRepeat">
+          <input
+            className="del-grid__input"
+            value={line.taxCode || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      price: () => (
+        <td key="price">
+          <input
+            className="del-grid__input"
+            value={line.price || line.unitPrice || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      priceAfterDiscount: () => (
+        <td key="priceAfterDiscount">
+          <input
+            className="del-grid__input"
+            value={line.priceAfterDiscount || getPriceAfterDiscount(line)}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      itemCost: () => (
+        <td key="itemCost">
+          <input
+            className="del-grid__input"
+            value={line.itemCost || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      binLocationAllocation: () => (
+        <td key="binLocationAllocation">
+          <input
+            className="del-grid__input"
+            value={line.binLocationAllocation || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
           />
         </td>
       ),
@@ -860,7 +986,7 @@ export default function ContentsTab({
       ),
     };
 
-    return cellRenderers[columnKey] ? cellRenderers[columnKey]() : null;
+    return cellRenderers[rendererKey] ? cellRenderers[rendererKey]() : null;
   };
 
   return (
@@ -932,7 +1058,7 @@ export default function ContentsTab({
                       {i + 1}
                     </td>
 
-                    {visibleColumns.map((col) => renderCell(col.key, line, i, uomOpts, lineTotals))}
+                    {visibleColumns.map((col) => renderCell(col, line, i, uomOpts, lineTotals))}
 
                     <td>{renderBatchCell(line, i)}</td>
 

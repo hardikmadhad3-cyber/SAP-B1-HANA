@@ -37,6 +37,12 @@ import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import { useAuth } from '../../auth/AuthContext';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
+import {
+  AR_CREDIT_MEMO_LAYOUT_DOCUMENT_TYPE,
+  buildSalesOrderMatrixColumnsFromLayout,
+} from '../sales-order/documentLayout';
 import {
   fetchARCreditMemoReferenceData,
   fetchARCreditMemoCustomerDetails,
@@ -54,7 +60,6 @@ import {
 } from '../../api/arCreditMemoApi';
 import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { fetchDeliveryForCopyToCreditMemo } from '../../api/deliveryApi';
-import { AR_INVOICE_COMPANY_ID } from '../../config/appConfig';
 import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
   FORM_SETTINGS_STORAGE_KEY,
@@ -68,10 +73,12 @@ import {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
-  const d = e?.response?.data?.detail;
+  const body = e?.response?.data || {};
+  const d = body.detail || body.details;
   if (typeof d === 'string' && d.trim()) return d;
   if (d?.error?.message) return d.error.message;
   if (d?.message) return d.message;
+  if (body.message) return d?.hint ? `${body.message} ${d.hint}` : body.message;
   return e?.message || fb;
 };
 const today = () => new Date().toISOString().split('T')[0];
@@ -201,6 +208,9 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 function ARCreditMemo() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { company } = useAuth();
+  const activeCompanyId = company?.companyId || '';
+  const activeCompanyDb = company?.dbName || '';
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const requestedEditDocEntry = location.state?.arCreditMemoDocEntry;
 
@@ -357,7 +367,41 @@ function ARCreditMemo() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const refDataRes = await fetchARCreditMemoReferenceData(AR_INVOICE_COMPANY_ID);
+        if (!activeCompanyId) {
+          setHeaderUdfDefinitions([]);
+          setRowUdfDefinitions([]);
+          setMatrixColumnDefinitions([]);
+          setHeaderUdfs({});
+          setLines([createLine([])]);
+          setRefData(prev => ({
+            ...prev,
+            company: '',
+            vendors: [], contacts: [], pay_to_addresses: [], items: [], warehouses: [],
+            warehouse_addresses: [], company_address: {}, tax_codes: [], payment_terms: [],
+            shipping_types: [], sales_employees: [], branches: [], states: [], gl_accounts: [],
+            distribution_rules: [], uom_groups: [], matrix_columns: [],
+            line_field_metadata: { matrix_columns: [], sap_form: {} },
+            udf_metadata: { header: [], rows: [] },
+          }));
+          return;
+        }
+
+        setMatrixColumnDefinitions([]);
+
+        const [refDataRes, layoutRes] = await Promise.all([
+          fetchARCreditMemoReferenceData(activeCompanyId),
+          getDocumentLayout({
+            companyDb: activeCompanyDb || undefined,
+            documentType: AR_CREDIT_MEMO_LAYOUT_DOCUMENT_TYPE,
+            objectType: '14',
+          }).catch((error) => ({
+            data: {
+              success: false,
+              columns: [],
+              warning: getErrMsg(error, 'Failed to load SAP layout.'),
+            },
+          })),
+        ]);
         
         if (!ignore) {
           const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
@@ -366,13 +410,19 @@ function ARCreditMemo() {
           const nextMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
             ? refDataRes.data.line_field_metadata.matrix_columns
             : (refDataRes.data.matrix_columns || []);
+          const nextLayoutMatrixColumns = buildSalesOrderMatrixColumnsFromLayout({
+            layoutColumns: layoutRes?.data?.columns || [],
+            liveMatrixColumns: nextMatrixColumns,
+            rowUdfFields: nextRowUdfs,
+            includeLineNumber: false,
+          });
           const hasSapMatrixPreferences =
             Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0;
-          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
-          const nextSapDefaults = createDefaultFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns);
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextLayoutMatrixColumns, formSettingsStorageKey);
+          const nextSapDefaults = createDefaultFormSettings(nextHeaderUdfs, nextRowUdfs, nextLayoutMatrixColumns);
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
-          setMatrixColumnDefinitions(nextMatrixColumns);
+          setMatrixColumnDefinitions(nextLayoutMatrixColumns);
           setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
             ...line,
@@ -421,10 +471,17 @@ function ARCreditMemo() {
             distribution_rules: refDataRes.data.distribution_rules || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
-            matrix_columns: nextMatrixColumns,
-            line_field_metadata: refDataRes.data.line_field_metadata || { matrix_columns: nextMatrixColumns, sap_form: {} },
+            matrix_columns: nextLayoutMatrixColumns,
+            line_field_metadata: {
+              ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+              matrix_columns: nextLayoutMatrixColumns,
+              imported_layout: layoutRes?.data || null,
+            },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
-            warnings: refDataRes.data.warnings || [],
+            warnings: [
+              ...(refDataRes.data.warnings || []),
+              ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+            ],
             series: Array.isArray(prev.series) ? prev.series : [],
           }));
         }
@@ -436,7 +493,7 @@ function ARCreditMemo() {
     };
     load();
     return () => { ignore = true; };
-  }, [formSettingsStorageKey]);
+  }, [activeCompanyDb, activeCompanyId, formSettingsStorageKey]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -1794,6 +1851,7 @@ function ARCreditMemo() {
               side: 'sales',
               hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
               fallbackWarehouse: header.warehouse || DEFAULT_WAREHOUSE_CODE,
+              syncUnitPriceUdf: false,
               calcLineTotal,
               formatTotal: (value) => fmtDec(value, numDec.total),
             }),
@@ -1829,6 +1887,7 @@ function ARCreditMemo() {
           const nextLine = hydrateDocumentLineFromItem(line, mergedItem, {
             side: 'sales',
             fallbackWarehouse: header.warehouse || DEFAULT_WAREHOUSE_CODE,
+            syncUnitPriceUdf: false,
             calcLineTotal,
             formatTotal: (value) => fmtDec(value, numDec.total),
           });
@@ -2294,7 +2353,7 @@ function ARCreditMemo() {
       console.log('🔍 [Frontend] Lines:', lines);
       
       const payload = {
-        company_id: AR_INVOICE_COMPANY_ID,
+        company_id: activeCompanyId,
         header: prep,
         lines: lines.map((line) => ({
           ...line,

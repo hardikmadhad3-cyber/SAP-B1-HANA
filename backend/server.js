@@ -112,6 +112,7 @@ const performanceRoutes          = require('./routes/performanceRoutes');
 const formSettingsRoutes         = require('./routes/formSettings');
 const generalSettingsRoutes      = require('./routes/generalSettingsRoutes');
 const predefinedTextRoutes       = require('./routes/predefinedTextRoutes');
+const sapDocumentLayoutRoutes    = require('./routes/sapDocumentLayout');
 
 const app = express();
 
@@ -133,6 +134,8 @@ const isReusableLookupRequest = (req) => {
 
   return (
     path.endsWith('/reference-data') ||
+    path === '/api/sap/layout/document' ||
+    path.startsWith('/api/hsn-codes') ||
     path.includes('/lookup/') ||
     path.endsWith('/metadata') ||
     path.endsWith('/series') ||
@@ -323,6 +326,7 @@ app.use('/api/performance',        performanceRoutes);
 app.use('/api/form-settings',      formSettingsRoutes);
 app.use('/api/general-settings',   generalSettingsRoutes);
 app.use('/api/predefined-texts',   predefinedTextRoutes);
+app.use('/api/sap/layout',         sapDocumentLayoutRoutes);
 app.use('/api',                    sapRoutes);
 
 // Health check
@@ -402,6 +406,7 @@ app.use((err, req, res, next) => {
   res.status(err.statusCode || 500).json({
     success: false,
     message: err.message || 'Internal Server Error',
+    details: err.details || undefined,
     error: process.env.NODE_ENV === 'development' ? err.stack : undefined,
   });
 });

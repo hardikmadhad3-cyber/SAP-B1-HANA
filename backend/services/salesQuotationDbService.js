@@ -526,6 +526,16 @@ const getSalesQuotation = async (docEntry) => {
       ? `T1.${columnName} AS ${sqlAlias(alias)}`
       : `${fallback} AS ${sqlAlias(alias)}`
   );
+  const lineUomCodeField = hasTableField(lineFieldMetadata, 'unitMsr')
+    ? `T1.unitMsr AS ${sqlAlias('UomCode')}`
+    : hasTableField(lineFieldMetadata, 'UomCode')
+      ? `T1.UomCode AS ${sqlAlias('UomCode')}`
+      : `'' AS ${sqlAlias('UomCode')}`;
+  const lineUomNameField = hasTableField(lineFieldMetadata, 'unitMsr')
+    ? `T1.unitMsr AS ${sqlAlias('UomName')}`
+    : hasTableField(lineFieldMetadata, 'UomCode')
+      ? `T1.UomCode AS ${sqlAlias('UomName')}`
+      : `'' AS ${sqlAlias('UomName')}`;
 
   const rows = await safe(db.query(`
     SELECT
@@ -545,13 +555,15 @@ const getSalesQuotation = async (docEntry) => {
       T0.TotalExpns AS Freight,
       T0.VatSum AS TaxAmount,
       ST.Name AS PlaceOfSupply,
-      T1.LineNum, T1.ItemCode, T1.Dscription,
+      T1.LineNum,
+      T1.ItemCode,
+      COALESCE(NULLIF(LTRIM(RTRIM(T1.Dscription)), ''), ITM.ItemName, '') AS Dscription,
       T1.Quantity, T1.Price,
       ${lineField('RequiredDate', 'RequiredDate')},
       ${lineField('ShipDate', 'ShipDate')},
       T1.DiscPrcnt AS LineDiscPrcnt,
       T1.VatGroup AS TaxCode,
-      T1.WhsCode, T1.unitMsr AS UomCode, T1.LineTotal,
+      T1.WhsCode, ${lineUomCodeField}, ${lineUomNameField}, T1.LineTotal,
       T1.OcrCode AS DistRule,
       T1.CogsOcrCod AS CogsDistRule,
       T1.CountryOrg AS CountryOfOrigin,
@@ -669,8 +681,9 @@ const getSalesQuotation = async (docEntry) => {
           sacCode: firstUdfValue(lineUdf, ['U_SACCode', 'U_SAC']),
           quantity: String(line.Quantity || 0),
           unitPrice: String(line.Price || 0),
-          unitPriceUdf: firstUdfValue(lineUdf, ['U_Unit_Price']) || String(line.Price || 0),
+          unitPriceUdf: firstUdfValue(lineUdf, ['U_Unit_Price']),
           uomCode: line.UomCode || '',
+          uomName: line.UomName || line.UomCode || '',
           stdDiscount: String(line.LineDiscPrcnt || ''),
           taxCode: line.TaxCode || '',
           total: String(line.LineTotal || 0),
@@ -852,7 +865,7 @@ const getSalesQuotationForCopy = async (docEntry) => {
     SELECT 
       T0.LineNum,
       T0.ItemCode,
-      T0.Dscription AS ItemDescription,
+      COALESCE(NULLIF(LTRIM(RTRIM(T0.Dscription)), ''), ITM.ItemName, '') AS ItemDescription,
 
       -- 🔥 IMPORTANT: USE OPEN QTY
       T0.OpenQty AS Quantity,
@@ -890,7 +903,7 @@ const getSalesQuotationForCopy = async (docEntry) => {
       ${lineField('U_COMPRC', 'Commission')},
       ${lineField('U_S_BrokPerQty', 'SellerBrokeragePerQty')},
       ${lineField('U_Req_Qty', 'RequiredQty')},
-      ${lineField('U_Unit_Price', 'UnitPriceUdf', 'COALESCE(T0.PriceBefDi, T0.Price)')},
+      ${lineField('U_Unit_Price', 'UnitPriceUdf')},
       ${lineField('U_Brok_Seller', 'SellerBrokerage')},
       ${lineField('U_Brok_Buyer', 'BuyerBrokerage')},
       ${lineField('U_Buyer_Delivery', 'BuyerDelivery')},

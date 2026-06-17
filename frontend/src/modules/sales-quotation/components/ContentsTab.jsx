@@ -54,6 +54,19 @@ const formatDateDisplay = (value) => {
 
 const compactLabel = (value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+const getLineFieldValue = (line = {}, key = '') => {
+  if (key === 'itemNo') {
+    return line.itemNo || line.ItemCode || line.itemCode || '';
+  }
+  if (key === 'itemDescription') {
+    return line.itemDescription || line.ItemDescription || line.Dscription || line.description || line.itemName || '';
+  }
+  if (key === 'uomName') {
+    return line.uomName || line.UomName || line.UoMName || line.unitMsr || line.uomCode || line.UomCode || line.UoMCode || '';
+  }
+  return line[key] || '';
+};
+
 export default function ContentsTab({
   lines,
   onLineChange,
@@ -73,16 +86,28 @@ export default function ContentsTab({
   onOpenPaymentTermsModal,
   getBranchName,
   formSettings = {},
+  matrixFields = BASE_MATRIX_COLUMNS,
   rowUdfFields = [],
   onRowUdfChange,
 }) {
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
+  const sourceMatrixFields = Array.isArray(matrixFields) && matrixFields.length ? matrixFields : BASE_MATRIX_COLUMNS;
+  const usesMetadataDrivenMatrix = sourceMatrixFields.some((field) => field?.sapControlled || field?.importedLayout);
   const fixedColumnLabels = new Set(BASE_MATRIX_COLUMNS.map((column) => compactLabel(column.label || column.key)));
-  const visibleRowUdfFields = rowUdfFields.filter((field) => !fixedColumnLabels.has(compactLabel(field.label || field.key)));
+  const visibleRowUdfFields = usesMetadataDrivenMatrix
+    ? []
+    : rowUdfFields.filter((field) => !fixedColumnLabels.has(compactLabel(field.label || field.key)));
+  const rowUdfByKey = new Map((rowUdfFields || []).map((field) => [field.key, field]));
   const matrixColumns = [
-    ...BASE_MATRIX_COLUMNS.map((column) => ({
+    ...sourceMatrixFields.map((column, index) => ({
+      ...(BASE_MATRIX_COLUMNS.find((base) => base.key === (column.rendererKey || column.valueKey || column.key)) || {}),
       ...column,
-      minWidth: COLUMN_WIDTHS[column.key] || 125,
+      key: column.key,
+      rendererKey: column.rendererKey || column.valueKey || column.key,
+      valueKey: column.valueKey || column.rendererKey || column.key,
+      minWidth: column.minWidth || column.width || COLUMN_WIDTHS[column.rendererKey || column.valueKey || column.key] || 125,
+      order: Number(column.order ?? column.columnOrder ?? index + 1),
+      field: column.isUdf ? (rowUdfByKey.get(column.valueKey || column.key) || rowUdfByKey.get(column.key) || column.field) : column.field,
     })),
     ...visibleRowUdfFields.map((field) => ({
       key: field.key,
@@ -94,9 +119,10 @@ export default function ContentsTab({
   ];
 
   const visibleColumns = matrixColumns.filter((column) => {
+    if (column.sapControlled || column.importedLayout) return column.visible !== false;
     if (column.isUdf) return formSettings.rowUdfs?.[column.key]?.visible !== false;
     return formSettings.matrixColumns?.[column.key]?.visible !== false;
-  });
+  }).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
 
   const tableMinWidth =
     INDEX_COL_WIDTH +
@@ -104,10 +130,17 @@ export default function ContentsTab({
     visibleColumns.reduce((total, column) => total + column.minWidth, 0);
 
   const renderUdfCell = (field, line, i) => {
+    if (!field?.key) {
+      return (
+        <td>
+          <input className="so-grid__input" value="" readOnly />
+        </td>
+      );
+    }
     const disabled = field.readOnly || formSettings.rowUdfs?.[field.key]?.active === false;
     const value = line.udf?.[field.key] || '';
 
-    if (field.type === 'select') {
+    if (field.type === 'select' && Array.isArray(field.options) && field.options.length > 0) {
       return (
         <td key={field.key}>
           <select
@@ -153,14 +186,14 @@ export default function ContentsTab({
   };
 
   const renderCell = (column, line, i, uomOpts, lineTotals) => {
-    if (column.isUdf) return renderUdfCell(column.field, line, i);
+    const rendererKey = column.rendererKey || column.valueKey || column.key;
 
     const textInput = (key, options = {}) => (
-      <td key={key}>
+      <td key={column.key || key}>
         <input
           className="so-grid__input"
           name={key}
-          value={line[key] || ''}
+          value={getLineFieldValue(line, key)}
           onChange={(e) => onLineChange(i, e)}
           onBlur={options.numeric ? () => onNumBlur(key, 'line', i) : undefined}
           type={options.type || 'text'}
@@ -203,7 +236,7 @@ export default function ContentsTab({
               data-sap-lookup="item"
               data-sap-row-index={i}
               onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
-              value={line.itemNo || ''}
+              value={getLineFieldValue(line, 'itemNo')}
               onChange={(e) => onLineChange(i, e)}
               placeholder="Item Code"
             />
@@ -214,6 +247,19 @@ export default function ContentsTab({
           {valErrors.lines[i]?.itemNo && (
             <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].itemNo}</div>
           )}
+        </td>
+      ),
+      itemDescription: () => (
+        <td key="itemDescription">
+          <input
+            className="so-grid__input"
+            style={{ textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            name="itemDescription"
+            type="text"
+            value={getLineFieldValue(line, 'itemDescription')}
+            onChange={(e) => onLineChange(i, e)}
+            title={getLineFieldValue(line, 'itemDescription')}
+          />
         </td>
       ),
       quantity: () => (
@@ -310,6 +356,7 @@ export default function ContentsTab({
           </select>
         </td>
       ),
+      uomName: () => readonlyInput('uomName', getLineFieldValue(line, 'uomName')),
       countryOfOrigin: () => (
         <td key="countryOfOrigin">
           <select
@@ -404,9 +451,9 @@ export default function ContentsTab({
       'freightSales',
     ]);
 
-    return cellRenderers[column.key]
-      ? cellRenderers[column.key]()
-      : textInput(column.key, { numeric: numericFields.has(column.key) });
+    if (cellRenderers[rendererKey]) return cellRenderers[rendererKey]();
+    if (column.isUdf && column.field) return renderUdfCell(column.field, line, i);
+    return textInput(rendererKey, { numeric: numericFields.has(rendererKey) });
   };
 
   return (

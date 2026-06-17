@@ -1262,7 +1262,7 @@ const getARInvoice = async (docEntry) => {
     SELECT
       T0.LineNum,
       T0.ItemCode,
-      T0.Dscription AS ItemDescription,
+      COALESCE(NULLIF(LTRIM(RTRIM(T0.Dscription)), ''), ITM.ItemName, '') AS ItemDescription,
       T0.Quantity,
       T0.OpenQty AS OpenQuantity,
       T0.Price AS UnitPrice,

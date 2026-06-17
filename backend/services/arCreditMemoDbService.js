@@ -314,7 +314,7 @@ const getARCreditMemo = async (docEntry) => {
     SELECT 
       T0.LineNum,
       T0.ItemCode,
-      T0.Dscription AS ItemDescription,
+      COALESCE(NULLIF(LTRIM(RTRIM(T0.Dscription)), ''), ITM.ItemName, '') AS ItemDescription,
       T0.Quantity,
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
@@ -326,6 +326,7 @@ const getARCreditMemo = async (docEntry) => {
       T0.BaseType,
       T0.BaseLine
     FROM RIN1 T0
+    LEFT JOIN OITM ITM ON ITM.ItemCode = T0.ItemCode
     WHERE T0.DocEntry = @docEntry
     ORDER BY T0.LineNum
   `, { docEntry }));

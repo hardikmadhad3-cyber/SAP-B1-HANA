@@ -1,11 +1,12 @@
 import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
+import DocumentLinesTable from '../../../components/sales-document/DocumentLinesTable';
 import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 import { filterSalesOrderRowUdfDefinitions } from '../../../config/salesOrderForm';
+import LineValueLookupModal from '../../../components/sales-document/LineValueLookupModal';
+import { SALES_ORDER_LINE_NUMBER_KEY } from '../documentLayout';
 
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
-
-const TABLE_MIN_WIDTH = 5200;
 
 const MATRIX_COLS = [
   { key: 'itemNo', label: 'Item No.', minWidth: 160 },
@@ -298,87 +299,304 @@ export default function ContentsTab({
   onOpenQualityModal,
   onOpenPaymentTermsModal,
   formSettings = {},
+  matrixFields = MATRIX_COLS,
+  loading = false,
+  useSapMatrixOrder = false,
   rowUdfFields = [],
   onRowUdfChange,
+  onLoadLookupOptions,
 }) {
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
-  const [distributionRuleLineIndex, setDistributionRuleLineIndex] = React.useState(-1);
+  const [dynamicUdfLookup, setDynamicUdfLookup] = React.useState({
+    open: false,
+    rowIndex: -1,
+    field: null,
+    options: [],
+    loading: false,
+    error: '',
+  });
   const getTaxAmountDisplay = (line) => {
     if (String(line.taxAmount ?? '').trim()) return line.taxAmount;
     const totals = getLineTotalsForDisplay(line, effectiveTaxCodes);
     if (!totals.beforeTax || !totals.total) return '';
     return (parseNumber(totals.total) - parseNumber(totals.beforeTax)).toFixed(2);
   };
+  const rendererColumnMap = React.useMemo(
+    () => new Map(MATRIX_COLS.map((column) => [column.key, column])),
+    []
+  );
+  const liveMatrixFields = React.useMemo(() => {
+    const sourceFields = Array.isArray(matrixFields) ? matrixFields : MATRIX_COLS;
+    if (!sourceFields.length) return [];
+    const hasLineNumberColumn = sourceFields.some((field) => field?.key === SALES_ORDER_LINE_NUMBER_KEY);
+    if (hasLineNumberColumn) return sourceFields;
 
-  // Filter visible columns based on form settings
-  const visibleRowUdfFields = filterSalesOrderRowUdfDefinitions(rowUdfFields);
+    return [
+      {
+        key: SALES_ORDER_LINE_NUMBER_KEY,
+        fieldName: 'LineNum',
+        label: '#',
+        visible: true,
+        active: true,
+        readOnly: true,
+        minWidth: 42,
+        width: 42,
+        order: 0,
+        columnOrder: 0,
+        sapControlled: true,
+        importedLayout: true,
+      },
+      ...sourceFields,
+    ];
+  }, [matrixFields]);
+  const usesMetadataDrivenMatrix = useSapMatrixOrder || liveMatrixFields.some((field) => field?.importedLayout);
+  const visibleRowUdfFields = usesMetadataDrivenMatrix
+    ? (rowUdfFields || [])
+    : filterSalesOrderRowUdfDefinitions(rowUdfFields);
+  const liveMatrixFieldKeys = React.useMemo(
+    () => new Set(liveMatrixFields.map((field) => field.key)),
+    [liveMatrixFields]
+  );
+  const getColumnValueKey = (column = {}) => column.valueKey || column.rendererKey || column.key;
+  const getColumnRendererKey = (column = {}) => column.rendererKey || column.valueKey || column.key;
+  const isSapControlledColumn = (column = {}) => Boolean(column.sapControlled);
+  const getColumnVisibility = (column = {}) => {
+    if (isSapControlledColumn(column)) return column.visible !== false;
+    if (liveMatrixFieldKeys.has(column.key)) {
+      const setting = formSettings.matrixColumns?.[column.key];
+      return column.visible !== false && setting?.visible !== false;
+    }
+    if (column.isUdf) {
+      return column.visible !== false && formSettings.rowUdfs?.[column.key]?.visible !== false;
+    }
+    const setting = formSettings.matrixColumns?.[column.key];
+    return column.visible !== false && setting?.visible !== false;
+  };
 
   const matrixColumns = [
-    ...MATRIX_COLS,
-    ...visibleRowUdfFields.map((field) => ({
+    ...liveMatrixFields.map((field, index) => {
+      const rendererColumn = rendererColumnMap.get(field.rendererKey || field.valueKey || field.key) || {};
+      return {
+        ...rendererColumn,
+        ...field,
+        key: field.key,
+        label: field.label || rendererColumn.label || field.key,
+        minWidth: field.minWidth || rendererColumn.minWidth || 125,
+        order: field.order ?? rendererColumn.order ?? index + 1,
+      };
+    }),
+    ...(usesMetadataDrivenMatrix ? [] : visibleRowUdfFields.map((field) => ({
       key: field.key,
       label: field.label || field.key,
       minWidth: field.type === 'textarea' ? 180 : 125,
+      visible: field.visible,
+      active: field.active,
+      order: field.order,
       isUdf: true,
       field,
-    })),
-  ];
+    }))),
+  ].sort((left, right) => (Number(left.order ?? 99999) - Number(right.order ?? 99999)));
 
-  const visibleColumns = matrixColumns.filter(col => {
-    if (col.isUdf) {
-      return formSettings.rowUdfs?.[col.key]?.visible !== false;
-    }
-    const setting = formSettings.matrixColumns?.[col.key];
-    return setting?.visible !== false;
-  });
+  const visibleColumns = matrixColumns.filter((col) => getColumnVisibility(col));
 
   // Helper to check if a column is visible
   const isColumnVisible = (columnKey) => {
-    const setting = formSettings.matrixColumns?.[columnKey];
-    return setting?.visible !== false;
+    const column = matrixColumns.find((entry) => entry.key === columnKey);
+    if (!column) return false;
+    return getColumnVisibility(column);
   };
 
-  // Create a map of column renderers
-  const renderCell = (columnKey, line, i, uomOpts, lineTotals) => {
-    const udfColumn = visibleRowUdfFields.find((field) => field.key === columnKey);
-    if (udfColumn) {
-      const disabled = udfColumn.readOnly || formSettings.rowUdfs?.[udfColumn.key]?.active === false;
-      const value = line.udf?.[udfColumn.key] || '';
+  const openDynamicUdfLookup = async (rowIndex, field) => {
+    if (!field?.lookupSource || typeof onLoadLookupOptions !== 'function') return;
 
+    setDynamicUdfLookup({
+      open: true,
+      rowIndex,
+      field,
+      options: [],
+      loading: true,
+      error: '',
+    });
+
+    try {
+      const options = await onLoadLookupOptions(field.lookupSource, field);
+      setDynamicUdfLookup({
+        open: true,
+        rowIndex,
+        field,
+        options: Array.isArray(options) ? options : [],
+        loading: false,
+        error: '',
+      });
+    } catch (error) {
+      setDynamicUdfLookup({
+        open: true,
+        rowIndex,
+        field,
+        options: [],
+        loading: false,
+        error: error?.response?.data?.detail || error?.message || 'Failed to load lookup values.',
+      });
+    }
+  };
+
+  const handleDynamicUdfLookupSelect = (option) => {
+    if (!dynamicUdfLookup.field?.key || dynamicUdfLookup.rowIndex < 0) return;
+    const valueKey = getColumnValueKey(dynamicUdfLookup.field);
+    onRowUdfChange && onRowUdfChange(dynamicUdfLookup.rowIndex, valueKey, option?.value || '');
+  };
+
+  const isUdfMatrixColumn = (column = {}) => (
+    Boolean(column.isUdf)
+    || column.source === 'RDR1_UDF'
+    || String(column.key || '').startsWith('U_')
+    || String(column.valueKey || '').startsWith('U_')
+  );
+
+  const getMatrixColumnSetting = (column = {}) => (
+    isSapControlledColumn(column)
+      ? { visible: column.visible !== false, active: column.active !== false, sapControlled: true }
+      : (
+        formSettings.matrixColumns?.[column.key]
+        || formSettings.rowUdfs?.[column.key]
+        || {}
+      )
+  );
+
+  const handleGenericMatrixValueChange = (rowIndex, column, nextValue) => {
+    const valueKey = getColumnValueKey(column);
+    if (isUdfMatrixColumn(column)) {
+      onRowUdfChange && onRowUdfChange(rowIndex, valueKey, nextValue);
+      return;
+    }
+
+    if (typeof onLineChange !== 'function') return;
+    onLineChange(rowIndex, { target: { name: valueKey, value: nextValue } });
+  };
+
+  const renderGenericMatrixCell = (column, line, i) => {
+    const setting = getMatrixColumnSetting(column);
+    const disabled = column.readOnly || setting.active === false;
+    const valueKey = getColumnValueKey(column);
+    const value = isUdfMatrixColumn(column)
+      ? (line.udf?.[valueKey] || '')
+      : (line[valueKey] ?? '');
+
+    const inputType = column.type === 'date'
+      ? 'date'
+      : (column.type === 'number' || column.numeric ? 'number' : 'text');
+
+    const hasSelectOptions = Array.isArray(column.options) && column.options.length > 0;
+    if (hasSelectOptions) {
       return (
-        <td key={udfColumn.key}>
-          {udfColumn.type === 'select' ? (
-            <select
-              className="so-grid__input"
-              value={value}
-              disabled={disabled}
-              onChange={(e) => onRowUdfChange && onRowUdfChange(i, udfColumn.key, e.target.value)}
-            >
-              <option value=""></option>
-              {(udfColumn.options || []).map((option) => {
-                const normalizedOption = typeof option === 'object' ? option : { value: option, label: option };
-                return <option key={normalizedOption.value} value={normalizedOption.value}>{normalizedOption.label}</option>;
-              })}
-            </select>
-          ) : udfColumn.type === 'checkbox' ? (
-            <input
-              type="checkbox"
-              checked={['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase())}
-              disabled={disabled}
-              onChange={(e) => onRowUdfChange && onRowUdfChange(i, udfColumn.key, e.target.checked ? 'Y' : 'N')}
-            />
-          ) : (
-            <input
-              className="so-grid__input"
-              type={udfColumn.type === 'date' ? 'date' : udfColumn.type === 'number' ? 'number' : 'text'}
-              value={value}
-              disabled={disabled}
-              onChange={(e) => onRowUdfChange && onRowUdfChange(i, udfColumn.key, e.target.value)}
-            />
-          )}
+        <td key={column.key}>
+          <select
+            className="so-grid__input"
+            value={value}
+            disabled={disabled}
+            onChange={(e) => handleGenericMatrixValueChange(i, column, e.target.value)}
+          >
+            <option value=""></option>
+            {(column.options || []).map((option) => {
+              const normalizedOption = typeof option === 'object'
+                ? option
+                : { value: option, label: option };
+              return (
+                <option key={normalizedOption.value} value={normalizedOption.value}>
+                  {normalizedOption.label}
+                </option>
+              );
+            })}
+          </select>
         </td>
       );
     }
+
+    if (column.type === 'checkbox') {
+      return (
+        <td key={column.key}>
+          <input
+            type="checkbox"
+            checked={['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase())}
+            disabled={disabled}
+            onChange={(e) => handleGenericMatrixValueChange(i, column, e.target.checked ? 'Y' : 'N')}
+          />
+        </td>
+      );
+    }
+
+    if (column.lookupSource) {
+      return (
+        <td key={column.key}>
+          <div style={{ display: 'flex', gap: 2 }}>
+            <input
+              className="so-grid__input"
+              type={inputType}
+              value={value}
+              disabled={disabled}
+              onChange={(e) => handleGenericMatrixValueChange(i, column, e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => openDynamicUdfLookup(i, column)}
+              disabled={disabled}
+              style={pickerButtonStyle}
+              title={`List of ${column.label || 'Values'}`}
+            >
+              ...
+            </button>
+          </div>
+        </td>
+      );
+    }
+
+    if (column.type === 'textarea') {
+      return (
+        <td key={column.key}>
+          <textarea
+            className="so-grid__input"
+            value={value}
+            disabled={disabled}
+            rows={2}
+            onChange={(e) => handleGenericMatrixValueChange(i, column, e.target.value)}
+          />
+        </td>
+      );
+    }
+
+    return (
+      <td key={column.key}>
+        <input
+          className="so-grid__input"
+          type={inputType}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => handleGenericMatrixValueChange(i, column, e.target.value)}
+        />
+      </td>
+    );
+  };
+
+  // Create a map of column renderers
+  const renderCell = (column, line, i, uomOpts, lineTotals) => {
+    const columnKey = column.key;
+    const rendererKey = getColumnRendererKey(column);
+    const valueKey = getColumnValueKey(column);
+    if (columnKey === SALES_ORDER_LINE_NUMBER_KEY) {
+      return (
+        <td key={columnKey} className="so-grid__cell--muted" style={{ textAlign: 'center', fontSize: 11 }}>
+          {line.lineNum != null ? Number(line.lineNum) + 1 : i + 1}
+        </td>
+      );
+    }
+
+    const matchedUdfColumn = isUdfMatrixColumn(column)
+      ? visibleRowUdfFields.find((field) => field.key === valueKey)
+      : null;
+    const udfColumn = isUdfMatrixColumn(column)
+      ? (matchedUdfColumn ? { ...matchedUdfColumn, ...column, valueKey } : column)
+      : null;
+    if (udfColumn) return renderGenericMatrixCell(udfColumn, line, i);
 
     if (!isColumnVisible(columnKey)) return null;
 
@@ -1025,10 +1243,15 @@ export default function ContentsTab({
       ),
     };
 
-    return cellRenderers[columnKey] ? cellRenderers[columnKey]() : null;
+    if (!cellRenderers[rendererKey]) return undefined;
+    const rendered = cellRenderers[rendererKey]();
+    return React.isValidElement(rendered)
+      ? React.cloneElement(rendered, { key: columnKey })
+      : rendered;
   };
 
   return (
+    <>
     <div className="so-tab-panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
         <div className="so-section-title">Document Lines</div>
@@ -1037,68 +1260,46 @@ export default function ContentsTab({
         </button>
       </div>
 
-      <div className="so-grid-wrap so-grid-wrap--contents">
-        <div
-          className="so-grid-wrap__scroller so-grid-wrap__scroller--contents"
-        >
-          <table
-            className="so-grid so-grid--contents"
-            style={{
-              width: 'max-content',
-              minWidth: TABLE_MIN_WIDTH,
-            }}
-          >
-          <colgroup>
-            <col style={{ width: 42 }} />
-            {visibleColumns.map((column) => (
-              <col key={column.key} style={{ width: column.minWidth }} />
-            ))}
-            <col style={{ width: 48 }} />
-          </colgroup>
-          <thead>
-            <tr>
-              <th style={{ width: 42 }}>#</th>
-              {visibleColumns.map((column) => (
-                <th
-                  key={column.key}
-                  style={{ minWidth: column.minWidth }}
-                >
-                  {column.label}
-                </th>
-              ))}
-              <th style={{ width: 25 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((line, i) => {
-              const uomOpts = getUomOptions(line);
-              const lineTotals = getLineTotalsForDisplay(line, effectiveTaxCodes);
-
-              return (
-                <tr key={i}>
-                  <td className="so-grid__cell--muted" style={{ textAlign: 'center', fontSize: 11 }}>
-                    {i + 1}
-                  </td>
-
-                  {visibleColumns.map(col => renderCell(col.key, line, i, uomOpts, lineTotals))}
-
-                  <td>
-                    <button
-                      type="button"
-                      className="so-btn so-btn--danger"
-                      style={{ padding: '2px 8px', fontSize: 14 }}
-                      onClick={() => onRemoveLine(i)}
-                    >
-                      x
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-          </table>
-        </div>
-      </div>
+      <DocumentLinesTable
+        rows={lines}
+        columns={visibleColumns.map((column) => ({
+          ...column,
+          columnTitle: column.label || column.columnTitle || column.key,
+          width: column.width || column.minWidth,
+          columnOrder: column.columnOrder ?? column.order,
+        }))}
+        loading={loading}
+        rowKey={(_row, index) => index}
+        renderCell={(column, line, rowIndex) => {
+          const uomOpts = getUomOptions(line);
+          const lineTotals = getLineTotalsForDisplay(line, effectiveTaxCodes);
+          return renderCell(column, line, rowIndex, uomOpts, lineTotals);
+        }}
+        renderTrailingHeaderCell={() => <th style={{ width: 25 }}></th>}
+        renderTrailingCell={(_row, rowIndex) => (
+          <td>
+            <button
+              type="button"
+              className="so-btn so-btn--danger"
+              style={{ padding: '2px 8px', fontSize: 14 }}
+              onClick={() => onRemoveLine(rowIndex)}
+            >
+              x
+            </button>
+          </td>
+        )}
+      />
     </div>
+    <LineValueLookupModal
+      isOpen={dynamicUdfLookup.open}
+      onClose={() => setDynamicUdfLookup((prev) => ({ ...prev, open: false }))}
+      onSelect={handleDynamicUdfLookupSelect}
+      options={dynamicUdfLookup.options}
+      title={`List of ${dynamicUdfLookup.field?.label || 'Values'}`}
+      searchPlaceholder="Search values"
+      emptyMessage={dynamicUdfLookup.loading ? 'Loading values...' : (dynamicUdfLookup.error || 'No values found')}
+      allowCreate={false}
+    />
+    </>
   );
 }

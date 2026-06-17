@@ -38,6 +38,12 @@ import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import { useAuth } from '../../auth/AuthContext';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
+import {
+  AR_INVOICE_LAYOUT_DOCUMENT_TYPE,
+  buildSalesOrderMatrixColumnsFromLayout,
+} from '../sales-order/documentLayout';
 import {
   fetchARInvoiceReferenceData,
   fetchARInvoiceCustomerDetails,
@@ -58,7 +64,6 @@ import {
   fetchBlanketAgreementForARInvoiceCopy,
 } from '../../api/arInvoiceApi';
 import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
-import { AR_INVOICE_COMPANY_ID } from '../../config/appConfig';
 import { arInvoiceCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
   FORM_SETTINGS_STORAGE_KEY,
@@ -71,10 +76,12 @@ import {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
-  const d = e?.response?.data?.detail;
+  const body = e?.response?.data || {};
+  const d = body.detail || body.details;
   if (typeof d === 'string' && d.trim()) return d;
   if (d?.error?.message) return d.error.message;
   if (d?.message) return d.message;
+  if (body.message) return d?.hint ? `${body.message} ${d.hint}` : body.message;
   return e?.message || fb;
 };
 const today = () => new Date().toISOString().split('T')[0];
@@ -232,6 +239,9 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 function ARInvoicePage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { company } = useAuth();
+  const activeCompanyId = company?.companyId || '';
+  const activeCompanyDb = company?.dbName || '';
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const handledCopyFromRef = useRef('');
   const requestedEditDocEntry = location.state?.arInvoiceDocEntry;
@@ -423,7 +433,42 @@ function ARInvoicePage() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const refDataRes = await fetchARInvoiceReferenceData(AR_INVOICE_COMPANY_ID);
+        if (!activeCompanyId) {
+          setHeaderUdfDefinitions([]);
+          setRowUdfDefinitions([]);
+          setMatrixColumnDefinitions([]);
+          setHeaderUdfs({});
+          setLines([createLine([])]);
+          setRefData(prev => ({
+            ...prev,
+            company: '',
+            vendors: [], contacts: [], pay_to_addresses: [], items: [], warehouses: [],
+            warehouse_addresses: [], company_address: {}, tax_codes: [], withholding_tax_codes: [],
+            gl_accounts: [], distribution_rules: [], payment_terms: [], shipping_types: [],
+            transaction_types: [], sales_employees: [], branches: [], states: [], uom_groups: [],
+            matrix_columns: [],
+            line_field_metadata: { matrix_columns: [], sap_form: {} },
+            udf_metadata: { header: [], rows: [] },
+          }));
+          return;
+        }
+
+        setMatrixColumnDefinitions([]);
+
+        const [refDataRes, layoutRes] = await Promise.all([
+          fetchARInvoiceReferenceData(activeCompanyId),
+          getDocumentLayout({
+            companyDb: activeCompanyDb || undefined,
+            documentType: AR_INVOICE_LAYOUT_DOCUMENT_TYPE,
+            objectType: '13',
+          }).catch((error) => ({
+            data: {
+              success: false,
+              columns: [],
+              warning: getErrMsg(error, 'Failed to load SAP layout.'),
+            },
+          })),
+        ]);
         
         if (!ignore) {
           const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
@@ -434,14 +479,20 @@ function ARInvoicePage() {
               ? refDataRes.data.line_field_metadata.matrix_columns
               : (refDataRes.data.matrix_columns || [])
           ).filter((field) => field && field.key);
+          const nextLayoutMatrixColumns = buildSalesOrderMatrixColumnsFromLayout({
+            layoutColumns: layoutRes?.data?.columns || [],
+            liveMatrixColumns: nextMatrixColumns,
+            rowUdfFields: nextRowUdfs,
+            includeLineNumber: false,
+          });
           const hasSapMatrixPreferences =
             Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0;
           const liveDefaultBranch = String(refDataRes.data.default_branch || '').trim();
           const liveDefaultWarehouse = String(refDataRes.data.default_warehouse || '').trim();
-          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextLayoutMatrixColumns, formSettingsStorageKey);
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
-          setMatrixColumnDefinitions(nextMatrixColumns);
+          setMatrixColumnDefinitions(nextLayoutMatrixColumns);
           setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
             ...line,
@@ -492,10 +543,17 @@ function ARInvoicePage() {
             states: refDataRes.data.states || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
-            matrix_columns: nextMatrixColumns,
-            line_field_metadata: refDataRes.data.line_field_metadata || { matrix_columns: nextMatrixColumns, sap_form: {} },
+            matrix_columns: nextLayoutMatrixColumns,
+            line_field_metadata: {
+              ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+              matrix_columns: nextLayoutMatrixColumns,
+              imported_layout: layoutRes?.data || null,
+            },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
-            warnings: refDataRes.data.warnings || [],
+            warnings: [
+              ...(refDataRes.data.warnings || []),
+              ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+            ],
             series: Array.isArray(prev.series) ? prev.series : [],
             default_branch: liveDefaultBranch,
             default_warehouse: liveDefaultWarehouse,
@@ -522,7 +580,7 @@ function ARInvoicePage() {
     };
     load();
     return () => { ignore = true; };
-  }, [formSettingsStorageKey]);
+  }, [activeCompanyDb, activeCompanyId, formSettingsStorageKey]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -1923,6 +1981,7 @@ function ARInvoicePage() {
             side: 'sales',
             hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
             fallbackWarehouse: header.warehouse,
+            syncUnitPriceUdf: false,
             calcLineTotal,
             formatTotal: (value) => fmtDec(value, numDec.total),
           });
@@ -1954,6 +2013,7 @@ function ARInvoicePage() {
           const updatedLine = hydrateDocumentLineFromItem(line, mergedItem, {
             side: 'sales',
             fallbackWarehouse: header.warehouse,
+            syncUnitPriceUdf: false,
             calcLineTotal,
             formatTotal: (value) => fmtDec(value, numDec.total),
           });
@@ -2457,7 +2517,7 @@ function ARInvoicePage() {
       console.log('🔍 [Frontend] Lines:', lines);
       
       const payload = {
-        company_id: AR_INVOICE_COMPANY_ID,
+        company_id: activeCompanyId,
         header: prep,
         lines: lines.map((line) => ({
           ...line,

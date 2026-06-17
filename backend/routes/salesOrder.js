@@ -12,6 +12,7 @@ router.get('/state-from-address', salesOrderController.getStateFromAddress);
 router.get('/items-modal', salesOrderController.getItemsForModal);
 router.get('/freight-charges', salesOrderController.getFreightCharges);
 router.get('/print-layouts', salesOrderController.getSalesOrderPrintLayouts);
+router.get('/lookups/:source', salesOrderController.getLookupOptions);
 router.post('/lookup-values', salesOrderController.createLookupValue);
 router.get('/customers/search', salesOrderController.getCustomerFilterOptions);
 router.get('/customers/:customerCode', salesOrderController.getCustomerDetails);

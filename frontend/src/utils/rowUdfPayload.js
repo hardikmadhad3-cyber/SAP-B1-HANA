@@ -10,14 +10,19 @@ export const buildVisibleEnteredRowUdfPayload = (
   formSettings = {},
 ) => {
   const rowSettings = formSettings?.rowUdfs || {};
+  const matrixSettings = formSettings?.matrixColumns || {};
 
   return (rowUdfDefinitions || []).reduce((acc, field) => {
     const key = field?.key;
     if (!key) return acc;
 
-    const setting = rowSettings[key];
-    const isVisible = setting ? setting.visible === true : field.visible !== false;
-    const isActive = setting?.active !== false;
+    const setting = matrixSettings[key] || rowSettings[key];
+    const isVisible = field.sapControlled
+      ? field.visible !== false
+      : (setting ? setting.visible === true : field.visible !== false);
+    const isActive = field.sapControlled
+      ? field.active !== false
+      : setting?.active !== false;
     const value = values?.[key];
 
     if (isVisible && isActive && hasEnteredUdfValue(value)) {

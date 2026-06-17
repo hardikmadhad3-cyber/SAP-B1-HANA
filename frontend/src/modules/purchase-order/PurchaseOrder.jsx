@@ -32,6 +32,8 @@ import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useValidationHighlights from '../../utils/useValidationHighlights';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
+import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
 import {
   fetchPurchaseOrderByDocEntry,
   fetchPurchaseOrderReferenceData,
@@ -252,6 +254,7 @@ function PurchaseOrder() {
   const { company } = useAuth();
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const activeCompanyId = company?.companyId || PURCHASE_ORDER_COMPANY_ID;
+  const activeCompanyDb = company?.dbName || '';
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
@@ -412,20 +415,36 @@ function PurchaseOrder() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const [refDataRes, seriesRes, hsnRes] = await Promise.all([
+        const [refDataRes, seriesRes, hsnRes, layoutRes] = await Promise.all([
           fetchPurchaseOrderReferenceData(activeCompanyId),
           fetchDocumentSeries(),
           fetchHSNCodes(),
+          getDocumentLayout({
+            companyDb: activeCompanyDb || undefined,
+            documentType: 'PURCHASE_ORDER',
+          }).catch((error) => ({
+            data: {
+              success: false,
+              columns: [],
+              warning: getErrMsg(error, 'Failed to load SAP layout.'),
+            },
+          })),
         ]);
 
         if (!ignore) {
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
           const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
-          const nextMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+          const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
             ? refDataRes.data.line_field_metadata.matrix_columns
             : BASE_MATRIX_COLUMNS;
+          const nextMatrixColumns = buildMatrixColumnsFromSapLayout({
+            baseColumns: liveMatrixColumns,
+            layoutColumns: layoutRes?.data?.columns || [],
+            fallbackColumns: BASE_MATRIX_COLUMNS,
+          });
           const hasSapMatrixPreferences =
-            Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0;
+            Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0 ||
+            Boolean((layoutRes?.data?.columns || []).length && layoutRes?.data?.source !== 'fallback');
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
           setMatrixColumnDefinitions(nextMatrixColumns);
@@ -436,18 +455,7 @@ function PurchaseOrder() {
           })));
           const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
           setFormSettings((prev) => ({
-            ...nextDefaults,
-            ...prev,
-            matrixColumns: hasSapMatrixPreferences
-              ? nextDefaults.matrixColumns
-              : {
-                  ...nextDefaults.matrixColumns,
-                  ...(prev.matrixColumns || {}),
-                },
-            headerUdfs: {
-              ...nextDefaults.headerUdfs,
-              ...(prev.headerUdfs || {}),
-            },
+            ...mergeLiveMatrixSettings(nextDefaults, prev, hasSapMatrixPreferences),
             rowUdfs: nextRowUdfs.reduce((settings, field) => ({
               ...settings,
               [field.key]: hasSapMatrixPreferences && field.sapColumnId
@@ -456,7 +464,7 @@ function PurchaseOrder() {
                     ...(nextDefaults.rowUdfs[field.key] || {}),
                     ...((prev.rowUdfs || {})[field.key] || {}),
                   },
-            }), nextDefaults.rowUdfs),
+            }), mergeLiveMatrixSettings(nextDefaults, prev, hasSapMatrixPreferences).rowUdfs),
           }));
 
           setRefData({
@@ -479,8 +487,15 @@ function PurchaseOrder() {
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
-            line_field_metadata: refDataRes.data.line_field_metadata || { matrix_columns: nextMatrixColumns, sap_form: {} },
-            warnings: refDataRes.data.warnings || [],
+            line_field_metadata: {
+              ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+              matrix_columns: nextMatrixColumns,
+              imported_layout: layoutRes?.data || null,
+            },
+            warnings: [
+              ...(refDataRes.data.warnings || []),
+              ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+            ],
             series: seriesRes.data.series || [],
           });
 
@@ -500,7 +515,7 @@ function PurchaseOrder() {
     };
     load();
     return () => { ignore = true; };
-  }, [activeCompanyId, formSettingsStorageKey]);
+  }, [activeCompanyDb, activeCompanyId, formSettingsStorageKey]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
