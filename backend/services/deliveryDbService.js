@@ -42,6 +42,27 @@ const getLineDiscountPercent = (discountAmount, unitPrice, fallbackDiscountPerce
   return toFiniteNumberOrUndefined(fallbackDiscountPercent);
 };
 
+const hasNonBlankValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
+
+const getUdfAliasValue = (values = {}, aliases = []) => {
+  for (const alias of aliases) {
+    if (hasNonBlankValue(values[alias])) return values[alias];
+  }
+
+  const entries = Object.entries(values || {});
+  for (const alias of aliases) {
+    const normalizedAlias = normalizeUdfNameForMatch(alias);
+    const match = entries.find(([key, value]) => (
+      normalizeUdfNameForMatch(key) === normalizedAlias && hasNonBlankValue(value)
+    ));
+    if (match) return match[1];
+  }
+
+  return '';
+};
+
+const formatUdfValue = (value) => (value == null ? '' : String(value));
+
 const buildNullableTrimmedTextExpression = (expression) => (
   `NULLIF(LTRIM(RTRIM(CAST(${expression} AS NVARCHAR(254)))), '')`
 );
@@ -168,6 +189,20 @@ const getUomGroups = () => safe(db.query(`
 
 const resolveDeliveryLineUomEntry = async (itemCode, uomValue) =>
   salesOrderDb.resolveSalesOrderLineUomEntry(itemCode, uomValue);
+
+const getBaseSalesOrderLineItemCode = async (docEntry, lineNum) => {
+  const rows = await safe(db.query(`
+    SELECT TOP 1 ItemCode
+    FROM RDR1
+    WHERE DocEntry = @DocEntry
+      AND LineNum = @LineNum
+  `, {
+    DocEntry: Number(docEntry),
+    LineNum: Number(lineNum),
+  }));
+
+  return String(rows[0]?.ItemCode || '').trim();
+};
 
 const tableFieldMetadataPromises = new Map();
 
@@ -1155,7 +1190,7 @@ const getDelivery = async (docEntry) => {
   const header = headerRows[0];
 
   const dln1FieldMetadata = await getDeliveryLineFieldMetadata();
-  const hasDln1Column = (columnName) => Boolean(dln1FieldMetadata[String(columnName || '').trim()]);
+  const hasDln1Column = (columnName) => hasTableField(dln1FieldMetadata, columnName);
 
   const optionalLineSelects = [
     hasDln1Column('OpenQty') ? 'T0.OpenQty AS OpenQuantity' : 'CAST(NULL AS DECIMAL(19, 6)) AS OpenQuantity',
@@ -1309,6 +1344,9 @@ const getDelivery = async (docEntry) => {
       'U_Fr_trans',
       'U_Fr_trans_name',
       'U_BDNum',
+      'U_PackingType',
+      'U_GrossWt',
+      'U_TotalPackage',
     ].filter(hasDln1Column);
 
     const udfLineRows = deliveryLineUdfColumns.length
@@ -1323,7 +1361,8 @@ const getDelivery = async (docEntry) => {
 
     if (udfLineRows.recordset) {
       udfLineRows.recordset.forEach((row) => {
-        lineUdfs[row.LineNum] = row;
+        const { LineNum, ...values } = row;
+        lineUdfs[LineNum] = values;
       });
     }
   } catch (err) {
@@ -1398,6 +1437,9 @@ const getDelivery = async (docEntry) => {
           ...(dynamicLineUdfs[l.LineNum] || {}),
           ...(lineUdfs[l.LineNum] || {}),
         };
+        const packingType = formatUdfValue(getUdfAliasValue(lineUdf, ['U_PackingType', 'U_Packing_Type']));
+        const grossWt = formatUdfValue(getUdfAliasValue(lineUdf, ['U_GrossWt', 'U_Gross_Wt']));
+        const totalPackage = formatUdfValue(getUdfAliasValue(lineUdf, ['U_TotalPackage', 'U_Total_Package']));
         const discountAmount = lineUdf.U_Rate ?? l.DiscountAmount;
         const discountPercent = getLineDiscountPercent(discountAmount, l.UnitPrice, l.DiscountPercent);
         return {
@@ -1430,7 +1472,7 @@ const getDelivery = async (docEntry) => {
           sellerBrokeragePercent: lineUdf.U_Seller_Brok_Per != null ? String(lineUdf.U_Seller_Brok_Per) : (l.SellerBrokeragePercent != null ? String(l.SellerBrokeragePercent) : ''),
           sellerBrokerage: lineUdf.U_Brok_Seller != null ? String(lineUdf.U_Brok_Seller) : (l.SellerBrokerage != null ? String(l.SellerBrokerage) : ''),
           buyerBrokerage: lineUdf.U_Brok_Buyer != null ? String(lineUdf.U_Brok_Buyer) : (l.BuyerBrokerage != null ? String(l.BuyerBrokerage) : ''),
-          stcode: lineUdf.U_SELLTCODE || l.TaxCode || '',
+          stcode: lineUdf.U_SELLTCODE || '',
           specialRebate: lineUdf.U_SPLRBT != null ? String(lineUdf.U_SPLRBT) : '',
           commission: lineUdf.U_COMPRC != null ? String(lineUdf.U_COMPRC) : '',
           sellerBrokeragePerQty: lineUdf.U_S_BrokPerQty != null ? String(lineUdf.U_S_BrokPerQty) : '',
@@ -1447,6 +1489,12 @@ const getDelivery = async (docEntry) => {
           freightProvider: lineUdf.U_Fr_trans || '',
           freightProviderName: lineUdf.U_Fr_trans_name || '',
           brokerageNumber: lineUdf.U_BDNum || '',
+          packingType,
+          grossWt,
+          totalPackage,
+          U_PackingType: packingType,
+          U_GrossWt: grossWt,
+          U_TotalPackage: totalPackage,
           stdDiscount: discountPercent != null ? String(discountPercent) : '',
           taxCode: l.TaxCode || '',
           taxAmount: l.LineTaxAmount != null ? String(l.LineTaxAmount) : '',
@@ -1465,6 +1513,7 @@ const getDelivery = async (docEntry) => {
           batchManaged: String(l.BatchManaged || '').toUpperCase() === 'Y' || itemInfo.batchManaged,
           batches: batchesByLine[l.LineNum] || [],
           udf: {
+            ...lineUdf,
             U_SPLRBT: lineUdf.U_SPLRBT ?? '',
             U_COMPRC: lineUdf.U_COMPRC ?? '',
             U_S_BrokPerQty: lineUdf.U_S_BrokPerQty ?? '',
@@ -1494,6 +1543,9 @@ const getDelivery = async (docEntry) => {
             U_Fr_trans: lineUdf.U_Fr_trans || '',
             U_Fr_trans_name: lineUdf.U_Fr_trans_name || '',
             U_BDNum: lineUdf.U_BDNum || '',
+            U_PackingType: packingType,
+            U_GrossWt: grossWt,
+            U_TotalPackage: totalPackage,
           },
         };
       }),
@@ -2155,7 +2207,6 @@ const validateLineUdfValues = async (lines = []) => {
     Object.entries(line?.udf || {}).forEach(([key, value]) => {
       if (!String(key || '').startsWith('U_') || isBlank(value)) return;
       if (!validUdfKeys.has(key)) {
-        errors.push(`Line ${index + 1}: ${key} is not defined for Delivery rows in SAP B1`);
         return;
       }
 
@@ -2172,6 +2223,7 @@ const validateLineUdfValues = async (lines = []) => {
 // Validate batch selection only for inventory items that are batch-managed in SAP B1.
 const validateBatchSelection = async (lines) => {
   const errors = [];
+  const allocatedByStockBatch = new Map();
   
   for (const line of lines) {
     if (!line.itemNo) continue;
@@ -2214,32 +2266,47 @@ const validateBatchSelection = async (lines) => {
         }
 
         for (const [batchNumber, allocatedQty] of allocatedByBatch.entries()) {
-          const batchResult = await safe(db.query(`
-            SELECT SUM(T0.Quantity) as AvailableQty
-            FROM OIBT T0
-            WHERE T0.ItemCode = @ItemCode
-            AND T0.BatchNum = @BatchNum
-            AND T0.WhsCode = @WhsCode
-          `, {
-            ItemCode: line.itemNo,
-            BatchNum: batchNumber,
-            WhsCode: line.whse
-          }));
-          
-          const availableQty = parseBatchQtyNumber(batchResult[0]?.AvailableQty);
-
-          if (availableQty <= 0) {
-            errors.push(`Batch ${batchNumber} does not belong to warehouse ${line.whse} for item ${line.itemNo}`);
-            continue;
-          }
-
-          if (allocatedQty - availableQty > BATCH_QTY_TOLERANCE) {
-            errors.push(
-              `Batch ${batchNumber} exceeds available quantity for item ${line.itemNo}. Allocated: ${allocatedQty.toFixed(2)} ${inventoryUOM}, Available: ${availableQty.toFixed(2)} ${inventoryUOM}`
-            );
-          }
+          const itemCode = String(line.itemNo || '').trim();
+          const whsCode = String(line.whse || '').trim();
+          const key = JSON.stringify({ itemCode, whsCode, batchNumber });
+          const current = allocatedByStockBatch.get(key) || {
+            itemCode,
+            whsCode,
+            batchNumber,
+            inventoryUOM,
+            allocatedQty: 0,
+          };
+          current.allocatedQty += allocatedQty;
+          allocatedByStockBatch.set(key, current);
         }
       }
+    }
+  }
+
+  for (const entry of allocatedByStockBatch.values()) {
+    const batchResult = await safe(db.query(`
+      SELECT SUM(T0.Quantity) as AvailableQty
+      FROM OIBT T0
+      WHERE T0.ItemCode = @ItemCode
+        AND T0.BatchNum = @BatchNum
+        AND T0.WhsCode = @WhsCode
+    `, {
+      ItemCode: entry.itemCode,
+      BatchNum: entry.batchNumber,
+      WhsCode: entry.whsCode
+    }));
+
+    const availableQty = parseBatchQtyNumber(batchResult[0]?.AvailableQty);
+
+    if (availableQty <= 0) {
+      errors.push(`Batch ${entry.batchNumber} does not belong to warehouse ${entry.whsCode} for item ${entry.itemCode}`);
+      continue;
+    }
+
+    if (entry.allocatedQty - availableQty > BATCH_QTY_TOLERANCE) {
+      errors.push(
+        `Batch ${entry.batchNumber} exceeds available quantity for item ${entry.itemCode} in warehouse ${entry.whsCode}. Allocated across delivery: ${entry.allocatedQty.toFixed(2)} ${entry.inventoryUOM}, Available: ${availableQty.toFixed(2)} ${entry.inventoryUOM}`
+      );
     }
   }
   
@@ -2419,6 +2486,7 @@ module.exports = {
   getItemsForModal,
   getUomConversionFactor,
   resolveDeliveryLineUomEntry,
+  getBaseSalesOrderLineItemCode,
   // Validation functions
   validateBatchSelection,
   validateLineMasterData,

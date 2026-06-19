@@ -5,9 +5,6 @@ import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
 import { AR_CREDIT_MEMO_WORKBOOK_COLUMNS } from '../../../config/workbookMatrixColumns';
 
 const MATRIX_COLS = AR_CREDIT_MEMO_WORKBOOK_COLUMNS;
-const KNOWN_MATRIX_RENDERER_KEYS = new Set(
-  MATRIX_COLS.filter((column) => !column.isUdf).map((column) => column.key)
-);
 
 const INDEX_COL_WIDTH = 42;
 const ACTION_COL_WIDTH = 48;
@@ -92,6 +89,9 @@ export default function ContentsTab({
     };
   };
   const hasLiveMatrixFields = Array.isArray(matrixFields) && matrixFields.length > 0;
+  const isVisibleBySetting = (field = {}, setting = {}) => (
+    field.visible === false ? false : setting?.visible !== undefined ? setting.visible !== false : true
+  );
   const usesMetadataDrivenMatrix = hasLiveMatrixFields && matrixFields.some((field) => field?.sapControlled || field?.importedLayout);
   const standardColumns = hasLiveMatrixFields
     ? matrixFields
@@ -129,11 +129,10 @@ export default function ContentsTab({
 
   const matrixCols = [...standardColumns, ...udfColumns]
     .filter((column) => {
-      if (column.sapControlled || column.importedLayout) return column.visible !== false;
       if (column.isUdf) {
-        return formSettings.rowUdfs?.[column.field.key]?.visible !== false;
+        return isVisibleBySetting(column, formSettings.rowUdfs?.[column.field.key] || {});
       }
-      return formSettings.matrixColumns?.[column.key]?.visible !== false;
+      return isVisibleBySetting(column, formSettings.matrixColumns?.[column.key] || {});
     })
     .sort((left, right) => {
       const leftOrder = Number.isFinite(Number(left.order)) ? Number(left.order) : 99999;
@@ -262,7 +261,7 @@ export default function ContentsTab({
   };
 
   const renderCell = (column, line, i, uomOpts, lineTotals) => {
-    if (column.isUdf && column.field && !KNOWN_MATRIX_RENDERER_KEYS.has(column.rendererKey || column.valueKey || column.key)) {
+    if (column.isUdf && column.field) {
       return renderUdfCell(column.field, line, i);
     }
 

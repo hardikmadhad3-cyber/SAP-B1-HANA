@@ -10,6 +10,32 @@ const normalizeBranchId = (branch) => {
   return normalized === '' ? -1 : Number(normalized);
 };
 
+const resolveARInvoiceSeries = async (header = {}) => {
+  const selectedSeries = Number(header.series);
+  try {
+    const seriesRows = await arInvoiceDb.getDocumentSeries(
+      header.postingDate || header.documentDate || null,
+      header.transactionType || '',
+      header.branch || '',
+    );
+
+    if (!Array.isArray(seriesRows) || !seriesRows.length) {
+      return Number.isFinite(selectedSeries) && selectedSeries > 0 ? selectedSeries : undefined;
+    }
+
+    const selectedRow = Number.isFinite(selectedSeries) && selectedSeries > 0
+      ? seriesRows.find((row) => Number(row.Series) === selectedSeries)
+      : null;
+    const defaultRow = seriesRows.find((row) => row.IsDefault) || seriesRows[0];
+    const resolved = Number((selectedRow || defaultRow)?.Series);
+
+    return Number.isFinite(resolved) && resolved > 0 ? resolved : undefined;
+  } catch (error) {
+    console.warn('[ARInvoiceService] Could not validate invoice series; using submitted value.', error.message);
+    return Number.isFinite(selectedSeries) && selectedSeries > 0 ? selectedSeries : undefined;
+  }
+};
+
 const isUdfValuePresent = (value) => {
   if (value == null) return false;
   if (typeof value === 'string') return value.trim() !== '';
@@ -305,6 +331,7 @@ const submitARInvoice = async (payload) => {
     }
     
     console.log("🔍 [ARInvoiceService] Using customer code:", customerCode);
+    const resolvedSeries = await resolveARInvoiceSeries(payload.header);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('OINV'),
@@ -317,7 +344,7 @@ const submitARInvoice = async (payload) => {
       CardCode: String(customerCode).trim(),
 
       // Series for auto-numbering - only include if explicitly provided and valid
-      ...(payload.header.series && Number(payload.header.series) > 0 ? { Series: Number(payload.header.series) } : {}),
+      ...(resolvedSeries ? { Series: resolvedSeries } : {}),
 
       DocDate: payload.header.postingDate || payload.header.documentDate,
       DocDueDate: payload.header.deliveryDate || payload.header.dueDate,
@@ -480,7 +507,9 @@ const updateARInvoice = async (docEntry, payload) => {
 
       DocumentLines: payload.lines.map((l) => {
         const warehouseCode = String(l.whse || l.warehouse || '').trim();
+        const lineNum = l.lineNum ?? l.LineNum;
         const line = {
+          ...(lineNum !== undefined && lineNum !== null && lineNum !== '' ? { LineNum: Number(lineNum) } : {}),
           ItemCode: l.itemNo,
           Quantity: Number(l.quantity),
           UnitPrice: getLineUnitPrice(l),

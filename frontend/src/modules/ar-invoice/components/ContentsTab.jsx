@@ -25,23 +25,15 @@ const CUSTOM_UDF_COLUMN_KEYS = new Set([
   'U_TotalPackage',
   'U_Fix_Brock_B',
   'U_Fix_Brock_S',
-  'U_FIX_BROK_BUYER',
-  'U_Fix_Brock_Seller',
-  'blanketAgreementNo',
-  'saudaNodeRef',
-  'bedRate',
-  'bedAmount',
-  'rg23dNo',
-  'specialRebate',
-  'commission',
-  'sellerBrokeragePerQty',
-  'sellerItem',
-  'sellerUnitPrice',
-  'sellerQty',
+  'taxCodeRepeat',
+  'price',
   'sellerBrokerage',
   'buyerBrokerage',
   'buyerDelivery',
   'sellerDelivery',
+  'buyerPaymentTerms',
+  'sellerPaymentTerms',
+  'sellerPaymentTermsRepeat',
   'buyerQuality',
   'sellerQuality',
   'buyerPrice',
@@ -50,18 +42,13 @@ const CUSTOM_UDF_COLUMN_KEYS = new Set([
   'sellerSpecialInstruction',
   'sellerBrokerageAmtPer',
   'sellerBrokeragePercent',
-  'buyerBillDiscount',
-  'sellerBillDiscount',
   'stcode',
-  'buyerPaymentTerms',
-  'sellerPaymentTerms',
-  'freightPurchase',
-  'freightSales',
-  'freightProvider',
-  'freightProviderName',
-  'brokerageNumber',
+  'sellerItem',
+  'sellerQty',
+  'specialRebate',
+  'commission',
+  'sellerBrokeragePerQty',
 ]);
-
 const pickerButtonStyle = {
   padding: '0 6px',
   fontSize: 11,
@@ -85,6 +72,11 @@ const isCheckedValue = (value) =>
 
 const normalizeYesNoValue = (value) => (isCheckedValue(value) ? 'Y' : 'N');
 
+const normalizeSelectOptions = (options = []) =>
+  (Array.isArray(options) ? options : [])
+    .map((option) => (typeof option === 'object' ? option : { value: option, label: option }))
+    .filter((option) => option && option.value !== undefined && option.value !== null);
+
 const parseNumber = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -107,6 +99,21 @@ const getUdfIdentities = (field = {}) => [
 const normalizeUdfKey = (value) =>
   String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
 
+const getUdfMatchTokens = (value) => {
+  const identity = normalizeIdentity(value);
+  const udfKey = normalizeUdfKey(value).toLowerCase();
+  return [identity, udfKey].filter(Boolean);
+};
+
+const getFieldMatchTokens = (field = {}) => [
+  field.key,
+  field.sapField,
+  field.aliasId,
+  field.label,
+  field.description,
+  field.Descr,
+].flatMap(getUdfMatchTokens);
+
 const isSuppressedUdf = (field = {}) => [
   field.key,
   field.sapField,
@@ -121,31 +128,53 @@ const isSellerItemField = (field = {}) => [
   field.label,
 ].map(normalizeUdfKey).some((key) => key === 'SITEM');
 
+const isUdfBackedColumn = (column = {}) => {
+  const explicitFieldName = column.fieldName || column.layoutFieldName || column.sapField || column.valueKey;
+  const normalizedKey = String(column.key || '').toUpperCase();
+  const normalizedFieldName = String(explicitFieldName || '').toUpperCase();
+  return Boolean(column.isUdf)
+    || CUSTOM_UDF_COLUMN_KEYS.has(column.key)
+    || normalizedKey.startsWith('U_')
+    || normalizedFieldName.startsWith('U_');
+};
+
 const getBoundUdf = (column, rowUdfFields) => {
-  if (!CUSTOM_UDF_COLUMN_KEYS.has(column.key)) return null;
-  const identities = [column.key, column.label].map(normalizeIdentity);
+  if (!isUdfBackedColumn(column)) return null;
+
+  const exactTokens = [
+    column.key,
+    column.valueKey,
+    column.rendererKey,
+    column.fieldName,
+    column.layoutFieldName,
+    column.sapField,
+  ].flatMap(getUdfMatchTokens);
+  const exactMatch = rowUdfFields.find((field) => {
+    const fieldTokens = getFieldMatchTokens(field);
+    return exactTokens.some((token) => fieldTokens.includes(token));
+  });
+  if (exactMatch) return exactMatch;
+
+  const fuzzyIdentities = [column.key, column.label]
+    .map(normalizeIdentity)
+    .filter((identity) => identity.length > 4 && !['price', 'taxcode'].includes(identity));
+
   return rowUdfFields.find((field) => {
     const fieldIdentities = getUdfIdentities(field);
-    return identities.some((identity) => fieldIdentities.some((fieldIdentity) => (
-      fieldIdentity === identity ||
-      (identity.length > 3 && fieldIdentity.includes(identity)) ||
-      (fieldIdentity.length > 3 && identity.includes(fieldIdentity))
+    return fuzzyIdentities.some((identity) => fieldIdentities.some((fieldIdentity) => (
+      fieldIdentity.includes(identity) || identity.includes(fieldIdentity)
     )));
   });
 };
 
-const getKnownColumnForUdf = (field, standardColumnByKey) => {
-  const fieldIdentities = getUdfIdentities(field);
+const getBoundUdfValue = (line = {}, boundUdf = null) => {
+  if (!boundUdf) return '';
+  const udfValues = line.udf || {};
+  if (Object.prototype.hasOwnProperty.call(udfValues, boundUdf.key)) return udfValues[boundUdf.key] ?? '';
 
-  return SAP_CONTENT_COLUMNS.find((column) => {
-    if (!CUSTOM_UDF_COLUMN_KEYS.has(column.key)) return false;
-    const columnIdentities = [column.key, column.label].map(normalizeIdentity);
-    return columnIdentities.some((identity) => fieldIdentities.some((fieldIdentity) => (
-      fieldIdentity === identity ||
-      (identity.length > 3 && fieldIdentity.includes(identity)) ||
-      (fieldIdentity.length > 3 && identity.includes(fieldIdentity))
-    )));
-  }) || standardColumnByKey.get(field.key) || null;
+  const fieldTokens = getUdfIdentities(boundUdf);
+  const match = Object.entries(udfValues).find(([key]) => fieldTokens.includes(normalizeIdentity(key)));
+  return match ? (match[1] ?? '') : '';
 };
 
 const getNumericOrder = (value, fallback) => {
@@ -155,7 +184,7 @@ const getNumericOrder = (value, fallback) => {
 
 const getLineValue = (line, column, boundUdf) => {
   const valueKey = column.valueKey || column.rendererKey || column.key;
-  if (boundUdf) return line.udf?.[boundUdf.key] ?? '';
+  if (boundUdf) return getBoundUdfValue(line, boundUdf);
   if (valueKey === 'itemNo') return line.itemNo || line.ItemCode || line.itemCode || '';
   if (valueKey === 'itemDescription') {
     return line.itemDescription || line.ItemDescription || line.Dscription || line.description || line.itemName || '';
@@ -198,8 +227,10 @@ export default function ContentsTab({
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
   const effectiveRowUdfFields = (rowUdfFields || []).filter((field) => !isSuppressedUdf(field));
   const matrixFieldByKey = new Map((matrixFields || []).map((field) => [field.key, field]));
+  const isVisibleBySetting = (field = {}, setting = {}) => (
+    field.visible === false ? false : setting?.visible !== undefined ? setting.visible !== false : true
+  );
   const hasLiveMatrixFields = matrixFieldByKey.size > 0;
-  const usesMetadataDrivenMatrix = hasLiveMatrixFields && (matrixFields || []).some((field) => field?.sapControlled || field?.importedLayout);
   const standardColumnByKey = new Map(SAP_CONTENT_COLUMNS.map((column) => [column.key, column]));
   const sourceColumns = hasLiveMatrixFields
     ? matrixFields
@@ -212,44 +243,28 @@ export default function ContentsTab({
   const boundColumns = sourceColumns.map((column) => ({
     ...column,
     ...(matrixFieldByKey.get(column.key) || {}),
-    boundUdf: getBoundUdf(column, effectiveRowUdfFields),
-  })).filter((column) => {
-    if (CUSTOM_UDF_COLUMN_KEYS.has(column.key)) return Boolean(column.boundUdf) || !hasLiveMatrixFields;
+  })).map((column) => {
+    const boundUdf = getBoundUdf(column, effectiveRowUdfFields);
+    return {
+      ...column,
+      boundUdf,
+    };
+  }).filter((column) => {
+    if (column.boundUdf) return true;
     return !hasLiveMatrixFields || matrixFieldByKey.has(column.key);
   });
-  const boundUdfKeys = new Set(boundColumns.map((column) => column.boundUdf?.key).filter(Boolean));
-  const extraUdfColumns = usesMetadataDrivenMatrix ? [] : rowUdfFields
-    .filter((field) => !isSuppressedUdf(field))
-    .filter((field) => !boundUdfKeys.has(field.key))
-    .map((field, index) => {
-      const knownColumn = getKnownColumnForUdf(field, standardColumnByKey);
-      const fallbackOrder = knownColumn
-        ? DEFAULT_COLUMN_ORDER.get(knownColumn.key)
-        : SAP_CONTENT_COLUMNS.length + index + 1;
-
-      return {
-        ...(knownColumn || {}),
-        key: knownColumn?.key || field.key,
-        label: knownColumn?.label || field.label || field.key,
-        minWidth: field.minWidth || knownColumn?.minWidth || (field.type === 'textarea' ? 180 : 125),
-        order: getNumericOrder(field.order, fallbackOrder),
-        boundUdf: field,
-        isExtraUdf: true,
-      };
-    });
-  const mergedColumns = [...boundColumns, ...extraUdfColumns]
+  const mergedColumns = boundColumns
     .map((column) => ({
       ...column,
       order: getNumericOrder(column.order, DEFAULT_COLUMN_ORDER.get(column.key) || 99999),
     }))
     .sort((left, right) => left.order - right.order);
   const matrixCols = mergedColumns.filter((column) => {
-    if (column.sapControlled || column.importedLayout) return column.visible !== false;
-    if (column.boundUdf || column.isExtraUdf) {
-      return formSettings.rowUdfs?.[column.boundUdf?.key]?.visible !== false;
+    if (column.boundUdf) {
+      return isVisibleBySetting(column, formSettings.rowUdfs?.[column.boundUdf?.key] || {});
     }
 
-    return formSettings.matrixColumns?.[column.key]?.visible !== false;
+    return isVisibleBySetting(column, formSettings.matrixColumns?.[column.key] || {});
   });
   const tableMinWidth = INDEX_COL_WIDTH + ACTION_COL_WIDTH + matrixCols.reduce((total, col) => total + col.minWidth, 0);
 
@@ -362,18 +377,19 @@ export default function ContentsTab({
       );
     }
 
-    if (fieldType === 'select' && Array.isArray(boundUdf?.options) && boundUdf.options.length > 0) {
+    const selectOptions = normalizeSelectOptions(boundUdf?.options || column.options);
+    if (fieldType === 'select' && selectOptions.length > 0) {
       return (
         <td key={column.key}>
           <select
             className="del-grid__input"
+            name={column.key}
             value={value}
             disabled={disabled}
             onChange={handleChange}
           >
             <option value=""></option>
-            {boundUdf.options.map((option) => {
-              const normalized = typeof option === 'object' ? option : { value: option, label: option };
+            {selectOptions.map((normalized) => {
               return (
                 <option key={normalized.value} value={normalized.value}>
                   {normalized.label}
@@ -412,6 +428,7 @@ export default function ContentsTab({
 
   const renderCell = (column, line, i, uomOpts, lineTotals) => {
     const errors = valErrors.lines[i] || {};
+    if (column.boundUdf) return renderGenericInput(column, line, i, { error: errors[column.key] });
 
     switch (column.rendererKey || column.valueKey || column.key) {
       case 'itemNo':

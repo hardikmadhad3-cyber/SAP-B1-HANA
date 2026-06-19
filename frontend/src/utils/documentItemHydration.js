@@ -81,7 +81,7 @@ export const hydrateDocumentLineFromItem = (line = {}, item = {}, {
 
   if (side === 'sales') {
     next.sellerItem = line.sellerItem || itemCode;
-    next.stcode = line.stcode || item.TaxCodeAR || item.SalTaxCode || item.ArTaxCode || line.taxCode || '';
+    next.stcode = line.stcode || '';
   } else if (!line.taxCodeManuallyOverridden) {
     next.taxCode = line.taxCode || item.TaxCodeAP || item.VatGroupPu || item.ApTaxCode || '';
   }

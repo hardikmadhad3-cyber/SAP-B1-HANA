@@ -74,6 +74,7 @@ import {
   normalizeUdfState,
   readSavedFormSettings,
 } from '../../config/arInvoiceForm';
+import { AR_INVOICE_WORKBOOK_COLUMNS } from '../../config/workbookMatrixColumns';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
@@ -195,11 +196,110 @@ const DOCUMENT_TYPE_CODE_BY_TRANSACTION_TYPE = {
 const getDocumentTypeCodeForTransaction = (value) =>
   DOCUMENT_TYPE_CODE_BY_TRANSACTION_TYPE[normalizeFieldIdentity(value)] || value;
 
+const getMatrixColumnTokens = (column = {}) => [
+  column.key,
+  column.valueKey,
+  column.rendererKey,
+  column.sapField,
+  column.fieldName,
+  column.layoutFieldName,
+  column.label,
+].map(normalizeFieldIdentity).filter(Boolean);
+
+const isSameMatrixColumn = (left = {}, right = {}) => {
+  const rightTokens = new Set(getMatrixColumnTokens(right));
+  return getMatrixColumnTokens(left).some((token) => rightTokens.has(token));
+};
+
+const ensureARInvoiceMatrixColumns = (columns = [], { respectSapVisibility = false } = {}) => {
+  const sourceColumns = (Array.isArray(columns) ? columns : []).filter((column) => column && column.key);
+  const usedSourceIndexes = new Set();
+  const fallbackColumns = AR_INVOICE_WORKBOOK_COLUMNS;
+
+  if (!sourceColumns.length) {
+    return fallbackColumns.map((fallbackColumn, index) => ({
+      ...fallbackColumn,
+      order: index + 1,
+      columnOrder: index + 1,
+      visible: !respectSapVisibility && fallbackColumn.visible !== false,
+    }));
+  }
+
+  const mergedSourceColumns = sourceColumns.map((sourceColumn, index) => {
+    const fallbackColumn = fallbackColumns.find((column) => isSameMatrixColumn(sourceColumn, column)) || {};
+    const valueKey = sourceColumn.valueKey || fallbackColumn.valueKey || sourceColumn.key;
+    const rendererKey = sourceColumn.rendererKey || fallbackColumn.rendererKey || valueKey;
+
+    return {
+      ...fallbackColumn,
+      ...sourceColumn,
+      key: sourceColumn.key,
+      valueKey,
+      rendererKey,
+      fieldName: sourceColumn.fieldName || sourceColumn.layoutFieldName || fallbackColumn.fieldName || sourceColumn.key,
+      layoutFieldName: sourceColumn.layoutFieldName || sourceColumn.fieldName || fallbackColumn.fieldName || sourceColumn.key,
+      minWidth: Number(sourceColumn.minWidth || sourceColumn.width || fallbackColumn.minWidth || fallbackColumn.width) || 125,
+      width: Number(sourceColumn.width || sourceColumn.minWidth || fallbackColumn.width || fallbackColumn.minWidth) || 125,
+      order: Number(sourceColumn.order || sourceColumn.columnOrder) || index + 1,
+      columnOrder: Number(sourceColumn.columnOrder || sourceColumn.order) || index + 1,
+      visible: sourceColumn.visible !== false,
+      active: sourceColumn.active !== false,
+      sapControlled: Boolean(sourceColumn.sapControlled),
+      importedLayout: Boolean(sourceColumn.importedLayout),
+      source: sourceColumn.source || fallbackColumn.source || 'ar-invoice-live-layout',
+      type: sourceColumn.type || fallbackColumn.type,
+      numeric: sourceColumn.numeric || fallbackColumn.numeric || false,
+      readOnly: sourceColumn.readOnly ?? fallbackColumn.readOnly,
+      lookupSource: sourceColumn.lookupSource || fallbackColumn.lookupSource,
+      lookupTable: sourceColumn.lookupTable || fallbackColumn.lookupTable,
+      options: sourceColumn.options || fallbackColumn.options,
+      field: sourceColumn.field || fallbackColumn.field,
+    };
+  });
+
+  if (respectSapVisibility) {
+    return mergedSourceColumns;
+  }
+
+  const missingFallbackColumns = fallbackColumns.map((fallbackColumn, index) => {
+    const sourceIndex = sourceColumns.findIndex((column, columnIndex) => (
+      !usedSourceIndexes.has(columnIndex) && isSameMatrixColumn(column, fallbackColumn)
+    ));
+    if (sourceIndex >= 0) usedSourceIndexes.add(sourceIndex);
+
+    if (sourceIndex >= 0) return null;
+
+    return {
+      ...fallbackColumn,
+      order: index + 1,
+      columnOrder: index + 1,
+      visible: fallbackColumn.visible !== false,
+    };
+  }).filter(Boolean);
+
+  return [...mergedSourceColumns, ...missingFallbackColumns];
+};
+
+const getARInvoiceDocumentLines = (invoice = {}) => {
+  const candidates = [
+    invoice.lines,
+    invoice.Lines,
+    invoice.documentLines,
+    invoice.DocumentLines,
+    invoice.rows,
+    invoice.DocumentRows,
+  ];
+
+  return candidates.find((value) => Array.isArray(value) && value.length) || [];
+};
+
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
-  openQty: '', uomCode: '', stdDiscount: '', taxCode: '', total: '', whse: DEFAULT_WAREHOUSE_CODE,
+  openQty: '', uomCode: '', stdDiscount: '', taxCode: '', taxCodeRepeat: '', total: '', totalLC: '', whse: DEFAULT_WAREHOUSE_CODE,
   loc: '', branch: '', wTaxLiable: 'N', glAccount: '', distRule: '', taxLiable: 'Y',
   weight: '', taxAmount: '', uomName: '', cogsDistRule: '', countryOfOrigin: '',
+  binLocationAllocation: '', commPercent: '', price: '', itemCost: '',
+  withoutQtyPosting: 'N', enableSettingCost: 'N', returnCost: '',
   qtyInventoryUom: '', inventoryUOM: '', changeQtyInvUomIndependently: 'N',
   uomGroup: '', blanketAgreementNo: '', saudaNodeRef: '', apInvDocKey: '',
   apInvDocNum: '', apInvLineNum: '', assessableValue: '', bedRate: '',
@@ -213,6 +313,8 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   buyerPaymentTerms: '', sellerPaymentTerms: '', freightPurchase: '',
   freightSales: '', freightProvider: '', freightProviderName: '',
   documentCreated: '', brokerageNumber: '',
+  U_Cost_Sheet: '', U_PackingType: '', U_ContainerType: '',
+  U_GrossWt: '', U_TotalPackage: '', U_Fix_Brock_B: '', U_Fix_Brock_S: '',
   udf: createUdfState(rowUdfDefinitions),
 });
 
@@ -377,6 +479,9 @@ function ARInvoicePage() {
 
     if (matchedSeries) return matchedSeries;
 
+    const sapDefaultSeries = seriesList.find((series) => series.IsDefault || series.isDefault);
+    if (sapDefaultSeries) return sapDefaultSeries;
+
     const normalizedTransactionType = normalizeFieldIdentity(header.transactionType);
     if (normalizedTransactionType) {
       const transactionTokens = normalizedTransactionType.includes('gsttaxinvoice')
@@ -480,14 +585,16 @@ function ARInvoicePage() {
               ? refDataRes.data.line_field_metadata.matrix_columns
               : (refDataRes.data.matrix_columns || [])
           ).filter((field) => field && field.key);
-          const nextLayoutMatrixColumns = buildSalesOrderMatrixColumnsFromLayout({
-            layoutColumns: layoutRes?.data?.columns || [],
-            liveMatrixColumns: nextMatrixColumns,
+          const importedLayoutColumns = layoutRes?.data?.columns || [];
+          const hasImportedSapLayout = importedLayoutColumns.length > 0 && layoutRes?.data?.source !== 'fallback';
+          const hasSapMatrixPreferences =
+            Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0 || hasImportedSapLayout;
+          const nextLayoutMatrixColumns = ensureARInvoiceMatrixColumns(buildSalesOrderMatrixColumnsFromLayout({
+            layoutColumns: importedLayoutColumns,
+            liveMatrixColumns: nextMatrixColumns.length ? nextMatrixColumns : AR_INVOICE_WORKBOOK_COLUMNS,
             rowUdfFields: nextRowUdfs,
             includeLineNumber: false,
-          });
-          const hasSapMatrixPreferences =
-            Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0;
+          }), { respectSapVisibility: hasSapMatrixPreferences });
           const liveDefaultBranch = String(refDataRes.data.default_branch || '').trim();
           const liveDefaultWarehouse = String(refDataRes.data.default_warehouse || '').trim();
           const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextLayoutMatrixColumns, formSettingsStorageKey);
@@ -515,12 +622,7 @@ function ARInvoicePage() {
                     ...((prev.rowUdfs || {})[field.key] || {}),
                   },
             }), nextDefaults.rowUdfs),
-            matrixColumns: hasSapMatrixPreferences
-              ? nextDefaults.matrixColumns
-              : {
-                  ...nextDefaults.matrixColumns,
-                  ...(prev.matrixColumns || {}),
-                },
+            matrixColumns: nextDefaults.matrixColumns,
           }));
           setRefData(prev => ({
             ...prev,
@@ -683,9 +785,10 @@ function ARInvoicePage() {
           nextNumber: so.header?.docNo || so.header?.docNum || '',
         }));
         
+        const savedDocumentLines = getARInvoiceDocumentLines(so);
         setLines(
-          Array.isArray(so.lines) && so.lines.length
-            ? so.lines.map((line) => hydrateWorkbookDocumentLine({
+          savedDocumentLines.length
+            ? savedDocumentLines.map((line) => hydrateWorkbookDocumentLine({
                 line,
                 createLine,
                 rowUdfDefinitions,
@@ -806,6 +909,7 @@ function ARInvoicePage() {
           ...createLine(rowUdfDefinitions),
           ...normalizedLine,
           whse: normalizeWarehouse(normalizedLine, srcHeader) || normalizeWarehouse(l, srcHeader) || copiedWarehouse || '',
+          taxCodeManuallyOverridden: Boolean(String(normalizedLine.taxCode || l.taxCode || l.TaxCode || l.VatGroup || '').trim()),
           baseEntry: l.baseEntry ?? l.BaseEntry ?? copiedBaseEntry,
           baseType: l.baseType ?? l.BaseType ?? copiedBaseType,
           baseLine: normalizeBaseLine(l, idx),
@@ -1443,7 +1547,7 @@ function ARInvoicePage() {
           
           setLines(prev => prev.map((line, idx) => {
             if (idx !== i) return line;
-            const next = { ...line, itemNo: value };
+            const next = { ...line, itemNo: value, taxCodeManuallyOverridden: false };
             
             // Step 1: Set Item Details
             next.itemDescription = item.ItemName || next.itemDescription;
@@ -1457,7 +1561,7 @@ function ARInvoicePage() {
             next.distRule = next.distRule || item.DistributionRule || item.OcrCode || '';
             next.cogsDistRule = next.cogsDistRule || item.COGSDistributionRule || item.COGSCostingCode || item.CogsOcrCod || next.distRule || '';
             next.sellerItem = next.sellerItem || value;
-            next.stcode = next.stcode || item.TaxCodeAR || item.SalTaxCode || '';
+            next.stcode = next.stcode || '';
             
             // Step 2: Set HSN Code from API response (OCHP.ChapterID via JOIN)
             next.hsnCode = hsnData.hsnCode || hsnData.hsn_sww || '';
@@ -1512,7 +1616,7 @@ function ARInvoicePage() {
         // Fallback to basic item selection without HSN
         setLines(prev => prev.map((line, idx) => {
           if (idx !== i) return line;
-          const next = { ...line, itemNo: value };
+          const next = { ...line, itemNo: value, taxCodeManuallyOverridden: false };
           const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
           if (item) {
             next.itemDescription = item.ItemName || next.itemDescription;
@@ -1526,7 +1630,7 @@ function ARInvoicePage() {
             next.distRule = next.distRule || item.DistributionRule || item.OcrCode || '';
             next.cogsDistRule = next.cogsDistRule || item.COGSDistributionRule || item.COGSCostingCode || item.CogsOcrCod || next.distRule || '';
             next.sellerItem = next.sellerItem || value;
-            next.stcode = next.stcode || item.TaxCodeAR || item.SalTaxCode || '';
+            next.stcode = next.stcode || '';
             next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
           }
           next.total = fmtDec(calcLineTotalFromFields(next), numDec.total);
@@ -1541,6 +1645,9 @@ function ARInvoicePage() {
       const next = { ...line, [name]: numDec[name] !== undefined ? sanitize(value, numDec[name]) : value };
       if (name === 'uomCode') {
         next.uomName = value;
+      }
+      if (name === 'taxCode') {
+        next.taxCodeManuallyOverridden = Boolean(String(next.taxCode || '').trim());
       }
       if (name === 'distRule' && (!line.cogsDistRule || line.cogsDistRule === line.distRule)) {
         next.cogsDistRule = value;
@@ -1998,7 +2105,7 @@ function ARInvoicePage() {
           updatedLine.qtyInventoryUom = updatedLine.qtyInventoryUom || updatedLine.quantity || '';
           updatedLine.uomGroup = getUomGroupName(mergedItem);
           updatedLine.sellerItem = updatedLine.sellerItem || mergedItem.ItemCode || '';
-          updatedLine.stcode = updatedLine.stcode || mergedItem.TaxCodeAR || mergedItem.SalTaxCode || '';
+          updatedLine.stcode = updatedLine.stcode || '';
           
           // Auto-populate tax code based on HSN
           if (updatedLine.hsnCode) {
@@ -2030,7 +2137,7 @@ function ARInvoicePage() {
           updatedLine.qtyInventoryUom = updatedLine.qtyInventoryUom || updatedLine.quantity || '';
           updatedLine.uomGroup = getUomGroupName(mergedItem);
           updatedLine.sellerItem = updatedLine.sellerItem || mergedItem.ItemCode || '';
-          updatedLine.stcode = updatedLine.stcode || mergedItem.TaxCodeAR || mergedItem.SalTaxCode || '';
+          updatedLine.stcode = updatedLine.stcode || '';
           return updatedLine;
         }
         return line;
@@ -2687,9 +2794,9 @@ function ARInvoicePage() {
                 <div className="col-md-6">
                   <div className="del-field-grid" style={{ gridTemplateColumns: '1fr' }}>
                     
-                    {/* Buyer's Code */}
+                    {/* Customer */}
                     <div className="del-field">
-                      <label className="del-field__label">Buyer's Code *</label>
+                      <label className="del-field__label">Customer *</label>
                       <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
                         <input
                           name="vendor"
@@ -2719,9 +2826,9 @@ function ARInvoicePage() {
                       </div>
                     </div>
 
-                    {/* Buyer's Name */}
+                    {/* Name */}
                     <div className="del-field">
-                      <label className="del-field__label">Buyer's Name</label>
+                      <label className="del-field__label">Name</label>
                       <input name="name" className="del-field__input" value={header.name} readOnly />
                     </div>
 
@@ -2744,9 +2851,9 @@ function ARInvoicePage() {
                       </select>
                     </div>
 
-                    {/* Buyer PO No */}
+                    {/* Customer Ref. No. */}
                     <div className="del-field">
-                      <label className="del-field__label">Buyer PO No</label>
+                      <label className="del-field__label">Customer Ref. No.</label>
                       <input
                         name="salesContractNo"
                         className="del-field__input"
@@ -2887,9 +2994,9 @@ function ARInvoicePage() {
                       <input type="date" name="postingDate" className={`del-field__input${valErrors.header.postingDate ? ' del-field__input--error' : ''}`} value={header.postingDate} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
                     </div>
 
-                    {/* Delivery Date */}
+                    {/* Due Date */}
                     <div className="del-field">
-                      <label className="del-field__label">Delivery Date</label>
+                      <label className="del-field__label">Due Date</label>
                       <input type="date" name="deliveryDate" className="del-field__input" value={header.deliveryDate} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
                     </div>
 

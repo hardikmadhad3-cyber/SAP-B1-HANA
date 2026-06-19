@@ -1,18 +1,27 @@
 import React from 'react';
 
-function SettingsSection({ title, fields, groupKey, formSettings, onSettingChange }) {
+function SettingsSection({
+  title,
+  fields,
+  groupKey,
+  formSettings,
+  onSettingChange,
+  readOnly = false,
+  allowSapControlledEdits = true,
+}) {
   return (
     <div className="mb-4">
       <h6 className="border-bottom pb-1 mb-2">{title}</h6>
 
       {fields.map((field) => {
         const setting = formSettings[groupKey]?.[field.key] || {};
-        const sapControlled = Boolean(field.sapControlled || setting.sapControlled);
+        const isSapControlled = Boolean(field.sapControlled || setting.sapControlled);
+        const locked = readOnly || (isSapControlled && !allowSapControlledEdits);
         return (
         <div
           key={field.key}
           className="d-flex justify-content-between align-items-center mb-2"
-          title={sapControlled ? 'Controlled by SAP Form Settings' : undefined}
+          title={locked ? 'Controlled by SAP Form Settings' : undefined}
         >
           <span className="small">{field.label}</span>
 
@@ -22,7 +31,7 @@ function SettingsSection({ title, fields, groupKey, formSettings, onSettingChang
                 type="checkbox"
                 className="form-check-input"
                 checked={setting.visible !== false}
-                disabled={sapControlled}
+                disabled={locked}
                 onChange={(event) =>
                   onSettingChange(groupKey, field.key, 'visible', event.target.checked)
                 }
@@ -35,7 +44,7 @@ function SettingsSection({ title, fields, groupKey, formSettings, onSettingChang
                 type="checkbox"
                 className="form-check-input"
                 checked={setting.active !== false}
-                disabled={sapControlled}
+                disabled={locked}
                 onChange={(event) =>
                   onSettingChange(groupKey, field.key, 'active', event.target.checked)
                 }
@@ -57,6 +66,7 @@ function FormSettingsPanel({
   rowUdfFields,
   formSettings,
   onSettingChange,
+  readOnlyGroups = [],
   variant = 'floating',
   className = '',
   style,
@@ -123,6 +133,8 @@ function FormSettingsPanel({
             groupKey="matrixColumns"
             formSettings={formSettings}
             onSettingChange={onSettingChange}
+            readOnly={readOnlyGroups.includes('matrixColumns')}
+            allowSapControlledEdits
           />
           <SettingsSection
             title="Header UDF Sidebar"
@@ -130,6 +142,8 @@ function FormSettingsPanel({
             groupKey="headerUdfs"
             formSettings={formSettings}
             onSettingChange={onSettingChange}
+            readOnly={readOnlyGroups.includes('headerUdfs')}
+            allowSapControlledEdits
           />
           <SettingsSection
             title="Row UDF Columns"
@@ -137,6 +151,8 @@ function FormSettingsPanel({
             groupKey="rowUdfs"
             formSettings={formSettings}
             onSettingChange={onSettingChange}
+            readOnly={readOnlyGroups.includes('rowUdfs')}
+            allowSapControlledEdits
           />
         </div>
       </div>

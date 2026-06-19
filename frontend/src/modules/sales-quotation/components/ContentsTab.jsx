@@ -35,6 +35,12 @@ const COLUMN_WIDTHS = {
 
 const INDEX_COL_WIDTH = 42;
 const ACTION_COL_WIDTH = 48;
+const MIN_DATA_COL_WIDTH = 72;
+
+const getReadableColumnWidth = (column = {}) => {
+  const labelWidth = Math.ceil(String(column.label || column.key || '').length * 7.2 + 28);
+  return Math.max(MIN_DATA_COL_WIDTH, Number(column.minWidth || column.width || 0), labelWidth);
+};
 
 const pickerButtonStyle = {
   padding: '0 6px',
@@ -53,6 +59,62 @@ const formatDateDisplay = (value) => {
 };
 
 const compactLabel = (value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+const hasDisplayValue = (value) => value !== undefined && value !== null && String(value) !== '';
+
+const UDF_LINE_FIELD_FALLBACKS = {
+  USITEM: ['sellerItem', 'SellerItem'],
+  SITEM: ['sellerItem', 'SellerItem'],
+  USQTY: ['sellerQty', 'SellerQty'],
+  SQTY: ['sellerQty', 'SellerQty'],
+  USPLRBT: ['specialRebate', 'SpecialRebate'],
+  SPECIALREBATE: ['specialRebate', 'SpecialRebate'],
+  UCOMPRC: ['commission', 'Commission'],
+  COMMISSION: ['commission', 'Commission'],
+  COMMISION: ['commission', 'Commission'],
+  USBROKPERQTY: ['sellerBrokeragePerQty', 'SellerBrokeragePerQty'],
+  UBROKSELLER: ['sellerBrokerage', 'SellerBrokerage'],
+  UBROKBUYER: ['buyerBrokerage', 'BuyerBrokerage'],
+  UBUYERDELIVERY: ['buyerDelivery', 'BuyerDelivery'],
+  USELLERDELIVERY: ['sellerDelivery', 'SellerDelivery'],
+  UBUYERPAYMENTTERMS: ['buyerPaymentTerms', 'BuyerPaymentTerms'],
+  USELLERPAYMENTTERM: ['sellerPaymentTerms', 'SellerPaymentTerms', 'SellerPaymentTerm'],
+  USELLERPAYMENTTERMS: ['sellerPaymentTerms', 'SellerPaymentTerms', 'SellerPaymentTerm'],
+  UBUYERQUALITY: ['buyerQuality', 'BuyerQuality'],
+  USELLERQUALITY: ['sellerQuality', 'SellerQuality'],
+  UBUYERPRICE: ['buyerPrice', 'BuyerPrice'],
+  USELLERPRICE: ['sellerPrice', 'SellerPrice'],
+  UBUYERSPINS: ['buyerSpecialInstruction', 'BuyerSpecialInstruction'],
+  BUYERSPECIALINSTRUCTION: ['buyerSpecialInstruction', 'BuyerSpecialInstruction'],
+  USELLERSPINS: ['sellerSpecialInstruction', 'SellerSpecialInstruction'],
+  SELLERSPECIALINSTRUCTION: ['sellerSpecialInstruction', 'SellerSpecialInstruction'],
+  USELBROKAP: ['sellerBrokerageAmtPer', 'SellerBrokerageAmtPer'],
+  USELLERBROKPER: ['sellerBrokeragePercent', 'SellerBrokeragePercent'],
+  USELLTCODE: ['stcode', 'STCODE'],
+  UPACKINGTYPE: ['packingType', 'PackingType', 'U_PackingType'],
+};
+
+const getUdfFieldValue = (line = {}, field = {}) => {
+  const fieldKeys = [field.key, field.sapField, field.aliasId, field.label].filter(Boolean);
+  for (const key of fieldKeys) {
+    const direct = line.udf?.[key];
+    if (hasDisplayValue(direct)) return direct;
+  }
+
+  const udfEntries = Object.entries(line.udf || {});
+  for (const key of fieldKeys) {
+    const token = compactLabel(key);
+    const match = udfEntries.find(([entryKey, value]) => compactLabel(entryKey) === token && hasDisplayValue(value));
+    if (match) return match[1];
+  }
+
+  const fallbackKeys = fieldKeys.flatMap((key) => UDF_LINE_FIELD_FALLBACKS[compactLabel(key)] || []);
+  for (const key of fallbackKeys) {
+    const value = line[key];
+    if (hasDisplayValue(value)) return value;
+  }
+
+  return '';
+};
 
 const getLineFieldValue = (line = {}, key = '') => {
   if (key === 'itemNo') {
@@ -64,8 +126,16 @@ const getLineFieldValue = (line = {}, key = '') => {
   if (key === 'uomName') {
     return line.uomName || line.UomName || line.UoMName || line.unitMsr || line.uomCode || line.UomCode || line.UoMCode || '';
   }
-  return line[key] || '';
+  return hasDisplayValue(line[key]) ? line[key] : '';
 };
+
+const getLineTaxCodeValue = (line = {}) => (
+  getLineFieldValue(line, 'taxCode') ||
+  getLineFieldValue(line, 'taxCodeRepeat') ||
+  getLineFieldValue(line, 'TaxCode') ||
+  getLineFieldValue(line, 'VatGroup') ||
+  getLineFieldValue(line, 'SavedTaxCode')
+);
 
 const getColumnValueKey = (column = {}) => column.valueKey || column.rendererKey || column.key || '';
 
@@ -146,7 +216,10 @@ export default function ContentsTab({
       key: column.key,
       rendererKey: column.rendererKey || column.valueKey || column.key,
       valueKey: column.valueKey || column.rendererKey || column.key,
-      minWidth: column.minWidth || column.width || COLUMN_WIDTHS[column.rendererKey || column.valueKey || column.key] || 125,
+      minWidth: getReadableColumnWidth({
+        ...column,
+        minWidth: column.minWidth || column.width || COLUMN_WIDTHS[column.rendererKey || column.valueKey || column.key] || 125,
+      }),
       order: Number(column.order ?? column.columnOrder ?? index + 1),
       field: column.isUdf
         ? (rowUdfByKey.get(column.valueKey || column.key) || rowUdfByKey.get(column.key) || getGenericUdfField(column))
@@ -155,17 +228,31 @@ export default function ContentsTab({
     ...visibleRowUdfFields.map((field) => ({
       key: field.key,
       label: field.label || field.key,
-      minWidth: field.type === 'textarea' ? 180 : 125,
+      minWidth: getReadableColumnWidth({
+        key: field.key,
+        label: field.label || field.key,
+        minWidth: field.type === 'textarea' ? 180 : 125,
+      }),
       isUdf: true,
       field,
     })),
   ];
 
-  const visibleColumns = dedupeColumns(matrixColumns).filter((column) => {
-    if (column.sapControlled || column.importedLayout) return column.visible !== false;
-    if (column.isUdf) return formSettings.rowUdfs?.[column.key]?.visible !== false;
-    return formSettings.matrixColumns?.[column.key]?.visible !== false;
-  }).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+  const getColumnSetting = (column = {}) => (
+    formSettings.matrixColumns?.[column.key]
+    || (column.isUdf ? formSettings.rowUdfs?.[column.key] : undefined)
+    || {}
+  );
+  const resolveVisible = (field = {}, setting = {}) => (
+    setting?.visible !== undefined ? setting.visible !== false : field.visible !== false
+  );
+  const resolveActive = (field = {}, setting = {}) => (
+    setting?.active !== undefined ? setting.active !== false : field.active !== false
+  );
+
+  const visibleColumns = dedupeColumns(matrixColumns).filter((column) => (
+    resolveVisible(column, getColumnSetting(column))
+  )).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
 
   const tableMinWidth =
     INDEX_COL_WIDTH +
@@ -180,8 +267,8 @@ export default function ContentsTab({
         </td>
       );
     }
-    const disabled = field.readOnly || formSettings.rowUdfs?.[field.key]?.active === false;
-    const value = line.udf?.[field.key] || '';
+    const disabled = field.readOnly || !resolveActive(field, formSettings.rowUdfs?.[field.key] || {});
+    const value = getUdfFieldValue(line, field);
 
     if (field.type === 'select' && Array.isArray(field.options) && field.options.length > 0) {
       return (
@@ -231,6 +318,12 @@ export default function ContentsTab({
   const renderCell = (column, line, i, uomOpts, lineTotals) => {
     const rendererKey = column.rendererKey || column.valueKey || column.key;
     const valueKey = column.valueKey || rendererKey;
+    const setting = getColumnSetting(column);
+    const disabled = Boolean(
+      column.readOnly ||
+      column.active === false ||
+      setting?.active === false
+    );
 
     const textInput = (key, options = {}) => (
       <td key={column.key || key}>
@@ -242,6 +335,7 @@ export default function ContentsTab({
           onBlur={options.numeric ? () => onNumBlur(key, 'line', i) : undefined}
           type={options.type || 'text'}
           style={options.style}
+          disabled={disabled}
         />
       </td>
     );
@@ -258,11 +352,12 @@ export default function ContentsTab({
           <input
             className="so-grid__input"
             style={{ flex: 1 }}
-            name={key}
-            value={line[key] || ''}
-            onChange={(e) => onLineChange(i, e)}
-          />
-          <button type="button" onClick={openLookup} style={pickerButtonStyle} title={title}>
+          name={key}
+          value={line[key] || ''}
+          onChange={(e) => onLineChange(i, e)}
+          disabled={disabled}
+        />
+          <button type="button" onClick={openLookup} style={pickerButtonStyle} title={title} disabled={disabled}>
             ...
           </button>
         </div>
@@ -283,8 +378,9 @@ export default function ContentsTab({
               value={getLineFieldValue(line, 'itemNo')}
               onChange={(e) => onLineChange(i, e)}
               placeholder="Item Code"
+              disabled={disabled}
             />
-            <button type="button" onClick={() => onOpenItemModal && onOpenItemModal(i)} style={pickerButtonStyle} title="Select Item">
+            <button type="button" onClick={() => onOpenItemModal && onOpenItemModal(i)} style={pickerButtonStyle} title="Select Item" disabled={disabled}>
               ...
             </button>
           </div>
@@ -303,6 +399,7 @@ export default function ContentsTab({
             value={getLineFieldValue(line, 'itemDescription')}
             onChange={(e) => onLineChange(i, e)}
             title={getLineFieldValue(line, 'itemDescription')}
+            disabled={disabled}
           />
         </td>
       ),
@@ -315,6 +412,7 @@ export default function ContentsTab({
             value={line.quantity || ''}
             onChange={(e) => onLineChange(i, e)}
             onBlur={() => onNumBlur('quantity', 'line', i)}
+            disabled={disabled}
           />
           {valErrors.lines[i]?.quantity && (
             <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].quantity}</div>
@@ -330,6 +428,7 @@ export default function ContentsTab({
             value={line.unitPrice || ''}
             onChange={(e) => onLineChange(i, e)}
             onBlur={() => onNumBlur('unitPrice', 'line', i)}
+            disabled={disabled}
           />
           {valErrors.lines[i]?.unitPrice && (
             <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].unitPrice}</div>
@@ -349,6 +448,7 @@ export default function ContentsTab({
             name="distRule"
             value={line.distRule || ''}
             onChange={(e) => onLineChange(i, e)}
+            disabled={disabled}
           >
             <option value="">Select</option>
             {distributionRules.map((rule) => (
@@ -368,10 +468,11 @@ export default function ContentsTab({
             className="so-grid__input"
             style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.taxCode ? '1px solid #c00' : undefined }}
             name="taxCode"
-            value={line.taxCode || ''}
+            value={getLineTaxCodeValue(line)}
             onChange={(e) => onLineChange(i, e)}
             taxCodes={effectiveTaxCodes}
             error={Boolean(valErrors.lines[i]?.taxCode)}
+            disabled={disabled}
           />
           {valErrors.lines[i]?.taxCode && (
             <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].taxCode}</div>
@@ -387,6 +488,7 @@ export default function ContentsTab({
             name="uomCode"
             value={line.uomCode || ''}
             onChange={(e) => onLineChange(i, e)}
+            disabled={disabled}
           >
             <option value=""></option>
             {uomOpts.map((uom) => (
@@ -409,6 +511,7 @@ export default function ContentsTab({
             name="countryOfOrigin"
             value={line.countryOfOrigin || ''}
             onChange={(e) => onLineChange(i, e)}
+            disabled={disabled}
           >
             <option value=""></option>
             {countries.map((country) => (
@@ -430,6 +533,7 @@ export default function ContentsTab({
             name="allowProcurementDoc"
             checked={Boolean(line.allowProcurementDoc)}
             onChange={(e) => onLineChange(i, { target: { name: 'allowProcurementDoc', value: e.target.checked, type: 'checkbox' } })}
+            disabled={disabled}
           />
         </td>
       ),
@@ -443,8 +547,9 @@ export default function ContentsTab({
               value={line.hsnCode || ''}
               onChange={(e) => onLineChange(i, e)}
               placeholder="HSN"
+              disabled={disabled}
             />
-            <button type="button" onClick={() => onOpenHSNModal && onOpenHSNModal(i)} style={pickerButtonStyle} title="Select HSN Code">
+            <button type="button" onClick={() => onOpenHSNModal && onOpenHSNModal(i)} style={pickerButtonStyle} title="Select HSN Code" disabled={disabled}>
               ...
             </button>
           </div>
@@ -466,6 +571,7 @@ export default function ContentsTab({
             name="sellerBrokerageAmtPer"
             value={line.sellerBrokerageAmtPer || ''}
             onChange={(e) => onLineChange(i, e)}
+            disabled={disabled}
           >
             <option value=""></option>
             <option value="Amount">Amount</option>

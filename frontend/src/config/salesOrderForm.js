@@ -383,7 +383,7 @@ const createUdfState = (definitions) =>
   }, {});
 
 const normalizeUdfState = (definitions, values = {}, options = {}) => {
-    const preserveExtra = Boolean(options.preserveExtra);
+    const preserveExtra = options.preserveExtra !== false;
     const normalized = definitions.reduce((acc, field) => {
         const currentValue = values[field.key];
         const shouldApplyDefault =
@@ -434,9 +434,11 @@ const mergeNestedSettings = (defaults, saved = {}) =>
     acc[groupKey] = Object.keys(defaults[groupKey] || {}).reduce((group, fieldKey) => {
       const defaultEntry = defaults[groupKey][fieldKey] || {};
       const savedEntry = savedGroup[fieldKey] || {};
-      group[fieldKey] = defaultEntry.sapControlled
-        ? { ...savedEntry, ...defaultEntry }
-        : { ...defaultEntry, ...savedEntry };
+      group[fieldKey] = {
+        ...defaultEntry,
+        ...savedEntry,
+        sapControlled: defaultEntry.sapControlled,
+      };
       return group;
     }, {});
     return acc;

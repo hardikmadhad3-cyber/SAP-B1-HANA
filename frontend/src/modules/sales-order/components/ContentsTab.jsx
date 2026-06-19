@@ -353,24 +353,28 @@ export default function ContentsTab({
   const visibleRowUdfFields = usesMetadataDrivenMatrix
     ? (rowUdfFields || [])
     : filterSalesOrderRowUdfDefinitions(rowUdfFields);
-  const liveMatrixFieldKeys = React.useMemo(
-    () => new Set(liveMatrixFields.map((field) => field.key)),
-    [liveMatrixFields]
-  );
   const getColumnValueKey = (column = {}) => column.valueKey || column.rendererKey || column.key;
   const getColumnRendererKey = (column = {}) => column.rendererKey || column.valueKey || column.key;
-  const isSapControlledColumn = (column = {}) => Boolean(column.sapControlled);
+  const isUdfMatrixColumn = (column = {}) => (
+    Boolean(column.isUdf)
+    || column.source === 'RDR1_UDF'
+    || String(column.key || '').startsWith('U_')
+    || String(column.valueKey || '').startsWith('U_')
+  );
+  const getMatrixColumnSetting = (column = {}) => (
+    {
+      visible: column.visible !== false,
+      active: column.active !== false,
+      ...(
+        formSettings.matrixColumns?.[column.key]
+        || (isUdfMatrixColumn(column) ? formSettings.rowUdfs?.[column.key] : undefined)
+        || {}
+      ),
+    }
+  );
   const getColumnVisibility = (column = {}) => {
-    if (isSapControlledColumn(column)) return column.visible !== false;
-    if (liveMatrixFieldKeys.has(column.key)) {
-      const setting = formSettings.matrixColumns?.[column.key];
-      return column.visible !== false && setting?.visible !== false;
-    }
-    if (column.isUdf) {
-      return column.visible !== false && formSettings.rowUdfs?.[column.key]?.visible !== false;
-    }
-    const setting = formSettings.matrixColumns?.[column.key];
-    return column.visible !== false && setting?.visible !== false;
+    const setting = getMatrixColumnSetting(column);
+    return setting.visible !== false;
   };
 
   const matrixColumns = [
@@ -445,23 +449,6 @@ export default function ContentsTab({
     const valueKey = getColumnValueKey(dynamicUdfLookup.field);
     onRowUdfChange && onRowUdfChange(dynamicUdfLookup.rowIndex, valueKey, option?.value || '');
   };
-
-  const isUdfMatrixColumn = (column = {}) => (
-    Boolean(column.isUdf)
-    || column.source === 'RDR1_UDF'
-    || String(column.key || '').startsWith('U_')
-    || String(column.valueKey || '').startsWith('U_')
-  );
-
-  const getMatrixColumnSetting = (column = {}) => (
-    isSapControlledColumn(column)
-      ? { visible: column.visible !== false, active: column.active !== false, sapControlled: true }
-      : (
-        formSettings.matrixColumns?.[column.key]
-        || formSettings.rowUdfs?.[column.key]
-        || {}
-      )
-  );
 
   const handleGenericMatrixValueChange = (rowIndex, column, nextValue) => {
     const valueKey = getColumnValueKey(column);

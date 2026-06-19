@@ -32,6 +32,7 @@ import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
+import { normalizeLineUdfAliases } from '../../utils/workbookLineHydration';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
@@ -214,18 +215,18 @@ const getHeaderFieldLabel = (fieldMap, key, fallback, forceRequired = false) => 
     return (forceRequired || field.required) ? `${label} *` : label;
 };
 
+const resolveFormSettingFlag = (field = {}, setting = {}, prop = 'visible') => (
+    setting?.[prop] !== undefined ? setting[prop] !== false : field[prop] !== false
+);
+
 const buildVisibleHeaderUdfPayload = (definitions = [], values = {}, settings = {}) => {
     const normalized = normalizeUdfState(definitions, values);
     return (definitions || []).reduce((acc, field) => {
         const key = field.key;
         if (!key) return acc;
         const fieldSettings = settings?.headerUdfs?.[key] || {};
-        const visible = field.sapControlled
-            ? field.visible !== false
-            : (field.visible !== false && fieldSettings.visible !== false);
-        const active = field.sapControlled
-            ? field.active !== false
-            : (field.active !== false && fieldSettings.active !== false);
+        const visible = resolveFormSettingFlag(field, fieldSettings, 'visible');
+        const active = resolveFormSettingFlag(field, fieldSettings, 'active');
         if (visible && active) acc[key] = normalized[key];
         return acc;
     }, {});
@@ -425,6 +426,10 @@ function SalesOrder() {
             location.state?.docEntry ||
             location.state?.document?.docEntry ||
             location.state?.document?.DocEntry;
+        const pendingRouteCopyFrom = Boolean(
+            location.state?.copyFrom && isRouteStateForActiveCompany(location.state)
+        );
+        const hasPendingRouteDocument = Boolean(pendingRouteDocEntry || pendingRouteCopyFrom);
         const load = async () => {
             setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
             try {
@@ -452,7 +457,7 @@ function SalesOrder() {
 
                 setMatrixColumnDefinitions([]);
 
-                if (!pendingRouteDocEntry) {
+                if (!hasPendingRouteDocument) {
                     const resetHeader = createInitialHeader(generalSettingsRef.current);
                     setCurrentDocEntry(null);
                     setSnapshotPending(false);
@@ -541,11 +546,11 @@ function SalesOrder() {
                     setRowUdfDefinitions(nextRowUdfs);
                     setMatrixColumnDefinitions(nextMatrixColumns);
                     setHeaderFieldDefinitions(nextHeaderFields);
-                    setHeaderUdfs((prev) => pendingRouteDocEntry
+                    setHeaderUdfs((prev) => hasPendingRouteDocument
                         ? normalizeUdfState(nextHeaderUdfs, prev)
                         : createUdfState(nextHeaderUdfs));
                     setLines((prev) => {
-                        const hasLoadedLines = pendingRouteDocEntry && (prev || []).some((line) =>
+                        const hasLoadedLines = hasPendingRouteDocument && (prev || []).some((line) =>
                             String(line.itemNo || '').trim() || line.lineNum !== undefined
                         );
                         return hasLoadedLines
@@ -776,11 +781,15 @@ function SalesOrder() {
                                 ...l,
                                 lineNum: l.lineNum ?? l.LineNum ?? index,
                                 hsnCode: hsnCode,
-                                stcode: l.stcode || l.taxCode || '',
+                                stcode: l.stcode || '',
+                                taxCodeManuallyOverridden: Boolean(String(l.taxCode || l.TaxCode || l.VatGroup || '').trim()),
                                 uomName: l.uomName || l.uomCode || '',
                                 documentCreated: l.documentCreated || so.header?.documentCreated || '',
                                 loc: l.loc || resolveLineLocation(l.whse, l.branch || so.header?.branch || header.branch),
-                                udf: normalizeUdfState(rowUdfDefinitions, l.udf || {})
+                                udf: normalizeLineUdfAliases(
+                                    normalizeUdfState(rowUdfDefinitions, l.udf || {}, { preserveExtra: true }),
+                                    l
+                                )
                             };
                         })
                         : [createLine(rowUdfDefinitions)]
@@ -1220,7 +1229,7 @@ function SalesOrder() {
         // Update tax codes for all lines that have items
         setLines(prevLines =>
             prevLines.map(line => {
-                if (!line.itemNo) return line; // Skip empty lines
+                if (!line.itemNo || line.taxCodeManuallyOverridden) return line; // Skip empty or preserved lines
 
                 // Get item's default tax rate (assume 18% if not specified)
                 const item = refData.items.find(it => String(it.ItemCode || '') === String(line.itemNo || ''));
@@ -1436,7 +1445,7 @@ function SalesOrder() {
 
                     setLines(prev => prev.map((line, idx) => {
                         if (idx !== i) return line;
-                        const next = { ...line, itemNo: value };
+                        const next = { ...line, itemNo: value, taxCodeManuallyOverridden: false };
 
                         // Step 1: Set Item Details
                         next.itemDescription = item.ItemName || next.itemDescription;
@@ -1472,7 +1481,7 @@ function SalesOrder() {
                         if (!gstState || !companyState) {
                             console.warn('⚠️ Missing state information for tax determination');
                             next.taxCode = '';
-                            next.stcode = baseTaxCode || '';
+                            next.stcode = next.stcode || '';
                         } else {
                             // Step 6: Determine Tax Code using Tax Engine
                             const determinedTaxCode = determineTaxCode(
@@ -1486,7 +1495,7 @@ function SalesOrder() {
 
                             if (determinedTaxCode) {
                                 next.taxCode = determinedTaxCode;
-                                next.stcode = determinedTaxCode;
+                                next.stcode = next.stcode || '';
                                 console.log('✅ Tax Code Auto-Selected:', {
                                     gstType: getGSTTypeLabel(companyState, gstState),
                                     taxCode: determinedTaxCode
@@ -1494,7 +1503,7 @@ function SalesOrder() {
                             } else {
                                 console.warn('⚠️ Could not determine tax code');
                                 next.taxCode = '';
-                                next.stcode = baseTaxCode || '';
+                                next.stcode = next.stcode || '';
                             }
                         }
 
@@ -1507,7 +1516,7 @@ function SalesOrder() {
                 // Fallback to reference data if API fails
                 setLines(prev => prev.map((line, idx) => {
                     if (idx !== i) return line;
-                    const next = { ...line, itemNo: value };
+                    const next = { ...line, itemNo: value, taxCodeManuallyOverridden: false };
                     const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
                     if (item) {
                         next.itemDescription = item.ItemName || next.itemDescription;
@@ -1520,7 +1529,7 @@ function SalesOrder() {
                         next.distRule = next.distRule || item.DistributionRule || '';
                         next.whse = next.whse || item.DefaultWarehouse || header.warehouse || '';
                         next.loc = resolveLineLocation(next.whse, next.branch || header.branch);
-                        next.stcode = next.stcode || item.TaxCodeAR || item.SalTaxCode || next.taxCode || '';
+                        next.stcode = next.stcode || '';
                     }
                     next.total = fmtDec(calcLineTotal(next), numDec.total);
                     return next;
@@ -1534,7 +1543,10 @@ function SalesOrder() {
                 if (name === 'quantity' && !String(next.sellerQty || '').trim()) next.sellerQty = next.quantity;
                 if (name === 'unitPrice') next.unitPriceUdf = next.unitPrice;
                 if (name === 'uomCode') next.uomName = value;
-                if (name === 'taxCode') next.stcode = String(next.taxCode || '');
+                if (name === 'taxCode') {
+                    next.stcode = next.stcode || '';
+                    next.taxCodeManuallyOverridden = Boolean(String(next.taxCode || '').trim());
+                }
                 if (name === 'whse') next.loc = resolveLineLocation(next.whse, next.branch || header.branch);
                 next.total = fmtDec(calcLineTotal(next), numDec.total);
                 return next;
@@ -1663,7 +1675,6 @@ function SalesOrder() {
     const handleRowUdfChange = (i, k, v) => setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
     const updateFormSetting = (g, k, prop, val) => setFormSettings((p) => {
         const current = ((p[g] || {})[k] || {});
-        if (current.sapControlled) return p;
         return { ...p, [g]: { ...(p[g] || {}), [k]: { ...current, [prop]: val } } };
     });
     const toggleHeaderUdfs = () => {
@@ -1919,12 +1930,12 @@ function SalesOrder() {
 
                     if (determinedTaxCode) {
                         next.taxCode = determinedTaxCode;
-                        next.stcode = determinedTaxCode;
+                        next.stcode = next.stcode || '';
                     }
                 }
 
                 if (!next.stcode) {
-                    next.stcode = mergedItem.TaxCodeAR || mergedItem.SalTaxCode || next.taxCode || '';
+                    next.stcode = next.stcode || '';
                 }
 
                 next.total = fmtDec(calcLineTotal(next), numDec.total);
@@ -2015,7 +2026,8 @@ function SalesOrder() {
         const copiedLines = rawLines.map((line, idx) => ({
             ...createLine(rowUdfDefinitions),
             ...normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch),
-            stcode: line.STCODE || line.STACode || line.stcode || line.TaxCode || line.VatGroup || line.taxCode || '',
+            stcode: line.STCODE || line.STACode || line.stcode || '',
+            taxCodeManuallyOverridden: Boolean(String(line.TaxCode || line.VatGroup || line.taxCode || '').trim()),
             documentCreated: line.DocumentCreated || line.documentCreated || copySource.header.DocumentCreated || normHeader.documentCreated || '',
             loc: line.loc || resolveLineLocation(line.WarehouseCode || line.WhsCode || line.whse || '', normHeader.branch),
         }));
@@ -2488,14 +2500,10 @@ function SalesOrder() {
     };
 
     const visHdrUdfs = headerUdfDefinitions.filter((field) => (
-        field.sapControlled
-            ? field.visible !== false
-            : (field.visible !== false && formSettings.headerUdfs?.[field.key]?.visible !== false)
+        resolveFormSettingFlag(field, formSettings.headerUdfs?.[field.key] || {}, 'visible')
     ));
     const visibleRowUdfs = rowUdfDefinitions.filter((field) => (
-        field.sapControlled
-            ? field.visible !== false
-            : (field.visible !== false && formSettings.rowUdfs?.[field.key]?.visible !== false)
+        resolveFormSettingFlag(field, formSettings.rowUdfs?.[field.key] || {}, 'visible')
     ));
     const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
 
@@ -3279,6 +3287,7 @@ function SalesOrder() {
                         rowUdfFields={rowUdfDefinitions}
                         formSettings={formSettings}
                         onSettingChange={updateFormSetting}
+                        editableSapControlledGroups={['matrixColumns']}
                     />
                 </div>
 

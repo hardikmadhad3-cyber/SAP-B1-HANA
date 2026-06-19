@@ -328,9 +328,22 @@ const createUdfState = (definitions) =>
     return acc;
   }, {});
 
-const normalizeUdfState = (definitions, values = {}) =>
-  definitions.reduce((acc, field) => {
-    const currentValue = values[field.key];
+const normalizeUdfLookupKey = (value) =>
+  String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
+
+const getUdfValueByKey = (values = {}, key = '') => {
+  if (Object.prototype.hasOwnProperty.call(values, key)) return values[key];
+
+  const token = normalizeUdfLookupKey(key);
+  if (!token) return undefined;
+
+  const match = Object.entries(values || {}).find(([valueKey]) => normalizeUdfLookupKey(valueKey) === token);
+  return match ? match[1] : undefined;
+};
+
+const normalizeUdfState = (definitions, values = {}) => {
+  const normalized = definitions.reduce((acc, field) => {
+    const currentValue = getUdfValueByKey(values, field.key);
     const shouldApplyDefault =
       currentValue === undefined ||
       currentValue === null ||
@@ -339,6 +352,15 @@ const normalizeUdfState = (definitions, values = {}) =>
     acc[field.key] = shouldApplyDefault ? getDefaultUdfValue(field) : currentValue;
     return acc;
   }, {});
+
+  Object.entries(values || {}).forEach(([key, value]) => {
+    if (String(key || '').startsWith('U_') && !Object.prototype.hasOwnProperty.call(normalized, key)) {
+      normalized[key] = value == null ? '' : value;
+    }
+  });
+
+  return normalized;
+};
 
 const buildVisibilitySettings = (definitions) =>
   definitions.reduce((acc, field) => {

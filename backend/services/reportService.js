@@ -662,6 +662,34 @@ const buildCredentialSourceSummary = (config) => {
   return `username from ${usernameSource}, password from ${passwordSource}, company DB from ${companyDbSource}`;
 };
 
+const getHttpStatusText = (status) => {
+  if (Number(status) === 401) return '401 Unauthorized';
+  if (Number(status) === 403) return '403 Forbidden';
+  return status ? `HTTP ${status}` : 'an authorization error';
+};
+
+const decorateReportServiceAuthorizationError = (error, action, config) => {
+  const status = Number(error?.response?.status);
+  if (![401, 403].includes(status)) {
+    return error;
+  }
+
+  const companyDb = String(config.companyDb || '').trim() || 'the configured company';
+  const credentialSource = buildCredentialSourceSummary(config);
+  const sapMessage = extractReportServiceMessage(error.response?.data);
+  const statusText = getHttpStatusText(status);
+  const message = sapMessage ? ` SAP said: ${sapMessage}` : '';
+  const wrapped = new Error(
+    `SAP Report Service rejected the request with ${statusText} while trying to ${action} for company ${companyDb} (${credentialSource}). ` +
+    `Check Admin Panel > Companies > SAP Report Service credentials, company DB, and report permissions.${message}`,
+  );
+
+  wrapped.statusCode = 502;
+  wrapped.code = 'REPORT_SERVICE_AUTH_FAILED';
+  wrapped.cause = error;
+  return wrapped;
+};
+
 const loginToReportServiceWithConfig = async (reportConfig) => {
   const normalizedCompanyDb = String(reportConfig.companyDb || '').trim();
   ensureReportLoginConfig(reportConfig);
@@ -676,7 +704,11 @@ const loginToReportServiceWithConfig = async (reportConfig) => {
       Password: reportConfig.password,
     });
   } catch (error) {
-    throw decorateReportServiceConnectionError(error, 'log in', reportConfig);
+    throw decorateReportServiceConnectionError(
+      decorateReportServiceAuthorizationError(error, 'log in', reportConfig),
+      'log in',
+      reportConfig,
+    );
   }
 
   const sessionCookie = extractCookieHeader(response.headers['set-cookie']);
@@ -1119,7 +1151,11 @@ const exportReportPdf = async ({
         return postExport(activeReportConfig, false);
       }
 
-      throw decorateReportServiceConnectionError(error, 'export the PDF', activeReportConfig);
+      throw decorateReportServiceConnectionError(
+        decorateReportServiceAuthorizationError(error, 'export the PDF', activeReportConfig),
+        'export the PDF',
+        activeReportConfig,
+      );
     }
   };
 
@@ -1313,7 +1349,11 @@ const loadReportParameters = async (docCode, optionsOrRetry = {}, retryOverride 
         return loadParameters(activeReportConfig, false);
       }
 
-      throw decorateReportServiceConnectionError(error, 'load report parameters', activeReportConfig);
+      throw decorateReportServiceConnectionError(
+        decorateReportServiceAuthorizationError(error, 'load report parameters', activeReportConfig),
+        'load report parameters',
+        activeReportConfig,
+      );
     }
   };
 
@@ -1364,7 +1404,11 @@ const loadAuthorizedCrList = async (query = '', retryOnAuth = true) => {
         return loadList(activeReportConfig, false);
       }
 
-      throw decorateReportServiceConnectionError(error, 'load authorized Crystal layouts', activeReportConfig);
+      throw decorateReportServiceConnectionError(
+        decorateReportServiceAuthorizationError(error, 'load authorized Crystal layouts', activeReportConfig),
+        'load authorized Crystal layouts',
+        activeReportConfig,
+      );
     }
   };
 

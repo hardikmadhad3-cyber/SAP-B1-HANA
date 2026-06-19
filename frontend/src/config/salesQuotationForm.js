@@ -209,8 +209,8 @@ const createUdfState = (definitions) =>
     return acc;
   }, {});
 
-const normalizeUdfState = (definitions, values = {}) =>
-  definitions.reduce((acc, field) => {
+const normalizeUdfState = (definitions, values = {}) => {
+  const normalized = definitions.reduce((acc, field) => {
     const currentValue = values[field.key];
     const shouldApplyDefault =
       currentValue === undefined ||
@@ -221,9 +221,24 @@ const normalizeUdfState = (definitions, values = {}) =>
     return acc;
   }, {});
 
+  Object.entries(values || {}).forEach(([key, value]) => {
+    if (String(key || '').startsWith('U_') && !Object.prototype.hasOwnProperty.call(normalized, key)) {
+      normalized[key] = value == null ? '' : value;
+    }
+  });
+
+  return normalized;
+};
+
 const buildVisibilitySettings = (definitions) =>
   definitions.reduce((acc, field) => {
-    acc[field.key] = { visible: field.visible !== undefined ? field.visible : true, active: true };
+    acc[field.key] = {
+      visible: field.visible !== undefined ? field.visible : true,
+      active: field.active !== undefined ? field.active : true,
+      sapControlled: Boolean(field.sapControlled),
+      order: field.order,
+      minWidth: field.minWidth,
+    };
     return acc;
   }, {});
 

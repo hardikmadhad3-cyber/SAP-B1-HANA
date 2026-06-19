@@ -218,6 +218,13 @@ app.use(cors({
   },
   credentials: true,
 }));
+
+// Ensure Authorization header is allowed in CORS preflight responses
+// so frontend clients can send Bearer tokens from browsers.
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  next();
+});
 app.use(express.json());
 app.use(apiTimingMiddleware);
 app.use((req, res, next) => runWithRequestContext(req, next));

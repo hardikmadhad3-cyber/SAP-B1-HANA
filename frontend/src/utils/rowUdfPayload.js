@@ -4,6 +4,27 @@ const hasEnteredUdfValue = (value) => {
   return String(value).trim() !== '';
 };
 
+const isSapUdfKey = (key) => String(key || '').startsWith('U_');
+
+const getRowUdfSetting = (key, rowSettings = {}, matrixSettings = {}) =>
+  matrixSettings[key] || rowSettings[key];
+
+const resolveVisible = (field = {}, setting = {}) => (
+  setting?.visible !== undefined ? setting.visible !== false : field.visible !== false
+);
+
+const resolveActive = (field = {}, setting = {}) => (
+  setting?.active !== undefined ? setting.active !== false : field.active !== false
+);
+
+const canIncludeRowUdf = (field, setting = {}) => {
+  if (field) {
+    return resolveVisible(field, setting) && resolveActive(field, setting);
+  }
+
+  return setting?.visible !== false && setting?.active !== false;
+};
+
 export const buildVisibleEnteredRowUdfPayload = (
   rowUdfDefinitions = [],
   values = {},
@@ -11,24 +32,43 @@ export const buildVisibleEnteredRowUdfPayload = (
 ) => {
   const rowSettings = formSettings?.rowUdfs || {};
   const matrixSettings = formSettings?.matrixColumns || {};
+  const definitionsByKey = new Map(
+    (rowUdfDefinitions || [])
+      .filter((field) => field?.key)
+      .map((field) => [field.key, field])
+  );
 
-  return (rowUdfDefinitions || []).reduce((acc, field) => {
+  const payload = (rowUdfDefinitions || []).reduce((acc, field) => {
     const key = field?.key;
     if (!key) return acc;
 
-    const setting = matrixSettings[key] || rowSettings[key];
-    const isVisible = field.sapControlled
-      ? field.visible !== false
-      : (setting ? setting.visible === true : field.visible !== false);
-    const isActive = field.sapControlled
-      ? field.active !== false
-      : setting?.active !== false;
+    const setting = getRowUdfSetting(key, rowSettings, matrixSettings);
     const value = values?.[key];
 
-    if (isVisible && isActive && hasEnteredUdfValue(value)) {
+    if (canIncludeRowUdf(field, setting) && hasEnteredUdfValue(value)) {
       acc[key] = value;
     }
 
     return acc;
   }, {});
+
+  Object.entries(values || {}).forEach(([key, value]) => {
+    if (
+      !isSapUdfKey(key) ||
+      Object.prototype.hasOwnProperty.call(payload, key) ||
+      !hasEnteredUdfValue(value)
+    ) {
+      return;
+    }
+
+    const field = definitionsByKey.get(key);
+    if (!field) return;
+
+    const setting = getRowUdfSetting(key, rowSettings, matrixSettings);
+    if (canIncludeRowUdf(field, setting)) {
+      payload[key] = value;
+    }
+  });
+
+  return payload;
 };

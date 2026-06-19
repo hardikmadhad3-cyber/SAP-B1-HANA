@@ -57,7 +57,7 @@ export const DELIVERY_WORKBOOK_COLUMNS = withOrder([
   { key: 'binLocationAllocation', label: 'Bin Location Allocation', minWidth: 160 },
   { key: 'priceAfterDiscount', label: 'Price after Discount', minWidth: 130, readOnly: true },
   { key: 'itemCost', label: 'Item Cost', minWidth: 110 },
-  { key: 'taxCodeRepeat', label: 'TaxCode', minWidth: 110, valueKey: 'taxCode', rendererKey: 'taxCode' },
+  { key: 'taxCodeRepeat', label: 'TaxCode', minWidth: 110, valueKey: 'U_TAXCODE', rendererKey: 'taxCodeRepeat', isUdf: true, readOnly: true },
   { key: 'price', label: 'Price', minWidth: 95, numeric: true },
   { key: 'sellerBrokerage', label: 'Seller Brokerage', minWidth: 120 },
   { key: 'buyerBrokerage', label: 'Buyer Brokerage', minWidth: 120 },
@@ -81,7 +81,7 @@ export const DELIVERY_WORKBOOK_COLUMNS = withOrder([
   { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', minWidth: 100 },
   { key: 'U_Fix_Brock_B', label: 'FIX Brok BUYER', minWidth: 135, isUdf: true, numeric: true },
   { key: 'U_Fix_Brock_S', label: 'Fix Brock Seller', minWidth: 140, isUdf: true, numeric: true },
-  { key: 'batch', label: 'Batch', minWidth: 95 },
+  { key: 'batch', label: 'Batch', minWidth: 95, visible: false },
 ]);
 
 export const AR_INVOICE_WORKBOOK_COLUMNS = withOrder([
@@ -99,11 +99,13 @@ export const AR_INVOICE_WORKBOOK_COLUMNS = withOrder([
   { key: 'glAccount', label: 'G/L Account', minWidth: 135 },
   { key: 'distRule', label: 'Distr. Rule', minWidth: 105 },
   { key: 'uomCode', label: 'UoM Code', minWidth: 105 },
-  { key: 'uomName', label: 'UoM Name', minWidth: 120, readOnly: true },
-  { key: 'cogsDistRule', label: 'COGS Distr. Rule', minWidth: 135 },
+  { key: 'itemCost', label: 'Item Cost', minWidth: 110, readOnly: true, numeric: true },
   { key: 'countryOfOrigin', label: 'Country/Region of Origin', minWidth: 185 },
-  { key: 'assessableValue', label: 'Assessable Value (INR)', minWidth: 150 },
+  { key: 'cogsDistRule', label: 'COGS Distr. Rule', minWidth: 135 },
   { key: 'loc', label: 'Loc.', minWidth: 115, readOnly: true },
+  { key: 'withoutQtyPosting', label: 'Without Qty Posting', minWidth: 145, type: 'yesNo' },
+  { key: 'enableSettingCost', label: 'Enable Setting Cost', minWidth: 140, type: 'checkbox' },
+  { key: 'returnCost', label: 'Return Cost (LC)', minWidth: 125, numeric: true },
   { key: 'blanketAgreementNo', label: 'Blanket Agreement No.', minWidth: 170 },
   { key: 'hsnCode', label: 'HSN', minWidth: 115 },
   { key: 'sacCode', label: 'SAC', minWidth: 95 },
@@ -112,8 +114,8 @@ export const AR_INVOICE_WORKBOOK_COLUMNS = withOrder([
   { key: 'U_ContainerType', label: 'Container Type', minWidth: 135, isUdf: true },
   { key: 'U_GrossWt', label: 'GrossWt', minWidth: 110, isUdf: true, numeric: true },
   { key: 'U_TotalPackage', label: 'Total-Package', minWidth: 130, isUdf: true, numeric: true },
-  { key: 'taxCodeRepeat', label: 'TaxCode', minWidth: 110, valueKey: 'taxCode', rendererKey: 'taxCode' },
-  { key: 'price', label: 'Price', minWidth: 95, numeric: true },
+  { key: 'taxCodeRepeat', label: 'TaxCode', minWidth: 110, valueKey: 'U_TAXCODE', rendererKey: 'taxCodeRepeat', isUdf: true, readOnly: true },
+  { key: 'price', label: 'Price', minWidth: 95, valueKey: 'U_PRICE', rendererKey: 'price', isUdf: true, numeric: true },
   { key: 'sellerBrokerage', label: 'Seller Brokerage', minWidth: 135 },
   { key: 'buyerBrokerage', label: 'Buyer Brokerage', minWidth: 130 },
   { key: 'buyerDelivery', label: 'Buyer - Delivery', minWidth: 135 },
@@ -136,6 +138,7 @@ export const AR_INVOICE_WORKBOOK_COLUMNS = withOrder([
   { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', minWidth: 110 },
   { key: 'U_Fix_Brock_B', label: 'FIX Brok BUYER', minWidth: 135, isUdf: true, numeric: true },
   { key: 'U_Fix_Brock_S', label: 'Fix Brock Seller', minWidth: 140, isUdf: true, numeric: true },
+  { key: 'sellerPaymentTermsRepeat', label: 'Seller - Terms of Payment', minWidth: 180, valueKey: 'U_SELLER_PAYMENT_TERM', rendererKey: 'sellerPaymentTermsRepeat', isUdf: true },
 ]);
 
 export const AR_CREDIT_MEMO_WORKBOOK_COLUMNS = withOrder([
@@ -166,7 +169,7 @@ export const AR_CREDIT_MEMO_WORKBOOK_COLUMNS = withOrder([
   { key: 'U_ContainerType', label: 'Container Type', minWidth: 135, isUdf: true },
   { key: 'U_GrossWt', label: 'GrossWt', minWidth: 110, isUdf: true, numeric: true },
   { key: 'U_TotalPackage', label: 'Total-Package', minWidth: 130, isUdf: true, numeric: true },
-  { key: 'taxCodeRepeat', label: 'TaxCode', minWidth: 110, valueKey: 'taxCode', rendererKey: 'taxCode' },
+  { key: 'taxCodeRepeat', label: 'TaxCode', minWidth: 110, valueKey: 'U_TAXCODE', rendererKey: 'taxCodeRepeat', isUdf: true, readOnly: true },
   { key: 'price', label: 'Price', minWidth: 95, numeric: true },
   { key: 'sellerBrokerage', label: 'Seller Brokerage', minWidth: 135 },
   { key: 'buyerBrokerage', label: 'Buyer Brokerage', minWidth: 130 },

@@ -258,6 +258,7 @@ export function recalculateAllTaxCodes(
 ) {
   return lines.map(line => {
     if (!line.itemNo) return line;
+    if (line.taxCodeManuallyOverridden && line.taxCode) return line;
 
     const item = items.find(it => String(it.ItemCode) === String(line.itemNo));
     if (!item) return line;

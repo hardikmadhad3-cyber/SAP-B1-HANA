@@ -56,9 +56,13 @@ const SUBTYPE_MAP = {
 };
 
 const normalizeUdfKey = (aliasId) => {
-  const value = String(aliasId || '').trim();
+  let value = String(aliasId || '').trim().toUpperCase();
   if (!value) return '';
-  return value.startsWith('U_') ? value : `U_${value}`;
+  // strip any non-alphanumeric/underscore characters to mirror frontend normalization
+  value = value.replace(/[^A-Z0-9_]+/g, '');
+  if (!value) return '';
+  if (!value.startsWith('U_')) value = `U_${value.replace(/^_+/, '')}`;
+  return value;
 };
 
 const SQL_NUMBER_TYPES = new Set([

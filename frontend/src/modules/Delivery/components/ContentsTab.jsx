@@ -7,9 +7,6 @@ import { DELIVERY_WORKBOOK_COLUMNS } from '../../../config/workbookMatrixColumns
 const TABLE_MIN_WIDTH = 4800;
 
 const MATRIX_COLS = DELIVERY_WORKBOOK_COLUMNS;
-const KNOWN_MATRIX_RENDERER_KEYS = new Set(
-  MATRIX_COLS.filter((column) => !column.isUdf).map((column) => column.key)
-);
 
 const parseNumber = (value) => {
   const parsed = Number(value);
@@ -46,11 +43,24 @@ const compactColumnToken = (value) => String(value || '').trim().toUpperCase().r
 
 const getColumnValueKey = (column = {}) => column.valueKey || column.rendererKey || column.key || '';
 
+const getUdfToken = (value) => String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
+
+const getLineUdfValue = (line = {}, key = '') => {
+  const udfValues = line.udf || {};
+  if (Object.prototype.hasOwnProperty.call(udfValues, key)) return udfValues[key];
+
+  const token = getUdfToken(key);
+  if (!token) return undefined;
+
+  const match = Object.entries(udfValues).find(([udfKey]) => getUdfToken(udfKey) === token);
+  return match ? match[1] : undefined;
+};
+
 const dedupeColumns = (columns = []) => {
   const seen = new Set();
   return columns.filter((column) => {
     if (!column?.key) return false;
-    const identity = compactColumnToken(getColumnValueKey(column) || column.label || column.key);
+    const identity = compactColumnToken(column.key || column.label || getColumnValueKey(column));
     if (!identity) return false;
     if (seen.has(identity)) return false;
     seen.add(identity);
@@ -115,7 +125,11 @@ export default function ContentsTab({
   const sourceMatrixFields = validMatrixFields.length ? validMatrixFields : MATRIX_COLS;
   const usesMetadataDrivenMatrix = sourceMatrixFields.some((field) => field?.sapControlled || field?.importedLayout);
   const rowUdfByKey = new Map(safeRowUdfFields.map((field) => [field.key, field]));
+  const rowUdfByToken = new Map(safeRowUdfFields.map((field) => [getUdfToken(field.key), field]));
   const baseColumnByKey = new Map(MATRIX_COLS.map((field) => [field.key, field]));
+  const isVisibleBySetting = (field = {}, setting = {}) => (
+    setting?.visible !== undefined ? setting.visible !== false : field.visible !== false
+  );
   const matrixColumns = [
     ...sourceMatrixFields.map((field, index) => {
       const rendererKey = field.rendererKey || field.valueKey || field.key;
@@ -127,7 +141,15 @@ export default function ContentsTab({
         valueKey: field.valueKey || rendererKey,
         minWidth: field.minWidth || field.width || baseColumnByKey.get(rendererKey)?.minWidth || 125,
         order: Number(field.order ?? field.columnOrder ?? index + 1),
-        field: field.isUdf ? (rowUdfByKey.get(field.valueKey || field.key) || rowUdfByKey.get(field.key) || field.field) : field.field,
+        field: field.isUdf
+          ? (
+            rowUdfByKey.get(field.valueKey || field.key) ||
+            rowUdfByKey.get(field.key) ||
+            rowUdfByToken.get(getUdfToken(field.valueKey || field.key)) ||
+            rowUdfByToken.get(getUdfToken(field.key)) ||
+            field.field
+          )
+          : field.field,
       };
     }),
     ...(usesMetadataDrivenMatrix ? [] : safeRowUdfFields.map((field) => ({
@@ -140,13 +162,21 @@ export default function ContentsTab({
   ];
 
   const visibleColumns = dedupeColumns(matrixColumns).filter((col) => {
-    if (col.sapControlled || col.importedLayout) return col.visible !== false;
     const setting = formSettings.matrixColumns?.[col.key];
     if (col.isUdf) {
-      return formSettings.rowUdfs?.[col.key]?.visible !== false;
+      return isVisibleBySetting(col, formSettings.rowUdfs?.[col.key] || {});
     }
-    return setting?.visible !== false;
+    return isVisibleBySetting(col, setting || {});
   }).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+  // Ensure actions column is always present as the trailing column
+  const visibleColumnsWithActions = [
+    ...visibleColumns,
+    { key: '__actions', label: '', minWidth: 48, order: Number.MAX_SAFE_INTEGER },
+  ];
+  const isBatchColumn = (column = {}) => ['BATCH', 'BATCHES'].includes(compactColumnToken(
+    column.rendererKey || column.valueKey || column.key || column.label
+  ));
+  const hasBatchColumn = visibleColumns.some(isBatchColumn);
 
   const isColumnVisible = (columnKey) => {
     const setting = formSettings.matrixColumns?.[columnKey];
@@ -216,20 +246,53 @@ export default function ContentsTab({
     const columnKey = typeof column === 'object' ? column.key : column;
     const rendererKey = typeof column === 'object' ? (column.rendererKey || column.valueKey || column.key) : column;
     const udfColumn = typeof column === 'object' && column.isUdf
-      ? (column.field || safeRowUdfFields.find((field) => field.key === (column.valueKey || column.key)) || getGenericUdfField(column))
+      ? (
+        column.field ||
+        safeRowUdfFields.find((field) => field.key === (column.valueKey || column.key)) ||
+        rowUdfByToken.get(getUdfToken(column.valueKey || column.key)) ||
+        getGenericUdfField(column)
+      )
       : safeRowUdfFields.find((field) => field.key === columnKey);
-    if (udfColumn && !KNOWN_MATRIX_RENDERER_KEYS.has(rendererKey)) {
-      const disabled = udfColumn.readOnly || formSettings.rowUdfs?.[udfColumn.key]?.active === false;
-      const value = line.udf?.[udfColumn.key] || '';
+    const columnObject = typeof column === 'object' ? column : { key: columnKey };
+    const renderGenericCell = () => {
+      const valueKey = getColumnValueKey(columnObject) || columnKey;
+      const fieldKey = udfColumn?.key || valueKey;
+      const disabled = Boolean(
+        columnObject.readOnly ||
+        columnObject.active === false ||
+        udfColumn?.readOnly ||
+        formSettings.rowUdfs?.[fieldKey]?.active === false
+      );
+      const value = udfColumn
+        ? (getLineUdfValue(line, fieldKey) ?? line[fieldKey] ?? '')
+        : (line[valueKey] ?? line[columnKey] ?? '');
+      const fieldType = String(udfColumn?.type || columnObject.type || (columnObject.numeric ? 'number' : 'text')).trim();
+      const fieldTypeKind = fieldType.toLowerCase();
+      const centeredInputStyle = {
+        textAlign: 'center',
+        textAlignLast: 'center',
+        minWidth: 0,
+        height: 26,
+        lineHeight: '24px',
+      };
+      const updateValue = (nextValue) => {
+        if (disabled) return;
+        if (udfColumn) {
+          onRowUdfChange && onRowUdfChange(i, fieldKey, nextValue);
+          return;
+        }
+        onLineChange(i, { target: { name: valueKey, value: nextValue } });
+      };
 
       return (
-        <td key={udfColumn.key}>
-          {udfColumn.type === 'select' && Array.isArray(udfColumn.options) && udfColumn.options.length > 0 ? (
+        <td key={columnKey} style={{ verticalAlign: 'middle' }}>
+          {fieldTypeKind === 'select' && Array.isArray(udfColumn?.options) && udfColumn.options.length > 0 ? (
             <select
               className="del-grid__input"
+              style={centeredInputStyle}
               value={value}
               disabled={disabled}
-              onChange={(e) => onRowUdfChange && onRowUdfChange(i, udfColumn.key, e.target.value)}
+              onChange={(e) => updateValue(e.target.value)}
             >
               <option value=""></option>
               {(udfColumn.options || []).map((option) => {
@@ -241,27 +304,42 @@ export default function ContentsTab({
                 );
               })}
             </select>
-          ) : udfColumn.type === 'checkbox' ? (
+          ) : fieldTypeKind === 'checkbox' ? (
             <input
               type="checkbox"
               checked={['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase())}
               disabled={disabled}
-              onChange={(e) => onRowUdfChange && onRowUdfChange(i, udfColumn.key, e.target.checked ? 'Y' : 'N')}
+              onChange={(e) => updateValue(e.target.checked ? 'Y' : 'N')}
             />
+          ) : ['yesno'].includes(fieldTypeKind) ? (
+            <select
+              className="del-grid__input"
+              style={centeredInputStyle}
+              value={value}
+              disabled={disabled}
+              onChange={(e) => updateValue(e.target.value)}
+            >
+              <option value=""></option>
+              <option value="Y">Yes</option>
+              <option value="N">No</option>
+            </select>
           ) : (
             <input
               className="del-grid__input"
-              type={udfColumn.type === 'date' ? 'date' : udfColumn.type === 'number' ? 'number' : 'text'}
+              type={fieldTypeKind === 'date' ? 'date' : fieldTypeKind === 'number' ? 'number' : 'text'}
               value={value}
-              disabled={disabled}
-              onChange={(e) => onRowUdfChange && onRowUdfChange(i, udfColumn.key, e.target.value)}
+              readOnly={disabled}
+              style={disabled ? { background: '#f5f8fc', ...centeredInputStyle } : centeredInputStyle}
+              onChange={(e) => updateValue(e.target.value)}
             />
           )}
         </td>
       );
-    }
+    };
 
-    if (!isColumnVisible(columnKey)) return null;
+    if (udfColumn) return renderGenericCell();
+
+    if (!isColumnVisible(columnKey)) return <td key={columnKey} />;
 
     const cellRenderers = {
       itemNo: () => (
@@ -596,12 +674,19 @@ export default function ContentsTab({
       ),
       binLocationAllocation: () => (
         <td key="binLocationAllocation">
-          <input
-            className="del-grid__input"
-            value={line.binLocationAllocation || ''}
-            readOnly
-            style={{ background: '#f5f8fc' }}
-          />
+          {hasBatchColumn ? (
+            <input
+              className="del-grid__input"
+              value={line.binLocationAllocation || ''}
+              readOnly
+              style={{ background: '#f5f8fc' }}
+            />
+          ) : renderBatchCell(line, i)}
+        </td>
+      ),
+      batch: () => (
+        <td key="batch">
+          {renderBatchCell(line, i)}
         </td>
       ),
       taxAmount: () => (
@@ -946,7 +1031,8 @@ export default function ContentsTab({
       ),
     };
 
-    return cellRenderers[rendererKey] ? cellRenderers[rendererKey]() : null;
+    const renderedCell = cellRenderers[rendererKey] ? cellRenderers[rendererKey]() : renderGenericCell();
+    return React.cloneElement(renderedCell, { key: columnKey });
   };
 
   return (
@@ -989,22 +1075,18 @@ export default function ContentsTab({
           >
             <colgroup>
               <col style={{ width: 42 }} />
-              {visibleColumns.map((column) => (
+              {visibleColumnsWithActions.map((column) => (
                 <col key={column.key} style={{ width: column.minWidth }} />
               ))}
-              <col style={{ width: 100 }} />
-              <col style={{ width: 48 }} />
             </colgroup>
             <thead>
               <tr>
                 <th style={{ width: 42 }}>#</th>
-                {visibleColumns.map((column) => (
+                {visibleColumnsWithActions.map((column) => (
                   <th key={column.key} style={{ minWidth: column.minWidth }}>
                     {column.label}
                   </th>
                 ))}
-                <th style={{ minWidth: 90 }}>Batches</th>
-                <th style={{ width: 25 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -1018,20 +1100,24 @@ export default function ContentsTab({
                       {i + 1}
                     </td>
 
-                    {visibleColumns.map((col) => renderCell(col, line, i, uomOpts, lineTotals))}
+                    {visibleColumnsWithActions.map((col) => {
+                      if (String(col.key) === '__actions') {
+                        return (
+                          <td key="__actions">
+                            <button
+                              type="button"
+                              className="del-btn del-btn--danger"
+                              style={{ padding: '2px 8px', fontSize: 14 }}
+                              onClick={() => onRemoveLine(i)}
+                            >
+                              x
+                            </button>
+                          </td>
+                        );
+                      }
 
-                    <td>{renderBatchCell(line, i)}</td>
-
-                    <td>
-                      <button
-                        type="button"
-                        className="del-btn del-btn--danger"
-                        style={{ padding: '2px 8px', fontSize: 14 }}
-                        onClick={() => onRemoveLine(i)}
-                      >
-                        x
-                      </button>
-                    </td>
+                      return renderCell(col, line, i, uomOpts, lineTotals);
+                    })}
                   </tr>
                 );
               })}

@@ -935,7 +935,7 @@ function NCSalesOrder() {
                                 ...l,
                                 lineNum: l.lineNum ?? l.LineNum ?? index,
                                 hsnCode: hsnCode,
-                                stcode: l.stcode || l.taxCode || '',
+                                stcode: l.stcode || '',
                                 uomName: l.uomName || l.uomCode || '',
                                 documentCreated: l.documentCreated || so.header?.documentCreated || '',
                                 loc: l.loc || resolveLineLocation(l.whse, l.branch || so.header?.branch || header.branch),
@@ -1863,7 +1863,7 @@ function NCSalesOrder() {
                         if (!gstState || !companyState) {
                             console.warn('⚠️ Missing state information for tax determination');
                             next.taxCode = '';
-                            next.stcode = baseTaxCode || '';
+                            next.stcode = next.stcode || '';
                         } else {
                             // Step 6: Determine Tax Code using Tax Engine
                             const determinedTaxCode = determineTaxCode(
@@ -1877,7 +1877,7 @@ function NCSalesOrder() {
 
                             if (determinedTaxCode) {
                                 next.taxCode = determinedTaxCode;
-                                next.stcode = determinedTaxCode;
+                                next.stcode = next.stcode || '';
                                 console.log('✅ Tax Code Auto-Selected:', {
                                     gstType: getGSTTypeLabel(companyState, gstState),
                                     taxCode: determinedTaxCode
@@ -1885,7 +1885,7 @@ function NCSalesOrder() {
                             } else {
                                 console.warn('⚠️ Could not determine tax code');
                                 next.taxCode = '';
-                                next.stcode = baseTaxCode || '';
+                                next.stcode = next.stcode || '';
                             }
                         }
 
@@ -1910,7 +1910,7 @@ function NCSalesOrder() {
                         next.distRule = next.distRule || item.DistributionRule || '';
                         next.whse = next.whse || item.DefaultWarehouse || header.warehouse || '';
                         next.loc = resolveLineLocation(next.whse, next.branch || header.branch);
-                        next.stcode = next.stcode || item.TaxCodeAR || item.SalTaxCode || next.taxCode || '';
+                        next.stcode = next.stcode || '';
                     }
                     return applyLineCalculatedFields(next);
                 }));
@@ -1939,7 +1939,7 @@ function NCSalesOrder() {
                         : '';
                 }
                 if (name === 'uomCode') next.uomName = value;
-                if (name === 'taxCode') next.stcode = String(next.taxCode || '');
+                if (name === 'taxCode') next.stcode = next.stcode || '';
                 if (name === 'whse') next.loc = resolveLineLocation(next.whse, next.branch || header.branch);
                 return applyLineCalculatedFields(next);
             }));
@@ -2318,12 +2318,12 @@ function NCSalesOrder() {
 
                     if (determinedTaxCode) {
                         next.taxCode = determinedTaxCode;
-                        next.stcode = determinedTaxCode;
+                        next.stcode = next.stcode || '';
                     }
                 }
 
                 if (!next.stcode) {
-                    next.stcode = mergedItem.TaxCodeAR || mergedItem.SalTaxCode || next.taxCode || '';
+                    next.stcode = next.stcode || '';
                 }
 
                 next.total = fmtDec(calcLineTotal(next), numDec.total);
@@ -2414,7 +2414,7 @@ function NCSalesOrder() {
         const copiedLines = rawLines.map((line, idx) => applyLineCalculatedFields({
             ...createLine(rowUdfDefinitions),
             ...normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch),
-            stcode: line.STCODE || line.STACode || line.stcode || line.TaxCode || line.VatGroup || line.taxCode || '',
+            stcode: line.STCODE || line.STACode || line.stcode || '',
             documentCreated: line.DocumentCreated || line.documentCreated || copySource.header.DocumentCreated || normHeader.documentCreated || '',
             loc: line.loc || resolveLineLocation(line.WarehouseCode || line.WhsCode || line.whse || '', normHeader.branch),
         }));

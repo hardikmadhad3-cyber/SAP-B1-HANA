@@ -53,6 +53,70 @@ const hasTableField = (metadata, columnName) => {
 };
 
 const sqlAlias = (alias) => `[${String(alias || '').replace(/]/g, ']]')}]`;
+const toSqlIdentifier = (identifier) => `[${String(identifier || '').replace(/]/g, ']]')}]`;
+
+const normalizeDbScalar = (value) => {
+  if (value instanceof Date) return value.toISOString().split('T')[0];
+  return value == null ? '' : String(value);
+};
+
+const getPhysicalUdfValues = async ({ tableName, keyColumn = 'DocEntry', keyValue, includeLineNum = false }) => {
+  const fieldMetadata = await getTableFieldMetadata(tableName);
+  const udfColumns = Object.keys(fieldMetadata).filter((columnName) => columnName.startsWith('U_'));
+  if (!udfColumns.length) return {};
+
+  const selectColumns = [
+    ...(includeLineNum ? ['LineNum'] : []),
+    ...udfColumns,
+  ].map(toSqlIdentifier).join(', ');
+
+  const rows = await safe(db.query(`
+    SELECT ${selectColumns}
+    FROM ${toSqlIdentifier(tableName)}
+    WHERE ${toSqlIdentifier(keyColumn)} = @keyValue
+  `, { keyValue }));
+
+  if (includeLineNum) {
+    return rows.reduce((acc, row) => {
+      acc[row.LineNum] = udfColumns.reduce((values, columnName) => {
+        values[columnName] = normalizeDbScalar(row[columnName]);
+        return values;
+      }, {});
+      return acc;
+    }, {});
+  }
+
+  const row = rows[0] || {};
+  return udfColumns.reduce((values, columnName) => {
+    values[columnName] = normalizeDbScalar(row[columnName]);
+    return values;
+  }, {});
+};
+
+const mergeLineUdfValueMaps = (...maps) => maps.reduce((acc, map) => {
+  Object.entries(map || {}).forEach(([lineNum, values]) => {
+    acc[lineNum] = {
+      ...(acc[lineNum] || {}),
+      ...(values || {}),
+    };
+  });
+
+  return acc;
+}, {});
+
+const buildLineTaxCodeExpression = (tableAlias, fieldMetadata = {}) => {
+  const expressions = [];
+  if (hasTableField(fieldMetadata, 'TaxCode')) {
+    expressions.push(`NULLIF(LTRIM(RTRIM(CAST(${tableAlias}.TaxCode AS NVARCHAR(100)))), '')`);
+  }
+  if (hasTableField(fieldMetadata, 'VatGroup')) {
+    expressions.push(`NULLIF(LTRIM(RTRIM(CAST(${tableAlias}.VatGroup AS NVARCHAR(100)))), '')`);
+  }
+  return expressions.length ? `COALESCE(${expressions.join(', ')}, '')` : "''";
+};
+
+const buildLineTaxCodeSelect = (tableAlias, fieldMetadata = {}, alias = 'TaxCode') =>
+  `${buildLineTaxCodeExpression(tableAlias, fieldMetadata)} AS ${sqlAlias(alias)}`;
 
 const formatSapDate = (value) => {
   if (!value) return '';
@@ -249,6 +313,315 @@ const getOwners = () => safe(db.query(`
 
 // ── Document Series (ObjectCode = '23' for Quotations) ───────────────────────
 
+const getCompanyInfo = () => safe(db.query(`
+  SELECT TOP 1
+    CompnyName,
+    CompnyAddr AS Address,
+    State,
+    MainCurncy AS localCurrency,
+    SysCurrncy AS systemCurrency
+  FROM OADM
+`));
+
+const SALES_QUOTATION_FORM_ID = '149';
+const SALES_QUOTATION_MATRIX_ITEM_ID = '38';
+
+const SALES_QUOTATION_MATRIX_COLUMN_DEFS = [
+  { key: 'itemNo', label: 'Item No.', minWidth: 160, sapField: 'ItemCode', sapColumnIds: ['1', 'ItemCode', 'Item No.', 'ItemNo'] },
+  { key: 'itemDescription', label: 'Item Description', minWidth: 240, sapField: 'Dscription', sapColumnIds: ['3', 'Dscription', 'ItemDescription', 'Description', 'Item Description'] },
+  { key: 'quantity', label: 'Quantity', minWidth: 95, numeric: true, sapField: 'Quantity', sapColumnIds: ['11', 'Quantity', 'Qty'] },
+  { key: 'uomName', label: 'UoM Name', minWidth: 120, readOnly: true, sapField: 'unitMsr', alternativeFields: ['UomCode'], sapColumnIds: ['1470002145', 'unitMsr', 'UomName', 'UoM Name'] },
+  { key: 'uomCode', label: 'UoM Code', minWidth: 105, sapField: 'UomCode', alternativeFields: ['unitMsr', 'UomEntry'], sapColumnIds: ['1470002149', '1470002145', 'UomCode', 'unitMsr', 'UoM Code', 'UoM'] },
+  { key: 'hsnCode', label: 'HSN', minWidth: 105, source: 'OITM', sapColumnIds: ['254000391', 'HsnEntry', 'HSN', 'HSN/SAC'] },
+  { key: 'unitPrice', label: 'Unit Price', minWidth: 110, numeric: true, sapField: 'Price', alternativeFields: ['PriceBefDi'], sapColumnIds: ['14', 'Price', 'PriceBefDi', 'UnitPrice', 'Unit Price'] },
+  { key: 'stdDiscount', label: 'Discount %', minWidth: 95, numeric: true, sapField: 'DiscPrcnt', sapColumnIds: ['15', 'DiscPrcnt', 'DiscountPercent', 'Discount %', 'Disc%'] },
+  { key: 'taxCode', label: 'Tax Code', minWidth: 115, sapField: 'TaxCode', alternativeFields: ['VatGroup'], sapColumnIds: ['160', '234000377', 'TaxCode', 'VatGroup', 'Tax Code'] },
+  { key: 'totalLC', label: 'Total (LC)', minWidth: 115, readOnly: true, numeric: true, sapField: 'LineTotal', sapColumnIds: ['160', '17', 'GTotal', 'LineTotal', 'Total', 'Total (LC)'] },
+  { key: 'distRule', label: 'Distr. Rule', minWidth: 115, sapField: 'OcrCode', sapColumnIds: ['21', 'OcrCode', 'DistributionRule', 'Distr. Rule'] },
+  { key: 'cogsDistRule', label: 'COGS Distr. Rule', minWidth: 130, sapField: 'CogsOcrCod', sapColumnIds: ['29', 'CogsOcrCod', 'COGS Distr. Rule'] },
+  { key: 'countryOfOrigin', label: 'Country/Region of Origin', minWidth: 180, sapField: 'CountryOrg', sapColumnIds: ['10002037', 'CountryOrg', 'Country/Region of Origin'] },
+  { key: 'loc', label: 'Loc.', minWidth: 115, readOnly: true, sapField: 'LocCode', alternativeFields: ['WhsCode', 'BPLId'], sapColumnIds: ['10002047', 'LocCode', 'Loc.'] },
+  { key: 'blanketAgreementNo', label: 'Blanket Agreement No.', minWidth: 170, sapField: 'AgrNo', sapColumnIds: ['AgrNo', 'Blanket Agreement No.'] },
+  { key: 'sellerBrokerage', label: 'Seller Brokerage', minWidth: 135, sapField: 'U_Brok_Seller', sapColumnIds: ['U_Brok_Seller', 'Seller Brokerage'] },
+  { key: 'buyerBrokerage', label: 'Buyer Brokerage', minWidth: 130, sapField: 'U_Brok_Buyer', sapColumnIds: ['U_Brok_Buyer', 'Buyer Brokerage'] },
+  { key: 'buyerDelivery', label: 'Buyer - Delivery', minWidth: 135, sapField: 'U_Buyer_Delivery', sapColumnIds: ['U_Buyer_Delivery', 'Buyer - Delivery'] },
+  { key: 'sellerDelivery', label: 'Seller - Delivery', minWidth: 135, sapField: 'U_Seller_Delivery', sapColumnIds: ['U_Seller_Delivery', 'Seller - Delivery'] },
+  { key: 'buyerPaymentTerms', label: 'Buyer - Terms of Payment', minWidth: 180, sapField: 'U_Buyer_Payment_Terms', sapColumnIds: ['U_Buyer_Payment_Terms', 'Buyer - Terms of Payment'] },
+  { key: 'sellerPaymentTerms', label: 'Seller - Terms of Payment', minWidth: 180, sapField: 'U_Seller_Payment_Term', alternativeFields: ['U_Seller_Payment_Terms'], sapColumnIds: ['U_Seller_Payment_Term', 'U_Seller_Payment_Terms', 'Seller - Terms of Payment'] },
+  { key: 'buyerQuality', label: 'Buyer - Quality', minWidth: 135, sapField: 'U_Buyer_Quality', sapColumnIds: ['U_Buyer_Quality', 'Buyer - Quality'] },
+  { key: 'sellerQuality', label: 'Seller - Quality', minWidth: 135, sapField: 'U_Seller_Quality', sapColumnIds: ['U_Seller_Quality', 'Seller - Quality'] },
+  { key: 'buyerPrice', label: 'Buyer - Price', minWidth: 120, sapField: 'U_Buyer_Price', sapColumnIds: ['U_Buyer_Price', 'Buyer - Price'] },
+  { key: 'sellerPrice', label: 'Seller - Price', minWidth: 120, sapField: 'U_Seller_Price', sapColumnIds: ['U_Seller_Price', 'Seller - Price'] },
+  { key: 'buyerSpecialInstruction', label: 'Buyer - Special Instruction', minWidth: 190, sapField: 'U_Buyer_SPINS', sapColumnIds: ['U_Buyer_SPINS', 'Buyer - Special Instruction'] },
+  { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', minWidth: 190, sapField: 'U_Seller_SPINS', sapColumnIds: ['U_Seller_SPINS', 'Seller - Special Instruction'] },
+  { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', minWidth: 175, sapField: 'U_Sel_Brok_AP', sapColumnIds: ['U_Sel_Brok_AP', 'Seller Brokerage(Amt./Per)'] },
+  { key: 'sellerBrokeragePercent', label: 'Seller Brokerage in Percentage', minWidth: 190, numeric: true, sapField: 'U_Seller_Brok_Per', sapColumnIds: ['U_Seller_Brok_Per', 'Seller Brokerage in Percentage'] },
+  { key: 'stcode', label: 'STCODE', minWidth: 110, sapField: 'U_SELLTCODE', sapColumnIds: ['U_SELLTCODE', 'STCODE'] },
+  { key: 'sellerItem', label: 'S_Item', minWidth: 115, sapField: 'U_S_Item', sapColumnIds: ['U_S_Item', 'S_Item'] },
+  { key: 'sellerQty', label: 'S_Qty', minWidth: 105, numeric: true, sapField: 'U_S_Qty', sapColumnIds: ['U_S_Qty', 'S_Qty'] },
+  { key: 'specialRebate', label: 'Special Rebate', minWidth: 120, sapField: 'U_SPLRBT', sapColumnIds: ['U_SPLRBT', 'Special Rebate'] },
+  { key: 'commission', label: 'Commision', minWidth: 110, sapField: 'U_COMPRC', sapColumnIds: ['U_COMPRC', 'Commission', 'Commision'] },
+  { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', minWidth: 110, sapField: 'U_S_BrokPerQty', sapColumnIds: ['U_S_BrokPerQty', 'BrokPerQty'] },
+  { key: 'freightPurchase', label: 'Freight Purchase', minWidth: 130, sapField: 'U_Freight_pur', sapColumnIds: ['U_Freight_pur', 'Freight Purchase'] },
+  { key: 'freightSales', label: 'Freight Sales', minWidth: 120, sapField: 'U_Freight_sales', sapColumnIds: ['U_Freight_sales', 'Freight Sales'] },
+  { key: 'freightProvider', label: 'Freight Provider', minWidth: 120, sapField: 'U_Fr_trans', sapColumnIds: ['U_Fr_trans', 'Freight Provider'] },
+  { key: 'freightProviderName', label: 'Freight Provider Name', minWidth: 165, sapField: 'U_Fr_trans_name', sapColumnIds: ['U_Fr_trans_name', 'Freight Provider Name'] },
+  { key: 'brokerageNumber', label: 'Brokerage Number', minWidth: 145, sapField: 'U_BDNum', sapColumnIds: ['U_BDNum', 'Brokerage Number'] },
+];
+
+const sapFlagToBoolean = (value, fallback = true) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized)) return true;
+  if (['N', 'NO', 'FALSE', '0', 'TNO'].includes(normalized)) return false;
+  return fallback;
+};
+
+const normalizePreferenceKey = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]/g, '');
+
+const unique = (values = []) => [...new Set(values.filter(Boolean))];
+
+const resolveSapUserSign = async () => {
+  let sapUsername = '';
+  try {
+    const { getActiveCompanyConfig } = require('./companyConfigService');
+    const company = await getActiveCompanyConfig();
+    sapUsername = String(company?.serviceLayer?.username || '').trim();
+  } catch (_error) {
+    sapUsername = '';
+  }
+  if (!sapUsername) return null;
+
+  const rows = await safe(db.query(`
+    SELECT TOP 1 USERID
+    FROM OUSR
+    WHERE USER_CODE = @sapUsername
+       OR U_NAME = @sapUsername
+    ORDER BY
+      CASE WHEN USER_CODE = @sapUsername THEN 0 ELSE 1 END,
+      USERID
+  `, { sapUsername }));
+
+  const userSign = Number(rows[0]?.USERID);
+  return Number.isFinite(userSign) ? userSign : null;
+};
+
+const getRichTableColumns = async (tableName) => {
+  const rows = await safe(db.query(`
+    SELECT
+      COLUMN_NAME,
+      DATA_TYPE,
+      CHARACTER_MAXIMUM_LENGTH,
+      NUMERIC_PRECISION,
+      NUMERIC_SCALE,
+      IS_NULLABLE,
+      ORDINAL_POSITION
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+    ORDER BY ORDINAL_POSITION
+  `, { tableName }));
+
+  return rows.reduce((acc, row) => {
+    const columnName = String(row.COLUMN_NAME || '').trim();
+    if (!columnName) return acc;
+    acc[columnName.toUpperCase()] = {
+      name: columnName,
+      dataType: String(row.DATA_TYPE || '').trim().toLowerCase(),
+      maxLength: row.CHARACTER_MAXIMUM_LENGTH,
+      precision: row.NUMERIC_PRECISION,
+      scale: row.NUMERIC_SCALE,
+      nullable: String(row.IS_NULLABLE || '').toUpperCase() === 'YES',
+      ordinal: Number(row.ORDINAL_POSITION || 0),
+    };
+    return acc;
+  }, {});
+};
+
+const getPreferenceRowMatchKeys = (row = {}) => unique([
+  row.Caption,
+  row.Title,
+  row.Descr,
+  row.ColAlias,
+  row.ItemUID,
+  row.TableName,
+  row.ColID,
+].map(normalizePreferenceKey).filter(Boolean));
+
+const buildColumnCandidates = (column = {}) => unique([
+  ...(column.sapColumnIds || []),
+  column.label,
+  column.sapField,
+  ...(column.alternativeFields || []),
+  column.key,
+].map(normalizePreferenceKey).filter(Boolean));
+
+const shouldReplaceColumnPreference = (current, next) => {
+  if (!current) return true;
+  const currentVisible = sapFlagToBoolean(current.VisInForm, false);
+  const nextVisible = sapFlagToBoolean(next.VisInForm, false);
+  if (currentVisible !== nextVisible) return nextVisible;
+
+  const currentIndex = Number(current.VisualIndx);
+  const nextIndex = Number(next.VisualIndx);
+  if (Number.isFinite(currentIndex) && Number.isFinite(nextIndex) && currentIndex !== nextIndex) {
+    return nextIndex < currentIndex;
+  }
+
+  const currentWidth = Number(current.Width);
+  const nextWidth = Number(next.Width);
+  if (Number.isFinite(currentWidth) && Number.isFinite(nextWidth) && currentWidth !== nextWidth) {
+    return nextWidth > currentWidth;
+  }
+
+  return false;
+};
+
+const getSalesQuotationColumnPreferences = async () => {
+  const tableRows = await safe(db.query(`
+    SELECT TABLE_NAME
+    FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_NAME = 'CPRF'
+  `));
+  if (!tableRows.length) return { byKey: {}, rows: [], userSign: null };
+
+  const cprfColumns = await safe(db.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'CPRF'
+  `));
+  const columnSet = new Set(cprfColumns.map((row) => String(row.COLUMN_NAME || '').trim()));
+  const hasItemUid = columnSet.has('ItemUID');
+  const hasTableName = columnSet.has('TableName');
+  const hasCaption = columnSet.has('Caption');
+  const hasTitle = columnSet.has('Title');
+  const hasDescr = columnSet.has('Descr');
+  const hasColAlias = columnSet.has('ColAlias');
+  const userSign = await resolveSapUserSign();
+  if (userSign == null) return { byKey: {}, rows: [], userSign: null };
+
+  const rows = await safe(db.query(`
+    SELECT
+      FormID,
+      ItemID,
+      ColID,
+      Width,
+      VisInForm,
+      VisualIndx,
+      EditInForm,
+      UserSign,
+      TPLId
+      ${hasTableName ? ', TableName' : ", '' AS TableName"}
+      ${hasItemUid ? ', ItemUID' : ", '' AS ItemUID"}
+      ${hasCaption ? ', Caption' : ", '' AS Caption"}
+      ${hasTitle ? ', Title' : ", '' AS Title"}
+      ${hasDescr ? ', Descr' : ", '' AS Descr"}
+      ${hasColAlias ? ', ColAlias' : ", '' AS ColAlias"}
+    FROM CPRF
+    WHERE FormID = @formId
+      AND (
+        ItemID = @itemId
+        ${hasItemUid ? 'OR ItemUID = @itemId' : ''}
+        ${hasTableName ? 'OR TableName = @tableName' : ''}
+      )
+      AND UserSign = @userSign
+    ORDER BY
+      CASE WHEN TPLId = 0 THEN 0 ELSE 1 END,
+      VisualIndx,
+      ColID
+  `, {
+    formId: SALES_QUOTATION_FORM_ID,
+    itemId: SALES_QUOTATION_MATRIX_ITEM_ID,
+    tableName: 'QUT1',
+    userSign,
+  }));
+
+  const byKey = rows.reduce((acc, row) => {
+    getPreferenceRowMatchKeys(row).forEach((key) => {
+      if (shouldReplaceColumnPreference(acc[key], row)) acc[key] = row;
+    });
+    return acc;
+  }, {});
+
+  return { byKey, rows, userSign };
+};
+
+const getColumnMetadata = (column, lineColumns = {}) => {
+  const candidates = [column.sapField, ...(column.alternativeFields || [])].filter(Boolean);
+  for (const candidate of candidates) {
+    const metadata = lineColumns[String(candidate).toUpperCase()];
+    if (metadata) return metadata;
+  }
+  return null;
+};
+
+const findColumnPreference = (column, preferences = {}) => {
+  for (const candidate of buildColumnCandidates(column)) {
+    if (preferences[candidate]) return preferences[candidate];
+  }
+  return null;
+};
+
+const getSalesQuotationLineUiMetadata = async () => {
+  const [lineColumns, preferencesResult] = await Promise.all([
+    getRichTableColumns('QUT1'),
+    getSalesQuotationColumnPreferences(),
+  ]);
+  const hasSapPreferences = preferencesResult.rows.length > 0;
+
+  const matrixColumns = SALES_QUOTATION_MATRIX_COLUMN_DEFS
+    .map((column, index) => {
+      const metadata = getColumnMetadata(column, lineColumns);
+      const exists = Boolean(metadata || column.source || column.calculated);
+      if (!exists) return null;
+
+      const preference = findColumnPreference(column, preferencesResult.byKey);
+      const width = Number(preference?.Width);
+
+      return {
+        key: column.key,
+        label: column.label,
+        sapField: column.sapField || '',
+        source: column.source || (column.calculated ? 'calculated' : 'QUT1'),
+        dataType: metadata?.dataType || '',
+        maxLength: metadata?.maxLength || undefined,
+        precision: metadata?.precision || undefined,
+        scale: metadata?.scale || undefined,
+        required: Boolean(metadata && !metadata.nullable),
+        readOnly: Boolean(column.readOnly || column.calculated),
+        visible: preference ? sapFlagToBoolean(preference.VisInForm, true) : true,
+        active: preference ? sapFlagToBoolean(preference.EditInForm, true) : true,
+        minWidth: Number.isFinite(width) && width > 0
+          ? Math.max(width, column.minWidth || 125)
+          : (column.minWidth || 125),
+        order: Number.isFinite(Number(preference?.VisualIndx))
+          ? Number(preference.VisualIndx)
+          : index + 1,
+        sapColumnId: preference?.ColID || '',
+        numeric: Boolean(column.numeric),
+        type: column.type,
+        hasPreference: Boolean(preference),
+        sapControlled: hasSapPreferences,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => (left.order || 0) - (right.order || 0));
+
+  return {
+    matrix_columns: matrixColumns,
+    sap_form: {
+      formId: SALES_QUOTATION_FORM_ID,
+      matrixItemId: SALES_QUOTATION_MATRIX_ITEM_ID,
+      userSign: preferencesResult.userSign,
+      preferenceRows: preferencesResult.rows.length,
+    },
+    _preferencesByKey: preferencesResult.byKey,
+  };
+};
+
 const getDocumentSeries = async (targetDate = null) => {
   const effectiveTargetDate = targetDate || new Date().toISOString().split('T')[0];
   const result = await safe(db.query(`
@@ -328,18 +701,20 @@ const getStateFromAddress = async (cardCode, addressCode) => {
 const getReferenceData = async () => {
   const [
     customers, items, warehouses, paymentTerms,
-    shippingTypes, branches, states, countries, distributionRules, taxCodes, uomRaw, salesEmployees, owners,
+    shippingTypes, branches, states, countries, distributionRules, taxCodes, uomRaw, salesEmployees, owners, companyInfo,
     buyerQualityOptions, sellerQualityOptions, buyerPriceOptions, sellerPriceOptions, udfMetadata,
   ] = await Promise.all([
     getCustomers(), getItems(), getWarehouses(), getPaymentTerms(),
     getShippingTypes(), getBranches(), getStates(), getCountries(), getDistributionRules(), getTaxCodes(), getUomGroups(),
-    getSalesEmployees(), getOwners(),
+    getSalesEmployees(), getOwners(), getCompanyInfo(),
     salesQuotationLineLookups.getLookupValues('U_Buyer_Quality'),
     salesQuotationLineLookups.getLookupValues('U_Seller_Quality'),
     salesQuotationLineLookups.getLookupValues('U_Buyer_Price'),
     salesQuotationLineLookups.getLookupValues('U_Seller_Price'),
     getMarketingDocumentUdfs({ headerTable: 'OQUT', lineTable: 'QUT1' }),
   ]);
+  const lineFieldMetadata = await getSalesQuotationLineUiMetadata();
+  const company = companyInfo[0] || {};
 
   const uomMap = {};
   for (const row of uomRaw) {
@@ -404,8 +779,21 @@ const getReferenceData = async () => {
     },
     contacts: [],
     pay_to_addresses: [],
-    company_address: {},
+    company_address: {
+      CompnyName: company.CompnyName || '',
+      Address: company.Address || '',
+      State: company.State || '',
+    },
+    company_currencies: {
+      localCurrency: company.localCurrency || 'INR',
+      systemCurrency: company.systemCurrency || company.localCurrency || 'INR',
+    },
     decimal_settings: { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 },
+    matrix_columns: lineFieldMetadata.matrix_columns || [],
+    line_field_metadata: {
+      matrix_columns: lineFieldMetadata.matrix_columns || [],
+      sap_form: lineFieldMetadata.sap_form || {},
+    },
     udf_metadata: udfMetadata,
     warnings: [],
   };
@@ -562,12 +950,13 @@ const getSalesQuotation = async (docEntry) => {
       ${lineField('RequiredDate', 'RequiredDate')},
       ${lineField('ShipDate', 'ShipDate')},
       T1.DiscPrcnt AS LineDiscPrcnt,
-      T1.VatGroup AS TaxCode,
+      ${buildLineTaxCodeSelect('T1', lineFieldMetadata, 'TaxCode')},
       T1.WhsCode, ${lineUomCodeField}, ${lineUomNameField}, T1.LineTotal,
       T1.OcrCode AS DistRule,
       T1.CogsOcrCod AS CogsDistRule,
       T1.CountryOrg AS CountryOfOrigin,
       T1.AgrNo AS BlanketAgreementNo,
+      ${lineField('U_PackingType', 'U_PackingType')},
       CHP.ChapterID AS HSNCode
     FROM OQUT T0
     INNER JOIN QUT1 T1 ON T0.DocEntry = T1.DocEntry
@@ -600,10 +989,14 @@ const getSalesQuotation = async (docEntry) => {
   if (!rows.length) throw new Error(`Sales Quotation ${docEntry} not found`);
 
   const header = rows[0];
-  const [headerUdfs, lineUdfs] = await Promise.all([
+  const [metadataHeaderUdfs, metadataLineUdfs, physicalHeaderUdfs, physicalLineUdfs] = await Promise.all([
     getHeaderUdfValues({ tableId: 'OQUT', keyValue: docEntry }),
     getLineUdfValues({ tableId: 'QUT1', keyValue: docEntry }),
+    getPhysicalUdfValues({ tableName: 'OQUT', keyValue: docEntry }),
+    getPhysicalUdfValues({ tableName: 'QUT1', keyValue: docEntry, includeLineNum: true }),
   ]);
+  const headerUdfs = { ...metadataHeaderUdfs, ...physicalHeaderUdfs };
+  const lineUdfs = mergeLineUdfValueMaps(metadataLineUdfs, physicalLineUdfs);
 
   const batchRows = await safe(db.query(`
     SELECT BaseLinNum AS BaseLineNum, BatchNum, Quantity
@@ -623,10 +1016,30 @@ const getSalesQuotation = async (docEntry) => {
     });
   });
 
+  const normalizeUdfLookupToken = (value) =>
+    String(value || '')
+      .trim()
+      .toUpperCase()
+      .replace(/^U_/, '')
+      .replace(/[^A-Z0-9]/g, '');
+
   const firstUdfValue = (udfs, keys) => {
+    const entries = Object.entries(udfs || {});
     for (const key of keys) {
-      if (udfs[key] !== undefined && udfs[key] !== null && String(udfs[key]) !== '') {
-        return String(udfs[key]);
+      const direct = udfs[key];
+      if (direct !== undefined && direct !== null && String(direct) !== '') {
+        return String(direct);
+      }
+
+      const keyToken = normalizeUdfLookupToken(key);
+      const match = entries.find(([entryKey, value]) => (
+        normalizeUdfLookupToken(entryKey) === keyToken &&
+        value !== undefined &&
+        value !== null &&
+        String(value) !== ''
+      ));
+      if (match) {
+        return String(match[1]);
       }
     }
     return '';
@@ -671,7 +1084,9 @@ const getSalesQuotation = async (docEntry) => {
       header_udfs: headerUdfs,
       lines: rows.map(line => {
         const lineUdf = lineUdfs[line.LineNum] || {};
+        const packingType = firstUdfValue(lineUdf, ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type']) || line.U_PackingType || '';
         return {
+          lineNum: line.LineNum != null ? Number(line.LineNum) : undefined,
           itemNo: line.ItemCode,
           itemDescription: line.Dscription || '',
           requiredDate: firstUdfValue(lineUdf, ['U_Required_Date', 'U_ReqDate']) || formatSapDate(line.RequiredDate),
@@ -686,6 +1101,9 @@ const getSalesQuotation = async (docEntry) => {
           uomName: line.UomName || line.UomCode || '',
           stdDiscount: String(line.LineDiscPrcnt || ''),
           taxCode: line.TaxCode || '',
+          taxCodeRepeat: line.TaxCode || '',
+          TaxCode: line.TaxCode || '',
+          VatGroup: line.TaxCode || '',
           total: String(line.LineTotal || 0),
           totalLC: String(line.LineTotal || 0),
           whse: line.WhsCode || '',
@@ -712,6 +1130,8 @@ const getSalesQuotation = async (docEntry) => {
           sellerBrokeragePercent: firstUdfValue(lineUdf, ['U_Seller_Brok_Per']),
           buyerBillDiscount: firstUdfValue(lineUdf, ['U_Buyer_Bill_Disc']),
           sellerBillDiscount: firstUdfValue(lineUdf, ['U_Seller_Bill_Disc']),
+          packingType,
+          U_PackingType: packingType,
           stcode: firstUdfValue(lineUdf, ['U_SELLTCODE']),
           sellerItem: firstUdfValue(lineUdf, ['U_S_Item']),
           sellerQty: firstUdfValue(lineUdf, ['U_S_Qty']),
@@ -722,7 +1142,10 @@ const getSalesQuotation = async (docEntry) => {
           documentCreated: firstUdfValue(lineUdf, ['U_Document_Created', 'U_DocCreated']) || formatSapDate(line.DocumentCreated),
           brokerageNumber: firstUdfValue(lineUdf, ['U_BDNum']),
           batches: batchesByLine[line.LineNum] || [],
-          udf: lineUdf,
+          udf: {
+            ...lineUdf,
+            U_PackingType: packingType,
+          },
         };
       }),
     },
@@ -780,11 +1203,8 @@ const getSalesQuotationForCopy = async (docEntry) => {
       ? `T0.${columnName} AS ${sqlAlias(alias)}`
       : `${fallback} AS ${sqlAlias(alias)}`
   );
-  const lineTaxField = hasTableField(lineFieldMetadata, 'TaxCode')
-    ? `T0.TaxCode AS ${sqlAlias('TaxCode')}`
-    : hasTableField(lineFieldMetadata, 'VatGroup')
-      ? `T0.VatGroup AS ${sqlAlias('TaxCode')}`
-      : `'' AS ${sqlAlias('TaxCode')}`;
+  const lineTaxField = buildLineTaxCodeSelect('T0', lineFieldMetadata, 'TaxCode');
+  const lineTaxExpression = buildLineTaxCodeExpression('T0', lineFieldMetadata);
   const lineUomCodeField = hasTableField(lineFieldMetadata, 'unitMsr')
     ? `T0.unitMsr AS ${sqlAlias('UomCode')}`
     : hasTableField(lineFieldMetadata, 'UomCode')
@@ -923,14 +1343,15 @@ const getSalesQuotationForCopy = async (docEntry) => {
       ${lineField('U_Seller_Brok_Per', 'SellerBrokeragePercent')},
       ${lineField('U_Buyer_Bill_Disc', 'BuyerBillDiscount')},
       ${lineField('U_Seller_Bill_Disc', 'SellerBillDiscount')},
-      ${lineField('U_SELLTCODE', 'STCODE', hasTableField(lineFieldMetadata, 'VatGroup') ? 'T0.VatGroup' : "''")},
+      ${lineField('U_SELLTCODE', 'STCODE')},
       ${lineField('U_S_Item', 'SellerItem')},
       ${lineField('U_S_Qty', 'SellerQty')},
       ${lineField('U_Freight_pur', 'FreightPurchase')},
       ${lineField('U_Freight_sales', 'FreightSales')},
       ${lineField('U_Fr_trans', 'FreightProvider')},
       ${lineField('U_Fr_trans_name', 'FreightProviderName')},
-      ${lineField('U_BDNum', 'BrokerageNumber')}
+      ${lineField('U_BDNum', 'BrokerageNumber')},
+      ${lineField('U_PackingType', 'U_PackingType')}
 
     FROM QUT1 T0
     LEFT JOIN OITM ITM ON T0.ItemCode = ITM.ItemCode
@@ -944,17 +1365,30 @@ const getSalesQuotationForCopy = async (docEntry) => {
 
   const header = headerResult.recordset?.[0] || {};
   const resolvedDocEntry = header.DocEntry || docEntry;
-  const [headerUdfs, lineUdfs, freightCharges] = await Promise.all([
+  const [metadataHeaderUdfs, metadataLineUdfs, physicalHeaderUdfs, physicalLineUdfs, freightCharges] = await Promise.all([
     getHeaderUdfValues({ tableId: 'OQUT', keyValue: resolvedDocEntry }),
     getLineUdfValues({ tableId: 'QUT1', keyValue: resolvedDocEntry }),
+    getPhysicalUdfValues({ tableName: 'OQUT', keyValue: resolvedDocEntry }),
+    getPhysicalUdfValues({ tableName: 'QUT1', keyValue: resolvedDocEntry, includeLineNum: true }),
     getFreightCharges(resolvedDocEntry),
   ]);
+  const headerUdfs = { ...metadataHeaderUdfs, ...physicalHeaderUdfs };
+  const lineUdfs = mergeLineUdfValueMaps(metadataLineUdfs, physicalLineUdfs);
   const lines = (linesResult.recordset || []).map((line) => {
     const udf = lineUdfs[line.LineNum] || {};
+    const packingType = line.U_PackingType || udf.U_PackingType || udf.U_PACKINGTYPE || udf.U_Packing_Type || '';
     return {
       ...line,
+      taxCode: line.TaxCode || '',
+      taxCodeRepeat: line.TaxCode || '',
+      VatGroup: line.TaxCode || '',
+      packingType,
+      U_PackingType: packingType,
       DocumentCreated: formatSapDate(header.DocumentCreated),
-      udf,
+      udf: {
+        ...udf,
+        U_PackingType: packingType,
+      },
     };
   });
 
