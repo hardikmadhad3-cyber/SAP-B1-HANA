@@ -487,8 +487,8 @@ const createUdfState = (definitions) =>
     return acc;
   }, {});
 
-const normalizeUdfState = (definitions, values = {}) =>
-  definitions.reduce((acc, field) => {
+const normalizeUdfState = (definitions, values = {}) => {
+  const normalized = definitions.reduce((acc, field) => {
     const currentValue = values[field.key];
     const shouldApplyDefault =
       currentValue === undefined ||
@@ -498,6 +498,15 @@ const normalizeUdfState = (definitions, values = {}) =>
     acc[field.key] = shouldApplyDefault ? getDefaultUdfValue(field) : currentValue;
     return acc;
   }, {});
+
+  Object.entries(values || {}).forEach(([key, value]) => {
+    if (String(key || '').startsWith('U_') && !Object.prototype.hasOwnProperty.call(normalized, key)) {
+      normalized[key] = value == null ? '' : value;
+    }
+  });
+
+  return normalized;
+};
 
 const buildVisibilitySettings = (definitions, defaultVisible = null) =>
   definitions.reduce((acc, field) => {

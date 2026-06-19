@@ -20,6 +20,65 @@ const getUdfDefinitionsByKey = async (tableId) => {
   return new Map(definitions.map((field) => [field.key, field]));
 };
 
+const hasValue = (value) => (
+  value !== undefined &&
+  value !== null &&
+  !(typeof value === 'string' && value.trim() === '')
+);
+
+const firstPresent = (...values) => values.find(hasValue);
+
+const yesNo = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['y', 'yes', 'true', '1', 'tyes'].includes(normalized) ? 'tYES' : 'tNO';
+};
+
+const AR_CREDIT_MEMO_LINE_UDF_MAPPINGS = [
+  { aliases: ['U_Cost_Sheet'], getValue: (line) => line.udf?.U_Cost_Sheet ?? line.U_Cost_Sheet ?? line.costSheet },
+  { aliases: ['U_PackingType', 'U_PACKINGTYPE'], getValue: (line) => line.udf?.U_PackingType ?? line.udf?.U_PACKINGTYPE ?? line.U_PackingType ?? line.packingType },
+  { aliases: ['U_ContainerType'], getValue: (line) => line.udf?.U_ContainerType ?? line.U_ContainerType ?? line.containerType },
+  { aliases: ['U_GrossWt'], getValue: (line) => line.udf?.U_GrossWt ?? line.U_GrossWt ?? line.grossWt },
+  { aliases: ['U_TotalPackage'], getValue: (line) => line.udf?.U_TotalPackage ?? line.U_TotalPackage ?? line.totalPackage },
+  { aliases: ['U_TAXCODE', 'U_TaxCode'], getValue: (line) => firstPresent(line.taxCodeRepeat, line.udf?.U_TAXCODE, line.udf?.U_TaxCode, line.taxCode) },
+  { aliases: ['U_PRICE', 'U_Price'], getValue: (line) => firstPresent(line.price, line.udf?.U_PRICE, line.udf?.U_Price) },
+  { aliases: ['U_SPLRBT'], getValue: (line) => line.specialRebate },
+  { aliases: ['U_COMPRC'], getValue: (line) => line.commission },
+  { aliases: ['U_S_BrokPerQty', 'U_S_BROKPERQTY'], getValue: (line) => line.sellerBrokeragePerQty },
+  { aliases: ['U_Brok_Seller', 'U_BROK_SELLER'], getValue: (line) => line.sellerBrokerage },
+  { aliases: ['U_Brok_Buyer', 'U_BROK_BUYER'], getValue: (line) => line.buyerBrokerage },
+  { aliases: ['U_Buyer_Delivery', 'U_BUYER_DELIVERY'], getValue: (line) => line.buyerDelivery },
+  { aliases: ['U_Seller_Delivery', 'U_SELLER_DELIVERY'], getValue: (line) => line.sellerDelivery },
+  { aliases: ['U_Buyer_Payment_Terms', 'U_BUYER_PAYMENT_TERMS'], getValue: (line) => line.buyerPaymentTerms },
+  { aliases: ['U_Seller_Payment_Term', 'U_Seller_Payment_Terms', 'U_SELLER_PAYMENT_TERM', 'U_SELLER_PAYMENT_TERMS'], getValue: (line) => line.sellerPaymentTerms },
+  { aliases: ['U_Buyer_Quality', 'U_BUYER_QUALITY'], getValue: (line) => line.buyerQuality },
+  { aliases: ['U_Seller_Quality', 'U_SELLER_QUALITY'], getValue: (line) => line.sellerQuality },
+  { aliases: ['U_Buyer_Price', 'U_BUYER_PRICE'], getValue: (line) => line.buyerPrice },
+  { aliases: ['U_Seller_Price', 'U_SELLER_PRICE'], getValue: (line) => line.sellerPrice },
+  { aliases: ['U_Buyer_SPINS', 'U_BUYER_SPINS'], getValue: (line) => line.buyerSpecialInstruction },
+  { aliases: ['U_Seller_SPINS', 'U_SELLER_SPINS'], getValue: (line) => line.sellerSpecialInstruction },
+  { aliases: ['U_Sel_Brok_AP', 'U_SEL_BROK_AP'], getValue: (line) => line.sellerBrokerageAmtPer },
+  { aliases: ['U_Seller_Brok_Per', 'U_SELLER_BROK_PER'], getValue: (line) => line.sellerBrokeragePercent },
+  { aliases: ['U_SELLTCODE'], getValue: (line) => line.stcode },
+  { aliases: ['U_S_Item', 'U_S_ITEM'], getValue: (line) => line.sellerItem },
+  { aliases: ['U_S_Qty', 'U_S_QTY'], getValue: (line) => line.sellerQty },
+  { aliases: ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER'], getValue: (line) => line.udf?.U_Fix_Brock_B ?? line.U_Fix_Brock_B },
+  { aliases: ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller'], getValue: (line) => line.udf?.U_Fix_Brock_S ?? line.U_Fix_Brock_S },
+];
+
+const setAllowedLineUdf = (target, allowedLineUdfs, aliases, value) => {
+  if (!hasValue(value)) return;
+  const key = aliases.find((alias) => allowedLineUdfs.has(alias));
+  if (key) target[key] = value;
+};
+
+const buildLineUdfPayload = (line = {}, allowedLineUdfs = new Set()) => {
+  const udfs = { ...(line.udf || {}) };
+  AR_CREDIT_MEMO_LINE_UDF_MAPPINGS.forEach((mapping) => {
+    setAllowedLineUdf(udfs, allowedLineUdfs, mapping.aliases, mapping.getValue(line));
+  });
+  return udfs;
+};
+
 // ───────── REFERENCE DATA (USING ODBC) ─────────
 
 const getReferenceData = async (companyId) => {
@@ -264,6 +323,11 @@ const submitARCreditMemo = async (payload) => {
           WarehouseCode: l.whse || l.warehouse || "01",
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
+          WTLiable: yesNo(l.wTaxLiable ?? l.wtaxLiable),
+          AccountCode: l.glAccount || undefined,
+          CostingCode: l.distRule || undefined,
+          COGSCostingCode: l.cogsDistRule || l.distRule || undefined,
+          CountryOrg: l.countryOfOrigin || undefined,
         };
 
         // Add discount if present
@@ -281,7 +345,7 @@ const submitARCreditMemo = async (payload) => {
         }
 
         console.log(`🔍 [ARCreditMemoService] Transformed line ${index}:`, line);
-        applyUdfValues(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, buildLineUdfPayload(l, allowedLineUdfs), allowedLineUdfs);
         return line;
       })
     };
@@ -362,19 +426,26 @@ const updateARCreditMemo = async (docEntry, payload) => {
       DocumentAdditionalExpenses: documentAdditionalExpenses,
 
       DocumentLines: payload.lines.map((l) => {
+        const lineNum = l.lineNum ?? l.LineNum;
         const line = {
+          ...(lineNum !== undefined && lineNum !== null && lineNum !== '' ? { LineNum: Number(lineNum) } : {}),
           ItemCode: l.itemNo,
           Quantity: Number(l.quantity),
           UnitPrice: Number(l.unitPrice),
           WarehouseCode: l.whse || l.warehouse || "01",
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
+          WTLiable: yesNo(l.wTaxLiable ?? l.wtaxLiable),
+          AccountCode: l.glAccount || undefined,
+          CostingCode: l.distRule || undefined,
+          COGSCostingCode: l.cogsDistRule || l.distRule || undefined,
+          CountryOrg: l.countryOfOrigin || undefined,
           DiscountPercent: l.stdDiscount ? Number(l.stdDiscount) : (l.discountPercent ? Number(l.discountPercent) : 0),
           BaseType: l.baseType ? Number(l.baseType) : undefined,
           BaseEntry: l.baseEntry ? Number(l.baseEntry) : undefined,
           BaseLine: l.baseLine !== undefined ? Number(l.baseLine) : undefined,
         };
-        applyUdfValues(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, buildLineUdfPayload(l, allowedLineUdfs), allowedLineUdfs);
         return line;
       })
     };

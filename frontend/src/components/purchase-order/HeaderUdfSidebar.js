@@ -460,24 +460,28 @@ function renderField(field = {}, value, disabled, onChange, onLookup) {
 
   if (fieldType === 'select') {
     return (
-      <select
-        className="form-control form-control-sm"
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {(field.options || []).map((option) => {
-          const normalizedOption = typeof option === 'object'
-            ? option
-            : { value: option, label: option };
+      <div className={`po-udf-select-control${disabled ? ' is-disabled' : ''}`}>
+        <select
+          className="form-control form-control-sm po-udf-select-control__select"
+          value={value ?? ''}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          <option value=""></option>
+          {(field.options || []).map((option) => {
+            const normalizedOption = typeof option === 'object'
+              ? option
+              : { value: option, label: option };
+            if (String(normalizedOption.value ?? '') === '') return null;
 
-          return (
-            <option key={normalizedOption.value} value={normalizedOption.value}>
-              {normalizedOption.label}
-            </option>
-          );
-        })}
-      </select>
+            return (
+              <option key={normalizedOption.value} value={normalizedOption.value}>
+                {normalizedOption.label}
+              </option>
+            );
+          })}
+        </select>
+      </div>
     );
   }
 
@@ -1546,14 +1550,16 @@ function HeaderUdfSidebar({
           </div>
 
           <div className="po-udf-sidebar-body">
-            {orderedFields.map((field) => {
+            {orderedFields.filter((field) => field && field.key).map((field) => {
               const termsOfSupplyField = isTermsOfSupplyField(field);
               const fieldValue = values[field.key];
+              const fieldSetting = formSettings.headerUdfs?.[field.key] || {};
+              const fieldActive = fieldSetting.active !== undefined
+                ? fieldSetting.active !== false
+                : field.active !== false;
               const fieldDisabled = disabled ||
                 (!termsOfSupplyField && field.readOnly) ||
-                (field.sapControlled
-                  ? field.active === false
-                  : formSettings.headerUdfs?.[field.key]?.active === false);
+                !fieldActive;
               const currentToVendorAddressId = String(fieldValue || '');
               const currentBillToPartyAddressId = String(fieldValue || '');
               const fieldLookup = termsOfSupplyField
@@ -1618,7 +1624,7 @@ function HeaderUdfSidebar({
               return (
                 <div
                   key={field.key}
-                  className={`mb-3 po-udf-sidebar-field po-udf-sidebar-field--${field.type || 'text'}`}
+                  className={`mb-3 po-udf-sidebar-field po-udf-sidebar-field--${field?.type || 'text'}`}
                 >
                   <label className="form-label mb-1">
                     {field.label}{field.required ? ' *' : ''}

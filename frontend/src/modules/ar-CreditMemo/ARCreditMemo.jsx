@@ -43,6 +43,7 @@ import {
   AR_CREDIT_MEMO_LAYOUT_DOCUMENT_TYPE,
   buildSalesOrderMatrixColumnsFromLayout,
 } from '../sales-order/documentLayout';
+import { hydrateWorkbookDocumentLine } from '../../utils/workbookLineHydration';
 import {
   fetchARCreditMemoReferenceData,
   fetchARCreditMemoCustomerDetails,
@@ -595,7 +596,14 @@ function ARCreditMemo() {
         
         setLines(
           Array.isArray(so.lines) && so.lines.length
-            ? so.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, udf: normalizeUdfState(rowUdfDefinitions, l.udf || {}) }))
+            ? so.lines.map((line) => hydrateWorkbookDocumentLine({
+                line,
+                createLine,
+                rowUdfDefinitions,
+                normalizeUdfState,
+                items: refData.items,
+                fallbackWarehouse: so.header?.warehouse || DEFAULT_WAREHOUSE_CODE,
+              }))
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
@@ -777,6 +785,7 @@ function ARCreditMemo() {
         uomCode:         l.uomCode            || l.UomCode || l.unitMsr || '',
         hsnCode:         l.hsnCode            || l.HSNCode || '',
         taxCode:         l.taxCode            || l.TaxCode || '',
+        taxCodeManuallyOverridden: Boolean(String(l.taxCode || l.TaxCode || l.VatGroup || '').trim()),
         total:           String(l.total       || l.LineTotal || 0),
         whse:            l.whse               || l.WarehouseCode || l.WhsCode || DEFAULT_WAREHOUSE_CODE,
         loc:             l.loc                || l.Location || '',
@@ -1294,7 +1303,7 @@ function ARCreditMemo() {
           
           setLines(prev => prev.map((line, idx) => {
             if (idx !== i) return line;
-            const next = { ...line, itemNo: value };
+            const next = { ...line, itemNo: value, taxCodeManuallyOverridden: false };
             
             // Step 1: Set Item Details
             next.itemDescription = item.ItemName || next.itemDescription;
@@ -1356,7 +1365,7 @@ function ARCreditMemo() {
         // Fallback to basic item selection without HSN
         setLines(prev => prev.map((line, idx) => {
           if (idx !== i) return line;
-          const next = { ...line, itemNo: value };
+          const next = { ...line, itemNo: value, taxCodeManuallyOverridden: false };
           const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
           if (item) {
             next.itemDescription = item.ItemName || next.itemDescription;
@@ -1449,6 +1458,9 @@ function ARCreditMemo() {
       const next = { ...line, [name]: numDec[name] !== undefined ? sanitize(value, numDec[name]) : value };
       if (name === 'distRule') {
         next.cogsDistRule = value;
+      }
+      if (name === 'taxCode') {
+        next.taxCodeManuallyOverridden = Boolean(String(next.taxCode || '').trim());
       }
       next.total = fmtDec(calcLineTotal(next), numDec.total);
       return next;

@@ -20,6 +20,52 @@ const safe = async (promise) => {
   }
 };
 
+const tableFieldMetadataPromises = new Map();
+
+const getTableFieldMetadata = async (tableName) => {
+  const normalizedTableName = String(tableName || '').trim();
+  if (!normalizedTableName) return {};
+
+  const databaseName = await db.resolveDatabaseName().catch(() => '');
+  const cacheKey = `${databaseName || 'default'}:${normalizedTableName}`;
+
+  if (!tableFieldMetadataPromises.has(cacheKey)) {
+    tableFieldMetadataPromises.set(cacheKey, safe(db.query(`
+      SELECT COLUMN_NAME, DATA_TYPE
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_NAME = @tableName
+    `, { tableName: normalizedTableName })).then((rows) => rows.reduce((acc, row) => {
+      acc[row.COLUMN_NAME] = row.DATA_TYPE;
+      return acc;
+    }, {})));
+  }
+
+  return tableFieldMetadataPromises.get(cacheKey);
+};
+
+const hasTableField = (metadata, columnName) => {
+  const normalizedColumnName = String(columnName || '').trim().toLowerCase();
+  if (!metadata || !normalizedColumnName) return false;
+  return Object.keys(metadata).some((fieldName) => fieldName.toLowerCase() === normalizedColumnName);
+};
+
+const sqlAlias = (alias) => `[${String(alias || '').replace(/]/g, ']]')}]`;
+
+const optionalColumn = (metadata, tableAlias, columnName, alias, fallback = 'NULL') => (
+  hasTableField(metadata, columnName)
+    ? `${tableAlias}.[${columnName}] AS ${sqlAlias(alias)}`
+    : `${fallback} AS ${sqlAlias(alias)}`
+);
+
+const firstUdfValue = (udf = {}, aliases = []) => {
+  for (const alias of aliases) {
+    if (udf[alias] !== undefined && udf[alias] !== null && String(udf[alias]) !== '') {
+      return udf[alias];
+    }
+  }
+  return '';
+};
+
 // ── REFERENCE DATA QUERIES ────────────────────────────────────────────────────
 
 const getCustomers = () => safe(db.query(`
@@ -305,6 +351,30 @@ const getARCreditMemo = async (docEntry) => {
   }
 
   const header = headerRows[0];
+  const lineFieldMetadata = await getTableFieldMetadata('RIN1');
+  const lineTaxExpression = hasTableField(lineFieldMetadata, 'TaxCode')
+    ? 'T0.TaxCode'
+    : hasTableField(lineFieldMetadata, 'VatGroup')
+      ? 'T0.VatGroup'
+      : "''";
+  const lineUomExpression = hasTableField(lineFieldMetadata, 'unitMsr')
+    ? 'T0.unitMsr'
+    : hasTableField(lineFieldMetadata, 'UomCode')
+      ? 'T0.UomCode'
+      : "''";
+  const lineSacExpression = hasTableField(lineFieldMetadata, 'SacEntry')
+    ? 'T0.SacEntry'
+    : hasTableField(lineFieldMetadata, 'SACEntry')
+      ? 'T0.SACEntry'
+      : "''";
+  const lineTaxAmountExpression = hasTableField(lineFieldMetadata, 'VatSum')
+    ? 'T0.VatSum'
+    : 'NULL';
+  const lineWithoutQtyPostingExpression = hasTableField(lineFieldMetadata, 'NoInvtryMv')
+    ? 'T0.NoInvtryMv'
+    : hasTableField(lineFieldMetadata, 'WithoutQtyPosting')
+      ? 'T0.WithoutQtyPosting'
+      : "'N'";
   const [headerUdfs, lineUdfsByLineNum] = await Promise.all([
     getHeaderUdfValues({ tableId: 'ORIN', keyValue: docEntry }),
     getLineUdfValues({ tableId: 'RIN1', keyValue: docEntry }),
@@ -318,15 +388,32 @@ const getARCreditMemo = async (docEntry) => {
       T0.Quantity,
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
-      T0.TaxCode,
+      ${lineTaxExpression} AS TaxCode,
       T0.LineTotal,
+      ${lineTaxAmountExpression} AS TaxAmount,
+      ${optionalColumn(lineFieldMetadata, 'T0', 'WTLiable', 'WTLiable', "'N'")},
       T0.WhsCode AS Warehouse,
-      T0.unitMsr AS UoMCode,
+      ${lineUomExpression} AS UoMCode,
+      ${optionalColumn(lineFieldMetadata, 'T0', 'AcctCode', 'GLAccount', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode', 'DistributionRule', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'CogsOcrCod', 'COGSDistributionRule', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'CountryOrg', 'CountryOfOrigin', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'LocCode', 'Loc', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode2', 'BranchCode', "''")},
+      ${lineWithoutQtyPostingExpression} AS WithoutQtyPosting,
+      ${optionalColumn(lineFieldMetadata, 'T0', 'EnSetCost', 'EnableSettingCost', "'N'")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'RetCost', 'ReturnCost', '0')},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'AgrNo', 'BlanketAgreementNo', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'StockPrice', 'ItemCost', '0')},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'U_AssblValue', 'AssessableValue', 'NULL')},
+      ${lineSacExpression} AS SACCode,
       T0.BaseEntry,
       T0.BaseType,
-      T0.BaseLine
+      T0.BaseLine,
+      COALESCE(CHP.ChapterID, ITM.SWW, '') AS HSNCode
     FROM RIN1 T0
     LEFT JOIN OITM ITM ON ITM.ItemCode = T0.ItemCode
+    LEFT JOIN OCHP CHP ON CHP.AbsEntry = ITM.ChapterID
     WHERE T0.DocEntry = @docEntry
     ORDER BY T0.LineNum
   `, { docEntry }));
@@ -411,25 +498,96 @@ const getARCreditMemo = async (docEntry) => {
       },
       lines: lineRows.map((l, idx) => {
         const itemInfo = itemInfoMap[l.ItemCode] || { hsnCode: '', batchManaged: false };
+        const lineUdfs = lineUdfsByLineNum[l.LineNum] || {};
         return {
           baseEntry: l.BaseEntry || null,
           baseType: l.BaseType || null,
           baseLine: l.BaseLine || null,
+          lineNum: l.LineNum,
+          LineNum: l.LineNum,
           itemNo: l.ItemCode || '',
+          ItemCode: l.ItemCode || '',
           itemDescription: l.ItemDescription || '',
-          hsnCode: itemInfo.hsnCode,
+          ItemDescription: l.ItemDescription || '',
+          hsnCode: l.HSNCode || itemInfo.hsnCode,
+          HSNCode: l.HSNCode || itemInfo.hsnCode,
+          sacCode: l.SACCode != null ? String(l.SACCode) : '',
+          SACCode: l.SACCode != null ? String(l.SACCode) : '',
           quantity: l.Quantity != null ? String(l.Quantity) : '',
+          Quantity: l.Quantity != null ? String(l.Quantity) : '',
           unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
+          UnitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
           stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
+          DiscountPercent: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
           taxCode: l.TaxCode || '',
+          TaxCode: l.TaxCode || '',
+          taxCodeRepeat: firstUdfValue(lineUdfs, ['U_TAXCODE', 'U_TaxCode']) || l.TaxCode || '',
           total: l.LineTotal != null ? String(l.LineTotal) : '',
+          totalLC: l.LineTotal != null ? String(l.LineTotal) : '',
+          LineTotal: l.LineTotal != null ? String(l.LineTotal) : '',
+          taxAmount: l.TaxAmount != null ? String(l.TaxAmount) : '',
+          wTaxLiable: String(l.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
+          WTLiable: String(l.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
           whse: l.Warehouse || '',
+          WarehouseCode: l.Warehouse || '',
+          WhsCode: l.Warehouse || '',
+          glAccount: l.GLAccount || '',
+          GLAccount: l.GLAccount || '',
+          distRule: l.DistributionRule || '',
+          DistributionRule: l.DistributionRule || '',
+          cogsDistRule: l.COGSDistributionRule || l.DistributionRule || '',
+          COGSDistributionRule: l.COGSDistributionRule || l.DistributionRule || '',
+          countryOfOrigin: l.CountryOfOrigin || '',
+          CountryOfOrigin: l.CountryOfOrigin || '',
+          loc: l.Loc || '',
+          Loc: l.Loc || '',
+          branch: l.BranchCode || (header.Branch ? String(header.Branch) : ''),
           uomCode: l.UoMCode || '',
+          UoMCode: l.UoMCode || '',
+          uomName: l.UoMCode || '',
+          enableSettingCost: String(l.EnableSettingCost || '').toUpperCase() === 'Y' ? 'Y' : 'N',
+          withoutQtyPosting: String(l.WithoutQtyPosting || '').toUpperCase() === 'Y' ? 'Y' : 'N',
+          returnCost: l.ReturnCost != null ? String(l.ReturnCost) : '',
+          blanketAgreementNo: l.BlanketAgreementNo != null ? String(l.BlanketAgreementNo) : '',
+          BlanketAgreementNo: l.BlanketAgreementNo != null ? String(l.BlanketAgreementNo) : '',
+          itemCost: l.ItemCost != null ? String(l.ItemCost) : '',
+          ItemCost: l.ItemCost != null ? String(l.ItemCost) : '',
+          assessableValue: l.AssessableValue != null ? String(l.AssessableValue) : '',
+          price: firstUdfValue(lineUdfs, ['U_PRICE', 'U_Price']),
+          sellerBrokerage: firstUdfValue(lineUdfs, ['U_Brok_Seller', 'U_BROK_SELLER']),
+          buyerBrokerage: firstUdfValue(lineUdfs, ['U_Brok_Buyer', 'U_BROK_BUYER']),
+          buyerDelivery: firstUdfValue(lineUdfs, ['U_Buyer_Delivery', 'U_BUYER_DELIVERY']),
+          sellerDelivery: firstUdfValue(lineUdfs, ['U_Seller_Delivery', 'U_SELLER_DELIVERY']),
+          buyerPaymentTerms: firstUdfValue(lineUdfs, ['U_Buyer_Payment_Terms', 'U_BUYER_PAYMENT_TERMS']),
+          sellerPaymentTerms: firstUdfValue(lineUdfs, ['U_Seller_Payment_Term', 'U_Seller_Payment_Terms', 'U_SELLER_PAYMENT_TERM', 'U_SELLER_PAYMENT_TERMS']),
+          buyerQuality: firstUdfValue(lineUdfs, ['U_Buyer_Quality', 'U_BUYER_QUALITY']),
+          sellerQuality: firstUdfValue(lineUdfs, ['U_Seller_Quality', 'U_SELLER_QUALITY']),
+          buyerPrice: firstUdfValue(lineUdfs, ['U_Buyer_Price', 'U_BUYER_PRICE']),
+          sellerPrice: firstUdfValue(lineUdfs, ['U_Seller_Price', 'U_SELLER_PRICE']),
+          buyerSpecialInstruction: firstUdfValue(lineUdfs, ['U_Buyer_SPINS', 'U_BUYER_SPINS']),
+          sellerSpecialInstruction: firstUdfValue(lineUdfs, ['U_Seller_SPINS', 'U_SELLER_SPINS']),
+          sellerBrokerageAmtPer: firstUdfValue(lineUdfs, ['U_Sel_Brok_AP', 'U_SEL_BROK_AP']),
+          sellerBrokeragePercent: firstUdfValue(lineUdfs, ['U_Seller_Brok_Per', 'U_SELLER_BROK_PER']),
+          stcode: firstUdfValue(lineUdfs, ['U_SELLTCODE']),
+          sellerItem: firstUdfValue(lineUdfs, ['U_S_Item', 'U_S_ITEM']),
+          sellerQty: firstUdfValue(lineUdfs, ['U_S_Qty', 'U_S_QTY']),
+          specialRebate: firstUdfValue(lineUdfs, ['U_SPLRBT']),
+          commission: firstUdfValue(lineUdfs, ['U_COMPRC']),
+          sellerBrokeragePerQty: firstUdfValue(lineUdfs, ['U_S_BrokPerQty', 'U_S_BROKPERQTY']),
+          U_Cost_Sheet: firstUdfValue(lineUdfs, ['U_Cost_Sheet']),
+          U_PackingType: firstUdfValue(lineUdfs, ['U_PackingType', 'U_PACKINGTYPE']),
+          U_ContainerType: firstUdfValue(lineUdfs, ['U_ContainerType']),
+          U_GrossWt: firstUdfValue(lineUdfs, ['U_GrossWt']),
+          U_TotalPackage: firstUdfValue(lineUdfs, ['U_TotalPackage']),
+          U_Fix_Brock_B: firstUdfValue(lineUdfs, ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER']),
+          U_Fix_Brock_S: firstUdfValue(lineUdfs, ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller']),
           batchManaged: itemInfo.batchManaged,
           batches: batchesByLine[l.LineNum] || [],
-          udf: lineUdfsByLineNum[l.LineNum] || {},
+          udf: lineUdfs,
+          line_udfs: lineUdfs,
         };
       }),
+      DocumentLines: lineRows,
       header_udfs: headerUdfs,
     }
   };

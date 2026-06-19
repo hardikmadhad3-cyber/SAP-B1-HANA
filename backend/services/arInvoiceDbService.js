@@ -407,17 +407,28 @@ const hasTableField = (metadata, columnName) => {
   return Object.keys(metadata).some((fieldName) => fieldName.toLowerCase() === normalizedColumnName);
 };
 
+const getTableFieldName = (metadata, columnName) => {
+  const normalizedColumnName = String(columnName || '').trim().toLowerCase();
+  if (!metadata || !normalizedColumnName) return '';
+  return Object.keys(metadata).find((fieldName) => fieldName.toLowerCase() === normalizedColumnName) || '';
+};
+
 const sqlAlias = (alias) => `[${String(alias || '').replace(/]/g, ']]')}]`;
 
+const sqlColumnRef = (metadata, tableAlias, columnName) => {
+  const physicalName = getTableFieldName(metadata, columnName);
+  return physicalName ? `${tableAlias}.[${physicalName}]` : '';
+};
+
 const optionalColumn = (metadata, tableAlias, columnName, alias, fallback = 'NULL') => (
-  hasTableField(metadata, columnName)
-    ? `${tableAlias}.[${columnName}] AS ${sqlAlias(alias)}`
+  sqlColumnRef(metadata, tableAlias, columnName)
+    ? `${sqlColumnRef(metadata, tableAlias, columnName)} AS ${sqlAlias(alias)}`
     : `${fallback} AS ${sqlAlias(alias)}`
 );
 
 const optionalTrimmedText = (metadata, tableAlias, columnName) => (
-  hasTableField(metadata, columnName)
-    ? `NULLIF(LTRIM(RTRIM(CAST(${tableAlias}.[${columnName}] AS NVARCHAR(254)))), '')`
+  sqlColumnRef(metadata, tableAlias, columnName)
+    ? `NULLIF(LTRIM(RTRIM(CAST(${sqlColumnRef(metadata, tableAlias, columnName)} AS NVARCHAR(254)))), '')`
     : 'NULL'
 );
 
@@ -626,10 +637,31 @@ const filterSeriesByTransactionType = (series = [], transactionType = '') => {
   return matched.length ? matched : series;
 };
 
+const isRegularInvoiceSeries = (row = {}) => {
+  const docSubType = String(row.DocSubType ?? row.docSubType ?? '').trim().toUpperCase();
+  return !docSubType || docSubType === '--';
+};
+
+const preferRegularInvoiceSeries = (series = [], transactionType = '') => {
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (normalizedType.includes('debit')) return series;
+
+  const regularSeries = (series || []).filter(isRegularInvoiceSeries);
+  return regularSeries.length ? regularSeries : series;
+};
+
 const getDocumentSeries = async (targetDate = null, transactionType = '', branch = '') => {
   const effectiveTargetDate = targetDate || new Date().toISOString().split('T')[0];
-  const seriesMetadata = await getTableFieldMetadata('NNM1');
+  const [seriesMetadata, numberingMetadata] = await Promise.all([
+    getTableFieldMetadata('NNM1'),
+    getTableFieldMetadata('ONNM'),
+  ]);
   const hasSeriesBranch = hasTableField(seriesMetadata, 'BPLId');
+  const defaultSeriesColumn = hasTableField(numberingMetadata, 'DfltSeries')
+    ? 'DfltSeries'
+    : hasTableField(numberingMetadata, 'DfltSerie')
+      ? 'DfltSerie'
+      : '';
   const branchId = Number(branch);
   const hasBranchFilter = hasSeriesBranch && Number.isFinite(branchId) && String(branch || '').trim() !== '';
   const seriesParams = hasBranchFilter ? { targetDate: effectiveTargetDate, branchId } : { targetDate: effectiveTargetDate };
@@ -637,6 +669,13 @@ const getDocumentSeries = async (targetDate = null, transactionType = '', branch
   const branchFilter = hasBranchFilter
     ? 'AND (T0.BPLId IS NULL OR T0.BPLId IN (-1, 0) OR T0.BPLId = @branchId)'
     : '';
+  const defaultSeriesJoin = defaultSeriesColumn
+    ? `LEFT JOIN ONNM T2 ON T2.ObjectCode = T0.ObjectCode AND T2.${defaultSeriesColumn} = T0.Series`
+    : '';
+  const defaultSeriesSelect = defaultSeriesColumn
+    ? `CASE WHEN T2.${defaultSeriesColumn} IS NOT NULL THEN 1 ELSE 0 END`
+    : '0';
+  const docSubTypeSelect = optionalColumn(seriesMetadata, 'T0', 'DocSubType', 'DocSubType', "''");
 
   let result = await safe(db.query(`
     SELECT 
@@ -644,18 +683,24 @@ const getDocumentSeries = async (targetDate = null, transactionType = '', branch
     T0.SeriesName,
     T0.Indicator,
     T0.NextNumber,
+    ${docSubTypeSelect},
     ${optionalColumn(seriesMetadata, 'T0', 'BPLId', 'BPLId', 'NULL')},
+    ${defaultSeriesSelect} AS IsDefault,
     T1.Name AS FinancialYear,
     T1.F_RefDate AS FromDate,
     T1.T_RefDate AS ToDate
 FROM NNM1 T0
 INNER JOIN OFPR T1 
     ON T0.Indicator = T1.Indicator
+${defaultSeriesJoin}
 WHERE T0.ObjectCode = '13'
     AND T0.Locked = 'N'
     ${branchFilter}
     AND CAST(@targetDate AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate
-ORDER BY T0.SeriesName
+ORDER BY
+    IsDefault DESC,
+    T0.SeriesName,
+    T0.Series
   `, seriesParams));
 
   if (!result.length) {
@@ -665,24 +710,32 @@ ORDER BY T0.SeriesName
         T0.SeriesName,
         T0.Indicator,
         T0.NextNumber,
+        ${docSubTypeSelect},
         ${optionalColumn(seriesMetadata, 'T0', 'BPLId', 'BPLId', 'NULL')},
+        ${defaultSeriesSelect} AS IsDefault,
         NULL AS FinancialYear,
         NULL AS FromDate,
         NULL AS ToDate
       FROM NNM1 T0
+      ${defaultSeriesJoin}
       WHERE T0.ObjectCode = '13'
         AND T0.Locked = 'N'
         ${branchFilter}
-      ORDER BY T0.SeriesName
+      ORDER BY
+        IsDefault DESC,
+        T0.SeriesName,
+        T0.Series
     `, fallbackSeriesParams));
   }
 
-  const series = result.map(s => ({
+  const series = preferRegularInvoiceSeries(result, transactionType).map(s => ({
     Series: s.Series,
     SeriesName: s.SeriesName,
     NextNumber: s.NextNumber,
     Indicator: s.Indicator,
+    DocSubType: s.DocSubType || '',
     BPLId: s.BPLId != null ? String(s.BPLId) : '',
+    IsDefault: Number(s.IsDefault || 0) === 1,
   }));
 
   return filterSeriesByTransactionType(series, transactionType);
@@ -1159,6 +1212,11 @@ const getARInvoice = async (docEntry) => {
     getTableFieldMetadata('OINV'),
     getTableFieldMetadata('INV1'),
   ]);
+  const requestedDocId = Number(docEntry);
+
+  if (!Number.isFinite(requestedDocId)) {
+    throw new Error('AR Invoice document id is invalid');
+  }
 
   const placeOfSupplyExpression = hasTableField(headerFieldMetadata, 'U_PlaceOfSupply')
     ? "COALESCE(NULLIF(LTRIM(RTRIM(CAST(T0.U_PlaceOfSupply AS NVARCHAR(254)))), ''), C.State, ST.Name, '')"
@@ -1166,19 +1224,19 @@ const getARInvoice = async (docEntry) => {
   const headerBranchExpression = hasTableField(headerFieldMetadata, 'BPL_IDAssignedToInvoice')
     ? 'COALESCE(T0.BPL_IDAssignedToInvoice, T0.BPLId)'
     : 'T0.BPLId';
-  const lineTaxExpression = hasTableField(lineFieldMetadata, 'TaxCode')
-    ? 'T0.TaxCode'
-    : hasTableField(lineFieldMetadata, 'VatGroup')
-      ? 'T0.VatGroup'
+  const lineTaxExpression = sqlColumnRef(lineFieldMetadata, 'T0', 'TaxCode')
+    ? sqlColumnRef(lineFieldMetadata, 'T0', 'TaxCode')
+    : sqlColumnRef(lineFieldMetadata, 'T0', 'VatGroup')
+      ? sqlColumnRef(lineFieldMetadata, 'T0', 'VatGroup')
       : "''";
-  const lineUomExpression = hasTableField(lineFieldMetadata, 'unitMsr')
-    ? 'T0.unitMsr'
-    : hasTableField(lineFieldMetadata, 'UomCode')
-      ? 'T0.UomCode'
+  const lineUomExpression = sqlColumnRef(lineFieldMetadata, 'T0', 'unitMsr')
+    ? sqlColumnRef(lineFieldMetadata, 'T0', 'unitMsr')
+    : sqlColumnRef(lineFieldMetadata, 'T0', 'UomCode')
+      ? sqlColumnRef(lineFieldMetadata, 'T0', 'UomCode')
       : "''";
 
   const headerRows = await safe(db.query(`
-    SELECT
+    SELECT TOP 1
       T0.DocEntry,
       T0.DocNum,
       T0.Series,
@@ -1248,17 +1306,33 @@ const getARInvoice = async (docEntry) => {
      AND C.Address = ${hasTableField(headerFieldMetadata, 'ShipToCode') ? 'T0.ShipToCode' : "''"}
      AND C.AddressRank = 1
     LEFT JOIN OCST ST ON ST.Code = C.State AND ST.Country = C.Country
-    WHERE T0.DocEntry = @docEntry
+    WHERE (T0.DocEntry = @docEntry OR T0.DocNum = @docEntry)
       AND T0.DocType = 'I'
-  `, { docEntry }));
+    ORDER BY CASE WHEN T0.DocEntry = @docEntry THEN 0 ELSE 1 END
+  `, { docEntry: requestedDocId }));
 
   if (!headerRows.length) {
     throw new Error('AR Invoice not found');
   }
 
   const header = headerRows[0];
+  const resolvedDocEntry = Number(header.DocEntry);
 
-  const lineRows = await safe(db.query(`
+  const lineSacExpression = sqlColumnRef(lineFieldMetadata, 'T0', 'SacEntry')
+    ? sqlColumnRef(lineFieldMetadata, 'T0', 'SacEntry')
+    : sqlColumnRef(lineFieldMetadata, 'T0', 'SACEntry')
+      ? sqlColumnRef(lineFieldMetadata, 'T0', 'SACEntry')
+      : "''";
+  const lineTaxAmountExpression = sqlColumnRef(lineFieldMetadata, 'T0', 'VatSum')
+    ? sqlColumnRef(lineFieldMetadata, 'T0', 'VatSum')
+    : 'NULL';
+  const lineWithoutQtyPostingExpression = sqlColumnRef(lineFieldMetadata, 'T0', 'NoInvtryMv')
+    ? sqlColumnRef(lineFieldMetadata, 'T0', 'NoInvtryMv')
+    : sqlColumnRef(lineFieldMetadata, 'T0', 'WithoutQtyPosting')
+      ? sqlColumnRef(lineFieldMetadata, 'T0', 'WithoutQtyPosting')
+      : "'N'";
+
+  let lineRows = await safe(db.query(`
     SELECT
       T0.LineNum,
       T0.ItemCode,
@@ -1269,14 +1343,23 @@ const getARInvoice = async (docEntry) => {
       T0.DiscPrcnt AS DiscountPercent,
       ${lineTaxExpression} AS TaxCode,
       T0.LineTotal,
+      ${lineTaxAmountExpression} AS TaxAmount,
       ${optionalColumn(lineFieldMetadata, 'T0', 'WTLiable', 'WTLiable', "'N'")},
       T0.WhsCode AS Warehouse,
       ${lineUomExpression} AS UoMCode,
-      ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode', 'Loc', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'CountryOrg', 'CountryOfOrigin', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'AgrNo', 'BlanketAgreementNo', "''")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'StockPrice', 'ItemCost', '0')},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'U_AssblValue', 'AssessableValue', 'NULL')},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'LocCode', 'Loc', "''")},
       ${optionalColumn(lineFieldMetadata, 'T0', 'AcctCode', 'GLAccount', "''")},
       ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode', 'DistributionRule', "''")},
       ${optionalColumn(lineFieldMetadata, 'T0', 'CogsOcrCod', 'COGSDistributionRule', "''")},
       ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode2', 'BranchCode', "''")},
+      ${lineWithoutQtyPostingExpression} AS WithoutQtyPosting,
+      ${optionalColumn(lineFieldMetadata, 'T0', 'EnSetCost', 'EnableSettingCost', "'N'")},
+      ${optionalColumn(lineFieldMetadata, 'T0', 'RetCost', 'ReturnCost', 'NULL')},
+      ${lineSacExpression} AS SACCode,
       T0.BaseEntry,
       T0.BaseType,
       T0.BaseLine,
@@ -1286,10 +1369,49 @@ const getARInvoice = async (docEntry) => {
     LEFT JOIN OCHP CHP ON CHP.AbsEntry = ITM.ChapterID
     WHERE T0.DocEntry = @docEntry
     ORDER BY T0.LineNum
-  `, { docEntry }));
+  `, { docEntry: resolvedDocEntry }));
+
+  if (!lineRows.length) {
+    lineRows = await safe(db.query(`
+      SELECT
+        T0.LineNum,
+        T0.ItemCode,
+        T0.Dscription AS ItemDescription,
+        T0.Quantity,
+        T0.Quantity AS OpenQuantity,
+        T0.Price AS UnitPrice,
+        T0.DiscPrcnt AS DiscountPercent,
+        ${lineTaxExpression} AS TaxCode,
+        T0.LineTotal,
+        ${lineTaxAmountExpression} AS TaxAmount,
+        ${optionalColumn(lineFieldMetadata, 'T0', 'WTLiable', 'WTLiable', "'N'")},
+        T0.WhsCode AS Warehouse,
+        ${lineUomExpression} AS UoMCode,
+        ${optionalColumn(lineFieldMetadata, 'T0', 'CountryOrg', 'CountryOfOrigin', "''")},
+        ${optionalColumn(lineFieldMetadata, 'T0', 'AgrNo', 'BlanketAgreementNo', "''")},
+        ${optionalColumn(lineFieldMetadata, 'T0', 'StockPrice', 'ItemCost', '0')},
+        ${optionalColumn(lineFieldMetadata, 'T0', 'U_AssblValue', 'AssessableValue', 'NULL')},
+        ${optionalColumn(lineFieldMetadata, 'T0', 'LocCode', 'Loc', "''")},
+        ${optionalColumn(lineFieldMetadata, 'T0', 'AcctCode', 'GLAccount', "''")},
+        ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode', 'DistributionRule', "''")},
+        ${optionalColumn(lineFieldMetadata, 'T0', 'CogsOcrCod', 'COGSDistributionRule', "''")},
+        ${optionalColumn(lineFieldMetadata, 'T0', 'OcrCode2', 'BranchCode', "''")},
+        ${lineWithoutQtyPostingExpression} AS WithoutQtyPosting,
+        ${optionalColumn(lineFieldMetadata, 'T0', 'EnSetCost', 'EnableSettingCost', "'N'")},
+        ${optionalColumn(lineFieldMetadata, 'T0', 'RetCost', 'ReturnCost', 'NULL')},
+        ${lineSacExpression} AS SACCode,
+        T0.BaseEntry,
+        T0.BaseType,
+        T0.BaseLine,
+        '' AS HSNCode
+      FROM INV1 T0
+      WHERE T0.DocEntry = @docEntry
+      ORDER BY T0.LineNum
+    `, { docEntry: resolvedDocEntry }));
+  }
   const [headerUdfs, lineUdfsByLineNum] = await Promise.all([
-    getHeaderUdfValues({ tableId: 'OINV', keyValue: docEntry }),
-    getLineUdfValues({ tableId: 'INV1', keyValue: docEntry }),
+    getHeaderUdfValues({ tableId: 'OINV', keyValue: resolvedDocEntry }),
+    getLineUdfValues({ tableId: 'INV1', keyValue: resolvedDocEntry }),
   ]);
 
   return {
@@ -1346,29 +1468,68 @@ const getARInvoice = async (docEntry) => {
         owner: header.OwnerName || '',
         currency: header.Currency || 'INR',
       },
-      lines: lineRows.map((line) => ({
+      lines: lineRows.map((line) => {
+        const lineUdfs = lineUdfsByLineNum[line.LineNum] || {};
+        return ({
         baseEntry: line.BaseEntry || null,
         baseType: line.BaseType || null,
         baseLine: line.BaseLine || null,
+        lineNum: line.LineNum,
+        LineNum: line.LineNum,
         itemNo: line.ItemCode || '',
+        ItemCode: line.ItemCode || '',
         itemDescription: line.ItemDescription || '',
+        ItemDescription: line.ItemDescription || '',
         hsnCode: line.HSNCode || '',
+        HSNCode: line.HSNCode || '',
         quantity: line.Quantity != null ? String(line.Quantity) : '',
+        Quantity: line.Quantity != null ? String(line.Quantity) : '',
         openQty: line.OpenQuantity != null ? String(line.OpenQuantity) : (line.Quantity != null ? String(line.Quantity) : ''),
         unitPrice: line.UnitPrice != null ? String(line.UnitPrice) : '',
+        UnitPrice: line.UnitPrice != null ? String(line.UnitPrice) : '',
         stdDiscount: line.DiscountPercent != null ? String(line.DiscountPercent) : '',
+        DiscountPercent: line.DiscountPercent != null ? String(line.DiscountPercent) : '',
         taxCode: line.TaxCode || '',
+        TaxCode: line.TaxCode || '',
         total: line.LineTotal != null ? String(line.LineTotal) : '',
+        totalLC: line.LineTotal != null ? String(line.LineTotal) : '',
+        LineTotal: line.LineTotal != null ? String(line.LineTotal) : '',
+        taxAmount: line.TaxAmount != null ? String(line.TaxAmount) : '',
         wTaxLiable: String(line.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
+        WTLiable: String(line.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
         whse: line.Warehouse || '',
+        WarehouseCode: line.Warehouse || '',
+        WhsCode: line.Warehouse || '',
         glAccount: line.GLAccount || '',
+        GLAccount: line.GLAccount || '',
         distRule: line.DistributionRule || '',
+        DistributionRule: line.DistributionRule || '',
         cogsDistRule: line.COGSDistributionRule || line.DistributionRule || '',
+        COGSDistributionRule: line.COGSDistributionRule || line.DistributionRule || '',
         uomCode: line.UoMCode || '',
+        UoMCode: line.UoMCode || '',
+        uomName: line.UoMCode || '',
+        countryOfOrigin: line.CountryOfOrigin || '',
+        CountryOfOrigin: line.CountryOfOrigin || '',
+        blanketAgreementNo: line.BlanketAgreementNo != null ? String(line.BlanketAgreementNo) : '',
+        BlanketAgreementNo: line.BlanketAgreementNo != null ? String(line.BlanketAgreementNo) : '',
+        itemCost: line.ItemCost != null ? String(line.ItemCost) : '',
+        ItemCost: line.ItemCost != null ? String(line.ItemCost) : '',
+        assessableValue: line.AssessableValue != null ? String(line.AssessableValue) : '',
+        AssessableValue: line.AssessableValue != null ? String(line.AssessableValue) : '',
         loc: line.Loc || '',
+        Loc: line.Loc || '',
         branch: line.BranchCode || (header.Branch ? String(header.Branch) : ''),
-        udf: lineUdfsByLineNum[line.LineNum] || {},
-      })),
+        sacCode: line.SACCode != null ? String(line.SACCode) : '',
+        SACCode: line.SACCode != null ? String(line.SACCode) : '',
+        withoutQtyPosting: String(line.WithoutQtyPosting || '').toUpperCase() === 'Y' ? 'Y' : 'N',
+        enableSettingCost: String(line.EnableSettingCost || '').toUpperCase() === 'Y' ? 'Y' : 'N',
+        returnCost: line.ReturnCost != null ? String(line.ReturnCost) : '',
+        udf: lineUdfs,
+        line_udfs: lineUdfs,
+      });
+      }),
+      DocumentLines: lineRows,
       header_udfs: headerUdfs,
     },
   };

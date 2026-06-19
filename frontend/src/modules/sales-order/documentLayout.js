@@ -14,9 +14,12 @@ const normalizeToken = (value) =>
     .replace(/[^A-Z0-9]+/g, '');
 
 const normalizeUdfKey = (value) => {
-  const normalized = String(value || '').trim().toUpperCase();
+  let normalized = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_]+/g, '');
   if (!normalized) return '';
-  return normalized.startsWith('U_') ? normalized : `U_${normalized}`;
+  if (!normalized.startsWith('U_')) {
+    normalized = `U_${normalized.replace(/^_+/, '')}`;
+  }
+  return normalized;
 };
 
 const mapLayoutDataTypeToInputType = (dataType = '') => {
@@ -45,6 +48,8 @@ const SAP_FIELD_TO_INTERNAL_KEY = {
   PRICE: 'unitPrice',
   PRICEBEFDI: 'unitPrice',
   UNITPRICE: 'unitPrice',
+  U_PRICE: 'price',
+  U_TAXCODE: 'taxCodeRepeat',
   U_UNITPRICE: 'unitPriceUdf',
   U_UNIT_PRICE: 'unitPriceUdf',
   RATE: 'forRate',
@@ -58,6 +63,25 @@ const SAP_FIELD_TO_INTERNAL_KEY = {
   PACKQTY: 'noOfPackages',
   NUMOFPACKS: 'noOfPackages',
   VATSUM: 'taxAmount',
+  TAXAMOUNT: 'taxAmount',
+  TAXAMOUNTLC: 'taxAmount',
+  'TAXAMOUNT(LC)': 'taxAmount',
+  'TAX AMOUNT(LC)': 'taxAmount',
+  'TAX AMOUNT LC': 'taxAmount',
+  TAXAMOUNT_LC: 'taxAmount',
+  TAXAMOUNTLC_: 'taxAmount',
+  TAXAMOUNT_LC_: 'taxAmount',
+  TAXAMOUNTLC__:'taxAmount',
+  BINALLOC: 'binLocationAllocation',
+  BINALLOCATION: 'binLocationAllocation',
+  BINLOCATIONALLOCATION: 'binLocationAllocation',
+  COMMPERCENT: 'commPercent',
+  COMMPRCNT: 'commPercent',
+  COMMISSIONPERCENT: 'commPercent',
+  ASSESSABLEVALUE: 'assessableValue',
+  ASSESSABLEVALUEINR: 'assessableValue',
+  PRICEAFTERDISCOUNT: 'priceAfterDiscount',
+  ITEMCOST: 'itemCost',
   ACCTCODE: 'glAccount',
   DISCPRCNT: 'stdDiscount',
   DELIVRDQTY: 'deliveredQty',
@@ -71,6 +95,8 @@ const SAP_FIELD_TO_INTERNAL_KEY = {
   FREETXT: 'freeText',
   SACCODE: 'sacCode',
   SACENTRY: 'sacCode',
+  WITHOUTQTYPOSTING: 'withoutQtyPosting',
+  WITHOUTINVENTORYMOVEMENT: 'withoutQtyPosting',
   ENSETCOST: 'enableSettingCost',
   RETCOST: 'returnCost',
   AGRNO: 'blanketAgreementNo',
@@ -115,13 +141,19 @@ const SAP_FIELD_TO_INTERNAL_KEY = {
   U_GROSS_WT: 'U_GrossWt',
   U_TOTALPACKAGE: 'U_TotalPackage',
   U_TOTAL_PACKAGE: 'U_TotalPackage',
+  U_CONTAINERTYPE: 'U_ContainerType',
+  U_CONTAINER_TYPE: 'U_ContainerType',
   U_FORRATE: 'U_ForRate',
   U_FOR_RATE: 'U_ForRate',
   U_FOR_RATE_: 'U_ForRate',
-  U_FIXBROKBUYER: 'U_FIX_BROK_BUYER',
-  U_FIXBROCKSELLER: 'U_Fix_Brock_Seller',
-  U_FIXBROKSELLER: 'U_Fix_Brock_Seller',
+  U_FIXBROKBUYER: 'U_Fix_Brock_B',
+  U_FIX_BROK_BUYER: 'U_Fix_Brock_B',
+  U_FIXBROCKSELLER: 'U_Fix_Brock_S',
+  U_FIXBROKSELLER: 'U_Fix_Brock_S',
+  U_FIX_BROCK_SELLER: 'U_Fix_Brock_S',
+  U_FIX_BROK_SELLER: 'U_Fix_Brock_S',
   U_COSTSHEET: 'U_Cost_Sheet',
+  U_COST_SHEET: 'U_Cost_Sheet',
 };
 
 const LABEL_TO_INTERNAL_KEY = {
@@ -130,6 +162,7 @@ const LABEL_TO_INTERNAL_KEY = {
   ITEMDESCRIPTION: 'itemDescription',
   QUANTITY: 'quantity',
   UOMNAME: 'uomName',
+  UOMCODE: 'uomCode',
   HSN: 'hsnCode',
   UNITPRICE: 'unitPrice',
   TAXCODE: 'taxCode',
@@ -138,8 +171,12 @@ const LABEL_TO_INTERNAL_KEY = {
   PACKINGTYPE: 'U_PackingType',
   PACKING: 'U_PackingType',
   TOTALPACKAGE: 'U_TotalPackage',
+  TOTALPACKAGES: 'U_TotalPackage',
   DISCOUNT: 'stdDiscount',
   DISC: 'stdDiscount',
+  PRICE: 'price',
+  PRICEAFTERDISCOUNT: 'priceAfterDiscount',
+  ITEMCOST: 'itemCost',
   QTY: 'quantity',
   REQUIREDQTY: 'requiredQty',
   REQUIREDDATE: 'requiredDate',
@@ -148,25 +185,66 @@ const LABEL_TO_INTERNAL_KEY = {
   QTYTOSHIP: 'deliveredQty',
   ORDEREDQTY: 'openQty',
   WHSE: 'whse',
+  DISTRRULE: 'distRule',
+  DISTRIBUTIONRULE: 'distRule',
   GLACCOUNT: 'glAccount',
   WTAXLIABLE: 'wTaxLiable',
   TAXLIABLE: 'taxLiable',
+  BINLOCATIONALLOCATION: 'binLocationAllocation',
   WEIGHT: 'weight',
   NOOFPACKAGES: 'noOfPackages',
   BLANKETAGREEMENTNO: 'blanketAgreementNo',
+  WITHOUTQTYPOSTING: 'withoutQtyPosting',
+  WITHOUTINVENTORYMOVEMENT: 'withoutQtyPosting',
   ENABLESETTINGCOST: 'enableSettingCost',
   RETURNCOSTLC: 'returnCost',
   QTYINVENTORYUOM: 'qtyInventoryUom',
   CHANGEQTYINVUOMINDEPENDENTLY: 'changeQtyInvUomIndependently',
   UOMGROUP: 'uomGroup',
   COGSDISTRULE: 'cogsDistRule',
+  COUNTRYREGIONOFORIGIN: 'countryOfOrigin',
+  ASSESSABLEVALUE: 'assessableValue',
+  ASSESSABLEVALUEINR: 'assessableValue',
+  LOC: 'loc',
+  COSTSHEET: 'U_Cost_Sheet',
+  CONTAINERTYPE: 'U_ContainerType',
+  COMMPERCENT: 'commPercent',
+  COMM: 'commPercent',
   FORRATE: 'U_ForRate',
+  SELLERBROKERAGE: 'sellerBrokerage',
+  BUYERBROKERAGE: 'buyerBrokerage',
+  BUYERDELIVERY: 'buyerDelivery',
+  SELLERDELIVERY: 'sellerDelivery',
+  BUYERTERMSOFPAYMENT: 'buyerPaymentTerms',
+  SELLERTERMSOFPAYMENT: 'sellerPaymentTerms',
+  BUYERQUALITY: 'buyerQuality',
+  SELLERQUALITY: 'sellerQuality',
+  BUYERPRICE: 'buyerPrice',
+  SELLERPRICE: 'sellerPrice',
   SITEM: 'sellerItem',
   SQTY: 'sellerQty',
   BROKPERQTY: 'sellerBrokeragePerQty',
   BUYERSPECIALINSTRUCTION: 'buyerSpecialInstruction',
   SELLERSPECIALINSTRUCTION: 'sellerSpecialInstruction',
+  SELLERBROKERAGEAMTPER: 'sellerBrokerageAmtPer',
+  SELLERBROKERAGEINPERCENTAGE: 'sellerBrokeragePercent',
+  STCODE: 'stcode',
+  FIXBROKBUYER: 'U_Fix_Brock_B',
+  FIXBROCKSELLER: 'U_Fix_Brock_S',
+  FIXBROKSELLER: 'U_Fix_Brock_S',
 };
+
+// Map common label variants for Tax Amount to internal `taxAmount` key
+LABEL_TO_INTERNAL_KEY.TAXAMOUNT = 'taxAmount';
+LABEL_TO_INTERNAL_KEY.TAXAMOUNTLC = 'taxAmount';
+LABEL_TO_INTERNAL_KEY.TAXAMOUNT_LC = 'taxAmount';
+LABEL_TO_INTERNAL_KEY['TAXAMOUNT(LC)'] = 'taxAmount';
+LABEL_TO_INTERNAL_KEY['TAX AMOUNT(LC)'] = 'taxAmount';
+LABEL_TO_INTERNAL_KEY['TAX AMOUNT LC'] = 'taxAmount';
+
+// Ensure 'TAX CODE' label variants map exactly to `taxCode`
+LABEL_TO_INTERNAL_KEY.TAXCODE = 'taxCode';
+LABEL_TO_INTERNAL_KEY['TAX CODE'] = 'taxCode';
 
 const STANDARD_RENDERER_KEYS = new Set([
   SALES_ORDER_LINE_NUMBER_KEY,
@@ -182,9 +260,16 @@ const STANDARD_RENDERER_KEYS = new Set([
   'unitPrice',
   'unitPriceUdf',
   'taxCode',
+  'taxCodeRepeat',
   'wTaxLiable',
   'taxLiable',
   'totalLC',
+  'price',
+  'commPercent',
+  'assessableValue',
+  'priceAfterDiscount',
+  'itemCost',
+  'binLocationAllocation',
   'noOfPackages',
   'taxAmount',
   'glAccount',
@@ -199,6 +284,7 @@ const STANDARD_RENDERER_KEYS = new Set([
   'freeText',
   'sacCode',
   'enableSettingCost',
+  'withoutQtyPosting',
   'returnCost',
   'blanketAgreementNo',
   'qtyInventoryUom',
@@ -206,6 +292,33 @@ const STANDARD_RENDERER_KEYS = new Set([
   'uomGroup',
   'loc',
   'branch',
+  'specialRebate',
+  'commission',
+  'sellerBrokeragePerQty',
+  'sellerItem',
+  'sellerQty',
+  'sellerBrokerage',
+  'buyerBrokerage',
+  'buyerDelivery',
+  'sellerDelivery',
+  'buyerPaymentTerms',
+  'sellerPaymentTerms',
+  'buyerQuality',
+  'sellerQuality',
+  'buyerPrice',
+  'sellerPrice',
+  'buyerSpecialInstruction',
+  'sellerSpecialInstruction',
+  'sellerBrokerageAmtPer',
+  'sellerBrokeragePercent',
+  'stcode',
+  'U_Cost_Sheet',
+  'U_PackingType',
+  'U_ContainerType',
+  'U_GrossWt',
+  'U_TotalPackage',
+  'U_Fix_Brock_B',
+  'U_Fix_Brock_S',
 ]);
 
 const STANDARD_FIELD_OVERRIDES = {
@@ -220,7 +333,12 @@ const STANDARD_FIELD_OVERRIDES = {
   unitPrice: { type: 'number', minWidth: 110, numeric: true },
   unitPriceUdf: { type: 'number', minWidth: 110, numeric: true },
   taxCode: { type: 'text', minWidth: 115 },
+  taxCodeRepeat: { type: 'text', minWidth: 110, readOnly: true },
   totalLC: { type: 'number', minWidth: 115, readOnly: true, numeric: true },
+  price: { type: 'number', minWidth: 95, readOnly: true, numeric: true },
+  priceAfterDiscount: { type: 'number', minWidth: 130, readOnly: true, numeric: true },
+  itemCost: { type: 'number', minWidth: 110, readOnly: true, numeric: true },
+  binLocationAllocation: { type: 'text', minWidth: 160, readOnly: true },
   stdDiscount: { type: 'number', minWidth: 95, numeric: true },
   deliveredQty: { type: 'number', minWidth: 120, numeric: true },
   whse: { type: 'text', minWidth: 120 },
@@ -228,6 +346,15 @@ const STANDARD_FIELD_OVERRIDES = {
   cogsDistRule: { type: 'text', minWidth: 130 },
   openQty: { type: 'number', minWidth: 110, numeric: true },
   blanketAgreementNo: { type: 'text', minWidth: 150 },
+  withoutQtyPosting: { type: 'yesNo', minWidth: 145 },
+  enableSettingCost: { type: 'checkbox', minWidth: 140 },
+  returnCost: { type: 'number', minWidth: 125, numeric: true },
+  commPercent: { type: 'number', minWidth: 95, numeric: true },
+  assessableValue: { type: 'number', minWidth: 150, numeric: true },
+  U_GrossWt: { type: 'number', minWidth: 110, numeric: true },
+  U_TotalPackage: { type: 'number', minWidth: 130, numeric: true },
+  U_Fix_Brock_B: { type: 'number', minWidth: 135, numeric: true },
+  U_Fix_Brock_S: { type: 'number', minWidth: 140, numeric: true },
   documentCreated: { type: 'date', minWidth: 140, readOnly: true },
 };
 
@@ -280,10 +407,40 @@ const buildRowUdfMap = (fields = []) => {
 const findInternalKey = (layoutColumn, liveFieldMap) => {
   const fieldToken = normalizeToken(layoutColumn.fieldName || layoutColumn.columnUid);
   const labelToken = normalizeToken(layoutColumn.columnTitle);
+  const rawTitle = String(layoutColumn.columnTitle || '').trim();
+  const rawFieldName = String(layoutColumn.fieldName || layoutColumn.columnUid || '').trim();
+  const rawFieldNameUpper = rawFieldName.toUpperCase();
+
+  if (labelToken === 'TAXCODE' && rawTitle && !/\s/.test(rawTitle)) {
+    return 'taxCodeRepeat';
+  }
+
+  if (labelToken === 'PRICE' && rawTitle.toUpperCase() === 'PRICE') {
+    return 'price';
+  }
+
+  if (rawFieldNameUpper.startsWith('U_') && normalizeUdfKey(rawFieldName) === 'U_TAXCODE') {
+    return 'taxCodeRepeat';
+  }
+
+  if (rawFieldNameUpper.startsWith('U_') && normalizeUdfKey(rawFieldName) === 'U_PRICE') {
+    return 'price';
+  }
+
+  const labelMappedKey = LABEL_TO_INTERNAL_KEY[labelToken];
+  if (labelMappedKey && [
+    'DISTRRULE',
+    'DISTRIBUTIONRULE',
+    'PACKINGTYPE',
+    'PACKING',
+    'TAXCODE',
+  ].includes(labelToken)) {
+    return labelMappedKey;
+  }
 
   return (
     SAP_FIELD_TO_INTERNAL_KEY[fieldToken]
-    || LABEL_TO_INTERNAL_KEY[labelToken]
+    || labelMappedKey
     || liveFieldMap.get(fieldToken)?.key
     || liveFieldMap.get(labelToken)?.key
     || ''
@@ -304,7 +461,7 @@ const buildSyntheticColumn = (layoutColumn, key, extras = {}) => ({
   width: Number(layoutColumn.width) || extras.minWidth || 125,
   order: Number(layoutColumn.columnOrder) || extras.order || 0,
   columnOrder: Number(layoutColumn.columnOrder) || extras.order || 0,
-  sapControlled: true,
+  sapControlled: layoutColumn.source !== 'fallback',
   importedLayout: true,
   source: layoutColumn.source || 'imported-layout',
   type: extras.type || mapLayoutDataTypeToInputType(layoutColumn.dataType),
@@ -387,6 +544,21 @@ export const buildSalesOrderMatrixColumnsFromLayout = ({
       });
     }
 
+    if (udfField && layoutIsUdf) {
+      return buildSyntheticColumn(layoutColumn, udfField.key, {
+        label: layoutColumn.columnTitle || udfField.label,
+        readOnly: Boolean(udfField.readOnly) || layoutColumn.editable === false,
+        minWidth: Number(layoutColumn.width) || (udfField.type === 'textarea' ? 180 : 125),
+        order: Number(layoutColumn.columnOrder) || index + 1,
+        type: udfField.type,
+        isUdf: true,
+        lookupSource: udfField.lookupSource,
+        lookupTable: udfField.lookupTable,
+        options: udfField.options,
+        field: udfField,
+      });
+    }
+
     if (liveField && STANDARD_RENDERER_KEYS.has(internalKey)) {
       const standardOverride = STANDARD_FIELD_OVERRIDES[internalKey] || {};
       return {
@@ -404,7 +576,7 @@ export const buildSalesOrderMatrixColumnsFromLayout = ({
         width: Number(layoutColumn.width) || standardOverride.minWidth || liveField.minWidth || 125,
         order: Number(layoutColumn.columnOrder) || index + 1,
         columnOrder: Number(layoutColumn.columnOrder) || index + 1,
-        sapControlled: true,
+        sapControlled: layoutColumn.source !== 'fallback' && liveField.sapControlled !== false,
         importedLayout: true,
         source: layoutColumn.source || 'imported-layout',
         isUdf: false,
@@ -416,20 +588,6 @@ export const buildSalesOrderMatrixColumnsFromLayout = ({
         ...(STANDARD_FIELD_OVERRIDES[internalKey] || {}),
         label: layoutColumn.columnTitle || internalKey,
         order: Number(layoutColumn.columnOrder) || index + 1,
-      });
-    }
-
-    if (udfField && layoutIsUdf) {
-      return buildSyntheticColumn(layoutColumn, udfField.key, {
-        label: layoutColumn.columnTitle || udfField.label,
-        readOnly: Boolean(udfField.readOnly) || layoutColumn.editable === false,
-        minWidth: Number(layoutColumn.width) || (udfField.type === 'textarea' ? 180 : 125),
-        order: Number(layoutColumn.columnOrder) || index + 1,
-        type: udfField.type,
-        isUdf: true,
-        lookupSource: udfField.lookupSource,
-        lookupTable: udfField.lookupTable,
-        options: udfField.options,
       });
     }
 
@@ -448,7 +606,7 @@ export const buildSalesOrderMatrixColumnsFromLayout = ({
         width: Number(layoutColumn.width) || liveField.minWidth || 125,
         order: Number(layoutColumn.columnOrder) || index + 1,
         columnOrder: Number(layoutColumn.columnOrder) || index + 1,
-        sapControlled: true,
+        sapControlled: layoutColumn.source !== 'fallback' && liveField.sapControlled !== false,
         importedLayout: true,
         source: layoutColumn.source || 'imported-layout',
       };
@@ -478,10 +636,25 @@ export const buildSalesOrderMatrixColumnsFromLayout = ({
       });
     }
 
-    return buildSyntheticColumn(layoutColumn, fieldName || `layout_${index + 1}`, {
-      order: index + 1,
-    });
+    // Skip unknown layout fields that cannot be rendered by the UI.
+    return null;
   });
 
-  return withUniqueLayoutKeys(mappedColumns.filter(Boolean));
+  // Ensure Tax Code appears before Tax Amount to match SAP B1 default ordering
+  const filtered = mappedColumns.filter(Boolean);
+  try {
+    const taxCodeIdx = filtered.findIndex((c) => (c.key || '').toString().toLowerCase() === 'taxcode' || (c.fieldName || '').toString().toLowerCase().includes('taxcode'));
+    const taxAmountIdx = filtered.findIndex((c) => (c.key || '').toString().toLowerCase() === 'taxamount' || (c.fieldName || '').toString().toLowerCase().includes('taxamount') || (c.label || '').toString().toLowerCase().includes('tax amount'));
+    if (taxCodeIdx >= 0 && taxAmountIdx >= 0 && taxAmountIdx < taxCodeIdx) {
+      // swap their order values so taxCode renders earlier
+      const tmpOrder = Number(filtered[taxCodeIdx].order || filtered[taxCodeIdx].columnOrder || taxCodeIdx + 1);
+      filtered[taxCodeIdx].order = Number(filtered[taxAmountIdx].order || filtered[taxAmountIdx].columnOrder || taxAmountIdx + 1);
+      filtered[taxAmountIdx].order = tmpOrder;
+    }
+  } catch (e) {
+    // swallow any errors — ordering is best-effort
+    // console.debug('layout ordering adjust failed', e);
+  }
+
+  return withUniqueLayoutKeys(filtered);
 };

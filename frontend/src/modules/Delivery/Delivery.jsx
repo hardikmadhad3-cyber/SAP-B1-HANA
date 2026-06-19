@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import './styles/Delivery.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
@@ -53,6 +53,7 @@ import {
   DELIVERY_LAYOUT_DOCUMENT_TYPE,
   buildSalesOrderMatrixColumnsFromLayout,
 } from '../sales-order/documentLayout';
+import { hydrateWorkbookDocumentLine } from '../../utils/workbookLineHydration';
 import {
   fetchDeliveryReferenceData,
   fetchDeliveryByDocEntry,
@@ -116,6 +117,46 @@ const mergeUdfValues = (...sources) =>
     return acc;
   }, {});
 
+const pickLineUdfValues = (source = {}) =>
+  Object.entries(source || {}).reduce((acc, [key, value]) => {
+    if (String(key || '').toUpperCase().startsWith('U_')) {
+      acc[key] = value ?? '';
+    }
+    return acc;
+  }, {});
+
+const normalizeMirrorToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]/g, '');
+
+const getFieldMirrorTokens = (fieldOrValues) => {
+  const values = Array.isArray(fieldOrValues)
+    ? fieldOrValues
+    : [
+        fieldOrValues?.key ?? fieldOrValues,
+        fieldOrValues?.sapField,
+        fieldOrValues?.aliasId,
+        fieldOrValues?.label,
+        fieldOrValues?.description,
+        fieldOrValues?.Descr,
+      ];
+
+  return values.map(normalizeMirrorToken).filter(Boolean);
+};
+
+const findMatchingRowUdfKeys = (sourceFieldOrValues, rowUdfDefinitions = []) => {
+  const sourceTokens = new Set(getFieldMirrorTokens(sourceFieldOrValues));
+  if (!sourceTokens.size) return [];
+
+  return (rowUdfDefinitions || [])
+    .filter((field) => getFieldMirrorTokens(field).some((token) => sourceTokens.has(token)))
+    .map((field) => field.key)
+    .filter(Boolean);
+};
+
 const unwrapSalesOrderDocument = (data = {}) =>
   data.sales_order || data.salesOrder || data.document || data;
 
@@ -149,7 +190,16 @@ const mergeSalesOrderCopyUdfs = (copyData = {}, detailData = {}) => {
 
     return {
       ...line,
-      udf: mergeUdfValues(detailLine.udf, detailLine.line_udfs, detailLine.lineUdfs, line.udf, line.line_udfs, line.lineUdfs),
+      udf: mergeUdfValues(
+        pickLineUdfValues(detailLine),
+        detailLine.udf,
+        detailLine.line_udfs,
+        detailLine.lineUdfs,
+        pickLineUdfValues(line),
+        line.udf,
+        line.line_udfs,
+        line.lineUdfs
+      ),
     };
   });
 
@@ -300,7 +350,7 @@ const FALLBACK_SHIPPING = [
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 
-const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
+const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS, headerUdfsParam = {}) => ({
   itemNo: '', itemDescription: '',
   sellerQuality: '', buyerQuality: '',
   hsnCode: '', quantity: '', unitPrice: '',
@@ -322,7 +372,20 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   hasBatchesAvailable: false, // Track if batches are available for this item-warehouse combo
   inventoryUOM: '', // Base UoM from item master
   uomFactor: 1, // Conversion factor: Document UoM to Base UoM
-  udf: createUdfState(rowUdfDefinitions),
+  // Merge provided header UDFs into line UDF defaults so header values auto-fill matching row UDFs
+  udf: mergeUdfValues(createUdfState(rowUdfDefinitions), headerUdfsParam || {}),
+});
+
+const clearBaseDocumentLink = (line = {}) => ({
+  ...line,
+  baseEntry: null,
+  baseType: null,
+  baseLine: null,
+  BaseEntry: null,
+  BaseType: null,
+  BaseLine: null,
+  lineNum: undefined,
+  LineNum: undefined,
 });
 
 const INIT_HEADER = {
@@ -345,6 +408,134 @@ const createInitialHeader = (settings = readGeneralSettings()) => ({
   deliveryDate: today(),
   documentDate: today(),
 });
+
+const compactColumnToken = (value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+const DELIVERY_ACTUAL_MATRIX_COLUMNS = BASE_MATRIX_COLUMNS.filter((column) => column.key !== 'batch');
+const DELIVERY_ACTUAL_MATRIX_KEY_SET = new Set(DELIVERY_ACTUAL_MATRIX_COLUMNS.map((column) => column.key));
+
+const DELIVERY_COLUMN_EXTRA_TOKENS = {
+  itemNo: ['ITEMCODE'],
+  itemDescription: ['DSCRIPTION', 'DESCRIPTION'],
+  uomName: ['UNITMSR', 'UOMNAME'],
+  hsnCode: ['HSNCODE', 'HSNENTRY'],
+  unitPrice: ['UNITPRICE', 'PRICEBEFDI'],
+  taxCode: ['VATGROUP'],
+  totalLC: ['LINETOTAL', 'GTOTAL', 'TOTAL'],
+  whse: ['WHSCODE', 'WAREHOUSE'],
+  binLocationAllocation: ['BINALLOC', 'BINALLOCATION', 'BINLOCATIONALLOCATION'],
+  priceAfterDiscount: ['PRICEAFTERDISCOUNT'],
+  itemCost: ['ITEMCOST'],
+  taxCodeRepeat: ['UTAXCODE'],
+  price: ['UPRICE'],
+  sellerBrokerage: ['UBROKSELLER'],
+  buyerBrokerage: ['UBROKBUYER'],
+  buyerDelivery: ['UBUYERDELIVERY'],
+  sellerDelivery: ['USELLERDELIVERY'],
+  buyerPaymentTerms: ['UBUYERPAYMENTTERMS'],
+  sellerPaymentTerms: ['USELLERPAYMENTTERM', 'USELLERPAYMENTTERMS'],
+  buyerQuality: ['UBUYERQUALITY'],
+  sellerQuality: ['USELLERQUALITY'],
+  buyerPrice: ['UBUYERPRICE'],
+  sellerPrice: ['USELLERPRICE'],
+  buyerSpecialInstruction: ['UBUYERSPINS'],
+  sellerSpecialInstruction: ['USELLERSPINS'],
+  sellerBrokerageAmtPer: ['USELBROKAP'],
+  sellerBrokeragePercent: ['USELLERBROKPER'],
+  stcode: ['USELLTCODE'],
+  sellerItem: ['USITEM'],
+  sellerQty: ['USQTY'],
+  specialRebate: ['USPLRBT'],
+  commission: ['UCOMPRC', 'COMMISSION'],
+  sellerBrokeragePerQty: ['USBROKPERQTY'],
+  U_Fix_Brock_B: ['UFIXBROKBUYER', 'UFIXBROCKB', 'UFIXBROKB'],
+  U_Fix_Brock_S: ['UFIXBROCKSELLER', 'UFIXBROKSELLER', 'UFIXBROCKS', 'UFIXBROKS'],
+};
+
+const buildDeliveryColumnTokenMap = () => {
+  const map = new Map();
+  const add = (token, key) => {
+    const normalized = compactColumnToken(token);
+    if (normalized && !map.has(normalized)) map.set(normalized, key);
+  };
+
+  DELIVERY_ACTUAL_MATRIX_COLUMNS.forEach((column) => {
+    [column.key, column.valueKey, column.rendererKey, column.label].forEach((token) => add(token, column.key));
+  });
+  Object.entries(DELIVERY_COLUMN_EXTRA_TOKENS).forEach(([key, tokens]) => {
+    tokens.forEach((token) => add(token, key));
+  });
+
+  return map;
+};
+
+const DELIVERY_COLUMN_KEY_BY_TOKEN = buildDeliveryColumnTokenMap();
+
+const getDeliveryColumnIdentity = (column = {}) => {
+  if (DELIVERY_ACTUAL_MATRIX_KEY_SET.has(column.key)) return column.key;
+
+  const rawLabel = String(column.label || column.columnTitle || '').trim();
+  const rawField = String(column.sapField || column.fieldName || column.layoutFieldName || '').trim();
+  const labelToken = compactColumnToken(rawLabel);
+  const fieldToken = compactColumnToken(rawField);
+
+  if (labelToken === 'TAXCODE') return rawLabel.includes(' ') ? 'taxCode' : 'taxCodeRepeat';
+  if (fieldToken === 'UTAXCODE') return 'taxCodeRepeat';
+  if (fieldToken === 'TAXCODE') return 'taxCode';
+  if (labelToken === 'UNITPRICE') return 'unitPrice';
+  if (labelToken === 'PRICE') return 'price';
+  if (fieldToken === 'UPRICE') return 'price';
+
+  const tokens = [
+    column.key,
+    column.valueKey,
+    column.rendererKey,
+    column.sapField,
+    column.fieldName,
+    column.layoutFieldName,
+    column.label,
+  ].map(compactColumnToken).filter(Boolean);
+
+  return tokens.map((token) => DELIVERY_COLUMN_KEY_BY_TOKEN.get(token)).find(Boolean) || '';
+};
+
+const ensureDeliveryMatrixColumns = (columns = []) => {
+  const sourceByKey = new Map();
+  (Array.isArray(columns) ? columns : []).filter(Boolean).forEach((column) => {
+    const key = getDeliveryColumnIdentity(column);
+    if (key && !sourceByKey.has(key)) sourceByKey.set(key, column);
+  });
+
+  return DELIVERY_ACTUAL_MATRIX_COLUMNS.map((baseColumn, index) => {
+    const sourceColumn = sourceByKey.get(baseColumn.key) || {};
+    const minWidth = Number(sourceColumn.minWidth || sourceColumn.width || baseColumn.minWidth || 125);
+
+    return {
+      ...baseColumn,
+      ...sourceColumn,
+      key: baseColumn.key,
+      valueKey: baseColumn.isUdf
+        ? (baseColumn.valueKey || sourceColumn.valueKey || sourceColumn.key || baseColumn.key)
+        : (sourceColumn.valueKey || baseColumn.valueKey || sourceColumn.key || baseColumn.key),
+      rendererKey: baseColumn.rendererKey || sourceColumn.rendererKey || sourceColumn.valueKey || baseColumn.key,
+      label: baseColumn.label,
+      visible: sourceColumn.visible !== false && baseColumn.visible !== false,
+      active: sourceColumn.active !== false,
+      readOnly: sourceColumn.readOnly ?? baseColumn.readOnly,
+      isUdf: Boolean(baseColumn.isUdf || sourceColumn.isUdf),
+      field: sourceColumn.field || baseColumn.field,
+      type: sourceColumn.type || baseColumn.type,
+      options: sourceColumn.options || baseColumn.options,
+      minWidth,
+      width: minWidth,
+      order: index + 1,
+      columnOrder: index + 1,
+      sapControlled: true,
+      importedLayout: Boolean(sourceColumn.importedLayout || sourceColumn.sapControlled),
+      source: sourceColumn.source || 'delivery-sap-order',
+    };
+  });
+};
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
   id: i + 1, targetPath: '', fileName: '', attachmentDate: '',
@@ -542,17 +733,23 @@ function Delivery() {
           }))
       : [];
     const batchManaged = line?.batchManaged != null ? !!line.batchManaged : isBatchManaged(item);
+    const workbookLine = hydrateWorkbookDocumentLine({
+      line,
+      createLine,
+      rowUdfDefinitions,
+      normalizeUdfState,
+      items: refData.items,
+    });
 
-    return {
-      ...createLine(rowUdfDefinitions),
-      ...line,
+    const hydratedLine = {
+      ...workbookLine,
       itemNo: itemCode,
       itemDescription: line?.itemDescription || line?.ItemDescription || line?.Dscription || item?.ItemName || '',
       hsnCode: line?.hsnCode || line?.HSNCode || item?.HSNCode || item?.SWW || item?.U_HSNCode || '',
       quantity: String(line?.quantity ?? line?.Quantity ?? ''),
       openQty: String(line?.openQty ?? line?.OpenQuantity ?? line?.OpenQty ?? ''),
       unitPrice: String(line?.unitPrice ?? line?.UnitPrice ?? line?.Price ?? ''),
-      uomName: line?.uomName || line?.UoMName || line?.unitMsr || rawUomCode,
+      uomName: line?.uomName || line?.UoMName || line?.UomName || line?.UnitMsr || line?.unitMsr || item?.SalesUnit || rawUomCode,
       price: String(line?.price ?? line?.Price ?? line?.unitPrice ?? line?.UnitPrice ?? ''),
       priceAfterDiscount: String(line?.priceAfterDiscount ?? line?.PriceAfterDiscount ?? ''),
       itemCost: String(line?.itemCost ?? line?.ItemCost ?? item?.ItemCost ?? item?.AvgPrice ?? ''),
@@ -584,7 +781,7 @@ function Delivery() {
       brokerageNumber: line?.brokerageNumber || line?.BrokerageNumber || '',
       uomCode: rawUomCode,
       stdDiscount: String(line?.stdDiscount ?? line?.DiscountPercent ?? line?.DiscPrcnt ?? ''),
-      stcode: line?.stcode || line?.STCode || line?.TaxCode || '',
+      stcode: line?.stcode || line?.STCode || '',
       taxCode: line?.taxCode || line?.TaxCode || '',
       total: String(line?.total ?? line?.LineTotal ?? ''),
       taxAmount: String(line?.taxAmount ?? line?.LineTaxAmount ?? line?.VatSum ?? ''),
@@ -606,8 +803,15 @@ function Delivery() {
       batchManaged,
       batches,
       hasBatchesAvailable: batchManaged ? true : false,
-      udf: normalizeUdfState(rowUdfDefinitions, line?.udf || {}),
+      udf: normalizeUdfState(
+        rowUdfDefinitions,
+        mergeUdfValues(pickLineUdfValues(line), workbookLine.udf, line?.line_udfs, line?.lineUdfs, line?.udf)
+      ),
     };
+    hydratedLine.taxCodeManuallyOverridden = Boolean(
+      line?.taxCodeManuallyOverridden ?? String(hydratedLine.taxCode || '').trim()
+    );
+    return hydratedLine;
   }, [refData.items, rowUdfDefinitions]);
 
   // Continue in next part...
@@ -661,12 +865,14 @@ function Delivery() {
           const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
             ? refDataRes.data.line_field_metadata.matrix_columns
             : BASE_MATRIX_COLUMNS;
-          const nextMatrixColumns = buildSalesOrderMatrixColumnsFromLayout({
+          let nextMatrixColumns = ensureDeliveryMatrixColumns(buildSalesOrderMatrixColumnsFromLayout({
             layoutColumns: layoutRes?.data?.columns || [],
             liveMatrixColumns,
             rowUdfFields: nextRowUdfs,
             includeLineNumber: false,
-          });
+          }));
+          // Hide wTaxLiable column on Delivery page unless explicitly required by layout
+          nextMatrixColumns = nextMatrixColumns.filter((c) => (c.key || c.valueKey || '').toString() !== 'wTaxLiable');
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
           setMatrixColumnDefinitions(nextMatrixColumns);
@@ -1035,14 +1241,15 @@ function Delivery() {
           ...createLine(rowUdfDefinitions),
           ...normalizedLine,
           taxCode: normalizedLine.taxCode || l.taxCode || l.TaxCode || l.VatGroup || '',
-          stcode: normalizedLine.stcode || l.stcode || l.TaxCode || l.VatGroup || '',
+          taxCodeManuallyOverridden: Boolean(String(normalizedLine.taxCode || l.taxCode || l.TaxCode || l.VatGroup || '').trim()),
+          stcode: normalizedLine.stcode || l.stcode || '',
           branch: normalizedLine.branch || copiedLocation.branch,
           loc: normalizedLine.loc || copiedLocation.branch,
           whse: normalizedLine.whse || l.whse || l.WarehouseCode || l.WhsCode || copiedLocation.warehouse,
           baseEntry,
           baseType,
           baseLine: l.lineNum ?? l.LineNum ?? normalizedLine.baseLine ?? idx,
-          udf: normalizeUdfState(rowUdfDefinitions, mergeUdfValues(l.line_udfs, l.lineUdfs, l.udf)),
+          udf: normalizeUdfState(rowUdfDefinitions, mergeUdfValues(pickLineUdfValues(l), l.line_udfs, l.lineUdfs, l.udf)),
         };
       }));
     } else {
@@ -1061,30 +1268,67 @@ function Delivery() {
   }, [location.pathname, location.state?.copyFrom, navigate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived / computed ────────────────────────────────────────────────────
-  const vendorContacts = refData.contacts.filter(c => String(c.CardCode || '') === String(header.vendor || ''));
-  const contactOptions = header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
-    ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
-    : vendorContacts;
-  const vendorPayToAddresses = refData.pay_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
-  const vendorShipToAddresses = refData.ship_to_addresses?.filter(a => String(a.CardCode || '') === String(header.vendor || '')) || [];
-  const vendorBillToAddresses = refData.bill_to_addresses?.filter(a => String(a.CardCode || '') === String(header.vendor || '')) || [];
-  const vendorEffectiveShipToAddresses = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
-  const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
-  const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
+  const vendorCode = String(header.vendor || '');
+  const vendorContacts = useMemo(
+    () => refData.contacts.filter(c => String(c.CardCode || '') === vendorCode),
+    [refData.contacts, vendorCode]
+  );
+  const contactOptions = useMemo(
+    () => header.contactPerson && !vendorContacts.some(c => String(c.CntctCode || '') === String(header.contactPerson || ''))
+      ? [{ CardCode: header.vendor, CntctCode: header.contactPerson, Name: header.contactPerson }, ...vendorContacts]
+      : vendorContacts,
+    [header.contactPerson, header.vendor, vendorContacts]
+  );
+  const vendorPayToAddresses = useMemo(
+    () => refData.pay_to_addresses.filter(a => String(a.CardCode || '') === vendorCode),
+    [refData.pay_to_addresses, vendorCode]
+  );
+  const vendorShipToAddresses = useMemo(
+    () => (refData.ship_to_addresses || []).filter(a => String(a.CardCode || '') === vendorCode),
+    [refData.ship_to_addresses, vendorCode]
+  );
+  const vendorBillToAddresses = useMemo(
+    () => (refData.bill_to_addresses || []).filter(a => String(a.CardCode || '') === vendorCode),
+    [refData.bill_to_addresses, vendorCode]
+  );
+  const vendorEffectiveShipToAddresses = useMemo(
+    () => vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses,
+    [vendorShipToAddresses, vendorPayToAddresses]
+  );
+  const vendorEffectiveBillToAddresses = useMemo(
+    () => vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses,
+    [vendorBillToAddresses, vendorPayToAddresses]
+  );
+  const selectedBranch = useMemo(
+    () => refData.branches.find(b => String(b.BPLId || '') === String(header.branch || '')),
+    [refData.branches, header.branch]
+  );
   const hasSelectedBranchOption =
     !normalizeSubmitBranch(header.branch) ||
     refData.branches.some(b => String(b.BPLId || '') === String(header.branch || ''));
   const firstLineWhse = String(lines[0]?.whse || '').trim();
-  const selectedWhseAddr = refData.warehouse_addresses.find(w => String(w.WhsCode || '') === firstLineWhse);
-  const defaultShipTo = fmtAddr(refData.company_address);
-  const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
+  const selectedWhseAddr = useMemo(
+    () => refData.warehouse_addresses.find(w => String(w.WhsCode || '') === firstLineWhse),
+    [refData.warehouse_addresses, firstLineWhse]
+  );
+  const defaultShipTo = useMemo(() => fmtAddr(refData.company_address), [refData.company_address]);
+  const uomGroupMap = useMemo(
+    () => (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {}),
+    [refData.uom_groups]
+  );
 
   const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveSalesEmployees = refData.sales_employees.length
     ? refData.sales_employees
     : [{ SlpCode: -1, SlpName: 'No Sales Employee / Buyer', Active: 'Y' }];
-  const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES;
-  const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
+  const effectiveWarehouses = useMemo(
+    () => refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES,
+    [refData.warehouses]
+  );
+  const branchFilteredWarehouses = useMemo(
+    () => filterWarehousesByBranch(effectiveWarehouses, header.branch),
+    [effectiveWarehouses, header.branch]
+  );
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
   const payTermOpts = refData.payment_terms.length
     ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
@@ -1253,13 +1497,16 @@ function Delivery() {
   useEffect(() => {
     if (!header.vendor) return;
     setHeader(prev => {
-      const existing = vendorPayToAddresses.find(a => String(a.Address || '') === String(prev.payToCode || ''));
+      const currentPayToCode = String(prev.payToCode || '').trim();
+      const existing = vendorPayToAddresses.find(a => String(a.Address || '').trim() === currentPayToCode);
       if (existing) return prev;
       const def = vendorPayToAddresses[0];
       if (!def) return prev;
+      const defaultPayToCode = String(def.Address || '').trim();
       const fmt = fmtAddr(def);
-      if (prev.payToCode === def.Address && prev.payTo === fmt) return prev;
-      return { ...prev, payToCode: def.Address || '', payTo: fmt };
+      if (!defaultPayToCode && !fmt) return prev;
+      if (currentPayToCode === defaultPayToCode && String(prev.payTo || '') === fmt) return prev;
+      return { ...prev, payToCode: defaultPayToCode, payTo: fmt };
     });
   }, [header.vendor, vendorPayToAddresses]);
 
@@ -1660,18 +1907,27 @@ function Delivery() {
           
           setLines(prev => prev.map((line, idx) => {
             if (idx !== i) return line;
-            const next = { ...line, itemNo: value, taxAmount: '' };
+            const next = clearBaseDocumentLink({ ...line, itemNo: value, taxAmount: '', taxCodeManuallyOverridden: false });
             
             // Reset batches
             next.batches = [];
             next.batchManaged = isBatchManaged(item);
+            next.hasBatchesAvailable = false;
             
             // Step 1: Set Item Details
             next.itemDescription = item.ItemName || next.itemDescription;
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
-            next.uomName = next.uomCode;
+            next.uomName = String(item.SalesUnit || item.InventoryUOM || next.uomCode || '').trim();
             next.itemCost = item.ItemCost != null ? String(item.ItemCost) : (item.AvgPrice != null ? String(item.AvgPrice) : next.itemCost || '');
             next.price = next.unitPrice || next.price || '';
+
+            if (next.batchManaged && next.whse) {
+              checkBatchAvailability(next.itemNo, next.whse).then(hasBatches => {
+                setLines(prevLines => prevLines.map((l, lIdx) =>
+                  lIdx === i ? { ...l, hasBatchesAvailable: hasBatches } : l
+                ));
+              });
+            }
             
             // Step 2: Set HSN Code from API response (OCHP.ChapterID via JOIN)
             next.hsnCode = hsnData.hsnCode || hsnData.hsn_sww || '';
@@ -1726,7 +1982,7 @@ function Delivery() {
         // Fallback to basic item selection without HSN
         setLines(prev => prev.map((line, idx) => {
           if (idx !== i) return line;
-          const next = { ...line, itemNo: value, taxAmount: '' };
+          const next = clearBaseDocumentLink({ ...line, itemNo: value, taxAmount: '', taxCodeManuallyOverridden: false });
           const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
           next.batches = [];
           next.batchManaged = isBatchManaged(item);
@@ -1744,7 +2000,7 @@ function Delivery() {
           if (item) {
             next.itemDescription = item.ItemName || next.itemDescription;
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
-            next.uomName = next.uomCode;
+            next.uomName = String(item.SalesUnit || item.InventoryUOM || next.uomCode || '').trim();
             next.itemCost = item.ItemCost != null ? String(item.ItemCost) : (item.AvgPrice != null ? String(item.AvgPrice) : next.itemCost || '');
             next.price = next.unitPrice || next.price || '';
             next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
@@ -1808,6 +2064,9 @@ function Delivery() {
               lIdx === i ? { ...l, uomFactor: 1 } : l
             ));
           });
+      }
+      if (name === 'taxCode') {
+        next.taxCodeManuallyOverridden = Boolean(String(next.taxCode || '').trim());
       }
       
       next.total = fmtDec(calcLineTotal(next), numDec.total);
@@ -1892,7 +2151,7 @@ function Delivery() {
     });
     
     setLines(p => [...p, { 
-      ...createLine(rowUdfDefinitions), 
+      ...createLine(rowUdfDefinitions, headerUdfs), 
       branch: header.branch || '', 
       loc: header.branch || '',
       whse: header.warehouse || ''
@@ -1908,10 +2167,29 @@ function Delivery() {
   const handleHeaderUdfChange = (k, v) => {
     markDirty();
     setHeaderUdfs(p => ({ ...p, [k]: v }));
+    // Auto-fill existing lines' UDFs when header UDF value is provided and line UDF is empty
+    if (hasUdfValue(v)) {
+      const headerField = headerUdfDefinitions.find((field) => field.key === k) || { key: k };
+      const targetKeys = new Set(findMatchingRowUdfKeys(headerField, rowUdfDefinitions));
+      if (rowUdfDefinitions.some((field) => field.key === k)) targetKeys.add(k);
+
+      setLines(prev => prev.map((l) => {
+        const current = l.udf || {};
+        const updates = {};
+        targetKeys.forEach((targetKey) => {
+          if (!hasUdfValue(current[targetKey])) updates[targetKey] = v;
+        });
+        return Object.keys(updates).length ? { ...l, udf: mergeUdfValues(current, updates) } : l;
+      }));
+    }
   };
   const handleRowUdfChange = (i, k, v) => {
     markDirty();
-    setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
+    setLines(p => p.map((l, idx) => {
+      if (idx !== i) return l;
+      const mirroredUdf = String(k || '').startsWith('U_') ? { [k]: v } : {};
+      return { ...l, ...mirroredUdf, udf: { ...(l.udf || {}), [k]: v } };
+    }));
   };
   const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...(p[g] || {}), [k]: { ...((p[g] || {})[k] || {}), [prop]: val } } }));
   const toggleHeaderUdfs = () => {
@@ -2484,7 +2762,7 @@ function Delivery() {
       
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
-          const updatedLine = {
+          const updatedLine = clearBaseDocumentLink({
             ...hydrateDocumentLineFromItem(line, mergedItem, {
               side: 'sales',
               hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
@@ -2494,7 +2772,7 @@ function Delivery() {
               formatTotal: (value) => fmtDec(value, numDec.total),
             }),
             uomCode: displayUoM, // Use the validated UoM for display
-            uomName: displayUoM,
+            uomName: mergedItem.SalesUnit || displayUoM || mergedItem.InventoryUOM || '',
             itemCost: mergedItem.ItemCost != null ? String(mergedItem.ItemCost) : (mergedItem.AvgPrice != null ? String(mergedItem.AvgPrice) : ''),
             price: line.unitPrice || '',
             batches: [],
@@ -2503,7 +2781,7 @@ function Delivery() {
             inventoryUOM: inventoryUOM,
             uomFactor: uomFactor,
             taxAmount: '',
-          };
+          });
           
           console.log('📝 [handleItemSelect] Updated line:', {
             itemNo: updatedLine.itemNo,
@@ -2574,7 +2852,7 @@ function Delivery() {
       
       setLines(prev => prev.map((line, idx) => {
         if (idx === lineIndex) {
-          const updatedLine = {
+          const updatedLine = clearBaseDocumentLink({
             ...hydrateDocumentLineFromItem(line, mergedItem, {
               side: 'sales',
               hsnCode: mergedItem.HSNCode || '',
@@ -2584,7 +2862,7 @@ function Delivery() {
               formatTotal: (value) => fmtDec(value, numDec.total),
             }),
             uomCode: selectedUoM,
-            uomName: selectedUoM,
+            uomName: mergedItem.SalesUnit || selectedUoM || mergedItem.InventoryUOM || '',
             itemCost: mergedItem.ItemCost != null ? String(mergedItem.ItemCost) : (mergedItem.AvgPrice != null ? String(mergedItem.AvgPrice) : ''),
             price: line.unitPrice || '',
             batches: [],
@@ -2593,7 +2871,7 @@ function Delivery() {
             inventoryUOM: inventoryUOM,
             uomFactor: uomFactor,
             taxAmount: '',
-          };
+          });
           updatedLine.total = fmtDec(calcLineTotal(updatedLine), numDec.total);
           
           return updatedLine;
@@ -2662,6 +2940,8 @@ function Delivery() {
     console.log('🔄 [Delivery] header.branch type:', typeof header.branch);
     console.log('🔄 [Delivery] Current lines count:', lines.length);
     
+    if (!header.branch || !lines.some(l => String(l.branch || '') !== String(header.branch) || String(l.loc || '') !== String(header.branch))) return;
+
     if (header.branch) {
       console.log('🔄 [Delivery] Syncing branch to all lines:', header.branch);
       setLines(prev => {
@@ -2677,7 +2957,7 @@ function Delivery() {
     } else {
       console.log('⚠️ [Delivery] Branch is empty, skipping sync');
     }
-  }, [header.branch]);
+  }, [header.branch, lines]);
   
   // Initial sync: Set branch on existing lines when branch is first loaded
   useEffect(() => {
@@ -2695,16 +2975,6 @@ function Delivery() {
     }
   }, [refData.branches]); // Trigger when branches are loaded
 
-  // Debug: Log when lines change
-  useEffect(() => {
-    console.log('📝 [Delivery] Lines state changed:', lines.map(l => ({ itemNo: l.itemNo, branch: l.branch, loc: l.loc, whse: l.whse })));
-  }, [lines]);
-  
-  // Debug: Log header.branch value
-  useEffect(() => {
-    console.log('🏢 [Delivery] Header branch value:', header.branch);
-  }, [header.branch]);
-
   useEffect(() => {
     if (isHydratingDocumentRef.current) return;
     if (!header.branch || !refData.warehouses.length) return;
@@ -2713,22 +2983,40 @@ function Delivery() {
       branchFilteredWarehouses.map(w => String(w.WhsCode || ''))
     );
 
-    setLines(prev => prev.map(line => (
-      line.whse && !allowedWarehouseCodes.has(String(line.whse))
-        ? { ...line, whse: '', hasBatchesAvailable: false, batches: [] }
-        : line
-    )));
+    setLines(prev => {
+      let changed = false;
+      const nextLines = prev.map(line => {
+        if (!line.whse || allowedWarehouseCodes.has(String(line.whse))) {
+          return line;
+        }
+        changed = true;
+        return { ...line, whse: '', hasBatchesAvailable: false, batches: [] };
+      });
+      return changed ? nextLines : prev;
+    });
   }, [branchFilteredWarehouses, header.branch, refData.warehouses.length]);
 
   // Sync warehouse to all lines when header warehouse changes and refresh batch availability
   useEffect(() => {
     if (isHydratingDocumentRef.current) return;
     if (!header.warehouse) {
-      setLines(prev => prev.map(l => ({ ...l, whse: '', hasBatchesAvailable: false, batches: [] })));
+      setLines(prev => {
+        let changed = false;
+        const nextLines = prev.map(l => {
+          if (!l.whse && !l.hasBatchesAvailable && (!Array.isArray(l.batches) || l.batches.length === 0)) {
+            return l;
+          }
+          changed = true;
+          return { ...l, whse: '', hasBatchesAvailable: false, batches: [] };
+        });
+        return changed ? nextLines : prev;
+      });
       return;
     }
 
-    setLines(prev => prev.map((line, index) => {
+    setLines(prev => {
+      let changed = false;
+      const nextLines = prev.map((line, index) => {
       const next = { ...line, whse: header.warehouse };
 
       if (next.itemNo && next.batchManaged) {
@@ -2745,8 +3033,18 @@ function Delivery() {
         next.batches = [];
       }
 
+      if (
+        line.whse === next.whse &&
+        line.hasBatchesAvailable === next.hasBatchesAvailable &&
+        JSON.stringify(line.batches || []) === JSON.stringify(next.batches || [])
+      ) {
+        return line;
+      }
+      changed = true;
       return next;
-    }));
+      });
+      return changed ? nextLines : prev;
+    });
   }, [header.warehouse]);
 
   // ── Recalculate Tax Codes on State/Address Changes ────────────────────────
@@ -3145,13 +3443,14 @@ function Delivery() {
         baseType: line.baseType ?? line.BaseType ?? baseType,
         baseLine: line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? normalizedLine.baseLine ?? idx,
         taxCode: normalizedLine.taxCode || line.taxCode || line.TaxCode || line.VatGroup || '',
-        stcode: normalizedLine.stcode || line.stcode || line.TaxCode || line.VatGroup || '',
+        taxCodeManuallyOverridden: Boolean(String(normalizedLine.taxCode || line.taxCode || line.TaxCode || line.VatGroup || '').trim()),
+        stcode: normalizedLine.stcode || line.stcode || '',
         branch: normalizedLine.branch || copiedLocation.branch,
         loc: normalizedLine.loc || copiedLocation.branch,
         whse: normalizedLine.whse || line.whse || line.WarehouseCode || line.WhsCode || copiedLocation.warehouse,
         udf: normalizeUdfState(
           rowUdfDefinitions,
-          mergeUdfValues(line.line_udfs, line.lineUdfs, line.udf)
+          mergeUdfValues(pickLineUdfValues(line), line.line_udfs, line.lineUdfs, line.udf)
         ),
       };
     });
@@ -3312,6 +3611,16 @@ function Delivery() {
     if (e.form || Object.values(e.header).some(Boolean) || Object.values(e.lines).some(le => Object.values(le || {}).some(Boolean))) {
       setValErrors(e);
       setPageState(p => ({ ...p, error: e.form || 'Please correct the highlighted fields.', success: '' }));
+      const firstBatchErrorLineIndex = Object.entries(e.lines || {}).find(([, lineErrors]) =>
+        Boolean(lineErrors?.batches)
+      )?.[0];
+      if (firstBatchErrorLineIndex !== undefined) {
+        const lineIndex = Number(firstBatchErrorLineIndex);
+        if (Number.isInteger(lineIndex) && lineIndex >= 0) {
+          setActiveTab('Contents');
+          window.setTimeout(() => openBatchModal(lineIndex), 0);
+        }
+      }
       return;
     }
     setValErrors({ header: {}, lines: {}, form: '' });
@@ -3324,6 +3633,8 @@ function Delivery() {
       );
       const prep = { 
         ...header, 
+        customerCode: header.customerCode || header.vendor,
+        customer: header.customer || header.vendor,
         deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
         placeOfSupply: header.placeOfSupply,
         branch: submitBranch,
@@ -3443,6 +3754,8 @@ function Delivery() {
           documentLabel="Delivery"
           docEntry={currentDocEntry}
           docNumber={header.docNo}
+          series={header.series}
+          cardCode={header.vendor}
           disabled={pageState.posting}
           classPrefix="del"
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}

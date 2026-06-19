@@ -137,6 +137,7 @@ export const buildDuplicateLines = (lines = [], createLine, rowUdfDefinitions) =
     if (Object.prototype.hasOwnProperty.call(duplicate, 'DeliveredQty')) duplicate.DeliveredQty = '';
     if (Object.prototype.hasOwnProperty.call(duplicate, 'batches')) duplicate.batches = [];
     if (Object.prototype.hasOwnProperty.call(duplicate, 'batchAllocations')) duplicate.batchAllocations = [];
+    duplicate.taxCodeManuallyOverridden = Boolean(duplicate.taxCode || duplicate.TaxCode || duplicate.VatGroup);
 
     return duplicate;
   });

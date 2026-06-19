@@ -24,7 +24,17 @@ const verifyToken = (token) => jwt.verify(token, env.jwtSecret);
 const authenticateAccessToken = (req, _res, next) => {
   try {
     const token = getBearerToken(req);
-    if (!token) throw unauthorized();
+    if (!token) {
+      // Log a concise debug message to help track down unauthenticated callers
+      const origin = req.headers.origin || req.headers.referer || '';
+      console.warn('🔒 [auth] Missing Authorization header', {
+        method: req.method,
+        path: req.path,
+        origin: String(origin).slice(0, 200),
+        ip: req.ip,
+      });
+      throw unauthorized();
+    }
 
     const payload = verifyToken(token);
     if (payload.tokenType !== 'access') {

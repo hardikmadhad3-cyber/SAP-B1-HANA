@@ -1,3 +1,5 @@
+import { DELIVERY_WORKBOOK_COLUMNS } from './workbookMatrixColumns';
+
 const FORM_SETTINGS_STORAGE_KEY = 'sapb1.delivery.formSettings.v3';
 
 const normalizeUdfKey = (value) => {
@@ -286,67 +288,7 @@ const ROW_UDF_DEFINITIONS = [
   { key: 'U_PackingStatus', label: 'Packing Status', type: 'select', defaultValue: 'Pending', options: ['Pending', 'Packed', 'Shipped'] },
 ];
 
-const BASE_MATRIX_COLUMNS = [
-  { key: 'itemNo', label: 'Item No.', visible: true },
-  { key: 'itemDescription', label: 'Item Description', visible: true },
-  { key: 'quantity', label: 'Quantity', visible: true },
-  { key: 'uomName', label: 'UoM Name', visible: true },
-  { key: 'hsnCode', label: 'HSN', visible: true },
-  { key: 'unitPrice', label: 'Unit Price', visible: true },
-  { key: 'taxCode', label: 'Tax Code', visible: true },
-  { key: 'U_PackingType', label: 'Packing-Type', visible: true },
-  { key: 'U_GrossWt', label: 'GrossWt', visible: true },
-  { key: 'U_TotalPackage', label: 'Total-Package', visible: true },
-  { key: 'totalLC', label: 'Total (LC)', visible: true },
-  { key: 'whse', label: 'Whse', visible: true },
-  { key: 'binLocationAllocation', label: 'Bin Location Allocation', visible: true },
-  { key: 'priceAfterDiscount', label: 'Price after Discount', visible: true },
-  { key: 'itemCost', label: 'Item Cost', visible: true },
-  { key: 'taxCodeRepeat', label: 'TaxCode', visible: true },
-  { key: 'price', label: 'Price', visible: true },
-  { key: 'sellerBrokerage', label: 'Seller Brokerage', visible: true },
-  { key: 'buyerBrokerage', label: 'Buyer Brokerage', visible: true },
-  { key: 'buyerDelivery', label: 'Buyer - Delivery', visible: true },
-  { key: 'sellerDelivery', label: 'Seller - Delivery', visible: true },
-  { key: 'buyerPaymentTerms', label: 'Buyer - Terms of payment', visible: true },
-  { key: 'sellerPaymentTerms', label: 'Seller - Terms of Payment', visible: true },
-  { key: 'buyerQuality', label: 'Buyer - Quality', visible: true },
-  { key: 'sellerQuality', label: 'Seller - Quality', visible: true },
-  { key: 'buyerPrice', label: 'Buyer - Price', visible: true },
-  { key: 'sellerPrice', label: 'Seller - Price', visible: true },
-  { key: 'buyerSpecialInstruction', label: 'Buyer - Special Instruction', visible: true },
-  { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', visible: true },
-  { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', visible: true },
-  { key: 'sellerBrokeragePercent', label: 'Seller Brokerage in Percentage', visible: true },
-  { key: 'stcode', label: 'STCODE', visible: true },
-  { key: 'sellerItem', label: 'S_Item', visible: true },
-  { key: 'sellerQty', label: 'S_Qty', visible: true },
-  { key: 'specialRebate', label: 'Special Rebate', visible: true },
-  { key: 'commission', label: 'Commision', visible: true },
-  { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', visible: true },
-  { key: 'U_Fix_Brock_B', label: 'FIX Brok BUYER', visible: true },
-  { key: 'U_Fix_Brock_S', label: 'Fix Brock Seller', visible: true },
-  { key: 'stdDiscount', label: 'Discount %', visible: false },
-  { key: 'taxAmount', label: 'Tax Amount (LC)', visible: false },
-  { key: 'deliveredQty', label: 'Qty to Ship', visible: false },
-  { key: 'openQty', label: 'Ordered Qty', visible: false },
-  { key: 'countryOfOrigin', label: 'Country/Region of Origin', visible: false },
-  { key: 'loc', label: 'Loc.', visible: false },
-  { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', visible: false },
-  { key: 'sellerBillDiscount', label: 'Seller Bill Discount', visible: false },
-  { key: 'sacCode', label: 'SAC', visible: false },
-  { key: 'freightPurchase', label: 'Freight Purchase', visible: false },
-  { key: 'freightSales', label: 'Freight Sales', visible: false },
-  { key: 'freightProvider', label: 'Freight Provider', visible: false },
-  { key: 'freightProviderName', label: 'Freight Provider Name', visible: false },
-  { key: 'documentCreated', label: 'Document Created', visible: false },
-  { key: 'brokerageNumber', label: 'Brokerage Number', visible: false },
-  { key: 'uomCode', label: 'UoM', visible: false },
-  { key: 'distRule', label: 'Distr. Rule', visible: false },
-  { key: 'branch', label: 'Branch', visible: false },
-  { key: 'unitPriceRepeat', label: 'Unit Price', visible: false },
-  { key: 'batch', label: 'Batch', visible: true },
-];
+const BASE_MATRIX_COLUMNS = DELIVERY_WORKBOOK_COLUMNS;
 
 const getOptionValue = (option) => (typeof option === 'string' ? option : option?.value ?? '');
 
@@ -386,9 +328,22 @@ const createUdfState = (definitions) =>
     return acc;
   }, {});
 
-const normalizeUdfState = (definitions, values = {}) =>
-  definitions.reduce((acc, field) => {
-    const currentValue = values[field.key];
+const normalizeUdfLookupKey = (value) =>
+  String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
+
+const getUdfValueByKey = (values = {}, key = '') => {
+  if (Object.prototype.hasOwnProperty.call(values, key)) return values[key];
+
+  const token = normalizeUdfLookupKey(key);
+  if (!token) return undefined;
+
+  const match = Object.entries(values || {}).find(([valueKey]) => normalizeUdfLookupKey(valueKey) === token);
+  return match ? match[1] : undefined;
+};
+
+const normalizeUdfState = (definitions, values = {}) => {
+  const normalized = definitions.reduce((acc, field) => {
+    const currentValue = getUdfValueByKey(values, field.key);
     const shouldApplyDefault =
       currentValue === undefined ||
       currentValue === null ||
@@ -397,6 +352,15 @@ const normalizeUdfState = (definitions, values = {}) =>
     acc[field.key] = shouldApplyDefault ? getDefaultUdfValue(field) : currentValue;
     return acc;
   }, {});
+
+  Object.entries(values || {}).forEach(([key, value]) => {
+    if (String(key || '').startsWith('U_') && !Object.prototype.hasOwnProperty.call(normalized, key)) {
+      normalized[key] = value == null ? '' : value;
+    }
+  });
+
+  return normalized;
+};
 
 const buildVisibilitySettings = (definitions) =>
   definitions.reduce((acc, field) => {

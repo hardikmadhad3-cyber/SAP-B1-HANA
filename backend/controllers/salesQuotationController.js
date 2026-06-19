@@ -1,13 +1,19 @@
 const salesQuotationService = require('../services/salesQuotationService');
 
-const getErrorPayload = (error, fallbackMessage) => ({
-  detail:
-    error.response?.data?.error?.message?.value ||
+const getErrorPayload = (error, fallbackMessage) => {
+  // Extract detailed SAP error message if available
+  const sapErrorDetail = error.response?.data?.error?.message?.value ||
     error.response?.data?.error?.message ||
-    error.response?.data ||
-    error.message ||
-    fallbackMessage,
-});
+    error.response?.data;
+
+  return {
+    detail: sapErrorDetail || error.message || fallbackMessage,
+    // Include error code if available
+    ...(error.response?.status && { statusCode: error.response.status }),
+    // Include error type for better client handling
+    errorType: sapErrorDetail ? 'SAP_ERROR' : 'INTERNAL_ERROR',
+  };
+};
 
 const parseTopParam = (value) => {
   if (value == null || value === '') return undefined;
@@ -90,18 +96,50 @@ const getSalesQuotation = async (req, res) => {
 
 const submitSalesQuotation = async (req, res) => {
   try {
+    // Validate required fields
+    if (!req.body || !req.body.header) {
+      return res.status(400).json({
+        detail: 'Invalid request: missing header data',
+        errorType: 'VALIDATION_ERROR',
+      });
+    }
+
+    if (!req.body.lines || !Array.isArray(req.body.lines) || req.body.lines.length === 0) {
+      return res.status(400).json({
+        detail: 'Invalid request: at least one line item is required',
+        errorType: 'VALIDATION_ERROR',
+      });
+    }
+
     const result = await salesQuotationService.submitSalesQuotation(req.body);
     res.json(result);
   } catch (error) {
+    console.error('[SalesQuotationController] submitSalesQuotation error:', error.message);
     res.status(500).json(getErrorPayload(error, 'Failed to submit sales quotation.'));
   }
 };
 
 const updateSalesQuotation = async (req, res) => {
   try {
+    // Validate required fields
+    if (!req.body || !req.body.header) {
+      return res.status(400).json({
+        detail: 'Invalid request: missing header data',
+        errorType: 'VALIDATION_ERROR',
+      });
+    }
+
+    if (!req.params.docEntry) {
+      return res.status(400).json({
+        detail: 'Invalid request: missing document entry',
+        errorType: 'VALIDATION_ERROR',
+      });
+    }
+
     const result = await salesQuotationService.updateSalesQuotation(req.params.docEntry, req.body);
     res.json(result);
   } catch (error) {
+    console.error('[SalesQuotationController] updateSalesQuotation error:', error.message);
     res.status(500).json(getErrorPayload(error, 'Failed to update sales quotation.'));
   }
 };

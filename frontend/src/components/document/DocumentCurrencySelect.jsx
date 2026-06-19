@@ -32,20 +32,28 @@ function DocumentCurrencySelect({
   onHeaderChange,
   businessPartners = [],
   disabled = false,
+  localCurrency = LOCAL_CURRENCY,
+  systemCurrency = '',
 }) {
   const mode = header.currencyMode || 'BP';
   const bpCurrency = findBpCurrency(businessPartners, header.vendor);
   const currentCurrency = String(header.currency || '').trim();
+  const resolvedLocalCurrency = String(localCurrency || '').trim() || LOCAL_CURRENCY;
+  const resolvedSystemCurrency = String(systemCurrency || '').trim() || resolvedLocalCurrency;
   const displayCurrency = mode === 'BP'
-    ? (bpCurrency || currentCurrency || LOCAL_CURRENCY)
-    : (currentCurrency || LOCAL_CURRENCY);
+    ? (bpCurrency || currentCurrency || resolvedLocalCurrency)
+    : mode === 'SYSTEM'
+      ? (currentCurrency || resolvedSystemCurrency)
+      : (currentCurrency || resolvedLocalCurrency);
   const showCurrencyCode = mode === 'BP';
 
   const handleModeChange = (event) => {
     const nextMode = event.target.value;
     const nextCurrency = nextMode === 'BP'
-      ? (bpCurrency || currentCurrency || LOCAL_CURRENCY)
-      : LOCAL_CURRENCY;
+      ? (bpCurrency || currentCurrency || resolvedLocalCurrency)
+      : nextMode === 'SYSTEM'
+        ? resolvedSystemCurrency
+        : resolvedLocalCurrency;
 
     emitHeaderChange(onHeaderChange, 'currencyMode', nextMode);
     emitHeaderChange(onHeaderChange, 'currency', nextCurrency);

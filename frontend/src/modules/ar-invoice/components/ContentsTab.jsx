@@ -2,68 +2,9 @@ import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
 import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
+import { AR_INVOICE_WORKBOOK_COLUMNS } from '../../../config/workbookMatrixColumns';
 
-const SAP_CONTENT_COLUMNS = [
-  { key: 'itemNo', label: 'Item No.', minWidth: 160 },
-  { key: 'itemDescription', label: 'Item Description', minWidth: 240 },
-  { key: 'quantity', label: 'Quantity', minWidth: 90, numeric: true },
-  { key: 'unitPrice', label: 'Unit Price', minWidth: 105, numeric: true },
-  { key: 'stdDiscount', label: 'Discount %', minWidth: 95, numeric: true },
-  { key: 'taxCode', label: 'Tax Code', minWidth: 120 },
-  { key: 'wTaxLiable', label: 'WTax Liable', minWidth: 100, type: 'yesNo' },
-  { key: 'totalLC', label: 'Total (LC)', minWidth: 110, numeric: true },
-  { key: 'whse', label: 'Whse', minWidth: 90 },
-  { key: 'glAccount', label: 'G/L Account', minWidth: 135 },
-  { key: 'distRule', label: 'Distr. Rule', minWidth: 105 },
-  { key: 'taxLiable', label: 'Tax Liable', minWidth: 95, type: 'yesNo' },
-  { key: 'weight', label: 'Weight', minWidth: 95, numeric: true },
-  { key: 'taxAmount', label: 'Tax Amount (LC)', minWidth: 125, readOnly: true },
-  { key: 'uomCode', label: 'UoM Code', minWidth: 105 },
-  { key: 'uomName', label: 'UoM Name', minWidth: 120, readOnly: true },
-  { key: 'cogsDistRule', label: 'COGS Distr. Rule', minWidth: 135 },
-  { key: 'countryOfOrigin', label: 'Country/Region of Origin', minWidth: 185 },
-  { key: 'loc', label: 'Loc.', minWidth: 115, readOnly: true },
-  { key: 'qtyInventoryUom', label: 'Qty(Inventory UoM)', minWidth: 140 },
-  { key: 'changeQtyInvUomIndependently', label: 'Change Qty (Inv. UoM) Independently', minWidth: 230, type: 'checkbox' },
-  { key: 'uomGroup', label: 'UoM Group', minWidth: 125, readOnly: true },
-  { key: 'blanketAgreementNo', label: 'Blanket Agreement No.', minWidth: 170 },
-  { key: 'saudaNodeRef', label: 'Sauda Node Ref', minWidth: 135 },
-  { key: 'assessableValue', label: 'Assessable Value', minWidth: 135 },
-  { key: 'bedRate', label: 'BED Rate', minWidth: 95 },
-  { key: 'bedAmount', label: 'BED Amount', minWidth: 110 },
-  { key: 'rg23dNo', label: 'RG23DNo', minWidth: 105 },
-  { key: 'specialRebate', label: 'Special Rebate', minWidth: 120 },
-  { key: 'commission', label: 'Commision', minWidth: 110 },
-  { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', minWidth: 110 },
-  { key: 'sellerItem', label: 'S_Item', minWidth: 115 },
-  { key: 'sellerUnitPrice', label: 'Unit Price', minWidth: 105 },
-  { key: 'sellerQty', label: 'S_Qty', minWidth: 95 },
-  { key: 'sellerBrokerage', label: 'Seller Brokerage', minWidth: 135 },
-  { key: 'buyerBrokerage', label: 'Buyer Brokerage', minWidth: 130 },
-  { key: 'buyerDelivery', label: 'Buyer - Delivery', minWidth: 135 },
-  { key: 'sellerDelivery', label: 'Seller - Delivery', minWidth: 135 },
-  { key: 'buyerQuality', label: 'Buyer - Quality', minWidth: 135 },
-  { key: 'sellerQuality', label: 'Seller - Quality', minWidth: 135 },
-  { key: 'buyerPrice', label: 'Buyer - Price', minWidth: 120 },
-  { key: 'sellerPrice', label: 'Seller - Price', minWidth: 120 },
-  { key: 'buyerSpecialInstruction', label: 'Buyer - Special Instruction', minWidth: 190 },
-  { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', minWidth: 190 },
-  { key: 'hsnCode', label: 'HSN', minWidth: 115 },
-  { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', minWidth: 175 },
-  { key: 'sellerBrokeragePercent', label: 'Seller Brokerage in Percentage', minWidth: 190 },
-  { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', minWidth: 145 },
-  { key: 'sellerBillDiscount', label: 'Seller Bill Discount', minWidth: 145 },
-  { key: 'sacCode', label: 'SAC', minWidth: 95 },
-  { key: 'stcode', label: 'STCODE', minWidth: 110 },
-  { key: 'buyerPaymentTerms', label: 'Buyer - Terms of payment', minWidth: 180 },
-  { key: 'sellerPaymentTerms', label: 'Seller - Terms of Payment', minWidth: 180 },
-  { key: 'freightPurchase', label: 'Freight Purchase', minWidth: 135 },
-  { key: 'freightSales', label: 'Freight Sales', minWidth: 120 },
-  { key: 'freightProvider', label: 'Freight Provider', minWidth: 135 },
-  { key: 'freightProviderName', label: 'Freight Provider Name', minWidth: 170 },
-  { key: 'documentCreated', label: 'Document Created', minWidth: 140, readOnly: true },
-  { key: 'brokerageNumber', label: 'Brokerage Number', minWidth: 145 },
-];
+const SAP_CONTENT_COLUMNS = AR_INVOICE_WORKBOOK_COLUMNS;
 
 const INDEX_COL_WIDTH = 42;
 const ACTION_COL_WIDTH = 48;
@@ -77,21 +18,22 @@ const SUPPRESSED_ROW_UDFS = new Set([
   'APINVLINENUM',
 ]);
 const CUSTOM_UDF_COLUMN_KEYS = new Set([
-  'blanketAgreementNo',
-  'saudaNodeRef',
-  'bedRate',
-  'bedAmount',
-  'rg23dNo',
-  'specialRebate',
-  'commission',
-  'sellerBrokeragePerQty',
-  'sellerItem',
-  'sellerUnitPrice',
-  'sellerQty',
+  'U_Cost_Sheet',
+  'U_PackingType',
+  'U_ContainerType',
+  'U_GrossWt',
+  'U_TotalPackage',
+  'U_Fix_Brock_B',
+  'U_Fix_Brock_S',
+  'taxCodeRepeat',
+  'price',
   'sellerBrokerage',
   'buyerBrokerage',
   'buyerDelivery',
   'sellerDelivery',
+  'buyerPaymentTerms',
+  'sellerPaymentTerms',
+  'sellerPaymentTermsRepeat',
   'buyerQuality',
   'sellerQuality',
   'buyerPrice',
@@ -100,18 +42,13 @@ const CUSTOM_UDF_COLUMN_KEYS = new Set([
   'sellerSpecialInstruction',
   'sellerBrokerageAmtPer',
   'sellerBrokeragePercent',
-  'buyerBillDiscount',
-  'sellerBillDiscount',
   'stcode',
-  'buyerPaymentTerms',
-  'sellerPaymentTerms',
-  'freightPurchase',
-  'freightSales',
-  'freightProvider',
-  'freightProviderName',
-  'brokerageNumber',
+  'sellerItem',
+  'sellerQty',
+  'specialRebate',
+  'commission',
+  'sellerBrokeragePerQty',
 ]);
-
 const pickerButtonStyle = {
   padding: '0 6px',
   fontSize: 11,
@@ -135,6 +72,11 @@ const isCheckedValue = (value) =>
 
 const normalizeYesNoValue = (value) => (isCheckedValue(value) ? 'Y' : 'N');
 
+const normalizeSelectOptions = (options = []) =>
+  (Array.isArray(options) ? options : [])
+    .map((option) => (typeof option === 'object' ? option : { value: option, label: option }))
+    .filter((option) => option && option.value !== undefined && option.value !== null);
+
 const parseNumber = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -157,6 +99,21 @@ const getUdfIdentities = (field = {}) => [
 const normalizeUdfKey = (value) =>
   String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
 
+const getUdfMatchTokens = (value) => {
+  const identity = normalizeIdentity(value);
+  const udfKey = normalizeUdfKey(value).toLowerCase();
+  return [identity, udfKey].filter(Boolean);
+};
+
+const getFieldMatchTokens = (field = {}) => [
+  field.key,
+  field.sapField,
+  field.aliasId,
+  field.label,
+  field.description,
+  field.Descr,
+].flatMap(getUdfMatchTokens);
+
 const isSuppressedUdf = (field = {}) => [
   field.key,
   field.sapField,
@@ -171,31 +128,53 @@ const isSellerItemField = (field = {}) => [
   field.label,
 ].map(normalizeUdfKey).some((key) => key === 'SITEM');
 
+const isUdfBackedColumn = (column = {}) => {
+  const explicitFieldName = column.fieldName || column.layoutFieldName || column.sapField || column.valueKey;
+  const normalizedKey = String(column.key || '').toUpperCase();
+  const normalizedFieldName = String(explicitFieldName || '').toUpperCase();
+  return Boolean(column.isUdf)
+    || CUSTOM_UDF_COLUMN_KEYS.has(column.key)
+    || normalizedKey.startsWith('U_')
+    || normalizedFieldName.startsWith('U_');
+};
+
 const getBoundUdf = (column, rowUdfFields) => {
-  if (!CUSTOM_UDF_COLUMN_KEYS.has(column.key)) return null;
-  const identities = [column.key, column.label].map(normalizeIdentity);
+  if (!isUdfBackedColumn(column)) return null;
+
+  const exactTokens = [
+    column.key,
+    column.valueKey,
+    column.rendererKey,
+    column.fieldName,
+    column.layoutFieldName,
+    column.sapField,
+  ].flatMap(getUdfMatchTokens);
+  const exactMatch = rowUdfFields.find((field) => {
+    const fieldTokens = getFieldMatchTokens(field);
+    return exactTokens.some((token) => fieldTokens.includes(token));
+  });
+  if (exactMatch) return exactMatch;
+
+  const fuzzyIdentities = [column.key, column.label]
+    .map(normalizeIdentity)
+    .filter((identity) => identity.length > 4 && !['price', 'taxcode'].includes(identity));
+
   return rowUdfFields.find((field) => {
     const fieldIdentities = getUdfIdentities(field);
-    return identities.some((identity) => fieldIdentities.some((fieldIdentity) => (
-      fieldIdentity === identity ||
-      (identity.length > 3 && fieldIdentity.includes(identity)) ||
-      (fieldIdentity.length > 3 && identity.includes(fieldIdentity))
+    return fuzzyIdentities.some((identity) => fieldIdentities.some((fieldIdentity) => (
+      fieldIdentity.includes(identity) || identity.includes(fieldIdentity)
     )));
   });
 };
 
-const getKnownColumnForUdf = (field, standardColumnByKey) => {
-  const fieldIdentities = getUdfIdentities(field);
+const getBoundUdfValue = (line = {}, boundUdf = null) => {
+  if (!boundUdf) return '';
+  const udfValues = line.udf || {};
+  if (Object.prototype.hasOwnProperty.call(udfValues, boundUdf.key)) return udfValues[boundUdf.key] ?? '';
 
-  return SAP_CONTENT_COLUMNS.find((column) => {
-    if (!CUSTOM_UDF_COLUMN_KEYS.has(column.key)) return false;
-    const columnIdentities = [column.key, column.label].map(normalizeIdentity);
-    return columnIdentities.some((identity) => fieldIdentities.some((fieldIdentity) => (
-      fieldIdentity === identity ||
-      (identity.length > 3 && fieldIdentity.includes(identity)) ||
-      (fieldIdentity.length > 3 && identity.includes(fieldIdentity))
-    )));
-  }) || standardColumnByKey.get(field.key) || null;
+  const fieldTokens = getUdfIdentities(boundUdf);
+  const match = Object.entries(udfValues).find(([key]) => fieldTokens.includes(normalizeIdentity(key)));
+  return match ? (match[1] ?? '') : '';
 };
 
 const getNumericOrder = (value, fallback) => {
@@ -203,22 +182,25 @@ const getNumericOrder = (value, fallback) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
-const getLineValue = (line, column, boundUdf) => (
-  boundUdf
-    ? line.udf?.[boundUdf.key] ?? ''
-    : column.key === 'itemNo'
-      ? line.itemNo || line.ItemCode || line.itemCode || ''
-    : column.key === 'itemDescription'
-      ? line.itemDescription || line.ItemDescription || line.Dscription || line.description || line.itemName || ''
-      : line[column.key] ?? ''
-);
+const getLineValue = (line, column, boundUdf) => {
+  const valueKey = column.valueKey || column.rendererKey || column.key;
+  if (boundUdf) return getBoundUdfValue(line, boundUdf);
+  if (valueKey === 'itemNo') return line.itemNo || line.ItemCode || line.itemCode || '';
+  if (valueKey === 'itemDescription') {
+    return line.itemDescription || line.ItemDescription || line.Dscription || line.description || line.itemName || '';
+  }
+  return line[valueKey] ?? line[column.key] ?? '';
+};
 
 const getLineChangeHandler = (i, column, boundUdf, onLineChange, onRowUdfChange) => (event) => {
   if (boundUdf) {
     onRowUdfChange && onRowUdfChange(i, boundUdf.key, event.target.value);
     return;
   }
-  onLineChange(i, event);
+  const valueKey = column.valueKey || column.rendererKey || column.key;
+  onLineChange(i, valueKey === column.key
+    ? event
+    : { target: { name: valueKey, value: event.target.value, checked: event.target.checked } });
 };
 
 export default function ContentsTab({
@@ -245,8 +227,10 @@ export default function ContentsTab({
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
   const effectiveRowUdfFields = (rowUdfFields || []).filter((field) => !isSuppressedUdf(field));
   const matrixFieldByKey = new Map((matrixFields || []).map((field) => [field.key, field]));
+  const isVisibleBySetting = (field = {}, setting = {}) => (
+    field.visible === false ? false : setting?.visible !== undefined ? setting.visible !== false : true
+  );
   const hasLiveMatrixFields = matrixFieldByKey.size > 0;
-  const usesMetadataDrivenMatrix = hasLiveMatrixFields && (matrixFields || []).some((field) => field?.sapControlled || field?.importedLayout);
   const standardColumnByKey = new Map(SAP_CONTENT_COLUMNS.map((column) => [column.key, column]));
   const sourceColumns = hasLiveMatrixFields
     ? matrixFields
@@ -259,44 +243,28 @@ export default function ContentsTab({
   const boundColumns = sourceColumns.map((column) => ({
     ...column,
     ...(matrixFieldByKey.get(column.key) || {}),
-    boundUdf: getBoundUdf(column, effectiveRowUdfFields),
-  })).filter((column) => {
-    if (CUSTOM_UDF_COLUMN_KEYS.has(column.key)) return Boolean(column.boundUdf);
+  })).map((column) => {
+    const boundUdf = getBoundUdf(column, effectiveRowUdfFields);
+    return {
+      ...column,
+      boundUdf,
+    };
+  }).filter((column) => {
+    if (column.boundUdf) return true;
     return !hasLiveMatrixFields || matrixFieldByKey.has(column.key);
   });
-  const boundUdfKeys = new Set(boundColumns.map((column) => column.boundUdf?.key).filter(Boolean));
-  const extraUdfColumns = usesMetadataDrivenMatrix ? [] : rowUdfFields
-    .filter((field) => !isSuppressedUdf(field))
-    .filter((field) => !boundUdfKeys.has(field.key))
-    .map((field, index) => {
-      const knownColumn = getKnownColumnForUdf(field, standardColumnByKey);
-      const fallbackOrder = knownColumn
-        ? DEFAULT_COLUMN_ORDER.get(knownColumn.key)
-        : SAP_CONTENT_COLUMNS.length + index + 1;
-
-      return {
-        ...(knownColumn || {}),
-        key: knownColumn?.key || field.key,
-        label: knownColumn?.label || field.label || field.key,
-        minWidth: field.minWidth || knownColumn?.minWidth || (field.type === 'textarea' ? 180 : 125),
-        order: getNumericOrder(field.order, fallbackOrder),
-        boundUdf: field,
-        isExtraUdf: true,
-      };
-    });
-  const mergedColumns = [...boundColumns, ...extraUdfColumns]
+  const mergedColumns = boundColumns
     .map((column) => ({
       ...column,
       order: getNumericOrder(column.order, DEFAULT_COLUMN_ORDER.get(column.key) || 99999),
     }))
     .sort((left, right) => left.order - right.order);
   const matrixCols = mergedColumns.filter((column) => {
-    if (column.sapControlled || column.importedLayout) return column.visible !== false;
-    if (column.boundUdf || column.isExtraUdf) {
-      return formSettings.rowUdfs?.[column.boundUdf?.key]?.visible !== false;
+    if (column.boundUdf) {
+      return isVisibleBySetting(column, formSettings.rowUdfs?.[column.boundUdf?.key] || {});
     }
 
-    return formSettings.matrixColumns?.[column.key]?.visible !== false;
+    return isVisibleBySetting(column, formSettings.matrixColumns?.[column.key] || {});
   });
   const tableMinWidth = INDEX_COL_WIDTH + ACTION_COL_WIDTH + matrixCols.reduce((total, col) => total + col.minWidth, 0);
 
@@ -409,18 +377,19 @@ export default function ContentsTab({
       );
     }
 
-    if (fieldType === 'select' && Array.isArray(boundUdf?.options) && boundUdf.options.length > 0) {
+    const selectOptions = normalizeSelectOptions(boundUdf?.options || column.options);
+    if (fieldType === 'select' && selectOptions.length > 0) {
       return (
         <td key={column.key}>
           <select
             className="del-grid__input"
+            name={column.key}
             value={value}
             disabled={disabled}
             onChange={handleChange}
           >
             <option value=""></option>
-            {boundUdf.options.map((option) => {
-              const normalized = typeof option === 'object' ? option : { value: option, label: option };
+            {selectOptions.map((normalized) => {
               return (
                 <option key={normalized.value} value={normalized.value}>
                   {normalized.label}
@@ -459,8 +428,9 @@ export default function ContentsTab({
 
   const renderCell = (column, line, i, uomOpts, lineTotals) => {
     const errors = valErrors.lines[i] || {};
+    if (column.boundUdf) return renderGenericInput(column, line, i, { error: errors[column.key] });
 
-    switch (column.key) {
+    switch (column.rendererKey || column.valueKey || column.key) {
       case 'itemNo':
         return (
           <td key="itemNo">
@@ -502,7 +472,7 @@ export default function ContentsTab({
         return renderGenericInput(column, line, i, { error: errors[column.key] });
       case 'taxCode':
         return (
-          <td key="taxCode">
+          <td key={column.key}>
             <TaxCodeLookup
               className={`del-grid__input${errors.taxCode ? ' del-field__select--error' : ''}`}
               style={{ textAlign: 'left', height: '20px', padding: '0 4px' }}

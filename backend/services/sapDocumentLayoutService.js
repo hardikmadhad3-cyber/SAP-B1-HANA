@@ -340,7 +340,13 @@ const sanitizeLayoutColumns = (columns = []) => {
     .filter((column) => {
       const fieldKey = normalizeLayoutMatchToken(column.fieldName);
       const titleKey = normalizeLayoutMatchToken(column.columnTitle);
-      const dedupeKey = `${fieldKey || titleKey}|${titleKey || fieldKey}`;
+      const rawFieldKey = String(column.fieldName || column.columnUid || '')
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9_]+/g, '');
+      const dedupeKey = column.isUdf
+        ? `UDF|${rawFieldKey || fieldKey || titleKey}|${titleKey || fieldKey}`
+        : `STD|${fieldKey || titleKey}|${titleKey || fieldKey}`;
       if (!dedupeKey || dedupeKey === '|') return true;
       if (usedKeys.has(dedupeKey)) return false;
       usedKeys.add(dedupeKey);
@@ -605,6 +611,48 @@ const buildStrictSalesOrderLayoutColumns = ({ matrixColumns = [], rowUdfFields =
   });
 
   return strictColumns;
+};
+
+const LIVE_MARKETING_LAYOUT_WITH_UDFS = new Set(['AR_INVOICE', 'AR_CREDIT_MEMO']);
+
+const buildLiveMarketingLayoutColumns = ({ matrixColumns = [], rowUdfFields = [] } = {}) => {
+  const usedUdfTokens = new Set();
+  const markUsedUdf = (...values) => {
+    values.map(normalizeLayoutMatchToken).filter(Boolean).forEach((token) => usedUdfTokens.add(token));
+  };
+  const hasUsedUdf = (...values) => values.map(normalizeLayoutMatchToken).filter(Boolean).some((token) => usedUdfTokens.has(token));
+
+  const standardColumns = (matrixColumns || []).map((column, index) => {
+    const layoutColumn = mapLiveMatrixColumnToLayoutColumn(column, index);
+    if (layoutColumn.isUdf || String(layoutColumn.fieldName || layoutColumn.columnUid || '').trim().toUpperCase().startsWith('U_')) {
+      markUsedUdf(column.key, column.sapField, column.fieldName, column.sapColumnId, layoutColumn.columnUid, layoutColumn.fieldName);
+    }
+    return layoutColumn;
+  });
+
+  const udfColumns = (rowUdfFields || [])
+    .map((field, index) => {
+      const fieldName = normalizeText(field.key || field.sapField, 'row UDF key', { required: false, maxLength: 200 });
+      if (!fieldName) return null;
+      if (hasUsedUdf(field.key, field.sapField, field.sapColumnId)) return null;
+
+      markUsedUdf(field.key, field.sapField, field.sapColumnId);
+      return normalizeColumnInput({
+        columnUid: field.sapColumnId || field.sapField || field.key,
+        fieldName,
+        columnTitle: field.label || field.description || field.key,
+        visible: field.visible !== false,
+        editable: field.active !== false && !field.readOnly,
+        columnOrder: Number.isFinite(Number(field.order)) ? Number(field.order) : 5000 + index,
+        width: clampLayoutWidth(field.minWidth || field.width, field.type === 'textarea' ? 180 : 125),
+        dataType: field.type || field.dataType || 'string',
+        isUdf: true,
+        source: LIVE_LAYOUT_SOURCE,
+      }, 10000 + index);
+    })
+    .filter(Boolean);
+
+  return sanitizeLayoutColumns([...standardColumns, ...udfColumns]);
 };
 
 const normalizeAuth = async (auth = {}, requestedCompanyDb, requestedUserCode) => {
@@ -1084,6 +1132,17 @@ const getLiveDerivedLayoutColumns = async (mapping, scope) => {
     return sanitizeLayoutColumns(genericColumns);
   }
 
+  if (LIVE_MARKETING_LAYOUT_WITH_UDFS.has(mapping.documentType)) {
+    const liveColumns = buildLiveMarketingLayoutColumns({
+      matrixColumns,
+      rowUdfFields,
+    });
+
+    return sanitizeLayoutColumns(liveColumns.length
+      ? liveColumns
+      : matrixColumns.map(mapLiveMatrixColumnToLayoutColumn));
+  }
+
   if (mapping.documentType === 'SALES_ORDER') {
     const strictColumns = buildStrictSalesOrderLayoutColumns({
       matrixColumns,
@@ -1134,7 +1193,10 @@ const getDocumentLayout = async (auth, input = {}) => {
     matrixId: mapping.matrixId,
   });
 
-  if (savedLiveRows.length) {
+  const savedLiveRowsMissingUdfs = LIVE_MARKETING_LAYOUT_WITH_UDFS.has(mapping.documentType)
+    && savedLiveRows.length;
+
+  if (savedLiveRows.length && !savedLiveRowsMissingUdfs) {
     const sanitizedSavedLiveRows = sanitizeLayoutColumns(savedLiveRows.map(mapRowToColumn));
     if (sanitizedSavedLiveRows.length !== savedLiveRows.length) {
       await saveLayoutRows({

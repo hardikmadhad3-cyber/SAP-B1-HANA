@@ -35,6 +35,17 @@ const normalizeHeaderBranch = (header = {}) => ({
   branch: normalizeBranchValue(header?.branch),
 });
 
+const resolveHeaderCustomerCode = (header = {}) =>
+  String(
+    header.customerCode ||
+    header.customer ||
+    header.vendor ||
+    header.cardCode ||
+    header.CardCode ||
+    header.buyerCode ||
+    ''
+  ).trim();
+
 const toOptionalNumber = (value) => {
   if (value === undefined || value === null || String(value).trim() === '') {
     return undefined;
@@ -75,7 +86,6 @@ const applyUdfs = (target, udfValues = {}, allowedKeys = null, fieldMetadata = n
     if (allowedKeys && !allowedKeys.has(key)) return;
 
     if (isBlankUdfValue(value)) {
-      target[key] = null;
       return;
     }
 
@@ -226,6 +236,9 @@ const DELIVERY_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Fr_trans', getValue: (line) => line.freightProvider },
   { sapField: 'U_Fr_trans_name', getValue: (line) => line.freightProviderName },
   { sapField: 'U_BDNum', getValue: (line) => line.brokerageNumber },
+  { sapField: 'U_PackingType', getValue: (line) => line.udf?.U_PackingType ?? line.U_PackingType ?? line.packingType },
+  { sapField: 'U_GrossWt', getValue: (line) => line.udf?.U_GrossWt ?? line.U_GrossWt ?? line.grossWt },
+  { sapField: 'U_TotalPackage', getValue: (line) => line.udf?.U_TotalPackage ?? line.U_TotalPackage ?? line.totalPackage },
 ];
 
 const DELIVERY_LOOKUP_UDF_FIELDS = new Set([
@@ -265,7 +278,6 @@ const setValidatedDeliveryUdf = (target, fieldMetadata, fieldName, value) => {
   if (!fieldMetadata?.[fieldName]) return;
 
   if (isBlankUdfValue(value)) {
-    target[fieldName] = null;
     return;
   }
 
@@ -326,76 +338,94 @@ const resolveDeliveryLookupValue = (fieldName, value, lookupResolvers = {}) => {
   return undefined;
 };
 
-const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLineNum = false, lookupResolvers = {}, allowedLineUdfs = null) => {
+const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLineNum = false, lookupResolvers = {}, allowedLineUdfs = null, lineIndex = 0) => {
+  let isBaseDocumentLine = hasValue(line.baseEntry)
+    && hasValue(line.baseType)
+    && line.baseLine !== undefined
+    && line.baseLine !== null
+    && line.baseLine !== '';
+  if (isBaseDocumentLine && Number(line.baseType) === 17 && hasValue(line.itemNo)) {
+    const baseItemCode = await deliveryDb.getBaseSalesOrderLineItemCode(line.baseEntry, line.baseLine);
+    if (baseItemCode && baseItemCode !== String(line.itemNo || '').trim()) {
+      isBaseDocumentLine = false;
+    }
+  }
   const documentLine = {
     Quantity: toRequiredNumber(line.quantity, 0),
-    WarehouseCode: toRequiredString(line.whse, ''),
   };
 
   if (includeLineNum && line.lineNum != null && line.lineNum !== '') {
     documentLine.LineNum = Number(line.lineNum);
   }
 
-  if (hasValue(line.baseEntry) && hasValue(line.baseType) && line.baseLine !== undefined && line.baseLine !== null && line.baseLine !== '') {
+  if (isBaseDocumentLine) {
     documentLine.BaseEntry = Number(line.baseEntry);
     documentLine.BaseType = Number(line.baseType);
     documentLine.BaseLine = Number(line.baseLine);
+    if (hasValue(line.whse)) {
+      documentLine.WarehouseCode = String(line.whse).trim();
+    }
   } else {
     documentLine.ItemCode = toRequiredString(line.itemNo, '');
+    documentLine.WarehouseCode = toRequiredString(line.whse, '');
     documentLine.Price = toRequiredNumber(line.unitPrice, 0);
   }
 
-  const resolvedUomEntry = await deliveryDb.resolveDeliveryLineUomEntry(
-    line.itemNo,
-    line.uomEntry ?? line.UoMEntry ?? line.uomCode,
-  );
-  if (resolvedUomEntry !== null && resolvedUomEntry !== undefined) {
-    documentLine.UoMEntry = resolvedUomEntry;
-  } else if (hasValue(line.uomCode)) {
-    documentLine.UoMCode = String(line.uomCode).trim();
-  }
-
-  if (hasValue(line.taxCode)) {
-    documentLine.TaxCode = String(line.taxCode).trim();
-  }
-
-  if (hasValue(line.distRule)) {
-    documentLine.CostingCode = String(line.distRule).trim();
-  }
-
-  if (hasValue(line.freeText)) {
-    documentLine.FreeText = String(line.freeText).trim();
-  }
-
-  const sacEntry = toOptionalNumber(line.sacCode);
-  if (sacEntry !== undefined && fieldMetadata?.SACEntry) {
-    documentLine.SACEntry = sacEntry;
-  }
-
-  const countryOrg = normalizeCountryOrgValue(line.countryOfOrigin);
-  if (hasValue(line.countryOfOrigin) && !countryOrg) {
-    console.warn(`[Delivery Service] Skipping CountryOrg value because it is not a valid SAP country code: ${line.countryOfOrigin}`);
-  }
-  setValidatedDeliveryField(documentLine, fieldMetadata, 'CountryOrg', countryOrg);
-
-  for (const mapping of DELIVERY_LINE_UDF_MAPPINGS) {
-    const value = resolveDeliveryLookupValue(
-      mapping.sapField,
-      mapping.getValue(line),
-      lookupResolvers,
+  if (!isBaseDocumentLine) {
+    const resolvedUomEntry = await deliveryDb.resolveDeliveryLineUomEntry(
+      line.itemNo,
+      line.uomEntry ?? line.UoMEntry ?? line.uomCode,
     );
-    setValidatedDeliveryUdf(documentLine, fieldMetadata, mapping.sapField, value);
+    if (resolvedUomEntry !== null && resolvedUomEntry !== undefined) {
+      documentLine.UoMEntry = resolvedUomEntry;
+    } else if (hasValue(line.uomCode)) {
+      documentLine.UoMCode = String(line.uomCode).trim();
+    }
+
+    if (hasValue(line.taxCode)) {
+      documentLine.TaxCode = String(line.taxCode).trim();
+    }
+
+    if (hasValue(line.distRule)) {
+      documentLine.CostingCode = String(line.distRule).trim();
+    }
+
+    if (hasValue(line.freeText)) {
+      documentLine.FreeText = String(line.freeText).trim();
+    }
+
+    const sacEntry = toOptionalNumber(line.sacCode);
+    if (sacEntry !== undefined && fieldMetadata?.SACEntry) {
+      documentLine.SACEntry = sacEntry;
+    }
+
+    const countryOrg = normalizeCountryOrgValue(line.countryOfOrigin);
+    if (hasValue(line.countryOfOrigin) && !countryOrg) {
+      console.warn(`[Delivery Service] Skipping CountryOrg value because it is not a valid SAP country code: ${line.countryOfOrigin}`);
+    }
+    setValidatedDeliveryField(documentLine, fieldMetadata, 'CountryOrg', countryOrg);
   }
 
-  const normalizedLineUdfs = Object.entries(line.udf || {}).reduce((acc, [key, value]) => {
-    acc[key] = resolveDeliveryLookupValue(key, value, lookupResolvers);
-    return acc;
-  }, {});
-  applyUdfs(documentLine, normalizedLineUdfs, allowedLineUdfs, fieldMetadata);
+  if (!isBaseDocumentLine) {
+    for (const mapping of DELIVERY_LINE_UDF_MAPPINGS) {
+      const value = resolveDeliveryLookupValue(
+        mapping.sapField,
+        mapping.getValue(line),
+        lookupResolvers,
+      );
+      setValidatedDeliveryUdf(documentLine, fieldMetadata, mapping.sapField, value);
+    }
+
+    const normalizedLineUdfs = Object.entries(line.udf || {}).reduce((acc, [key, value]) => {
+      acc[key] = resolveDeliveryLookupValue(key, value, lookupResolvers);
+      return acc;
+    }, {});
+    applyUdfs(documentLine, normalizedLineUdfs, allowedLineUdfs, fieldMetadata);
+  }
 
   if (line.batches && line.batches.length > 0) {
     documentLine.BatchNumbers = line.batches.map((batch) => ({
-      BatchNumber: batch.batchNumber,
+      BatchNumber: String(batch.batchNumber || '').trim(),
       Quantity: Number(batch.quantity),
     }));
   }
@@ -412,7 +442,7 @@ const buildDocumentLinesPayload = async (lines = [], includeLineNum = false) => 
 
   const sourceLines = (lines || []).filter((line) => hasValue(line.itemNo));
   return Promise.all(
-    sourceLines.map((line) => buildDocumentLinePayload(line, dln1FieldMetadata, includeLineNum, lookupResolvers, allowedLineUdfs))
+    sourceLines.map((line, index) => buildDocumentLinePayload(line, dln1FieldMetadata, includeLineNum, lookupResolvers, allowedLineUdfs, index))
   );
 };
 
@@ -741,13 +771,7 @@ const submitDelivery = async (payload) => {
 
     const { company_id, lines, header_udfs } = payload;
     const header = normalizeHeaderBranch(payload.header);
-    const customerCode =
-      String(
-        header.customerCode ||
-        header.customer ||
-        header.vendor ||
-        ''
-      ).trim();
+    const customerCode = resolveHeaderCustomerCode(header);
 console.log("Payload:", payload );
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const [documentLines, headerUdfDefinitionsByKey] = await Promise.all([
@@ -993,10 +1017,11 @@ const validateDeliveryDocument = async (payload) => {
   const { lines } = payload;
   const isUpdate = Boolean(payload._isUpdate);
   const documentLines = (lines || []).filter((line) => hasValue(line.itemNo));
+  const customerCode = resolveHeaderCustomerCode(header);
   const errors = [];
   
   // 1. Mandatory fields validation
-  if (!header.customerCode) {
+  if (!customerCode) {
     errors.push('Customer Code is required');
   }
   if (!header.postingDate) {

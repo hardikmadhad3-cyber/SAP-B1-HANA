@@ -1050,6 +1050,61 @@
   cursor: not-allowed;
 }
 
+.po-udf-select-control {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.po-udf-select-control__select {
+  width: 100%;
+  padding-right: 30px !important;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+.po-udf-select-control__select::-ms-expand {
+  display: none;
+}
+
+.po-udf-select-control::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 24px;
+  border-left: 1px solid var(--sap-border-strong);
+  background: linear-gradient(180deg, #f8fafc 0%, #e8eef5 100%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.po-udf-select-control::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--sap-text);
+  transform: translateY(-30%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.po-udf-select-control.is-disabled::before {
+  background: #edf1f5;
+}
+
+.po-udf-select-control.is-disabled::after {
+  border-top-color: var(--sap-text-muted);
+}
+
 :is(.po-alert, .so-alert, .del-alert, .im-alert, .uom-alert) {
   border-radius: var(--sap-radius-sm);
 }
