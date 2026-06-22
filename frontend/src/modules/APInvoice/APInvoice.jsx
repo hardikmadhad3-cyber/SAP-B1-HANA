@@ -29,7 +29,6 @@ import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/docume
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
-import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import { consumeCopyToState } from '../../utils/copyToState';
@@ -58,6 +57,10 @@ import {
   createUdfState,
   readSavedFormSettings,
 } from '../../config/APInvoiceForm';
+import {
+  buildPurchaseOrderLineUdfPayload,
+  hydratePurchaseOrderLineUdfFields,
+} from '../purchase-order/purchaseOrderLineUdfMapping';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
@@ -150,14 +153,52 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
   itemDescription: '',
   hsnCode: '',
+  sac: '',
   quantity: '',
   openQty: '',
   uomCode: '',
   unitPrice: '',
   stdDiscount: '',
   taxCode: '',
+  wtaxLiable: 'N',
   total: '',
+  binLocationAllocation: '',
+  glAccount: '',
   whse: '',
+  itemCost: '',
+  countryOfOrigin: '',
+  distRule: '',
+  loc: '',
+  blanketAgreementNo: '',
+  costSheet: '',
+  packingType: '',
+  containerType: '',
+  grossWt: '',
+  totalPackage: '',
+  taxCodeRepeat: '',
+  price: '',
+  sellerBrokerage: '',
+  buyerBrokerage: '',
+  buyerDelivery: '',
+  sellerDelivery: '',
+  buyerPaymentTerms: '',
+  sellerPaymentTerms: '',
+  buyerQuality: '',
+  sellerQuality: '',
+  buyerPrice: '',
+  sellerPrice: '',
+  buyerSpecialInstruction: '',
+  sellerSpecialInstruction: '',
+  sellerBrokerageAmtPer: '',
+  sellerBrokeragePercent: '',
+  stcode: '',
+  sellerItem: '',
+  sellerQty: '',
+  specialRebate: '',
+  commission: '',
+  sellerBrokeragePerQty: '',
+  fixBrokBuyer: '',
+  fixBrockSeller: '',
   baseEntry: null,
   baseType: null,
   baseLine: null,
@@ -532,7 +573,7 @@ function APInvoice() {
 
         setLines(
           Array.isArray(po.lines) && po.lines.length
-            ? po.lines.map(l => ({
+            ? po.lines.map(l => hydratePurchaseOrderLineUdfFields({
               ...createLine(rowUdfDefinitions),
               ...l,
               taxCodeManuallyOverridden: true,
@@ -569,7 +610,7 @@ function APInvoice() {
     const sourceType = copyFrom.type || 'grpo';
     const normalizedHeader = normaliseDocumentHeader(copyFrom.header || {});
     const sourceLines = Array.isArray(copyFrom.lines) ? copyFrom.lines : [];
-    const copiedLines = sourceLines.map((line, index) => ({
+    const copiedLines = sourceLines.map((line, index) => hydratePurchaseOrderLineUdfFields({
       ...createLine(rowUdfDefinitions),
       ...normaliseDocumentLine(
         line,
@@ -1424,12 +1465,12 @@ function APInvoice() {
     const copySource = unwrapCopyFromDocument(data);
     const normalizedHeader = normaliseDocumentHeader(copySource.header);
     const rawLines = copySource.lines;
-    const copiedLines = rawLines.map((line, index) => ({
+    const copiedLines = rawLines.map((line, index) => hydratePurchaseOrderLineUdfFields({
       ...createLine(rowUdfDefinitions),
       ...normaliseDocumentLine(line, index, copySource.docEntry, AP_INVOICE_COPY_BASE_TYPE[docType] || 20, normalizedHeader.branch),
       openQty: String(line.OpenQty ?? line.openQty ?? line.Quantity ?? line.quantity ?? ''),
       taxCodeManuallyOverridden: false,
-      udf: createUdfState(rowUdfDefinitions),
+      udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
     }));
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
@@ -1651,7 +1692,7 @@ function APInvoice() {
       };
       const payloadLines = lines.map((line) => ({
         ...line,
-        udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
+        udf: buildPurchaseOrderLineUdfPayload(line, rowUdfDefinitions, formSettings),
       }));
       const payload = {
         company_id: PURCHASE_ORDER_COMPANY_ID,
@@ -1710,7 +1751,7 @@ function APInvoice() {
   // ── render ────────────────────────────────────────────────────────────────
   return (
     <form
-      className={`po-page sap-document-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`}
+      className={`po-page sap-document-page ap-invoice-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`}
       onSubmit={handleSubmit}
       onChangeCapture={markDirty}
       onContextMenu={handleDocumentContextMenu}
@@ -1918,7 +1959,7 @@ function APInvoice() {
                 <div style={{ paddingLeft: 16 }}>
                   <div className="po-field">
                     <label className="po-field__label">Series</label>
-                    <select name="series" className="po-field__select" style={{ background: '#fff3cd' }} value={header.series} onChange={handleHeaderChange} disabled={!!currentDocEntry || pageState.seriesLoading}>
+                    <select name="series" className="po-field__select" value={header.series} onChange={handleHeaderChange} disabled={!!currentDocEntry || pageState.seriesLoading}>
                       <option value="">Select Series</option>
                       {refData.series.map(s => <option key={s.Series} value={s.Series}>{s.SeriesName} ({s.Indicator})</option>)}
                     </select>
@@ -2256,6 +2297,7 @@ function APInvoice() {
         isOpen={hsnModal.open}
         onClose={closeHSNModal}
         onSelect={handleHSNSelect}
+        mode={hsnModal.fieldName === 'sac' ? 'sac' : 'hsn'}
       />
 
       {/* Business Partner Modal */}

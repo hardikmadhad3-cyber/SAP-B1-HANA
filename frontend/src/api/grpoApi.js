@@ -49,6 +49,11 @@ const fetchBatchesByItem = (itemCode, whsCode) =>
     params: { itemCode, whsCode },
   });
 
+const fetchNextBatchNumber = (prefix = 'JKL') =>
+  apiClient.get('/grpo/batches/next-number', {
+    params: { prefix },
+  });
+
 const fetchItemsForModal = () =>
   apiClient.get('/grpo/items-modal');
 
@@ -69,6 +74,7 @@ export {
   fetchOpenPurchaseOrders,
   fetchPurchaseOrderForCopy,
   fetchBatchesByItem,
+  fetchNextBatchNumber,
   fetchItemsForModal,
   fetchFreightCharges,
 };

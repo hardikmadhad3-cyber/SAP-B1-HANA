@@ -16,6 +16,12 @@ const parseNum = (value) => {
   return Number.isFinite(num) ? num : 0;
 };
 
+const optionalNumber = (value) => {
+  if (value === '' || value === null || value === undefined) return undefined;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+};
+
 const yesNo = (value) => {
   const text = String(value ?? '').trim().toUpperCase();
   if (['Y', 'YES', 'TRUE', '1', 'TYES'].includes(text)) return 'tYES';
@@ -434,6 +440,23 @@ const submitAPInvoice = async (payload) => {
       const lineWtaxLiable = yesNo(l.wtaxLiable ?? l.wTaxLiable);
       if (lineWtaxLiable) {
         docLine.WTLiable = lineWtaxLiable;
+      }
+      if (String(l.glAccount || '').trim()) {
+        docLine.AccountCode = String(l.glAccount).trim();
+      }
+      if (String(l.distRule || '').trim()) {
+        docLine.CostingCode = String(l.distRule).trim();
+      }
+      if (String(l.countryOfOrigin || '').trim()) {
+        docLine.CountryOrg = String(l.countryOfOrigin).trim();
+      }
+      const locationCode = optionalNumber(l.loc);
+      if (locationCode !== undefined) {
+        docLine.LocationCode = locationCode;
+      }
+      const agreementNo = optionalNumber(l.blanketAgreementNo);
+      if (agreementNo !== undefined) {
+        docLine.AgreementNo = agreementNo;
       }
 
       if (hasBaseDoc) {

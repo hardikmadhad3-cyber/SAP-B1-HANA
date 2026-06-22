@@ -44,7 +44,7 @@
 }
 .po-page .alert-danger  { background: #fde8e8; color: #c00;    border-color: #f5a0a0; }
 .po-page .alert-success { background: #e6f4ea; color: #1a7a30; border-color: #8bc49a; }
-.po-page .alert-warning { background: #fff8e1; color: #856404; border-color: #ffc107; }
+.po-page .alert-warning { background: #edf5fb; color: #123b63; border-color: #9cbad1; }
 .po-page .alert-info    { background: #e8f0fe; color: #1a56db; border-color: #93b4f5; }
 
 /* ── Container ────────────────────────────────────────────────── */
@@ -436,5 +436,5 @@
 .po-page .po-status  { margin: 8px 12px 0; padding: 7px 12px; border-radius: 3px; font-size: 12px; border: 1px solid; }
 .po-page .po-status-error   { background: #fde8e8; color: #c00;    border-color: #f5a0a0; }
 .po-page .po-status-success { background: #e6f4ea; color: #1a7a30; border-color: #8bc49a; }
-.po-page .po-status-warn    { background: #fff8e1; color: #856404; border-color: #ffc107; }
+.po-page .po-status-warn    { background: #edf5fb; color: #123b63; border-color: #9cbad1; }
 .po-page .po-status-info    { background: #e8f0fe; color: #1a56db; border-color: #93b4f5; }

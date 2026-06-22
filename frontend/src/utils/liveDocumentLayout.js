@@ -19,7 +19,7 @@ const COLUMN_ALIASES = {
   uomCode: ['UomCode', 'unitMsr', 'UoM Code', 'UoM'],
   uomName: ['UomName', 'UoM Name'],
   unitPrice: ['Price', 'PriceBefDi', 'UnitPrice', 'Unit Price'],
-  unitPriceUdf: ['U_PRICE', 'U_Price', 'Price'],
+  unitPriceUdf: ['U_PRICE', 'U_Price'],
   stdDiscount: ['DiscPrcnt', 'Discount %', 'Disc%'],
   taxCode: ['TaxCode', 'VatGroup', 'Tax Code'],
   taxAmount: ['VatSum', 'Tax Amount (LC)'],
@@ -36,6 +36,13 @@ const COLUMN_ALIASES = {
   loc: ['LocCode', 'Location', 'Loc.'],
   countryOfOrigin: ['CountryOrg', 'Country/Region of Origin'],
   blanketAgreementNo: ['AgrNo', 'Blanket Agreement No.'],
+  U_Cost_Sheet: ['U_Cost_Sheet', 'U_COST_SHEET', 'U_COSTSHEET', 'Cost-Sheet'],
+  U_PackingType: ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'Packing-Type', 'PackingType'],
+  U_ContainerType: ['U_ContainerType', 'U_CONTAINERTYPE', 'U_Container_Type', 'Container Type'],
+  U_GrossWt: ['U_GrossWt', 'U_GROSSWT', 'U_Gross_Wt', 'GrossWt', 'Gross Weight'],
+  U_TotalPackage: ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_Total_Package', 'Total-Package', 'TotalPackage'],
+  taxCodeRepeat: ['U_TAXCODE', 'TaxCode'],
+  price: ['U_PRICE', 'U_Price', 'Price'],
   saudaNodeRef: ['U_SaudaNodeRef', 'Sauda Node Ref'],
   apInvDocKey: ['U_APInvDocKey', 'AP Inv DocKey', 'AP Inv DocEntry'],
   apInvDocNum: ['U_APInvDocNum', 'AP Inv DocNum'],
@@ -43,6 +50,7 @@ const COLUMN_ALIASES = {
   rg23dNo: ['U_RG23DNo', 'RG23DNo'],
   rg23DNo: ['U_RG23DNo', 'RG23DNo'],
   specialRebate: ['U_SPLRBT', 'Special Rebate'],
+  commPercent: ['Commission', 'CommissionPercent', 'Commission Percentage', 'Comm. %', 'CommPercent', 'CommPrcnt', 'CommPrCnt'],
   commission: ['U_COMPRC', 'Commision', 'Commission'],
   commision: ['U_COMPRC', 'Commision', 'Commission'],
   sellerItem: ['U_S_Item', 'S_Item', 'S Item'],
@@ -51,6 +59,8 @@ const COLUMN_ALIASES = {
   sQty: ['U_S_Qty', 'S_Qty', 'S Qty'],
   sellerBrokeragePerQty: ['U_S_BrokPerQty', 'BrokPerQty'],
   brokPerQty: ['U_S_BrokPerQty', 'BrokPerQty'],
+  U_Fix_Brock_B: ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER', 'U_FIXBROKBUYER', 'FIX Brok BUYER'],
+  U_Fix_Brock_S: ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_FIXBROCKSELLER', 'U_FIXBROKSELLER', 'Fix Brock Seller'],
   sellerBrokerage: ['U_Brok_Seller', 'Seller Brokerage'],
   buyerBrokerage: ['U_Brok_Buyer', 'Buyer Brokerage'],
   buyerDelivery: ['U_Buyer_Delivery', 'Buyer - Delivery'],
@@ -98,6 +108,22 @@ const getLayoutTokens = (column = {}) => [
   column.label,
 ].map(normalizeLayoutToken).filter(Boolean);
 
+const isUdfIdentifier = (value) => String(value || '').trim().toUpperCase().startsWith('U_');
+
+const isUdfColumn = (column = {}) => Boolean(column.isUdf) || [
+  column.key,
+  column.sapField,
+  column.fieldName,
+  column.columnUid,
+  ...(column.aliases || []),
+].some(isUdfIdentifier);
+
+const isUdfLayoutColumn = (column = {}) => [
+  column.fieldName,
+  column.columnUid,
+  column.key,
+].some(isUdfIdentifier);
+
 const indexColumnsByToken = (columns = []) => {
   const index = new Map();
   columns.forEach((column) => {
@@ -110,9 +136,13 @@ const indexColumnsByToken = (columns = []) => {
 };
 
 const pickMatchingColumn = (layoutColumn, index, usedKeys) => {
+  const layoutIsUdf = isUdfLayoutColumn(layoutColumn);
   for (const token of getLayoutTokens(layoutColumn)) {
     const matches = index.get(token) || [];
-    const unused = matches.find((column) => !usedKeys.has(column.key));
+    const unused = matches.find((column) => (
+      !usedKeys.has(column.key) &&
+      (!layoutIsUdf || isUdfColumn(column))
+    ));
     if (unused) return unused;
   }
   return null;

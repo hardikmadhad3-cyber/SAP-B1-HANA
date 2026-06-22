@@ -6,7 +6,7 @@
   background: #f0f2f5;
   min-height: 100vh;
   box-sizing: border-box;
-  overflow-x: auto !important;
+  overflow-x: hidden !important;
   overflow-y: auto;
   width: 100%;
 }
@@ -195,7 +195,8 @@
   background: #fff;
   border: 1px solid #c8d0da;
   border-radius: 3px;
-  padding: 10px 14px;
+  padding: 8px 10px;
+  box-sizing: border-box;
 }
 
 .po-layout {
@@ -209,6 +210,7 @@
 
 .po-layout.is-sidebar-open {
   grid-template-columns: minmax(0, 1fr) minmax(250px, 320px);
+  gap: 12px;
 }
 
 .po-layout__main,
@@ -363,6 +365,47 @@
   align-items: center;
 }
 
+.po-document-header-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 8px 24px;
+  align-items: start;
+}
+
+.po-document-header-column,
+.po-document-header-grid > .col-md-6 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+  max-width: none;
+  padding: 0 !important;
+}
+
+.po-header-card > .row,
+.po-header-card > .row.g-2 {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 8px 24px !important;
+  margin: 0 !important;
+  align-items: start;
+}
+
+.po-header-card > .row > [class*="col-"] {
+  width: 100% !important;
+  max-width: none !important;
+  flex: none !important;
+  padding: 0 !important;
+  min-width: 0;
+}
+
+.po-header-card > .row .po-field-grid,
+.po-document-header-column .po-field-grid {
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 5px;
+}
+
 .po-field {
   min-width: 0;
 }
@@ -378,7 +421,7 @@
 .po-field {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-height: 26px;
 }
 
@@ -400,6 +443,18 @@
   background: #fff;
   color: #1a1a1a;
   min-width: 0;
+}
+.po-field > div {
+  min-width: 0;
+}
+
+.po-field > div[style*="display: flex"] {
+  align-items: center;
+}
+
+.po-field > div button {
+  height: 22px !important;
+  min-width: 28px !important;
 }
 .po-field__input:focus {
   outline: none;
@@ -705,6 +760,15 @@ select.so-grid__input {
   border-bottom: 1px solid #e0e6ed;
 }
 
+@media (max-width: 1499.98px) {
+  .po-document-header-grid,
+  .po-header-card > .row,
+  .po-header-card > .row.g-2 {
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+    gap: 8px 18px !important;
+  }
+}
+
 @media (max-width: 1199.98px) {
   .po-layout.is-sidebar-open {
     grid-template-columns: minmax(0, 1fr);
@@ -718,6 +782,14 @@ select.so-grid__input {
 }
 
 /* ── Section titles ── */
+@media (max-width: 900px) {
+  .po-document-header-grid,
+  .po-header-card > .row,
+  .po-header-card > .row.g-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .po-section-title {
   font-size: 12px;
   font-weight: 700;
@@ -728,6 +800,123 @@ select.so-grid__input {
 }
 
 /* ── Modal ── */
+.po-logistics-tab {
+  min-height: 225px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.po-logistics-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.35fr) minmax(200px, 0.65fr);
+  gap: 18px 28px;
+  align-items: start;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.po-logistics-left,
+.po-logistics-right {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.po-logistics-left .po-field__label {
+  flex-basis: 80px;
+}
+
+.po-logistics-right .po-field__label {
+  flex-basis: 95px;
+}
+
+.po-logistics-address-field {
+  align-items: flex-start;
+}
+
+.po-logistics-address-field .po-field__label {
+  padding-top: 3px;
+}
+
+.po-logistics-address-control,
+.po-logistics-code-control {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.po-logistics-address-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 4px;
+  align-items: start;
+}
+
+.po-logistics-code-control {
+  display: flex;
+}
+
+.po-logistics-right .po-field {
+  justify-content: flex-start;
+}
+
+.po-logistics-right .po-field__select {
+  flex: 0 1 160px;
+  max-width: 160px;
+}
+
+.po-logistics-right .po-checkbox-label {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.po-logistics-right .po-checkbox-label span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.po-logistics-tab .po-textarea {
+  min-height: 68px;
+  resize: none;
+}
+
+.po-lookup-btn {
+  height: 24px !important;
+  min-width: 42px !important;
+  padding: 0 8px;
+  border: 1px solid #9aa8b6;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #fff 0%, #e7edf3 100%);
+  color: #0b355b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.po-lookup-btn:hover {
+  border-color: #2b6ea6;
+  background: #eef6fc;
+}
+
+@media (max-width: 1280px) {
+  .po-logistics-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .po-logistics-left .po-field__label,
+  .po-logistics-right .po-field__label {
+    flex-basis: 95px;
+  }
+
+  .po-logistics-right .po-field__select {
+    flex: 1;
+    max-width: none;
+  }
+}
+
 .po-modal-overlay {
   position: fixed;
   inset: 0;
@@ -787,6 +976,53 @@ select.so-grid__input {
 }
 
 /* ── Textarea ── */
+.po-address-modal {
+  width: 470px;
+  max-height: min(620px, calc(100vh - 80px));
+}
+
+.po-address-modal__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 10px 14px;
+}
+
+.po-address-field {
+  display: grid;
+  grid-template-columns: 135px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 24px;
+}
+
+.po-address-field label {
+  margin: 0;
+  color: #34495e;
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.po-address-field input,
+.po-address-field select {
+  height: 24px;
+  min-width: 0;
+  border: 1px solid #9aa8b6;
+  border-radius: 2px;
+  padding: 1px 5px;
+  font-size: 12px;
+  background: #fff;
+  color: #17212b;
+}
+
+.po-address-field input:focus,
+.po-address-field select:focus {
+  outline: none;
+  border-color: #1d6fa5;
+  box-shadow: 0 0 0 2px rgba(29, 111, 165, 0.14);
+}
+
 .po-textarea {
   width: 100%;
   padding: 6px 8px;

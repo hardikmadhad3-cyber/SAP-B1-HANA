@@ -161,6 +161,15 @@ const getBatchesByItem = async (req, res) => {
   }
 };
 
+const getNextBatchNumber = async (req, res) => {
+  try {
+    const data = await grpoService.getNextBatchNumber({ prefix: req.query.prefix || 'JKL' });
+    res.json(data);
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error, 'Failed to get next batch number.'));
+  }
+};
+
 const getItemsForModal = async (req, res) => {
   try {
     res.json(await grpoService.getItemsForModal());
@@ -191,6 +200,7 @@ module.exports = {
   getOpenPurchaseOrders,
   getPurchaseOrderForCopy,
   getBatchesByItem,
+  getNextBatchNumber,
   getItemsForModal,
   getFreightCharges,
 };

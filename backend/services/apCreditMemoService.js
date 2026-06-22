@@ -5,6 +5,7 @@ const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { applyUdfValues } = require('./udfPayloadUtils');
+const { resolveHSNCodeToAbsEntry, resolveSACCodeToAbsEntry } = require('./hsnCodeDbService');
 
 const formatDateForSAP = (value) => {
   if (!value) return null;
@@ -27,6 +28,60 @@ const yesNo = (value) => {
   if (['Y', 'YES', 'TRUE', '1', 'TYES'].includes(text)) return 'tYES';
   if (['N', 'NO', 'FALSE', '0', 'TNO'].includes(text)) return 'tNO';
   return undefined;
+};
+
+const hasValue = (value) => (
+  value !== undefined &&
+  value !== null &&
+  !(typeof value === 'string' && value.trim() === '')
+);
+
+const firstPresent = (...values) => values.find(hasValue);
+
+const AP_CREDIT_MEMO_LINE_UDF_MAPPINGS = [
+  { aliases: ['U_Cost_Sheet', 'U_COSTSHEET'], getValue: (line) => line.udf?.U_Cost_Sheet ?? line.costSheet },
+  { aliases: ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'U_PackingStatus'], getValue: (line) => line.udf?.U_PackingType ?? line.packingType },
+  { aliases: ['U_ContainerType', 'U_CONTAINERTYPE', 'U_Container_Type'], getValue: (line) => line.udf?.U_ContainerType ?? line.containerType },
+  { aliases: ['U_GrossWt', 'U_GROSSWT', 'U_Gross_Wt'], getValue: (line) => line.udf?.U_GrossWt ?? line.grossWt },
+  { aliases: ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_Total_Package'], getValue: (line) => line.udf?.U_TotalPackage ?? line.totalPackage },
+  { aliases: ['U_TAXCODE', 'U_TaxCode'], getValue: (line) => firstPresent(line.taxCodeRepeat, line.udf?.U_TAXCODE, line.taxCode) },
+  { aliases: ['U_PRICE', 'U_Price'], getValue: (line) => firstPresent(line.price, line.udf?.U_PRICE) },
+  { aliases: ['U_Brok_Seller', 'U_BROK_SELLER'], getValue: (line) => line.sellerBrokerage },
+  { aliases: ['U_Brok_Buyer', 'U_BROK_BUYER', 'U_Buyer_Brokerage'], getValue: (line) => line.buyerBrokerage },
+  { aliases: ['U_Buyer_Delivery', 'U_BUYER_DELIVERY'], getValue: (line) => line.buyerDelivery },
+  { aliases: ['U_Seller_Delivery', 'U_SELLER_DELIVERY'], getValue: (line) => line.sellerDelivery },
+  { aliases: ['U_Buyer_Payment_Terms', 'U_BUYER_PAYMENT_TERMS'], getValue: (line) => firstPresent(line.buyerTermsOfPayment, line.buyerPaymentTerms) },
+  { aliases: ['U_Seller_Payment_Term', 'U_Seller_Payment_Terms', 'U_SELLER_PAYMENT_TERM', 'U_SELLER_PAYMENT_TERMS'], getValue: (line) => firstPresent(line.sellerTermsOfPaymentRepeat, line.sellerTermsOfPayment, line.sellerPaymentTerms) },
+  { aliases: ['U_Buyer_Quality', 'U_BUYER_QUALITY'], getValue: (line) => line.buyerQuality },
+  { aliases: ['U_Seller_Quality', 'U_SELLER_QUALITY'], getValue: (line) => line.sellerQuality },
+  { aliases: ['U_Buyer_Price', 'U_BUYER_PRICE'], getValue: (line) => line.buyerPrice },
+  { aliases: ['U_Seller_Price', 'U_SELLER_PRICE'], getValue: (line) => line.sellerPrice },
+  { aliases: ['U_Buyer_SPINS', 'U_BUYER_SPINS'], getValue: (line) => line.buyerSpecialInstruction },
+  { aliases: ['U_Seller_SPINS', 'U_SELLER_SPINS'], getValue: (line) => line.sellerSpecialInstruction },
+  { aliases: ['U_Sel_Brok_AP', 'U_SEL_BROK_AP'], getValue: (line) => firstPresent(line.sellerBrokerageAmountPer, line.sellerBrokerageAmtPer) },
+  { aliases: ['U_Seller_Brok_Per', 'U_SELLER_BROK_PER'], getValue: (line) => firstPresent(line.sellerBrokeragePercentage, line.sellerBrokeragePercent) },
+  { aliases: ['U_SELLTCODE', 'U_STCODE'], getValue: (line) => line.stcode },
+  { aliases: ['U_S_Item', 'U_S_ITEM'], getValue: (line) => line.sellerItem },
+  { aliases: ['U_S_Qty', 'U_S_QTY'], getValue: (line) => firstPresent(line.sellerQuantity, line.sellerQty) },
+  { aliases: ['U_SPLRBT'], getValue: (line) => line.specialRebate },
+  { aliases: ['U_COMPRC'], getValue: (line) => firstPresent(line.commision, line.commission) },
+  { aliases: ['U_S_BrokPerQty', 'U_S_BROKPERQTY'], getValue: (line) => firstPresent(line.brokPerQty, line.sellerBrokeragePerQty) },
+  { aliases: ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER'], getValue: (line) => firstPresent(line.fixBrokBuyer, line.udf?.U_Fix_Brock_B) },
+  { aliases: ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller'], getValue: (line) => firstPresent(line.fixBrockSeller, line.udf?.U_Fix_Brock_S) },
+];
+
+const setAllowedLineUdf = (target, allowedLineUdfs, aliases, value) => {
+  if (!hasValue(value)) return;
+  const key = aliases.find((alias) => allowedLineUdfs.has(alias));
+  if (key) target[key] = value;
+};
+
+const buildLineUdfPayload = (line = {}, allowedLineUdfs = new Set()) => {
+  const udfs = { ...(line.udf || {}) };
+  AP_CREDIT_MEMO_LINE_UDF_MAPPINGS.forEach((mapping) => {
+    setAllowedLineUdf(udfs, allowedLineUdfs, mapping.aliases, mapping.getValue(line));
+  });
+  return udfs;
 };
 
 const normalizeState = (value) =>
@@ -235,6 +290,7 @@ const getReferenceData = async () => {
       contacts: [],
       pay_to_addresses: [],
       company_address: {},
+      gl_accounts: [],
       decimal_settings: { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 },
       warnings: [`Failed to load reference data: ${error.message}`],
     };
@@ -397,8 +453,18 @@ const submitAPCreditMemo = async (payload) => {
       if (lineWtaxLiable) {
         docLine.WTLiable = lineWtaxLiable;
       }
+      if (String(l.glAccount || '').trim()) {
+        docLine.AccountCode = String(l.glAccount).trim();
+      }
+      const withoutInventoryMovement = yesNo(l.withoutQtyPosting);
+      if (withoutInventoryMovement) {
+        docLine.WithoutInventoryMovement = withoutInventoryMovement;
+      }
       if (String(l.distRule || '').trim()) {
         docLine.CostingCode = String(l.distRule).trim();
+      }
+      if (String(l.cogsDistRule || '').trim()) {
+        docLine.COGSCostingCode = String(l.cogsDistRule).trim();
       }
       if (String(l.countryOfOrigin || '').trim()) {
         docLine.CountryOrg = String(l.countryOfOrigin).trim();
@@ -429,7 +495,16 @@ const submitAPCreditMemo = async (payload) => {
         docLine.DiscountPercent = parseFloat(l.stdDiscount) || 0;
       }
 
-      applyUdfValues(docLine, l.udf, allowedLineUdfs);
+      const hsnEntry = await resolveHSNCodeToAbsEntry(l.hsnCode);
+      if (hsnEntry !== null && hsnEntry !== undefined) {
+        docLine.HSNEntry = hsnEntry;
+      }
+      const sacEntry = await resolveSACCodeToAbsEntry(l.sacCode ?? l.sac);
+      if (sacEntry !== null && sacEntry !== undefined) {
+        docLine.SACEntry = sacEntry;
+      }
+
+      applyUdfValues(docLine, buildLineUdfPayload(l, allowedLineUdfs), allowedLineUdfs);
       documentLines.push(docLine);
     }
 

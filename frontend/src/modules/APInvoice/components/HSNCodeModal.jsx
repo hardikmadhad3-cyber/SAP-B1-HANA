@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { fetchHSNCodes } from '../../../api/hsnCodeApi';
+import { fetchHSNCodes, fetchSACCodes } from '../../../api/hsnCodeApi';
 
-export default function HSNCodeModal({ isOpen, onClose, onSelect }) {
+export default function HSNCodeModal({ isOpen, onClose, onSelect, mode = 'hsn' }) {
+  const isSacMode = mode === 'sac';
   const [hsnCodes, setHsnCodes] = useState([]);
   const [filteredCodes, setFilteredCodes] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -12,7 +13,7 @@ export default function HSNCodeModal({ isOpen, onClose, onSelect }) {
     if (isOpen) {
       loadHSNCodes();
     }
-  }, [isOpen]);
+  }, [isOpen, mode]);
 
   useEffect(() => {
     if (searchQuery.trim()) {
@@ -20,6 +21,8 @@ export default function HSNCodeModal({ isOpen, onClose, onSelect }) {
       const filtered = hsnCodes.filter(
         hsn =>
           (hsn.code || '').toLowerCase().includes(query) ||
+          (hsn.serviceCode || '').toLowerCase().includes(query) ||
+          (hsn.serviceName || '').toLowerCase().includes(query) ||
           (hsn.heading || '').toLowerCase().includes(query) ||
           (hsn.subHeading || '').toLowerCase().includes(query) ||
           (hsn.description || '').toLowerCase().includes(query)
@@ -34,7 +37,7 @@ export default function HSNCodeModal({ isOpen, onClose, onSelect }) {
   const loadHSNCodes = async () => {
     setLoading(true);
     try {
-      const response = await fetchHSNCodes('');
+      const response = isSacMode ? await fetchSACCodes('') : await fetchHSNCodes('');
       setHsnCodes(response.data || []);
       setFilteredCodes(response.data || []);
     } catch (error) {
@@ -115,7 +118,7 @@ export default function HSNCodeModal({ isOpen, onClose, onSelect }) {
           }}
         >
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#24292f' }}>
-            List of India Chapter ID
+            {isSacMode ? 'List of India SAC Codes' : 'List of India Chapter ID'}
           </h3>
           <button
             onClick={handleClose}
@@ -142,7 +145,7 @@ export default function HSNCodeModal({ isOpen, onClose, onSelect }) {
               type="text"
               value={searchQuery}
               onChange={handleSearchChange}
-              placeholder="Search by Chapter, Heading, Subheading, or Description"
+              placeholder={isSacMode ? 'Search by service code or description' : 'Search by Chapter, Heading, Subheading, or Description'}
               style={{
                 flex: 1,
                 padding: '4px 8px',
@@ -174,13 +177,13 @@ export default function HSNCodeModal({ isOpen, onClose, onSelect }) {
                     #
                   </th>
                   <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, width: 120 }}>
-                    Chapter
+                    {isSacMode ? 'Service Code' : 'Chapter'}
                   </th>
                   <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, width: 80 }}>
-                    Heading
+                    {isSacMode ? 'Service Name' : 'Heading'}
                   </th>
                   <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, width: 100 }}>
-                    Subheading
+                    {isSacMode ? '' : 'Subheading'}
                   </th>
                   <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600 }}>
                     Description
@@ -191,7 +194,7 @@ export default function HSNCodeModal({ isOpen, onClose, onSelect }) {
                 {filteredCodes.length === 0 ? (
                   <tr>
                     <td colSpan="5" style={{ padding: 20, textAlign: 'center', color: '#57606a' }}>
-                      No HSN codes found
+                      {isSacMode ? 'No SAC codes found' : 'No HSN codes found'}
                     </td>
                   </tr>
                 ) : (
@@ -201,15 +204,15 @@ export default function HSNCodeModal({ isOpen, onClose, onSelect }) {
                       onClick={() => handleRowClick(index)}
                       onDoubleClick={() => handleRowDoubleClick(hsn)}
                       style={{
-                        backgroundColor: selectedIndex === index ? '#fff8c5' : index % 2 === 0 ? '#fff' : '#f6f8fa',
+                        backgroundColor: selectedIndex === index ? '#e7f2fb' : index % 2 === 0 ? '#fff' : '#f6f8fa',
                         cursor: 'pointer',
                         borderBottom: '1px solid #d0d7de',
                       }}
                     >
                       <td style={{ padding: '6px 8px', color: '#57606a' }}>{index + 1}</td>
-                      <td style={{ padding: '6px 8px', fontWeight: 500 }}>{hsn.code || ''}</td>
-                      <td style={{ padding: '6px 8px' }}>{hsn.heading || ''}</td>
-                      <td style={{ padding: '6px 8px' }}>{hsn.subHeading || ''}</td>
+                      <td style={{ padding: '6px 8px', fontWeight: 500 }}>{hsn.code || hsn.serviceCode || ''}</td>
+                      <td style={{ padding: '6px 8px' }}>{isSacMode ? (hsn.serviceName || hsn.description || '') : (hsn.heading || '')}</td>
+                      <td style={{ padding: '6px 8px' }}>{isSacMode ? '' : (hsn.subHeading || '')}</td>
                       <td style={{ padding: '6px 8px' }}>{hsn.description || ''}</td>
                     </tr>
                   ))

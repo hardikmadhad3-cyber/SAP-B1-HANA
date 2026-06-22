@@ -208,11 +208,65 @@ const toNumberOrUndefined = (value) => {
 
 const hasValue = (value) => value !== '' && value !== null && value !== undefined;
 
+const firstValue = (...values) => values.find(hasValue);
+const normalizeUdfLookupToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]/g, '');
+
+const getLineUdfValue = (line = {}, aliases = []) => {
+  const udf = line.udf || {};
+  const aliasList = Array.isArray(aliases) ? aliases : [aliases];
+
+  for (const alias of aliasList) {
+    if (hasValue(udf[alias])) return udf[alias];
+  }
+
+  const aliasTokens = new Set(aliasList.map(normalizeUdfLookupToken).filter(Boolean));
+  const match = Object.entries(udf).find(([key, value]) =>
+    aliasTokens.has(normalizeUdfLookupToken(key)) && hasValue(value)
+  );
+  return match ? match[1] : undefined;
+};
+
 const PURCHASE_QUOTATION_LINE_UDF_MAPPINGS = [
+  { sapFields: ['U_Req_Qty', 'U_ReqQty'], getValue: (line) => firstValue(line.requiredQty, getLineUdfValue(line, ['U_Req_Qty', 'U_ReqQty'])) },
+  {
+    sapFields: ['U_Cost_Sheet', 'U_COST_SHEET', 'U_COSTSHEET', 'U_CostSheet'],
+    getValue: (line) => firstValue(line.U_Cost_Sheet, line.costSheet, getLineUdfValue(line, ['U_Cost_Sheet', 'U_COST_SHEET', 'U_COSTSHEET', 'U_CostSheet'])),
+  },
+  {
+    sapFields: ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'U_PackingStatus', 'U_PACKINGSTATUS'],
+    getValue: (line) => firstValue(line.U_PackingType, line.packingType, getLineUdfValue(line, ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'U_PackingStatus', 'U_PACKINGSTATUS'])),
+  },
+  {
+    sapFields: ['U_ContainerType', 'U_CONTAINERTYPE', 'U_Container_Type'],
+    getValue: (line) => firstValue(line.U_ContainerType, line.containerType, getLineUdfValue(line, ['U_ContainerType', 'U_CONTAINERTYPE', 'U_Container_Type'])),
+  },
+  {
+    sapFields: ['U_GrossWt', 'U_GROSSWT', 'U_Gross_Wt', 'U_GrossWeight', 'U_GROSSWEIGHT'],
+    getValue: (line) => firstValue(line.U_GrossWt, line.grossWt, getLineUdfValue(line, ['U_GrossWt', 'U_GROSSWT', 'U_Gross_Wt', 'U_GrossWeight', 'U_GROSSWEIGHT'])),
+  },
+  {
+    sapFields: ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_Total_Package', 'U_TotalPackge'],
+    getValue: (line) => firstValue(line.U_TotalPackage, line.totalPackage, getLineUdfValue(line, ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_Total_Package', 'U_TotalPackge'])),
+  },
+  {
+    sapFields: ['U_TAXCODE', 'U_TaxCode'],
+    getValue: (line) => firstValue(line.taxCodeRepeat, getLineUdfValue(line, ['U_TAXCODE', 'U_TaxCode']), line.taxCode),
+  },
+  {
+    sapFields: ['U_PRICE', 'U_Price'],
+    getValue: (line) => firstValue(line.price, getLineUdfValue(line, ['U_PRICE', 'U_Price']), line.unitPrice),
+  },
+  { sapFields: ['U_HSNCode', 'U_HSN'], getValue: (line) => firstValue(line.hsnCode, getLineUdfValue(line, ['U_HSNCode', 'U_HSN'])) },
+  { sapFields: ['U_SACCode', 'U_SAC'], getValue: (line) => firstValue(line.sacCode, getLineUdfValue(line, ['U_SACCode', 'U_SAC'])) },
   { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
   { sapField: 'U_COMPRC', getValue: (line) => line.commission },
   { sapField: 'U_S_BrokPerQty', getValue: (line) => line.sellerBrokeragePerQty },
-  { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf ?? line.unitPrice },
+  { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf },
   { sapField: 'U_Brok_Seller', getValue: (line) => line.sellerBrokerage },
   { sapField: 'U_Brok_Buyer', getValue: (line) => line.buyerBrokerage },
   { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
@@ -231,12 +285,20 @@ const PURCHASE_QUOTATION_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Seller_Bill_Disc', getValue: (line) => line.sellerBillDiscount },
   { sapField: 'U_SELLTCODE', getValue: (line) => line.stcode },
   { sapField: 'U_S_Item', getValue: (line) => line.sellerItem },
-  { sapField: 'U_S_Qty', getValue: (line) => line.sellerQty ?? line.quantity },
+  { sapField: 'U_S_Qty', getValue: (line) => line.sellerQty },
   { sapField: 'U_Freight_pur', getValue: (line) => line.freightPurchase },
   { sapField: 'U_Freight_sales', getValue: (line) => line.freightSales },
   { sapField: 'U_Fr_trans', getValue: (line) => line.freightProvider },
   { sapField: 'U_Fr_trans_name', getValue: (line) => line.freightProviderName },
   { sapField: 'U_BDNum', getValue: (line) => line.brokerageNumber },
+  {
+    sapFields: ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER', 'U_FIXBROKBUYER', 'U_FixBrokBuyer'],
+    getValue: (line) => firstValue(line.U_Fix_Brock_B, line.fixBrokBuyer, getLineUdfValue(line, ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER', 'U_FIXBROKBUYER', 'U_FixBrokBuyer'])),
+  },
+  {
+    sapFields: ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller', 'U_FIXBROCKSELLER', 'U_FIXBROKSELLER', 'U_FixBrokSeller'],
+    getValue: (line) => firstValue(line.U_Fix_Brock_S, line.fixBrockSeller, getLineUdfValue(line, ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller', 'U_FIXBROCKSELLER', 'U_FIXBROKSELLER', 'U_FixBrokSeller'])),
+  },
 ];
 
 const PURCHASE_QUOTATION_LABEL_UDF_MAPPINGS = [
@@ -250,10 +312,18 @@ const PURCHASE_QUOTATION_LABEL_UDF_MAPPINGS = [
   { labels: ['RG23DNo', 'RG23DNO'], getValue: (line) => line.rg23dNo },
   { labels: ['HSN'], getValue: (line) => line.hsnCode },
   { labels: ['SAC'], getValue: (line) => line.sacCode },
+  { labels: ['Cost-Sheet', 'Cost Sheet'], getValue: (line) => firstValue(line.U_Cost_Sheet, line.costSheet) },
+  { labels: ['Packing-Type', 'Packing Type'], getValue: (line) => firstValue(line.U_PackingType, line.packingType) },
+  { labels: ['Container Type'], getValue: (line) => firstValue(line.U_ContainerType, line.containerType) },
+  { labels: ['GrossWt', 'Gross Weight', 'Gross Wt'], getValue: (line) => firstValue(line.U_GrossWt, line.grossWt) },
+  { labels: ['Total-Package', 'Total Package'], getValue: (line) => firstValue(line.U_TotalPackage, line.totalPackage) },
+  { labels: ['TaxCode'], getValue: (line) => firstValue(line.taxCodeRepeat, line.taxCode) },
+  { labels: ['Price'], getValue: (line) => firstValue(line.price, line.unitPrice) },
+  { labels: ['FIX Brok BUYER', 'Fix Brok Buyer'], getValue: (line) => firstValue(line.U_Fix_Brock_B, line.fixBrokBuyer) },
+  { labels: ['Fix Brock Seller', 'Fix Brok Seller'], getValue: (line) => firstValue(line.U_Fix_Brock_S, line.fixBrockSeller) },
 ];
 
 const compactLabel = (value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-
 const getPurchaseQuotationLineUdfMetadata = async () => {
   const definitions = await getUdfDefinitions('PQT1');
   return {
@@ -261,6 +331,20 @@ const getPurchaseQuotationLineUdfMetadata = async () => {
     labelToKey: definitions.reduce((acc, field) => {
       const key = compactLabel(field.label || field.key);
       if (key && field.key) acc[key] = field.key;
+      return acc;
+    }, {}),
+    tokenToKey: definitions.reduce((acc, field) => {
+      [
+        field.key,
+        field.sapField,
+        field.aliasId,
+        field.label,
+        field.description,
+        field.Descr,
+      ].forEach((candidate) => {
+        const token = normalizeUdfLookupToken(candidate);
+        if (token && field.key && !acc[token]) acc[token] = field.key;
+      });
       return acc;
     }, {}),
   };
@@ -275,19 +359,33 @@ const buildValidatedLineUdfs = (line, udfMetadata) => {
   const availableUdfKeys = udfMetadata.keys || new Set();
   const udfs = {};
 
+  const resolveUdfKey = (candidates = []) => {
+    const candidateList = Array.isArray(candidates) ? candidates : [candidates];
+    return (
+      candidateList.find((key) => availableUdfKeys.has(key)) ||
+      candidateList
+        .map((key) => udfMetadata.tokenToKey?.[normalizeUdfLookupToken(key)])
+        .find((key) => key && availableUdfKeys.has(key)) ||
+      null
+    );
+  };
+
   Object.entries(line.udf || {}).forEach(([key, value]) => {
     if (availableUdfKeys.has(key)) {
       udfs[key] = normalizeUdfValue(value);
     }
   });
 
-  PURCHASE_QUOTATION_LINE_UDF_MAPPINGS.forEach(({ sapField, getValue }) => {
-    if (!availableUdfKeys.has(sapField)) return;
-    udfs[sapField] = normalizeUdfValue(getValue(line));
+  PURCHASE_QUOTATION_LINE_UDF_MAPPINGS.forEach(({ sapField, sapFields, getValue }) => {
+    const targetField = resolveUdfKey(sapFields || sapField);
+    if (!targetField) return;
+    udfs[targetField] = normalizeUdfValue(getValue(line));
   });
 
   PURCHASE_QUOTATION_LABEL_UDF_MAPPINGS.forEach(({ labels, getValue }) => {
-    const sapField = labels.map((label) => udfMetadata.labelToKey?.[compactLabel(label)]).find(Boolean);
+    const sapField = labels
+      .map((label) => udfMetadata.labelToKey?.[compactLabel(label)] || resolveUdfKey(label))
+      .find(Boolean);
     if (!sapField || !availableUdfKeys.has(sapField) || udfs[sapField] !== undefined) return;
     udfs[sapField] = normalizeUdfValue(getValue(line));
   });
@@ -348,6 +446,7 @@ const buildDocumentLines = async (lines = []) => {
         ShipDate: line.quotedDate,
         CostingCode: line.distRule,
         CountryOrg: line.countryOfOrigin,
+        LocationCode: toNumberOrUndefined(line.loc),
         AgreementNo: toNumberOrUndefined(line.blanketAgreementNo),
         ...(line.baseType && line.baseEntry != null ? { BaseType: Number(line.baseType) } : {}),
         ...(line.baseEntry != null ? { BaseEntry: Number(line.baseEntry) } : {}),

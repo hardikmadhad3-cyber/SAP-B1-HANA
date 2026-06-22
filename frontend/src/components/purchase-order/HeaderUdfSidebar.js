@@ -640,8 +640,8 @@ function SellerAddressModal({
             alignItems: 'center',
             justifyContent: 'space-between',
             padding: '6px 10px',
-            background: 'linear-gradient(to bottom, #f0f0f0, #d0d0d0)',
-            borderBottom: '2px solid #e8a000',
+            background: 'linear-gradient(to bottom, #f0f3f7, #e3ebf3)',
+            borderBottom: '1px solid #c8d2dc',
           }}
         >
           <h6 className="mb-0" style={{ fontSize: 12, fontWeight: 700 }}>
@@ -668,7 +668,7 @@ function SellerAddressModal({
               setSearchTerm(event.target.value);
               setSelectedRow(null);
             }}
-            style={{ maxWidth: 340, fontSize: 11, background: '#ffffcc' }}
+            style={{ maxWidth: 340, fontSize: 11, background: '#fff' }}
             autoFocus
           />
         </div>
@@ -706,7 +706,7 @@ function SellerAddressModal({
                         onDoubleClick={() => chooseAddress(address)}
                         style={{
                           cursor: 'pointer',
-                          backgroundColor: selected ? '#fff8c5' : index % 2 === 0 ? '#fff' : '#f3f3f3',
+                          backgroundColor: selected ? '#e7f2fb' : index % 2 === 0 ? '#fff' : '#f3f3f3',
                         }}
                       >
                         <td style={{ width: 48, padding: '5px 8px', color: '#666' }}>{index + 1}</td>
@@ -733,7 +733,8 @@ function SellerAddressModal({
               minWidth: 82,
               fontSize: 11,
               border: '1px solid #999',
-              background: selectedRow !== null ? 'linear-gradient(to bottom, #ffe066, #e8a000)' : '#e0e0e0',
+              background: selectedRow !== null ? 'linear-gradient(180deg, #006fb8 0%, #00558f 100%)' : '#e0e6ed',
+              color: selectedRow !== null ? '#fff' : '#172334',
             }}
           >
             Choose
@@ -742,7 +743,7 @@ function SellerAddressModal({
             type="button"
             className="btn btn-sm"
             onClick={onClose}
-            style={{ minWidth: 82, fontSize: 11, border: '1px solid #999', background: 'linear-gradient(to bottom, #ffe066, #e8a000)' }}
+            style={{ minWidth: 82, fontSize: 11, border: '1px solid #999', background: 'linear-gradient(180deg, #fff 0%, #e8edf2 100%)' }}
           >
             Cancel
           </button>

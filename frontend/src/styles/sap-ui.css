@@ -450,7 +450,7 @@
 
 .sap-state-lookup__filter input {
   height: 28px;
-  background: #fffbd1 !important;
+  background: var(--sap-surface) !important;
   font-size: 12px !important;
 }
 
@@ -1121,6 +1121,25 @@
   color: var(--sap-warning);
 }
 
+.app-shell :is(
+  .po-page.sap-document-page .po-alert--warning,
+  .po-page.sap-document-page .alert-warning,
+  .sap-document-page .po-alert--warning,
+  .sap-document-page .alert-warning,
+  .modal .alert-warning,
+  [role="dialog"] .alert-warning
+) {
+  background: #edf5fb !important;
+  border-color: #9cbad1 !important;
+  color: #123b63 !important;
+}
+
+.app-shell .po-page.sap-document-page .po-mode-badge--find {
+  background: #edf5fb !important;
+  border-color: #9cbad1 !important;
+  color: #123b63 !important;
+}
+
 .sap-auto-dismiss-notification {
   transition: opacity 180ms ease, transform 180ms ease;
 }
@@ -1222,7 +1241,7 @@
   height: var(--sap-control-height);
   border: 1px solid var(--sap-border-strong);
   border-radius: var(--sap-radius-xs);
-  background: #fffbd1;
+  background: var(--sap-surface);
   color: var(--sap-text);
   font-family: var(--sap-font-family);
   font-size: var(--sap-control-font-size);
@@ -1848,6 +1867,134 @@
 ):is(.disabled, [aria-disabled="true"]) {
   cursor: not-allowed !important;
   opacity: 0.58 !important;
+}
+
+.app-shell .po-page.sap-document-page {
+  overflow-x: hidden !important;
+}
+
+.app-shell .po-page.sap-document-page .po-layout {
+  gap: 12px !important;
+  padding: 0 12px !important;
+}
+
+.app-shell .po-page.sap-document-page .po-layout.is-sidebar-open {
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 320px) !important;
+}
+
+.app-shell .po-page.sap-document-page .po-header-card {
+  padding: 8px 10px !important;
+  box-sizing: border-box !important;
+}
+
+.app-shell .po-page.sap-document-page :is(
+  .po-document-header-grid,
+  .po-header-card > .po-field-grid,
+  .po-header-card > .row,
+  .po-header-card > .row.g-2
+) {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(240px, 1fr)) !important;
+  gap: 8px 18px !important;
+  align-items: start !important;
+}
+
+.app-shell .po-page.sap-document-page :is(
+  .po-document-header-column,
+  .po-document-header-grid > .col-md-6,
+  .po-header-card > .row > [class*="col-"]
+) {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+}
+
+.app-shell .po-page.sap-document-page .po-header-card > .po-field-grid > div {
+  min-width: 0 !important;
+}
+
+.app-shell .po-page.sap-document-page .po-field {
+  gap: 8px !important;
+  min-height: 26px !important;
+  margin-bottom: 0 !important;
+}
+
+.app-shell .po-page.sap-document-page .po-field__label {
+  flex: 0 0 110px !important;
+  font-size: 12px !important;
+  line-height: 1.2 !important;
+  text-align: right !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.app-shell .po-page.sap-document-page :is(.po-field__input, .po-field__select) {
+  height: 22px !important;
+  min-height: 22px !important;
+  font-size: 12px !important;
+}
+
+.app-shell .po-page.sap-document-page .po-field__input {
+  padding: 0 5px !important;
+}
+
+.app-shell .po-page.sap-document-page .po-field__select {
+  padding: 0 4px !important;
+}
+
+.app-shell .po-page.sap-document-page :is(
+  .po-field__input,
+  .po-field__select,
+  .po-toolbar__field-input,
+  .po-layout__sidebar .po-udf-sidebar-card .form-control,
+  .po-layout__sidebar .po-udf-sidebar-card .form-control-sm
+):not(:read-only):not(:disabled):not(.sap-validation-error):not(.po-field__input--error):not(.po-field__select--error) {
+  background: var(--sap-surface) !important;
+}
+
+.app-shell .po-page.sap-document-page :is(.po-field__input:read-only, .po-field__input:disabled, .po-field__select:disabled) {
+  background: #edf1f5 !important;
+  color: var(--sap-text-muted) !important;
+}
+
+.app-shell .po-page.sap-document-page .po-field > div button {
+  height: 22px !important;
+  min-width: 28px !important;
+}
+
+.app-shell .po-page.sap-document-page .po-tab-panel {
+  padding: 14px !important;
+}
+
+@media (max-width: 1199.98px) {
+  .app-shell .po-page.sap-document-page .po-layout.is-sidebar-open {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-shell .po-page.sap-document-page :is(
+    .po-document-header-grid,
+    .po-header-card > .po-field-grid,
+    .po-header-card > .row,
+    .po-header-card > .row.g-2
+  ) {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .app-shell .po-page.sap-document-page .po-field {
+    align-items: stretch !important;
+    flex-direction: column !important;
+    gap: 3px !important;
+  }
+
+  .app-shell .po-page.sap-document-page .po-field__label {
+    flex: none !important;
+    text-align: left !important;
+    white-space: normal !important;
+  }
 }
 
 .sap-setup-overlay {

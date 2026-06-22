@@ -47,6 +47,8 @@ const getReferenceData = async (companyId) => {
       uom_groups: [],
       contacts: [],
       pay_to_addresses: [],
+      ship_to_addresses: [],
+      bill_to_addresses: [],
       company_address: {},
       decimal_settings: {
         QtyDec: 2,
@@ -72,6 +74,8 @@ const getVendorDetails = async (vendorCode) => {
     return {
       contacts: [],
       pay_to_addresses: [],
+      ship_to_addresses: [],
+      bill_to_addresses: [],
     };
   }
 };
@@ -209,6 +213,18 @@ const toNumberOrUndefined = (value) => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+const toSapYesNo = (value, defaultValue = false) => {
+  if (value === '' || value === null || value === undefined) {
+    return defaultValue ? 'tYES' : 'tNO';
+  }
+
+  const normalized = String(value).trim().toUpperCase();
+  if (['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized)) return 'tYES';
+  if (['N', 'NO', 'FALSE', '0', 'TNO'].includes(normalized)) return 'tNO';
+
+  return value ? 'tYES' : 'tNO';
+};
+
 const cleanObject = (value) => {
   if (Array.isArray(value)) {
     return value
@@ -270,6 +286,7 @@ const buildDocumentLines = async (lines = []) =>
         TaxCode: line.taxCode,
         WarehouseCode: line.whse,
         UoMEntry: resolvedUomEntry,
+        CommissionPercent: toNumberOrUndefined(line.commPercent),
       });
       Object.assign(documentLine, normalizeUdfValues(line.udf));
 
@@ -290,7 +307,10 @@ const buildDocumentLines = async (lines = []) =>
       return documentLine;
     }));
 
-const buildPurchaseOrderPayload = async ({ header = {}, lines = [], header_udfs = {}, freightCharges = [] }) => {
+const buildPurchaseOrderPayload = async (
+  { header = {}, lines = [], header_udfs = {}, freightCharges = [] },
+  { forceConfirmed = false } = {},
+) => {
   const sapPayload = cleanObject({
     CardCode: header.vendor,
     NumAtCard: header.salesContractNo,
@@ -303,16 +323,26 @@ const buildPurchaseOrderPayload = async ({ header = {}, lines = [], header_udfs 
     DocCurrency: header.currency || 'INR',
     PaymentGroupCode: header.paymentTerms ? Number(header.paymentTerms) : undefined,
     SalesPersonCode: header.salesEmployee !== '' && header.salesEmployee != null ? toNumberOrUndefined(header.salesEmployee) : undefined,
+    ShipToCode: header.shipToCode || undefined,
+    PayToCode: header.payToCode || undefined,
+    Address: header.billToAddress || header.billTo || undefined,
+    Address2: header.payToAddress || header.payTo || undefined,
+    TransportationCode: toNumberOrUndefined(header.shippingType),
+    LanguageCode: String(header.language || '') === '-1' ? undefined : toNumberOrUndefined(header.language),
     Comments: header.otherInstruction,
     JournalMemo: header.journalRemark,
-    Confirmed: header.confirmed ? 'tYES' : 'tNO',
+    Confirmed: toSapYesNo(forceConfirmed ? true : header.confirmed, true),
     DiscountPercent: toNumberOrUndefined(header.discount),
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
     DocumentLines: await buildDocumentLines(lines),
   });
 
   const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OPOR');
-  Object.assign(sapPayload, normalizeUdfValues(header_udfs, null, headerUdfDefinitionsByKey));
+  const headerUdfValues = {
+    ...header_udfs,
+    ...(header.buyerLocation !== undefined ? { U_ShipLocation: header.buyerLocation } : {}),
+  };
+  Object.assign(sapPayload, normalizeUdfValues(headerUdfValues, null, headerUdfDefinitionsByKey));
   return sapPayload;
 };
 
@@ -337,7 +367,7 @@ const validatePurchaseOrderPayload = async ({ header = {}, lines = [] }) => {
 
 const submitPurchaseOrder = async (payload) => {
   await validatePurchaseOrderPayload(payload);
-  const purchaseOrderPayload = await buildPurchaseOrderPayload(payload);
+  const purchaseOrderPayload = await buildPurchaseOrderPayload(payload, { forceConfirmed: true });
 
   const response = await sapService.request({
     method: 'post',

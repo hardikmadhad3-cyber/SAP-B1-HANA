@@ -13,6 +13,7 @@ router.get('/vendors/:vendorCode', grpoController.getVendorDetails);
 router.get('/warehouse-state/:whsCode', grpoController.getStateFromWarehouse);
 router.get('/open-purchase-orders', grpoController.getOpenPurchaseOrders);
 router.get('/purchase-order/:docEntry/copy', grpoController.getPurchaseOrderForCopy);
+router.get('/batches/next-number', grpoController.getNextBatchNumber);
 router.get('/batches', grpoController.getBatchesByItem);
 router.get('/freight-charges', grpoController.getFreightCharges);
 router.get('/:docEntry', grpoController.getGRPOByDocEntry);

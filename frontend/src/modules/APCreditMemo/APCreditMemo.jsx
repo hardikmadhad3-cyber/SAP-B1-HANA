@@ -56,6 +56,9 @@ import {
   createUdfState,
   readSavedFormSettings,
 } from '../../config/APCreditMemoForm';
+import {
+  hydratePurchaseOrderLineUdfFields,
+} from '../purchase-order/purchaseOrderLineUdfMapping';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
@@ -142,6 +145,8 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
   itemDescription: '',
   hsnCode: '',
+  sac: '',
+  sacCode: '',
   quantity: '',
   openQty: '',
   uomCode: '',
@@ -150,11 +155,51 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   taxCode: '',
   wtaxLiable: 'N',
   total: '',
+  binLocationAllocation: '',
+  glAccount: '',
   whse: '',
+  itemCost: '',
   distRule: '',
   countryOfOrigin: '',
   loc: '',
+  withoutQtyPosting: 'N',
   blanketAgreementNo: '',
+  costSheet: '',
+  packingType: '',
+  containerType: '',
+  grossWt: '',
+  totalPackage: '',
+  taxCodeRepeat: '',
+  price: '',
+  sellerBrokerage: '',
+  buyerBrokerage: '',
+  buyerDelivery: '',
+  sellerDelivery: '',
+  buyerPaymentTerms: '',
+  buyerTermsOfPayment: '',
+  sellerTermsOfPayment: '',
+  sellerTermsOfPaymentRepeat: '',
+  buyerQuality: '',
+  sellerQuality: '',
+  buyerPrice: '',
+  sellerPrice: '',
+  buyerSpecialInstruction: '',
+  sellerSpecialInstruction: '',
+  sellerBrokerageAmtPer: '',
+  sellerBrokeragePercent: '',
+  sellerBrokerageAmountPer: '',
+  sellerBrokeragePercentage: '',
+  stcode: '',
+  sellerItem: '',
+  sellerQty: '',
+  sellerQuantity: '',
+  specialRebate: '',
+  commission: '',
+  commision: '',
+  sellerBrokeragePerQty: '',
+  brokPerQty: '',
+  fixBrokBuyer: '',
+  fixBrockSeller: '',
   baseEntry: null,
   baseType: null,
   baseLine: null,
@@ -258,6 +303,112 @@ const AP_CREDIT_MEMO_COPY_BASE_TYPE = {
   apInvoice: 20,
 };
 
+const AP_CREDIT_MEMO_LINE_UDF_FIELD_MAP = {
+  costSheet: ['U_Cost_Sheet', 'U_COSTSHEET'],
+  packingType: ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'U_PackingStatus'],
+  containerType: ['U_ContainerType', 'U_CONTAINERTYPE', 'U_Container_Type'],
+  grossWt: ['U_GrossWt', 'U_GROSSWT', 'U_Gross_Wt', 'U_GrossWeight'],
+  totalPackage: ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_Total_Package', 'U_TotalPackge'],
+  taxCodeRepeat: ['U_TAXCODE', 'U_TaxCode'],
+  price: ['U_PRICE', 'U_Price'],
+  sellerBrokerage: ['U_Brok_Seller', 'U_BROK_SELLER'],
+  buyerBrokerage: ['U_Brok_Buyer', 'U_BROK_BUYER', 'U_Buyer_Brokerage'],
+  buyerDelivery: ['U_Buyer_Delivery', 'U_BUYER_DELIVERY'],
+  sellerDelivery: ['U_Seller_Delivery', 'U_SELLER_DELIVERY'],
+  buyerPaymentTerms: ['U_Buyer_Payment_Terms', 'U_BUYER_PAYMENT_TERMS'],
+  buyerTermsOfPayment: ['U_Buyer_Payment_Terms', 'U_BUYER_PAYMENT_TERMS'],
+  sellerPaymentTerms: ['U_Seller_Payment_Term', 'U_Seller_Payment_Terms', 'U_SELLER_PAYMENT_TERM', 'U_SELLER_PAYMENT_TERMS'],
+  sellerTermsOfPayment: ['U_Seller_Payment_Term', 'U_Seller_Payment_Terms', 'U_SELLER_PAYMENT_TERM', 'U_SELLER_PAYMENT_TERMS'],
+  sellerTermsOfPaymentRepeat: ['U_Seller_Payment_Term', 'U_Seller_Payment_Terms', 'U_SELLER_PAYMENT_TERM', 'U_SELLER_PAYMENT_TERMS'],
+  buyerQuality: ['U_Buyer_Quality', 'U_BUYER_QUALITY'],
+  sellerQuality: ['U_Seller_Quality', 'U_SELLER_QUALITY'],
+  buyerPrice: ['U_Buyer_Price', 'U_BUYER_PRICE'],
+  sellerPrice: ['U_Seller_Price', 'U_SELLER_PRICE'],
+  buyerSpecialInstruction: ['U_Buyer_SPINS', 'U_BUYER_SPINS'],
+  sellerSpecialInstruction: ['U_Seller_SPINS', 'U_SELLER_SPINS'],
+  sellerBrokerageAmtPer: ['U_Sel_Brok_AP', 'U_SEL_BROK_AP'],
+  sellerBrokerageAmountPer: ['U_Sel_Brok_AP', 'U_SEL_BROK_AP'],
+  sellerBrokeragePercent: ['U_Seller_Brok_Per', 'U_SELLER_BROK_PER'],
+  sellerBrokeragePercentage: ['U_Seller_Brok_Per', 'U_SELLER_BROK_PER'],
+  stcode: ['U_SELLTCODE', 'U_STCODE'],
+  sellerItem: ['U_S_Item', 'U_S_ITEM'],
+  sellerQty: ['U_S_Qty', 'U_S_QTY'],
+  sellerQuantity: ['U_S_Qty', 'U_S_QTY'],
+  specialRebate: ['U_SPLRBT'],
+  commission: ['U_COMPRC'],
+  commision: ['U_COMPRC'],
+  sellerBrokeragePerQty: ['U_S_BrokPerQty', 'U_S_BROKPERQTY'],
+  brokPerQty: ['U_S_BrokPerQty', 'U_S_BROKPERQTY'],
+  fixBrokBuyer: ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER'],
+  fixBrockSeller: ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller'],
+};
+
+const normalizeLineUdfToken = (value) =>
+  String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
+
+const hasEnteredLineValue = (value) =>
+  value !== undefined && value !== null && String(value).trim() !== '';
+
+const buildAPCreditMemoLineUdfPayload = (line = {}, rowUdfDefinitions = [], formSettings = {}) => {
+  const udf = buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings);
+  const knownUdfKeyByToken = new Map();
+
+  (rowUdfDefinitions || []).forEach((field) => {
+    [field?.key, field?.sapField, field?.aliasId, field?.label, field?.description, field?.Descr]
+      .forEach((candidate) => {
+        const token = normalizeLineUdfToken(candidate);
+        if (field?.key && token && !knownUdfKeyByToken.has(token)) {
+          knownUdfKeyByToken.set(token, field.key);
+        }
+      });
+  });
+
+  Object.entries(AP_CREDIT_MEMO_LINE_UDF_FIELD_MAP).forEach(([lineKey, udfKeys]) => {
+    const value = line[lineKey];
+    if (!hasEnteredLineValue(value)) return;
+    const actualUdfKey = udfKeys
+      .map((key) => knownUdfKeyByToken.get(normalizeLineUdfToken(key)))
+      .find(Boolean) || udfKeys[0];
+    if (actualUdfKey) udf[actualUdfKey] = value;
+  });
+
+  return udf;
+};
+
+const getAPCreditMemoLineUdfValue = (udf = {}, aliases = []) => {
+  const aliasTokens = new Set((aliases || []).map(normalizeLineUdfToken).filter(Boolean));
+  for (const [key, value] of Object.entries(udf || {})) {
+    if (aliasTokens.has(normalizeLineUdfToken(key)) && hasEnteredLineValue(value)) {
+      return value;
+    }
+  }
+  return undefined;
+};
+
+const firstAPCreditMemoLineValue = (...values) => values.find(hasEnteredLineValue) ?? '';
+
+const hydrateAPCreditMemoLineUdfFields = (line = {}) => {
+  const hydrated = hydratePurchaseOrderLineUdfFields(line);
+  const udf = hydrated.udf || {};
+  const next = { ...hydrated };
+
+  Object.entries(AP_CREDIT_MEMO_LINE_UDF_FIELD_MAP).forEach(([lineKey, udfKeys]) => {
+    next[lineKey] = firstAPCreditMemoLineValue(next[lineKey], getAPCreditMemoLineUdfValue(udf, udfKeys));
+  });
+
+  next.sacCode = firstAPCreditMemoLineValue(next.sacCode, next.sac);
+  next.buyerTermsOfPayment = firstAPCreditMemoLineValue(next.buyerTermsOfPayment, next.buyerPaymentTerms);
+  next.sellerTermsOfPayment = firstAPCreditMemoLineValue(next.sellerTermsOfPayment, next.sellerPaymentTerms);
+  next.sellerTermsOfPaymentRepeat = firstAPCreditMemoLineValue(next.sellerTermsOfPaymentRepeat, next.sellerTermsOfPayment);
+  next.sellerBrokerageAmountPer = firstAPCreditMemoLineValue(next.sellerBrokerageAmountPer, next.sellerBrokerageAmtPer);
+  next.sellerBrokeragePercentage = firstAPCreditMemoLineValue(next.sellerBrokeragePercentage, next.sellerBrokeragePercent);
+  next.sellerQuantity = firstAPCreditMemoLineValue(next.sellerQuantity, next.sellerQty);
+  next.commision = firstAPCreditMemoLineValue(next.commision, next.commission);
+  next.brokPerQty = firstAPCreditMemoLineValue(next.brokPerQty, next.sellerBrokeragePerQty);
+
+  return next;
+};
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
 
@@ -303,6 +454,7 @@ function APCreditMemo() {
     series: [],
     states: [],
     distribution_rules: [],
+    gl_accounts: [],
     locations: [],
     countries: [],
     business_partners: [],
@@ -485,6 +637,7 @@ function APCreditMemo() {
             branches: refDataRes.data.branches || [],
             states: refDataRes.data.states || [],
             distribution_rules: refDataRes.data.distribution_rules || [],
+            gl_accounts: refDataRes.data.gl_accounts || [],
             locations: refDataRes.data.locations || [],
             countries: refDataRes.data.countries || [],
             business_partners: refDataRes.data.business_partners || [],
@@ -533,7 +686,7 @@ function APCreditMemo() {
 
         setLines(
           Array.isArray(po.lines) && po.lines.length
-            ? po.lines.map(l => ({
+            ? po.lines.map(l => hydrateAPCreditMemoLineUdfFields({
               ...createLine(rowUdfDefinitions),
               ...l,
               taxCodeManuallyOverridden: true,
@@ -570,7 +723,7 @@ function APCreditMemo() {
     const sourceType = copyFrom.type || 'grpo';
     const normalizedHeader = normaliseDocumentHeader(copyFrom.header || {});
     const sourceLines = Array.isArray(copyFrom.lines) ? copyFrom.lines : [];
-    const copiedLines = sourceLines.map((line, index) => ({
+    const copiedLines = sourceLines.map((line, index) => hydrateAPCreditMemoLineUdfFields({
       ...createLine(rowUdfDefinitions),
       ...normaliseDocumentLine(
         line,
@@ -672,6 +825,18 @@ function APCreditMemo() {
       factorDescription: description,
     };
   }).filter((option) => option.value), [refData.distribution_rules]);
+
+  const glAccountLookupOptions = useMemo(() => (refData.gl_accounts || []).map((account) => {
+    const value = account.AcctCode || account.accountCode || account.code || '';
+    const description = account.AcctName || account.accountName || account.name || '';
+    return {
+      value,
+      description,
+      label: description ? `${value} - ${description}` : value,
+      accountCode: value,
+      accountName: description,
+    };
+  }).filter((option) => option.value), [refData.gl_accounts]);
 
   const locationLookupOptions = useMemo(() => (refData.locations || []).map((locationItem) => {
     const value = String(locationItem.code ?? locationItem.Code ?? '');
@@ -1142,6 +1307,16 @@ function APCreditMemo() {
           { key: 'factorDescription', label: 'Description' },
         ],
       },
+      account: {
+        title: 'List of G/L Accounts',
+        options: glAccountLookupOptions,
+        searchPlaceholder: 'Search G/L accounts',
+        emptyMessage: 'No G/L accounts found',
+        columns: [
+          { key: 'accountCode', label: 'G/L Account', width: 140, primary: true },
+          { key: 'accountName', label: 'Account Name' },
+        ],
+      },
       location: {
         title: 'List of Locations',
         options: locationLookupOptions,
@@ -1467,12 +1642,12 @@ function APCreditMemo() {
     const copySource = unwrapCopyFromDocument(data);
     const normalizedHeader = normaliseDocumentHeader(copySource.header);
     const rawLines = copySource.lines;
-    const copiedLines = rawLines.map((line, index) => ({
+    const copiedLines = rawLines.map((line, index) => hydrateAPCreditMemoLineUdfFields({
       ...createLine(rowUdfDefinitions),
       ...normaliseDocumentLine(line, index, copySource.docEntry, AP_CREDIT_MEMO_COPY_BASE_TYPE[docType] || 20, normalizedHeader.branch),
       openQty: String(line.OpenQty ?? line.openQty ?? line.Quantity ?? line.quantity ?? ''),
       taxCodeManuallyOverridden: false,
-      udf: createUdfState(rowUdfDefinitions),
+      udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
     }));
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
@@ -1657,7 +1832,7 @@ function APCreditMemo() {
       };
       const payloadLines = lines.map((line) => ({
         ...line,
-        udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
+        udf: buildAPCreditMemoLineUdfPayload(line, rowUdfDefinitions, formSettings),
       }));
       const payload = { company_id: PURCHASE_ORDER_COMPANY_ID, header: prep, lines: payloadLines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
       const r = currentDocEntry ? await updateAPCreditMemo(currentDocEntry, payload) : await submitAPCreditMemo(payload);
@@ -1706,7 +1881,7 @@ function APCreditMemo() {
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <form className={`po-page sap-document-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form className={`po-page sap-document-page ap-credit-memo-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
       {/* ── Toolbar ── */}
       <div className="po-toolbar sap-document-toolbar">
@@ -1869,7 +2044,7 @@ function APCreditMemo() {
                 <div style={{ paddingLeft: 16 }}>
                   <div className="po-field">
                     <label className="po-field__label">Series</label>
-                    <select name="series" className="po-field__select" style={{ background: '#fff3cd' }} value={header.series} onChange={handleHeaderChange} disabled={!!currentDocEntry || pageState.seriesLoading}>
+                    <select name="series" className="po-field__select" value={header.series} onChange={handleHeaderChange} disabled={!!currentDocEntry || pageState.seriesLoading}>
                       <option value="">Select Series</option>
                       {refData.series.map(s => <option key={s.Series} value={s.Series}>{s.SeriesName} ({s.Indicator})</option>)}
                     </select>
@@ -2167,6 +2342,7 @@ function APCreditMemo() {
         isOpen={hsnModal.open}
         onClose={closeHSNModal}
         onSelect={handleHSNSelect}
+        mode={hsnModal.fieldName === 'sac' ? 'sac' : 'hsn'}
       />
 
       <LineValueLookupModal
