@@ -103,9 +103,13 @@ const updateAPInvoice = async (req, res) => {
   }
 };
 
-const getDocumentSeries = async (_req, res) => {
+const getDocumentSeries = async (req, res) => {
   try {
-    res.json(await apInvoiceService.getDocumentSeries());
+    res.json(await apInvoiceService.getDocumentSeries({
+      date: req.query.date || req.query.postingDate || null,
+      branch: req.query.branch || req.query.branchId || '',
+      transactionType: req.query.transactionType || '',
+    }));
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load document series.'));
   }

@@ -616,9 +616,8 @@ export default function ContentsTab({
           onChange={(event) => onLineChange(rowIndex, event)}
           disabled={disabled}
         >
-          <option value=""></option>
-          <option value="Y">Y</option>
           <option value="N">N</option>
+          <option value="Y">Y</option>
         </select>
       );
     }

@@ -11,6 +11,7 @@ const TITLES = {
   purchaseRequest: 'List of Purchase Requests',
   purchaseOrder: 'List of Purchase Orders',
   grpo: 'List of Goods Receipt POs',
+  apInvoice: 'List of A/P Invoices',
   goodsIssue: 'List of Goods Issues',
   blanket: 'List of Blanket Agreements',
 };
@@ -20,6 +21,7 @@ const BUSINESS_LABELS = {
   purchaseRequest: 'Vendor',
   purchaseOrder: 'Vendor',
   grpo: 'Vendor',
+  apInvoice: 'Vendor',
 };
 
 const getErrorMessage = (error, fallback) => {

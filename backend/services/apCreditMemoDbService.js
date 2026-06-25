@@ -12,6 +12,15 @@ const safe = async (promise) => {
   }
 };
 
+const getTableColumns = async (tableName) => {
+  const rows = await safe(db.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+  `, { tableName }));
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '').trim()));
+};
+
 const getVendors = () => safe(db.query(`
   SELECT CardCode, CardName, CardType, Currency,
          VatGroup, GroupNum AS PayTermsGrpCode
@@ -128,7 +137,8 @@ const getCompanyInfo = () => safe(db.query(`
   SELECT TOP 1
     CompnyName,
     CompnyAddr AS Address,
-    State
+    State,
+    MainCurncy
   FROM OADM
 `));
 
@@ -369,7 +379,18 @@ const getAPCreditMemoList = async ({
     status,
     postingDateFrom,
     postingDateTo,
+  }, {
+    additionalQueryClauses: [
+      'T0.NumAtCard LIKE @query',
+      `EXISTS (
+        SELECT 1
+        FROM RPC1 Q1
+        WHERE Q1.DocEntry = T0.DocEntry
+          AND (Q1.ItemCode LIKE @query OR Q1.Dscription LIKE @query)
+      )`,
+    ],
   });
+  whereClauses.push("ISNULL(T0.DocType, 'I') = 'I'");
 
   const countRows = await safe(db.query(`
     SELECT COUNT(*) AS total_count
@@ -536,6 +557,7 @@ const getAPCreditMemo = async (docEntry) => {
         docNo: header.DocNum ? String(header.DocNum) : '',
         status: header.DocumentStatus || 'Open',
         series: header.Series ? String(header.Series) : '',
+        currency: header.Currency || '',
         postingDate: header.PostingDate ? header.PostingDate.toISOString().split('T')[0] : '',
         deliveryDate: header.DeliveryDate ? header.DeliveryDate.toISOString().split('T')[0] : '',
         documentDate: header.DocumentDate ? header.DocumentDate.toISOString().split('T')[0] : '',
@@ -582,24 +604,116 @@ const getAPCreditMemo = async (docEntry) => {
   };
 };
 
-const getDocumentSeries = async () => {
+const getDocumentSeries = async ({ date = null, branch = '' } = {}) => {
+  const nnm1Columns = await getTableColumns('NNM1');
+  const hasBranchColumn = nnm1Columns.has('BPLId');
+  const branchSelect = hasBranchColumn ? 'T0.BPLId,' : 'NULL AS BPLId,';
+  const branchPreference = hasBranchColumn
+    ? 'CASE WHEN @branchId IS NOT NULL AND T0.BPLId = @branchId THEN 0 ELSE 1 END,'
+    : '';
+  const branchFilter = hasBranchColumn
+    ? 'AND (@branchId IS NULL OR T0.BPLId IS NULL OR T0.BPLId IN (-1, 0, @branchId))'
+    : '';
+  const exactBranchMatch = hasBranchColumn
+    ? 'CASE WHEN @branchId IS NOT NULL AND BPLId = @branchId THEN 1 ELSE 0 END'
+    : '0';
+  const branchScopeFilter = hasBranchColumn
+    ? 'AND (@branchId IS NULL OR HasExactBranchRows = 0 OR BPLId = @branchId OR IsManual = 1)'
+    : '';
+
   const result = await safe(db.query(`
-    SELECT 
-    T0.Series,
-    T0.SeriesName,
-    T0.Indicator,
-    T0.NextNumber,
-    T1.Name AS FinancialYear,
-    T1.F_RefDate AS FromDate,
-    T1.T_RefDate AS ToDate
-FROM NNM1 T0
-INNER JOIN OFPR T1 
-    ON T0.Indicator = T1.Indicator
-WHERE T0.ObjectCode = '19'
-    AND T0.Locked = 'N'
-    AND CAST(CURRENT_TIMESTAMP AS DATE) BETWEEN T1.F_RefDate AND T1.T_RefDate
-ORDER BY T0.SeriesName
-  `));
+    DECLARE @docDate date = COALESCE(
+      TRY_CONVERT(date, @date, 23),
+      TRY_CONVERT(date, @date, 105),
+      TRY_CONVERT(date, @date, 103),
+      TRY_CONVERT(date, @date)
+    );
+    IF @docDate IS NULL SET @docDate = CAST(CURRENT_TIMESTAMP AS date);
+
+    DECLARE @branchId int = TRY_CONVERT(int, NULLIF(@branch, ''));
+    DECLARE @fyStartYear int = CASE WHEN MONTH(@docDate) >= 4 THEN YEAR(@docDate) ELSE YEAR(@docDate) - 1 END;
+    DECLARE @fyEndYear int = @fyStartYear + 1;
+    DECLARE @fyStartShort varchar(2) = RIGHT(CONVERT(varchar(4), @fyStartYear), 2);
+    DECLARE @fyEndShort varchar(2) = RIGHT(CONVERT(varchar(4), @fyEndYear), 2);
+    DECLARE @fyCompact varchar(8) = CONCAT(@fyStartShort, @fyEndShort);
+    DECLARE @fyFullCompact varchar(12) = CONCAT(CONVERT(varchar(4), @fyStartYear), @fyEndShort);
+    DECLARE @fyFullRangeCompact varchar(12) = CONCAT(CONVERT(varchar(4), @fyStartYear), CONVERT(varchar(4), @fyEndYear));
+
+    ;WITH MatchingIndicators AS (
+      SELECT DISTINCT Indicator
+      FROM OFPR
+      WHERE @docDate BETWEEN F_RefDate AND T_RefDate
+    ),
+    SeriesRows AS (
+      SELECT
+        T0.Series,
+        T0.SeriesName,
+        T0.Indicator,
+        T0.NextNumber,
+        ${branchSelect}
+        FY.FinancialYear,
+        FY.FromDate,
+        FY.ToDate,
+        CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault,
+        CASE WHEN MI.Indicator IS NOT NULL THEN 1 ELSE 0 END AS IsDateMatch,
+        CASE
+          WHEN UPPER(REPLACE(REPLACE(REPLACE(REPLACE(CONCAT(ISNULL(T0.SeriesName, ''), ' ', ISNULL(T0.Indicator, '')), 'FY', ''), '-', ''), '/', ''), ' ', '')) LIKE '%' + @fyCompact + '%'
+            OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(CONCAT(ISNULL(T0.SeriesName, ''), ' ', ISNULL(T0.Indicator, '')), 'FY', ''), '-', ''), '/', ''), ' ', '')) LIKE '%' + @fyFullCompact + '%'
+            OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(CONCAT(ISNULL(T0.SeriesName, ''), ' ', ISNULL(T0.Indicator, '')), 'FY', ''), '-', ''), '/', ''), ' ', '')) LIKE '%' + @fyFullRangeCompact + '%'
+          THEN 1
+          ELSE 0
+        END AS IsYearNameMatch,
+        CASE
+          WHEN T0.Series = -1 OR UPPER(LTRIM(RTRIM(ISNULL(T0.SeriesName, '')))) = 'MANUAL' THEN 1
+          ELSE 0
+        END AS IsManual,
+        ROW_NUMBER() OVER (
+          PARTITION BY UPPER(LTRIM(RTRIM(ISNULL(T0.SeriesName, '')))), UPPER(LTRIM(RTRIM(ISNULL(T0.Indicator, ''))))
+          ORDER BY ${branchPreference} CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.Series
+        ) AS RowRank
+      FROM NNM1 T0
+      LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
+      LEFT JOIN MatchingIndicators MI ON MI.Indicator = T0.Indicator
+      LEFT JOIN (
+        SELECT
+          Indicator,
+          MAX(Name) AS FinancialYear,
+          MIN(F_RefDate) AS FromDate,
+          MAX(T_RefDate) AS ToDate
+        FROM OFPR
+        GROUP BY Indicator
+      ) FY ON FY.Indicator = T0.Indicator
+      WHERE T0.ObjectCode = '19'
+        AND ISNULL(T0.Locked, 'N') <> 'Y'
+        ${branchFilter}
+    ),
+    ScopedRows AS (
+      SELECT
+        *,
+        MAX(IsYearNameMatch) OVER () AS HasYearMatchedRows,
+        MAX(${exactBranchMatch}) OVER () AS HasExactBranchRows
+      FROM SeriesRows
+    )
+    SELECT
+      Series,
+      SeriesName,
+      Indicator,
+      NextNumber,
+      BPLId,
+      FinancialYear,
+      FromDate,
+      ToDate,
+      IsDefault
+    FROM ScopedRows
+    WHERE RowRank = 1
+      AND (
+        IsManual = 1
+        OR (HasYearMatchedRows = 1 AND IsYearNameMatch = 1)
+        OR (HasYearMatchedRows = 0 AND IsDateMatch = 1)
+      )
+      ${branchScopeFilter}
+    ORDER BY IsManual ASC, IsDefault DESC, SeriesName
+  `, { date, branch }));
 
   return { series: result };
 };
@@ -625,7 +739,17 @@ const getStateFromWarehouse = async (whsCode) => {
   return { state: result.length ? (result[0].State || '') : '' };
 };
 
+const loadReferencePart = async (label, loader, fallback, warnings) => {
+  try {
+    return await loader();
+  } catch (error) {
+    warnings.push(`${label}: ${error.message || 'failed to load'}`);
+    return fallback;
+  }
+};
+
 const getReferenceData = async () => {
+  const warnings = [];
   const [
     vendors,
     items,
@@ -646,24 +770,29 @@ const getReferenceData = async () => {
     countries,
     businessPartners,
   ] = await Promise.all([
-    getVendors(),
-    getItems(),
-    getWarehouses(),
-    getPaymentTerms(),
-    getSalesEmployees(),
-    getShippingTypes(),
-    getBranches(),
-    getStates(),
-    getTaxCodes(),
-    getUomGroups(),
-    getDecimalSettings(),
-    getCompanyInfo(),
-    getMarketingDocumentUdfs({ headerTable: 'ORPC', lineTable: 'RPC1' }),
-    masterDataDbService.lookupDistributionRules(),
-    getGLAccounts(),
-    masterDataDbService.lookupWarehouseLocations(),
-    masterDataDbService.lookupCountries(''),
-    masterDataDbService.searchBP('', '', 5000, 0),
+    loadReferencePart('Vendors', getVendors, [], warnings),
+    loadReferencePart('Items', getItems, [], warnings),
+    loadReferencePart('Warehouses', getWarehouses, [], warnings),
+    loadReferencePart('Payment terms', getPaymentTerms, [], warnings),
+    loadReferencePart('Sales employees', getSalesEmployees, [], warnings),
+    loadReferencePart('Shipping types', getShippingTypes, [], warnings),
+    loadReferencePart('Branches', getBranches, [], warnings),
+    loadReferencePart('States', getStates, [], warnings),
+    loadReferencePart('Tax codes', getTaxCodes, [], warnings),
+    loadReferencePart('UoM groups', getUomGroups, [], warnings),
+    loadReferencePart('Decimal settings', getDecimalSettings, [], warnings),
+    loadReferencePart('Company info', getCompanyInfo, [], warnings),
+    loadReferencePart(
+      'UDF metadata',
+      () => getMarketingDocumentUdfs({ headerTable: 'ORPC', lineTable: 'RPC1' }),
+      { header: [], rows: [] },
+      warnings
+    ),
+    loadReferencePart('Distribution rules', () => masterDataDbService.lookupDistributionRules(), [], warnings),
+    loadReferencePart('GL accounts', getGLAccounts, [], warnings),
+    loadReferencePart('Warehouse locations', () => masterDataDbService.lookupWarehouseLocations(), [], warnings),
+    loadReferencePart('Countries', () => masterDataDbService.lookupCountries(''), [], warnings),
+    loadReferencePart('Business partners', () => masterDataDbService.searchBP('', '', 5000, 0), [], warnings),
   ]);
 
   const uomGroupMap = {};
@@ -694,15 +823,18 @@ const getReferenceData = async () => {
     name: companyRows[0].CompnyName || 'SAP B1',
     address: companyRows[0].Address || '',
     state: companyRows[0].State || '',
+    localCurrency: companyRows[0].MainCurncy || '',
   } : {
     name: 'SAP B1',
     address: '',
     state: '',
+    localCurrency: '',
   };
 
   return {
     company: companyInfo.name,
     company_state: companyInfo.state,
+    company_currency: companyInfo.localCurrency,
     vendors,
     contacts: [],
     pay_to_addresses: [],
@@ -726,7 +858,7 @@ const getReferenceData = async () => {
     locations,
     countries,
     business_partners: businessPartners,
-    warnings: [],
+    warnings,
   };
 };
 

@@ -4,7 +4,7 @@ const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
-const { applyUdfValues } = require('./udfPayloadUtils');
+const { applyUdfValues, isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
 const { resolveHSNCodeToAbsEntry, resolveSACCodeToAbsEntry } = require('./hsnCodeDbService');
 
 const formatDateForSAP = (value) => {
@@ -139,6 +139,26 @@ const getUdfDefinitionsByKey = async (tableId) => {
   return new Map(definitions.map((field) => [field.key, field]));
 };
 
+const normalizeUdfAlias = (value) =>
+  String(value || '')
+    .replace(/^U_/i, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase();
+
+const setKnownUdfValue = (target, definitionsByKey, aliases, value) => {
+  if (value === undefined) return;
+
+  const normalizedAliases = aliases.map(normalizeUdfAlias);
+  const matchedKey = Array.from(definitionsByKey.keys()).find((key) => normalizedAliases.includes(normalizeUdfAlias(key)));
+  if (!matchedKey) return;
+  if (isBlankUdfValue(value)) {
+    target[matchedKey] = null;
+    return;
+  }
+  const normalizedValue = normalizeUdfValue(value, definitionsByKey.get(matchedKey), matchedKey);
+  if (normalizedValue !== undefined) target[matchedKey] = normalizedValue;
+};
+
 const calculateExpectedTotal = (header, lines) => {
   const subtotal = lines
     .filter((l) => l.itemNo && String(l.itemNo).trim())
@@ -247,14 +267,6 @@ const validateAPCreditMemoPayload = async (payload, docEntry = null) => {
     }
   }
 
-  if (String(header.totalPaymentDue || '').trim()) {
-    const enteredTotal = Number(parseNum(header.totalPaymentDue).toFixed(2));
-    const expectedTotal = calculateExpectedTotal(header, populatedLines);
-    if (Math.abs(enteredTotal - expectedTotal) > 0.01) {
-      throw new Error('Document total mismatch');
-    }
-  }
-
   let populatedLineIndex = 0;
   return {
     header: smartGstValidation.header,
@@ -283,15 +295,24 @@ const getReferenceData = async () => {
       warehouses: [],
       warehouse_addresses: [],
       payment_terms: [],
+      sales_employees: [],
       shipping_types: [],
       branches: [],
+      states: [],
       tax_codes: [],
       uom_groups: [],
       contacts: [],
       pay_to_addresses: [],
+      ship_to_addresses: [],
+      bill_to_addresses: [],
       company_address: {},
+      distribution_rules: [],
       gl_accounts: [],
+      locations: [],
+      countries: [],
+      business_partners: [],
       decimal_settings: { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 },
+      udf_metadata: { header: [], rows: [] },
       warnings: [`Failed to load reference data: ${error.message}`],
     };
   }
@@ -382,9 +403,9 @@ const getAPCreditMemo = async (docEntry) => {
   }
 };
 
-const getDocumentSeries = async () => {
+const getDocumentSeries = async (options = {}) => {
   try {
-    return await apCreditMemoDb.getDocumentSeries();
+    return await apCreditMemoDb.getDocumentSeries(options);
   } catch (_error) {
     return { series: [] };
   }
@@ -524,12 +545,19 @@ const submitAPCreditMemo = async (payload) => {
     };
 
     if (header.series) sapPayload.Series = parseInt(header.series, 10);
+    if (header.currency) sapPayload.DocCurrency = String(header.currency).trim();
+    if (header.shipToCode) sapPayload.ShipToCode = String(header.shipToCode).trim();
+    if (header.payToCode) sapPayload.PayToCode = String(header.payToCode).trim();
     if (header.branch) sapPayload.BPLId = parseInt(header.branch, 10);
     if (header.paymentTerms) sapPayload.PaymentGroupCode = parseInt(header.paymentTerms, 10);
     if (header.salesEmployee !== '' && header.salesEmployee != null) sapPayload.SalesPersonCode = parseInt(header.salesEmployee, 10);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
+    if (header.shipToCode) sapPayload.ShipToCode = String(header.shipToCode).trim();
+    if (header.payToCode) sapPayload.PayToCode = String(header.payToCode).trim();
 
     applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
     console.log('Constructed SAP Payload:', sapPayload);
 
     const response = await sapService.request({
@@ -570,6 +598,8 @@ const updateAPCreditMemo = async (docEntry, payload) => {
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
     applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
+    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
 
     await sapService.request({
       method: 'PATCH',

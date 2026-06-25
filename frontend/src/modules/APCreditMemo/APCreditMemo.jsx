@@ -26,7 +26,7 @@ import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/do
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
-import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import { getDefaultSeriesForCurrentYear, normalizeDocumentSeriesList } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
@@ -45,6 +45,10 @@ import {
   fetchItemsForModal,
   fetchFreightCharges,
 } from '../../api/apCreditMemoApi';
+import {
+  fetchAPInvoices,
+  fetchAPInvoiceByDocEntry,
+} from '../../api/apInvoiceApi';
 import { PURCHASE_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument } from '../../api/copyFromApi';
@@ -140,6 +144,40 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
+const DEFAULT_TRANSACTION_TYPES = [
+  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
+  { value: 'Bill of Supply', label: 'Bill of Supply' },
+  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
+];
+
+const normalizeMetadataIdentity = (value) =>
+  String(value || '').replace(/^U_/i, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+
+const isTransactionTypeField = (field = {}) => {
+  const identities = [field.key, field.sapField, field.aliasId, field.label, field.description, field.Descr]
+    .map(normalizeMetadataIdentity);
+  return identities.some((identity) => [
+    'transactiontype',
+    'transtype',
+    'documenttype',
+    'doctype',
+  ].includes(identity));
+};
+
+const getTransactionTypeOptions = (headerUdfDefinitions = [], fallbackOptions = DEFAULT_TRANSACTION_TYPES) => {
+  const transactionTypeField = headerUdfDefinitions.find(isTransactionTypeField);
+  const metadataOptions = Array.isArray(transactionTypeField?.options)
+    ? transactionTypeField.options
+      .map((option) => {
+        const value = String(option?.value ?? option ?? '').trim();
+        const label = String(option?.label ?? option?.description ?? option?.Descr ?? value).trim();
+        return value ? { value, label: label || value } : null;
+      })
+      .filter(Boolean)
+    : [];
+
+  return metadataOptions.length ? metadataOptions : fallbackOptions;
+};
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
@@ -212,6 +250,8 @@ const INIT_HEADER = {
   name: '',
   contactPerson: '',
   salesContractNo: '',
+  transactionType: '',
+  currency: '',
   branch: '',
   docNo: '',
   status: 'Open',
@@ -300,7 +340,7 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 
 const AP_CREDIT_MEMO_COPY_BASE_TYPE = {
   grpo: 20,
-  apInvoice: 20,
+  apInvoice: 18,
 };
 
 const AP_CREDIT_MEMO_LINE_UDF_FIELD_MAP = {
@@ -434,6 +474,7 @@ function APCreditMemo() {
   const [refData, setRefData] = useState({
     company: '',
     company_state: '',
+    company_currency: '',
     vendors: [],
     contacts: [],
     pay_to_addresses: [],
@@ -453,6 +494,8 @@ function APCreditMemo() {
     warnings: [],
     series: [],
     states: [],
+    transaction_types: [],
+    transactionTypes: [],
     distribution_rules: [],
     gl_accounts: [],
     locations: [],
@@ -589,10 +632,17 @@ function APCreditMemo() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const [refDataRes, seriesRes] = await Promise.all([
-          fetchAPCreditMemoReferenceData(PURCHASE_ORDER_COMPANY_ID),
-          fetchAPCreditMemoSeries(),
-        ]);
+        const refDataRes = await fetchAPCreditMemoReferenceData(PURCHASE_ORDER_COMPANY_ID);
+        let seriesRes = { data: { series: [] } };
+        try {
+          seriesRes = await fetchAPCreditMemoSeries({
+            date: INIT_HEADER.postingDate,
+            branch: INIT_HEADER.branch,
+            transactionType: INIT_HEADER.transactionType,
+          });
+        } catch (_seriesError) {
+          seriesRes = { data: { series: [] } };
+        }
 
         if (!ignore) {
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
@@ -621,6 +671,7 @@ function APCreditMemo() {
           setRefData({
             company: refDataRes.data.company || '',
             company_state: refDataRes.data.company_state || '',
+            company_currency: refDataRes.data.company_currency || '',
             vendors: refDataRes.data.vendors || [],
             contacts: refDataRes.data.contacts || [],
             pay_to_addresses: refDataRes.data.pay_to_addresses || [],
@@ -636,6 +687,8 @@ function APCreditMemo() {
             sales_employees: refDataRes.data.sales_employees || [],
             branches: refDataRes.data.branches || [],
             states: refDataRes.data.states || [],
+            transaction_types: refDataRes.data.transaction_types || [],
+            transactionTypes: refDataRes.data.transactionTypes || [],
             distribution_rules: refDataRes.data.distribution_rules || [],
             gl_accounts: refDataRes.data.gl_accounts || [],
             locations: refDataRes.data.locations || [],
@@ -645,11 +698,11 @@ function APCreditMemo() {
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             warnings: refDataRes.data.warnings || [],
-            series: seriesRes.data.series || [],
+            series: normalizeDocumentSeriesList(seriesRes.data.series || []),
           });
 
           if (seriesRes.data.series && seriesRes.data.series.length > 0 && !currentDocEntry) {
-            const defaultSeries = getDefaultSeriesForCurrentYear(seriesRes.data.series);
+            const defaultSeries = getDefaultSeriesForCurrentYear(normalizeDocumentSeriesList(seriesRes.data.series));
             if (defaultSeries?.Series != null) {
               handleSeriesChange(defaultSeries.Series);
             }
@@ -721,7 +774,11 @@ function APCreditMemo() {
     if (!copyFrom) return;
 
     const sourceType = copyFrom.type || 'grpo';
-    const normalizedHeader = normaliseDocumentHeader(copyFrom.header || {});
+    const normalizedHeader = { ...normaliseDocumentHeader(copyFrom.header || {}) };
+    if (sourceType === 'grpo') {
+      normalizedHeader.salesContractNo = '';
+      normalizedHeader.customerRefNo = '';
+    }
     const sourceLines = Array.isArray(copyFrom.lines) ? copyFrom.lines : [];
     const copiedLines = sourceLines.map((line, index) => hydrateAPCreditMemoLineUdfFields({
       ...createLine(rowUdfDefinitions),
@@ -807,6 +864,16 @@ function APCreditMemo() {
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
     : [{ value: 'Air', label: 'Air' }, { value: 'Sea', label: 'Sea' }, { value: 'Road', label: 'Road' }];
 
+  const currencyOptions = useMemo(() => {
+    const values = [
+      header.currency,
+      refData.company_currency,
+      'INR',
+      ...refData.vendors.map((vendor) => vendor.Currency),
+    ];
+    return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
+  }, [header.currency, refData.company_currency, refData.vendors]);
+
   const lineItemOptions = lines.reduce((acc, line, i) => {
     const code = String(line.itemNo || '').trim();
     const exists = refData.items.some(it => String(it.ItemCode || '') === code);
@@ -881,13 +948,88 @@ function APCreditMemo() {
     return { value, description: code ? `Code: ${code}` : '', label: code ? `${value} (${code})` : value, code };
   }).filter((option) => option.value), [refData.payment_terms]);
 
+  const transactionTypeOptions = useMemo(
+    () => getTransactionTypeOptions(headerUdfDefinitions),
+    [headerUdfDefinitions],
+  );
+
+  useEffect(() => {
+    if (currentDocEntry || header.transactionType || !transactionTypeOptions.length) return;
+    const firstOption = transactionTypeOptions[0];
+    setHeader((prev) => ({
+      ...prev,
+      transactionType: firstOption.value,
+      indicator: firstOption.indicator || prev.indicator,
+    }));
+  }, [currentDocEntry, header.transactionType, transactionTypeOptions]);
+
+  useEffect(() => {
+    if (currentDocEntry || location.state?.APCreditMemoDocEntry) return undefined;
+
+    let ignore = false;
+    const loadSeriesForHeader = async () => {
+      setPageState((prev) => ({ ...prev, seriesLoading: true }));
+      try {
+        const response = await fetchAPCreditMemoSeries({
+          date: header.postingDate || header.documentDate,
+          branch: header.branch || '',
+          transactionType: header.transactionType || '',
+        });
+        if (ignore) return;
+
+        const nextSeries = normalizeDocumentSeriesList(response.data?.series || []);
+        setRefData((prev) => ({ ...prev, series: nextSeries }));
+
+        if (!nextSeries.length) {
+          setHeader((prev) => ({ ...prev, series: '', nextNumber: '' }));
+          return;
+        }
+
+        const hasCurrentSeries = nextSeries.some((series) => String(series.Series) === String(header.series || ''));
+        const defaultSeries = hasCurrentSeries
+          ? nextSeries.find((series) => String(series.Series) === String(header.series || ''))
+          : getDefaultSeriesForCurrentYear(nextSeries, header.postingDate || header.documentDate);
+
+        if (defaultSeries?.Series != null && String(defaultSeries.Series) !== String(header.series || '')) {
+          await handleSeriesChange(defaultSeries.Series);
+        } else if (!String(header.nextNumber || '').trim() && defaultSeries?.Series != null) {
+          await handleSeriesChange(defaultSeries.Series);
+        }
+      } catch (error) {
+        if (!ignore) {
+          setRefData((prev) => ({ ...prev, series: [] }));
+          setHeader((prev) => ({ ...prev, series: '', nextNumber: '' }));
+        }
+      } finally {
+        if (!ignore) setPageState((prev) => ({ ...prev, seriesLoading: false }));
+      }
+    };
+
+    loadSeriesForHeader();
+    return () => { ignore = true; };
+  }, [currentDocEntry, location.state, header.postingDate, header.documentDate, header.branch, header.transactionType]);
+
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
   const FALLBACK_WAREHOUSES = [{ WhsCode: 'WH01', WhsName: 'Main Warehouse' }];
 
   const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : FALLBACK_WAREHOUSES;
   const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
+  const defaultBranchId = refData.branches[0]?.BPLId;
+  const defaultWarehouseCode = branchFilteredWarehouses[0]?.WhsCode;
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
+
+  useEffect(() => {
+    if (!header.branch && defaultBranchId != null) {
+      setHeader((prev) => prev.branch ? prev : { ...prev, branch: String(defaultBranchId) });
+    }
+  }, [header.branch, defaultBranchId]);
+
+  useEffect(() => {
+    if (!header.warehouse && defaultWarehouseCode) {
+      setHeader((prev) => prev.warehouse ? prev : { ...prev, warehouse: defaultWarehouseCode });
+    }
+  }, [header.warehouse, defaultWarehouseCode]);
 
   const getBranchName = (branchId) => {
     if (!branchId) return '';
@@ -1112,6 +1254,7 @@ function APCreditMemo() {
       nextHeader: {
         ...hdr,
         name: m.CardName || m.Name || hdr.name,
+        currency: m.Currency || hdr.currency || refData.company_currency || 'INR',
         paymentTerms: m.GroupNum != null ? String(m.GroupNum) : hdr.paymentTerms,
         contactPerson: '',
         shipTo: '',
@@ -1135,6 +1278,16 @@ function APCreditMemo() {
 
     if (name === 'series') {
       handleSeriesChange(value);
+      return;
+    }
+
+    if (name === 'transactionType') {
+      const selectedOption = transactionTypeOptions.find((option) => String(option.value) === String(value));
+      setHeader((prev) => ({
+        ...prev,
+        transactionType: value,
+        indicator: selectedOption?.indicator || prev.indicator,
+      }));
       return;
     }
 
@@ -1640,7 +1793,11 @@ function APCreditMemo() {
   // ── validation ────────────────────────────────────────────────────────────
   const handleCopyFrom = (data, docType) => {
     const copySource = unwrapCopyFromDocument(data);
-    const normalizedHeader = normaliseDocumentHeader(copySource.header);
+    const normalizedHeader = { ...normaliseDocumentHeader(copySource.header) };
+    if (docType === 'grpo') {
+      normalizedHeader.salesContractNo = '';
+      normalizedHeader.customerRefNo = '';
+    }
     const rawLines = copySource.lines;
     const copiedLines = rawLines.map((line, index) => hydrateAPCreditMemoLineUdfFields({
       ...createLine(rowUdfDefinitions),
@@ -1659,7 +1816,8 @@ function APCreditMemo() {
     }
 
     setCopyFromModal(false);
-    setPageState((prev) => ({ ...prev, error: '', success: 'GRPO copied successfully.' }));
+    const label = docType === 'apInvoice' ? 'A/P Invoice' : 'GRPO';
+    setPageState((prev) => ({ ...prev, error: '', success: `${label} copied successfully.` }));
   };
 
   const openCopyFromModal = (docType) => {
@@ -1678,6 +1836,16 @@ function APCreditMemo() {
   };
 
   const fetchCopyFromDocuments = async (docType) => {
+    if (docType === 'apInvoice') {
+      const response = await fetchAPInvoices({
+        vendorCode: header.vendor,
+        openOnly: false,
+        page: 1,
+        pageSize: 100,
+      });
+      return response.data.apInvoices || [];
+    }
+
     if (docType === 'grpo') {
       const response = await fetchAPCreditMemoOpenGRPO(header.vendor);
       return response.data.orders || response.data.documents || [];
@@ -1687,6 +1855,11 @@ function APCreditMemo() {
   };
 
   const fetchCopyFromDocumentDetails = async (docType, docEntry) => {
+    if (docType === 'apInvoice') {
+      const response = await fetchAPInvoiceByDocEntry(docEntry);
+      return response.data.apInvoice || response.data;
+    }
+
     if (docType === 'grpo') {
       const response = await fetchAPCreditMemoGRPOForCopy(docEntry);
       return response.data;
@@ -1718,6 +1891,7 @@ function APCreditMemo() {
     });
 
     if (duplicated) {
+      setHeader((prev) => ({ ...prev, salesContractNo: '' }));
       refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
     }
   };
@@ -1794,14 +1968,6 @@ function APCreditMemo() {
       }
     }
 
-    if (String(header.totalPaymentDue || '').trim()) {
-      const enteredTotal = parseNum(header.totalPaymentDue);
-      if (Math.abs(enteredTotal - totals.total) > 0.01) {
-        e.form = 'Document total mismatch';
-        return e;
-      }
-    }
-
     return e;
   };
 
@@ -1868,7 +2034,11 @@ function APCreditMemo() {
   };
 
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
-  const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const sidebarHeaderUdfDefinitions = useMemo(
+    () => headerUdfDefinitions.filter((field) => !isTransactionTypeField(field)),
+    [headerUdfDefinitions],
+  );
+  const visHdrUdfs = sidebarHeaderUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
   const visibleRowUdfs = rowUdfDefinitions
     .filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false)
@@ -1913,6 +2083,17 @@ function APCreditMemo() {
             Copy From ▼
           </button>
           <div className="po-dropdown-menu">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openCopyFromModal('apInvoice');
+                document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
+              }}
+            >
+              A/P Invoice
+            </button>
             <button
               type="button"
               onClick={(event) => {
@@ -1969,7 +2150,7 @@ function APCreditMemo() {
                 {/* LEFT — Vendor info */}
                 <div style={{ borderRight: '2px solid #e0e6ed', paddingRight: 16 }}>
                   <div className="po-field">
-                    <label className="po-field__label">Buyer's Code *</label>
+                    <label className="po-field__label">Vendor *</label>
                     <div style={{ display: 'flex', gap: 2 }}>
                       <input 
                         name="vendor" 
@@ -1987,7 +2168,7 @@ function APCreditMemo() {
                     {valErrors.header.vendor && <span className="po-error-feedback">{valErrors.header.vendor}</span>}
                   </div>
                   <div className="po-field">
-                    <label className="po-field__label">Buyer's Name</label>
+                    <label className="po-field__label">Name</label>
                     <input name="name" className="po-field__input" value={header.name} readOnly />
                   </div>
                   <div className="po-field">
@@ -2000,23 +2181,28 @@ function APCreditMemo() {
                     </select>
                   </div>
                   <div className="po-field">
-                    <label className="po-field__label">Sales Contract No.</label>
+                    <label className="po-field__label">Transaction Type</label>
+                    <select
+                      name="transactionType"
+                      className="po-field__select"
+                      value={header.transactionType || ''}
+                      onChange={handleHeaderChange}
+                      disabled={!isDocumentEditable || !transactionTypeOptions.length}
+                    >
+                      {transactionTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="po-field">
+                    <label className="po-field__label">Supplier Invoice No.</label>
                     <input name="salesContractNo" className="po-field__input" value={header.salesContractNo} onChange={handleHeaderChange} />
                   </div>
                   <div className="po-field">
-                    <label className="po-field__label">Our Branch</label>
-                    <select name="branch" className={`po-field__select${valErrors.header.branch ? ' po-field__select--error' : ''}`} value={header.branch} onChange={handleHeaderChange}>
-                      <option value="">Select</option>
-                      {refData.branches.map(b => <option key={b.BPLId} value={b.BPLId}>{b.BPLName}</option>)}
-                    </select>
-                    {valErrors.header.branch && <span className="po-error-feedback">{valErrors.header.branch}</span>}
-                  </div>
-                  <div className="po-field">
-                    <label className="po-field__label">Warehouse</label>
-                    <select name="warehouse" className="po-field__select" value={header.warehouse || ''} onChange={handleHeaderChange}>
-                      <option value="">Select Warehouse</option>
-                      {branchFilteredWarehouses.map(w => (
-                        <option key={w.WhsCode} value={w.WhsCode}>{w.WhsCode} - {w.WhsName}</option>
+                    <label className="po-field__label">Local Currency</label>
+                    <select name="currency" className="po-field__select" value={header.currency || refData.company_currency || 'INR'} onChange={handleHeaderChange}>
+                      {currencyOptions.map((currency) => (
+                        <option key={currency} value={currency}>{currency}</option>
                       ))}
                     </select>
                   </div>
@@ -2038,17 +2224,29 @@ function APCreditMemo() {
                       <div className="po-alert po-alert--warning" style={{ margin: '4px 0 0', padding: '3px 8px', fontSize: 11 }}>GSTIN missing - please verify tax calculation</div>
                     )}
                   </div>
+                  <div className="po-field">
+                    <label className="po-field__label">Ship From</label>
+                    <select name="shipToCode" className="po-field__select" value={header.shipToCode || ''} onChange={handleHeaderChange} disabled={!header.vendor}>
+                      <option value="">Select</option>
+                      {vendorEffectiveShipToAddresses.map((address) => (
+                        <option key={address.Address} value={address.Address}>{address.Address}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {/* RIGHT — Document info */}
                 <div style={{ paddingLeft: 16 }}>
                   <div className="po-field">
-                    <label className="po-field__label">Series</label>
+                    <label className="po-field__label">No.</label>
                     <select name="series" className="po-field__select" value={header.series} onChange={handleHeaderChange} disabled={!!currentDocEntry || pageState.seriesLoading}>
                       <option value="">Select Series</option>
                       {refData.series.map(s => <option key={s.Series} value={s.Series}>{s.SeriesName} ({s.Indicator})</option>)}
+                      {header.series && !refData.series.some(s => String(s.Series) === String(header.series)) && (
+                        <option value={header.series}>{header.series}</option>
+                      )}
                     </select>
-                    <input type="text" className="po-field__input" style={{ width: 80, background: '#f0f2f5', textAlign: 'center' }} value={pageState.seriesLoading ? '...' : header.nextNumber} readOnly title="Auto-assigned on save" />
+                    <input type="text" className="po-field__input" style={{ width: 80, background: '#f0f2f5', textAlign: 'center' }} value={pageState.seriesLoading ? '...' : currentDocEntry ? (header.docNo || header.nextNumber || '') : (header.nextNumber || '')} readOnly title="Auto-assigned on save" />
                   </div>
                   <div className="po-field">
                     <label className="po-field__label">Status</label>
@@ -2060,7 +2258,7 @@ function APCreditMemo() {
                     {valErrors.header.postingDate && <span className="po-error-feedback">{valErrors.header.postingDate}</span>}
                   </div>
                   <div className="po-field">
-                    <label className="po-field__label">Delivery Date</label>
+                    <label className="po-field__label">Due Date</label>
                     <input type="date" name="deliveryDate" className={`po-field__input${valErrors.header.deliveryDate ? ' po-field__input--error' : ''}`} value={header.deliveryDate} onChange={handleHeaderChange} />
                     {valErrors.header.deliveryDate && <span className="po-error-feedback">{valErrors.header.deliveryDate}</span>}
                   </div>
@@ -2068,14 +2266,6 @@ function APCreditMemo() {
                     <label className="po-field__label">Document Date *</label>
                     <input type="date" name="documentDate" className={`po-field__input${valErrors.header.documentDate ? ' po-field__input--error' : ''}`} value={header.documentDate} onChange={handleHeaderChange} />
                     {valErrors.header.documentDate && <span className="po-error-feedback">{valErrors.header.documentDate}</span>}
-                  </div>
-                  <div className="po-field">
-                    <label className="po-field__label">Contract Date</label>
-                    <input type="date" name="contractDate" className="po-field__input" value={header.contractDate} onChange={handleHeaderChange} />
-                  </div>
-                  <div className="po-field">
-                    <label className="po-field__label">Branch Reg. No.</label>
-                    <input name="branchRegNo" className="po-field__input" value={header.branchRegNo || ''} onChange={handleHeaderChange} />
                   </div>
                 </div>
 
@@ -2266,6 +2456,17 @@ function APCreditMemo() {
                       onClick={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
+                        openCopyFromModal('apInvoice');
+                        document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
+                      }}
+                    >
+                      A/P Invoice
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
                         openCopyFromModal('grpo');
                         document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
                       }}
@@ -2301,7 +2502,7 @@ function APCreditMemo() {
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={BASE_MATRIX_COLUMNS}
-            headerUdfFields={headerUdfDefinitions}
+            headerUdfFields={sidebarHeaderUdfDefinitions}
             rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}
             onSettingChange={updateFormSetting}

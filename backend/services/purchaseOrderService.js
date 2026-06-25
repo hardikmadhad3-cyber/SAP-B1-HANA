@@ -1,5 +1,7 @@
 const sapService = require('./sapService');
 const purchaseOrderDb = require('./purchaseOrderDbService');
+const authDbService = require('./authDbService');
+const { getRequestContext } = require('./requestContextService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
@@ -27,9 +29,25 @@ const getUdfDefinitionsByKey = async (tableId) => {
 
 // ───────── REFERENCE DATA (USING ODBC) ─────────
 
-const getReferenceData = async (companyId) => {
+const getReferenceData = async (companyId, userId) => {
   try {
-    // Use ODBC/Direct SQL for GET operations
+    // If a companyId and userId are provided, try to resolve the assigned company
+    // and set the request context database so downstream db queries target
+    // the requested company's database.
+    if (companyId && userId) {
+      try {
+        const assignedCompany = await authDbService.getAssignedCompanyForUser(Number(userId), Number(companyId));
+        const ctx = getRequestContext();
+        if (ctx && assignedCompany && assignedCompany.DbName) {
+          ctx.databaseName = String(assignedCompany.DbName).trim();
+        }
+      } catch (innerErr) {
+        // ignore resolution errors and fall back to default connection
+        console.warn('[purchaseOrderService] could not resolve assigned company for user/company:', innerErr.message || innerErr);
+      }
+    }
+
+    // Use ODBC/Direct SQL for GET operations (dbService will resolve DB from request context)
     const data = await purchaseOrderDb.getReferenceData();
     return data;
   } catch (error) {

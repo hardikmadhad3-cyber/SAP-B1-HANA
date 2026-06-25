@@ -3,7 +3,14 @@ const normalizeText = (value) => String(value || '').trim().toUpperCase();
 const parseDate = (value) => {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
+  if (!Number.isNaN(date.getTime())) return date;
+
+  const match = String(value).trim().match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (!match) return null;
+
+  const [, day, month, year] = match;
+  const parsed = new Date(Number(year), Number(month) - 1, Number(day));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
 const startOfDay = (date) => {
@@ -89,4 +96,17 @@ export const getDefaultSeriesForCurrentYear = (seriesList = [], now = new Date()
   }
 
   return bestScore > 0 ? bestMatch : seriesList[0];
+};
+
+export const normalizeDocumentSeriesList = (seriesList = []) => {
+  if (!Array.isArray(seriesList)) return [];
+
+  const bySeries = new Map();
+  seriesList.forEach((series) => {
+    const key = String(series?.Series ?? '').trim();
+    if (!key || bySeries.has(key)) return;
+    bySeries.set(key, series);
+  });
+
+  return Array.from(bySeries.values());
 };

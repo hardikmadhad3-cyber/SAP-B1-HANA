@@ -7,7 +7,8 @@ const getErrorPayload = (error, fallbackMessage) => ({
 
 const getReferenceData = async (req, res) => {
   try {
-    res.json(await serviceArInvoiceService.getReferenceData(req.query.company_id));
+    const data = await serviceArInvoiceService.getReferenceData(req.query.company_id, req.auth?.userId);
+    res.json(data);
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load Service A/R Invoice reference data.'));
   }
