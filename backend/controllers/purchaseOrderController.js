@@ -20,7 +20,7 @@ const parseTopParam = (value) => {
 
 const getReferenceData = async (req, res) => {
   try {
-    const data = await purchaseOrderService.getReferenceData(req.query.company_id);
+    const data = await purchaseOrderService.getReferenceData(req.query.company_id, req.auth?.userId);
     res.json(data);
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load purchase order reference data.'));

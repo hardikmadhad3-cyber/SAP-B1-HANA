@@ -1,27 +1,110 @@
 import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
 import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
-
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
+import {
+  BASE_MATRIX_COLUMN_KEYS,
+  BASE_MATRIX_COLUMNS,
+  normalizePurchaseOrderMatrixColumns,
+} from '../../../config/purchaseOrderForm';
 
-const MATRIX_COLS = [
-  { key: 'itemNo', label: 'Item No.', minWidth: 160 },
-  { key: 'itemDescription', label: 'Description', minWidth: 220 },
-  { key: 'hsnCode', label: 'HSN', minWidth: 115 },
-  { key: 'quantity', label: 'Qty', minWidth: 80 },
-  { key: 'unitPrice', label: 'Price', minWidth: 95 },
-  { key: 'uomCode', label: 'UoM', minWidth: 85 },
-  { key: 'stdDiscount', label: 'Disc%', minWidth: 85 },
-  { key: 'taxCode', label: 'Tax Code', minWidth: 115 },
-  { key: 'totalBeforeTax', label: 'Total Before Tax', minWidth: 135 },
-  { key: 'total', label: 'Total', minWidth: 105 },
-  { key: 'whse', label: 'Whse', minWidth: 90 },
-  { key: 'loc', label: 'LOC', minWidth: 115 },
-  { key: 'branch', label: 'Branch', minWidth: 115 },
-];
+const MATRIX_COLS = BASE_MATRIX_COLUMNS;
 
 const INDEX_COL_WIDTH = 42;
 const ACTION_COL_WIDTH = 48;
+const COLUMN_MIN_WIDTHS = {
+  itemNo: 180,
+  itemDescription: 260,
+  hsnCode: 145,
+  uomName: 130,
+  uomCode: 120,
+  taxCode: 135,
+};
+
+const pickerButtonStyle = {
+  padding: '0 6px',
+  fontSize: 11,
+  border: '1px solid #a0aab4',
+  background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
+  minWidth: '24px',
+  height: '22px',
+  cursor: 'pointer',
+  borderRadius: '2px',
+};
+const getColumnWidth = (column = {}) =>
+  Math.max(Number(column.minWidth || column.width || 125), COLUMN_MIN_WIDTHS[column.key] || 0);
+
+const NUMERIC_FIELDS = new Set([
+  'quantity',
+  'unitPrice',
+  'forRate',
+  'grossWt',
+  'totalPackage',
+  'commPercent',
+  'price',
+  'sellerBrokerage',
+  'buyerBrokerage',
+  'sellerBrokeragePercent',
+  'sellerQty',
+  'specialRebate',
+  'commission',
+  'sellerBrokeragePerQty',
+  'fixBrokBuyer',
+  'fixBrockSeller',
+]);
+
+const LINE_FIELD_TO_UDF_KEY = {
+  packingType: ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'U_PackingStatus', 'U_PACKINGSTATUS'],
+  grossWt: ['U_GrossWt', 'U_GROSSWT', 'U_Gross_Wt', 'U_GrossWeight', 'U_GROSSWEIGHT'],
+  totalPackage: ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_Total_Package', 'U_TotalPackge'],
+  forRate: ['U_ForRate', 'U_FORRATE', 'U_ForPrice', 'U_FORPRICE', 'U_FOR_PRICE', 'U_FORPrice', 'U_FOR_Price'],
+  taxCodeRepeat: 'U_TAXCODE',
+  price: ['U_PRICE', 'U_Price'],
+  sellerBrokerage: 'U_Brok_Seller',
+  buyerBrokerage: ['U_Brok_Buyer', 'U_Buyer_Brokerage', 'U_BUYERBROKERAGE', 'U_Brokerage_Buyer'],
+  buyerDelivery: 'U_Buyer_Delivery',
+  sellerDelivery: 'U_Seller_Delivery',
+  buyerPaymentTerms: 'U_Buyer_Payment_Terms',
+  sellerPaymentTerms: 'U_Seller_Payment_Term',
+  buyerQuality: 'U_Buyer_Quality',
+  sellerQuality: 'U_Seller_Quality',
+  buyerPrice: 'U_Buyer_Price',
+  sellerPrice: 'U_Seller_Price',
+  buyerSpecialInstruction: 'U_Buyer_SPINS',
+  sellerSpecialInstruction: 'U_Seller_SPINS',
+  sellerBrokerageAmtPer: 'U_Sel_Brok_AP',
+  sellerBrokeragePercent: 'U_Seller_Brok_Per',
+  stcode: 'U_SELLTCODE',
+  sellerItem: 'U_S_Item',
+  sellerQty: 'U_S_Qty',
+  specialRebate: 'U_SPLRBT',
+  commission: 'U_COMPRC',
+  sellerBrokeragePerQty: 'U_S_BrokPerQty',
+  fixBrokBuyer: 'U_Fix_Brock_B',
+  fixBrockSeller: 'U_Fix_Brock_S',
+};
+
+const isUdfColumn = (column = {}) => (
+  Boolean(column.isUdf)
+  || String(column.key || '').startsWith('U_')
+  || String(column.valueKey || '').startsWith('U_')
+);
+
+const normalizeUdfKey = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]/g, '');
+
+const getMappedUdfField = (rowUdfFieldMap, mappedUdfKey) => {
+  const mappedKeys = Array.isArray(mappedUdfKey) ? mappedUdfKey : [mappedUdfKey];
+  for (const key of mappedKeys) {
+    const field = rowUdfFieldMap.get(key) || rowUdfFieldMap.get(normalizeUdfKey(key));
+    if (field) return field;
+  }
+  return null;
+};
 
 export default function ContentsTab({
   lines,
@@ -33,28 +116,332 @@ export default function ContentsTab({
   getUomOptions,
   effectiveTaxCodes,
   effectiveWarehouses,
-  fmtTaxLabel,
   valErrors,
-  branches,
-  hsnCodes,
   onOpenHSNModal,
   onOpenItemModal,
-  getBranchName,
+  matrixFields = MATRIX_COLS,
+  formSettings = {},
   rowUdfFields = [],
   onRowUdfChange,
 }) {
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
-  const matrixCols = [
-    ...MATRIX_COLS,
-    ...rowUdfFields.map((field) => ({
-      key: field.key,
-      label: field.label || field.key,
-      minWidth: field.type === 'textarea' ? 180 : 125,
-      isUdf: true,
-      field,
-    })),
-  ];
-  const tableMinWidth = INDEX_COL_WIDTH + ACTION_COL_WIDTH + matrixCols.reduce((total, col) => total + col.minWidth, 0);
+
+  const rowUdfFieldMap = React.useMemo(
+    () => {
+      const map = new Map();
+      (rowUdfFields || []).filter((field) => field?.key).forEach((field) => {
+        map.set(field.key, field);
+        map.set(normalizeUdfKey(field.key), field);
+      });
+      return map;
+    },
+    [rowUdfFields]
+  );
+
+  const baseColumns = React.useMemo(() => {
+    const metadataByKey = new Map(
+      (Array.isArray(matrixFields) ? matrixFields : [])
+        .filter((field) => field?.key)
+        .map((field) => [field.key, field])
+    );
+
+    return normalizePurchaseOrderMatrixColumns(MATRIX_COLS.map((baseColumn, index) => {
+      const metadata = metadataByKey.get(baseColumn.key) || {};
+      return {
+        ...baseColumn,
+        ...metadata,
+        key: baseColumn.key,
+        label: baseColumn.label,
+        minWidth: getColumnWidth({ ...baseColumn, ...metadata }),
+        order: baseColumn.order ?? index + 1,
+      };
+    }));
+  }, [matrixFields]);
+
+  const getColumnSetting = (column = {}) => {
+    const savedSetting = (
+      formSettings.matrixColumns?.[column.key]
+      || (isUdfColumn(column) ? formSettings.rowUdfs?.[column.key] : undefined)
+      || {}
+    );
+
+    return {
+      ...savedSetting,
+      visible: BASE_MATRIX_COLUMN_KEYS.has(column.key),
+      active: savedSetting.active !== false && column.active !== false,
+    };
+  };
+
+  const visibleColumns = baseColumns.filter((column) => getColumnSetting(column).visible !== false);
+  const tableMinWidth = INDEX_COL_WIDTH + ACTION_COL_WIDTH + visibleColumns.reduce((total, col) => total + getColumnWidth(col), 0);
+
+  const renderInput = (line, rowIndex, fieldName, options = {}) => (
+    <input
+      className="so-grid__input"
+      name={fieldName}
+      type={options.type || (NUMERIC_FIELDS.has(fieldName) ? 'number' : 'text')}
+      value={options.value ?? line[fieldName] ?? ''}
+      readOnly={options.readOnly}
+      disabled={options.disabled}
+      style={options.style}
+      onChange={(e) => onLineChange(rowIndex, e)}
+      onBlur={options.onBlur}
+    />
+  );
+
+  const getTaxRate = React.useCallback((taxCode = '') => {
+    const code = String(taxCode || '').trim();
+    if (!code) return 0;
+    const exact = effectiveTaxCodes.find((tax) => String(tax.Code || '').trim() === code);
+    if (exact?.Rate != null) return Number(exact.Rate) || 0;
+    const codePrefix = code.split(/\s|-/).filter(Boolean).slice(0, 2).join('-');
+    const prefixed = effectiveTaxCodes.find((tax) => String(tax.Code || '').trim() === codePrefix);
+    if (prefixed?.Rate != null) return Number(prefixed.Rate) || 0;
+    const numericRate = String(code).match(/(\d+(?:\.\d+)?)\s*%/);
+    return numericRate ? Number(numericRate[1]) || 0 : 0;
+  }, [effectiveTaxCodes]);
+
+  const getCalculatedForRate = React.useCallback((line = {}) => {
+    const unitPrice = Number(line.unitPrice || 0);
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) return '';
+    const rate = getTaxRate(line.taxCode);
+    return (unitPrice * (1 + rate / 100)).toFixed(5);
+  }, [getTaxRate]);
+
+  const renderMappedInput = (line, rowIndex, fieldName, options = {}) => {
+    const mappedUdfKey = LINE_FIELD_TO_UDF_KEY[fieldName];
+    const udfField = getMappedUdfField(rowUdfFieldMap, mappedUdfKey);
+    const disabled = options.disabled || udfField?.active === false;
+    const optionsList = udfField?.options || [];
+    const currentValue = fieldName === 'forRate'
+      ? (line[fieldName] || getCalculatedForRate(line))
+      : (line[fieldName] || '');
+    const hasCurrentOption = optionsList.some((option) => {
+      const normalizedOption = typeof option === 'object' ? option : { value: option };
+      return String(normalizedOption.value ?? '') === String(currentValue);
+    });
+
+    if (udfField?.type === 'select' || optionsList.length > 0) {
+      return (
+        <select
+          className="so-grid__input"
+          name={fieldName}
+          value={currentValue}
+          disabled={disabled}
+          onChange={(e) => onLineChange(rowIndex, e)}
+        >
+          <option value=""></option>
+          {optionsList.map((option) => {
+            const normalizedOption = typeof option === 'object' ? option : { value: option, label: option };
+            return (
+              <option key={normalizedOption.value} value={normalizedOption.value}>
+                {normalizedOption.label}
+              </option>
+            );
+          })}
+          {currentValue && !hasCurrentOption && (
+            <option value={currentValue}>{currentValue}</option>
+          )}
+        </select>
+      );
+    }
+
+    return renderInput(line, rowIndex, fieldName, {
+      ...options,
+      disabled,
+      type: udfField?.type === 'date' ? 'date' : options.type,
+      value: currentValue,
+    });
+  };
+
+  const renderGenericUdfCell = (column, line, rowIndex) => {
+    const field = rowUdfFieldMap.get(column.key) || column.field || column;
+    const disabled = field.active === false || getColumnSetting(column).active === false;
+    const value = line.udf?.[field.key] || '';
+    const change = (nextValue) => onRowUdfChange && onRowUdfChange(rowIndex, field.key, nextValue);
+
+    if (field.type === 'select') {
+      return (
+        <td key={column.key}>
+          <select className="so-grid__input" value={value} onChange={(e) => change(e.target.value)} disabled={disabled}>
+            <option value=""></option>
+            {(field.options || []).map((option) => {
+              const normalizedOption = typeof option === 'object' ? option : { value: option, label: option };
+              return (
+                <option key={normalizedOption.value} value={normalizedOption.value}>
+                  {normalizedOption.label}
+                </option>
+              );
+            })}
+          </select>
+        </td>
+      );
+    }
+
+    return (
+      <td key={column.key}>
+        <input
+          className="so-grid__input"
+          type={field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'}
+          value={value}
+          onChange={(e) => change(e.target.value)}
+          disabled={disabled}
+        />
+      </td>
+    );
+  };
+
+  const renderCell = (column, line, rowIndex, uomOpts, lineTotals) => {
+    const key = column.key;
+
+    if (isUdfColumn(column) && !MATRIX_COLS.some((baseColumn) => baseColumn.key === key)) {
+      return renderGenericUdfCell(column, line, rowIndex);
+    }
+
+    switch (key) {
+      case 'itemNo':
+        return (
+          <td key={key}>
+            <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+              <input
+                className="so-grid__input"
+                style={{ flex: 1, textAlign: 'left', border: valErrors.lines[rowIndex]?.itemNo ? '1px solid #c00' : undefined }}
+                name="itemNo"
+                data-sap-lookup="item"
+                data-sap-row-index={rowIndex}
+                onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, rowIndex)}
+                value={line.itemNo || ''}
+                onChange={(e) => onLineChange(rowIndex, e)}
+                placeholder="Item Code"
+              />
+              <button type="button" onClick={() => onOpenItemModal && onOpenItemModal(rowIndex)} style={pickerButtonStyle} title="Select Item">
+                ...
+              </button>
+            </div>
+            {valErrors.lines[rowIndex]?.itemNo && (
+              <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[rowIndex].itemNo}</div>
+            )}
+          </td>
+        );
+      case 'itemDescription':
+        return (
+          <td key={key}>
+            {renderInput(line, rowIndex, 'itemDescription', {
+              type: 'text',
+              style: { width: '100%', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+            })}
+          </td>
+        );
+      case 'hsnCode':
+        return (
+          <td key={key}>
+            <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+              <input
+                className="so-grid__input"
+                style={{ flex: '1 1 0', minWidth: 96, textAlign: 'left', border: valErrors.lines[rowIndex]?.hsnCode ? '1px solid #c00' : undefined }}
+                name="hsnCode"
+                value={line.hsnCode || ''}
+                onChange={(e) => onLineChange(rowIndex, e)}
+                placeholder="HSN/SAC"
+              />
+              <button type="button" onClick={() => onOpenHSNModal && onOpenHSNModal(rowIndex)} style={pickerButtonStyle} title="Select HSN Code">
+                ...
+              </button>
+            </div>
+            {valErrors.lines[rowIndex]?.hsnCode && (
+              <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[rowIndex].hsnCode}</div>
+            )}
+          </td>
+        );
+      case 'quantity':
+      case 'unitPrice':
+        return (
+          <td key={key}>
+            {renderInput(line, rowIndex, key, {
+              onBlur: () => onNumBlur(key, 'line', rowIndex),
+              style: { border: valErrors.lines[rowIndex]?.[key] ? '1px solid #c00' : undefined },
+            })}
+            {valErrors.lines[rowIndex]?.[key] && (
+              <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[rowIndex][key]}</div>
+            )}
+          </td>
+        );
+      case 'uomCode':
+        return (
+          <td key={key}>
+            <select className="so-grid__input" name="uomCode" value={line.uomCode || ''} onChange={(e) => onLineChange(rowIndex, e)}>
+              <option value=""></option>
+              {uomOpts.map((uom) => <option key={uom} value={uom}>{uom}</option>)}
+              {line.uomCode && !uomOpts.includes(line.uomCode) && <option value={line.uomCode}>{line.uomCode}</option>}
+            </select>
+          </td>
+        );
+      case 'uomName':
+        return (
+          <td key={key}>
+            <input className="so-grid__input" value={line.uomName || line.uomCode || ''} readOnly style={{ background: '#f5f8fc' }} />
+          </td>
+        );
+      case 'taxCode':
+        return (
+          <td key={key}>
+            <TaxCodeLookup
+              className="so-grid__input"
+              style={{ width: '100%', textAlign: 'left' }}
+              name="taxCode"
+              value={line.taxCode || ''}
+              onChange={(e) => onLineChange(rowIndex, e)}
+              taxCodes={effectiveTaxCodes}
+            />
+          </td>
+        );
+      case 'total':
+        return (
+          <td key={key}>
+            <input className="so-grid__input" value={lineTotals.total} readOnly style={{ background: '#f5f8fc' }} />
+          </td>
+        );
+      case 'whse':
+        return (
+          <td key={key}>
+            <select
+              className="so-grid__input"
+              style={{ width: '100%', textAlign: 'left', border: valErrors.lines[rowIndex]?.whse ? '1px solid #c00' : undefined }}
+              name="whse"
+              value={line.whse || ''}
+              onChange={(e) => onLineChange(rowIndex, e)}
+            >
+              <option value="">Select</option>
+              {effectiveWarehouses.map((warehouse) => (
+                <option key={warehouse.WhsCode} value={warehouse.WhsCode}>{warehouse.WhsCode}</option>
+              ))}
+              {line.whse && !effectiveWarehouses.some((warehouse) => warehouse.WhsCode === line.whse) && (
+                <option value={line.whse}>{line.whse}</option>
+              )}
+            </select>
+            {valErrors.lines[rowIndex]?.whse && (
+              <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[rowIndex].whse}</div>
+            )}
+          </td>
+        );
+      case 'sellerBrokerageAmtPer':
+        return (
+          <td key={key}>
+            <select className="so-grid__input" name="sellerBrokerageAmtPer" value={line.sellerBrokerageAmtPer || ''} onChange={(e) => onLineChange(rowIndex, e)}>
+              <option value=""></option>
+              <option value="Amount">Amount</option>
+              <option value="Percentage">Percentage</option>
+            </select>
+          </td>
+        );
+      default:
+        return (
+          <td key={key}>
+            {renderMappedInput(line, rowIndex, key)}
+          </td>
+        );
+    }
+  };
 
   return (
     <div className="so-tab-panel" style={{ overflow: 'visible', minWidth: 0, maxWidth: 'none' }}>
@@ -66,318 +453,48 @@ export default function ContentsTab({
       </div>
       <div className="so-grid-wrap so-grid-wrap--contents">
         <div className="so-grid-wrap__scroller so-grid-wrap__scroller--contents">
-        <table
-          className="so-grid so-grid--contents"
-          style={{ width: 'max-content', minWidth: tableMinWidth, tableLayout: 'auto' }}
-        >
-          <colgroup>
-            <col style={{ width: INDEX_COL_WIDTH }} />
-            {matrixCols.map((column) => (
-              <col key={column.key} style={{ width: column.minWidth }} />
-            ))}
-            <col style={{ width: ACTION_COL_WIDTH }} />
-          </colgroup>
-          <thead>
-            <tr>
-              <th style={{ width: INDEX_COL_WIDTH }}>#</th>
-              {matrixCols.map(c => (
-                <th key={c.key} style={{ minWidth: c.minWidth }}>
-                  {c.label}
-                </th>
+          <table className="so-grid so-grid--contents" style={{ width: 'max-content', minWidth: tableMinWidth, tableLayout: 'auto' }}>
+            <colgroup>
+              <col style={{ width: INDEX_COL_WIDTH }} />
+              {visibleColumns.map((column) => (
+                <col key={column.key} style={{ width: getColumnWidth(column) }} />
               ))}
-              <th style={{ width: ACTION_COL_WIDTH }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((line, i) => {
-              const uomOpts = getUomOptions(line);
-              const lineTotals = getLineTotalsForDisplay(line, effectiveTaxCodes);
-              return (
-                <tr key={i}>
-                  <td className="so-grid__cell--muted" style={{ textAlign: 'center', fontSize: 11 }}>{i + 1}</td>
-
-                  {/* Item No */}
-                  <td>
-                    <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
-                      <input
-                        className="so-grid__input"
-                        style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
-                        name="itemNo"
-              data-sap-lookup="item"
-              data-sap-row-index={i}
-              onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
-                        value={line.itemNo}
-                        onChange={e => onLineChange(i, e)}
-                        placeholder="Item Code"
-                      />
+              <col style={{ width: ACTION_COL_WIDTH }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th style={{ width: INDEX_COL_WIDTH }}>#</th>
+                {visibleColumns.map((column) => (
+                  <th key={column.key} style={{ minWidth: getColumnWidth(column) }}>
+                    {column.label || column.key}
+                  </th>
+                ))}
+                <th style={{ width: ACTION_COL_WIDTH }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line, rowIndex) => {
+                const uomOpts = getUomOptions(line);
+                const lineTotals = getLineTotalsForDisplay(line, effectiveTaxCodes);
+                return (
+                  <tr key={rowIndex}>
+                    <td className="so-grid__cell--muted" style={{ textAlign: 'center', fontSize: 11 }}>{rowIndex + 1}</td>
+                    {visibleColumns.map((column) => renderCell(column, line, rowIndex, uomOpts, lineTotals))}
+                    <td>
                       <button
                         type="button"
-                        onClick={() => onOpenItemModal && onOpenItemModal(i)}
-                        style={{
-                          padding: '0 6px',
-                          fontSize: 11,
-                          border: '1px solid #a0aab4',
-                          background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                          minWidth: '24px',
-                          height: '22px',
-                          cursor: 'pointer',
-                          borderRadius: '2px',
-                        }}
-                        title="Select Item"
+                        className="so-btn so-btn--danger"
+                        style={{ padding: '2px 8px', fontSize: 14 }}
+                        onClick={() => onRemoveLine(rowIndex)}
                       >
-                        ...
+                        x
                       </button>
-                    </div>
-                    {valErrors.lines[i]?.itemNo && (
-                      <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].itemNo}</div>
-                    )}
-                  </td>
-
-                  {/* Description */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      style={{ width: '100%', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                      name="itemDescription"
-                      value={line.itemDescription}
-                      onChange={e => onLineChange(i, e)}
-                      title={line.itemDescription}
-                    />
-                  </td>
-
-                  {/* HSN Code */}
-                  <td>
-                    <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
-                      <input
-                        className="so-grid__input"
-                        style={{ 
-                          flex: 1, 
-                          textAlign: 'left', 
-                          border: valErrors.lines[i]?.hsnCode ? '1px solid #c00' : undefined 
-                        }}
-                        name="hsnCode"
-                        value={line.hsnCode}
-                        onChange={e => onLineChange(i, e)}
-                        placeholder="HSN/SAC"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => onOpenHSNModal && onOpenHSNModal(i)}
-                        style={{
-                          padding: '0 6px',
-                          fontSize: 11,
-                          border: '1px solid #a0aab4',
-                          background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                          minWidth: '24px',
-                          height: '22px',
-                          cursor: 'pointer',
-                          borderRadius: '2px',
-                        }}
-                        title="Select HSN Code"
-                      >
-                        ...
-                      </button>
-                    </div>
-                    {valErrors.lines[i]?.hsnCode && (
-                      <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].hsnCode}</div>
-                    )}
-                  </td>
-
-                  {/* Quantity */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      style={{ border: valErrors.lines[i]?.quantity ? '1px solid #c00' : undefined }}
-                      name="quantity"
-                      value={line.quantity}
-                      onChange={e => onLineChange(i, e)}
-                      onBlur={() => onNumBlur('quantity', 'line', i)}
-                    />
-                    {valErrors.lines[i]?.quantity && (
-                      <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].quantity}</div>
-                    )}
-                  </td>
-
-                  {/* Unit Price */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      style={{ border: valErrors.lines[i]?.unitPrice ? '1px solid #c00' : undefined }}
-                      name="unitPrice"
-                      value={line.unitPrice}
-                      onChange={e => onLineChange(i, e)}
-                      onBlur={() => onNumBlur('unitPrice', 'line', i)}
-                    />
-                    {valErrors.lines[i]?.unitPrice && (
-                      <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].unitPrice}</div>
-                    )}
-                  </td>
-
-                  {/* UoM */}
-                  <td>
-                    <select
-                      className="so-grid__input"
-                      style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.uomCode ? '1px solid #c00' : undefined }}
-                      name="uomCode"
-                      value={line.uomCode}
-                      onChange={e => onLineChange(i, e)}
-                    >
-                      <option value=""></option>
-                      {uomOpts.map(u => (
-                        <option key={u} value={u}>
-                          {u}
-                        </option>
-                      ))}
-                      {line.uomCode && !uomOpts.includes(line.uomCode) && (
-                        <option value={line.uomCode}>{line.uomCode}</option>
-                      )}
-                    </select>
-                  </td>
-
-                  {/* Discount */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      name="stdDiscount"
-                      value={line.stdDiscount}
-                      onChange={e => onLineChange(i, e)}
-                      onBlur={() => onNumBlur('stdDiscount', 'line', i)}
-                    />
-                  </td>
-
-                  {/* Tax Code */}
-                  <td>
-                    <TaxCodeLookup
-                      className="so-grid__input"
-                      style={{ width: '100%', textAlign: 'left' }}
-                      name="taxCode"
-                      value={line.taxCode}
-                      onChange={e => onLineChange(i, e)}
-                      taxCodes={effectiveTaxCodes}
-                    />
-                  </td>
-
-                  {/* Total Before Tax */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      value={lineTotals.beforeTax}
-                      readOnly
-                      style={{ background: '#f5f8fc' }}
-                    />
-                  </td>
-
-                  {/* Total */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      value={lineTotals.total}
-                      readOnly
-                      style={{ background: '#f5f8fc' }}
-                    />
-                  </td>
-
-                  {/* Warehouse */}
-                  <td>
-                    <select
-                      className="so-grid__input"
-                      style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.whse ? '1px solid #c00' : undefined }}
-                      name="whse"
-                      value={line.whse}
-                      onChange={e => onLineChange(i, e)}
-                    >
-                      <option value="">Select</option>
-                      {effectiveWarehouses.map(w => (
-                        <option key={w.WhsCode} value={w.WhsCode}>{w.WhsCode}</option>
-                      ))}
-                      {line.whse && !effectiveWarehouses.some(w => w.WhsCode === line.whse) && (
-                        <option value={line.whse}>{line.whse}</option>
-                      )}
-                    </select>
-                    {valErrors.lines[i]?.whse && (
-                      <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].whse}</div>
-                    )}
-                  </td>
-
-                  {/* LOC (Location) - Shows Branch Name */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      style={{ 
-                        width: '100%', 
-                        textAlign: 'left',
-                        background: '#f5f8fc'
-                      }}
-                      name="loc"
-                      value={getBranchName ? getBranchName(line.branch) : line.loc || ''}
-                      readOnly
-                      disabled
-                    />
-                  </td>
-
-                  {/* Branch - Shows Branch Name */}
-                  <td>
-                    <input
-                      className="so-grid__input"
-                      style={{ 
-                        width: '100%', 
-                        textAlign: 'left',
-                        background: '#f5f8fc'
-                      }}
-                      name="branch"
-                      value={getBranchName ? getBranchName(line.branch) : line.branch || ''}
-                      readOnly
-                      disabled
-                    />
-                  </td>
-
-                  {rowUdfFields.map((field) => (
-                    <td key={field.key}>
-                      {field.type === 'select' ? (
-                        <select
-                          className="so-grid__input"
-                          value={line.udf?.[field.key] || ''}
-                          onChange={(e) => onRowUdfChange && onRowUdfChange(i, field.key, e.target.value)}
-                          disabled={field.active === false}
-                        >
-                          <option value=""></option>
-                          {(field.options || []).map((option) => {
-                            const normalizedOption = typeof option === 'object' ? option : { value: option, label: option };
-                            return (
-                              <option key={normalizedOption.value} value={normalizedOption.value}>
-                                {normalizedOption.label}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      ) : (
-                        <input
-                          className="so-grid__input"
-                          type={field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'}
-                          value={line.udf?.[field.key] || ''}
-                          onChange={(e) => onRowUdfChange && onRowUdfChange(i, field.key, e.target.value)}
-                          disabled={field.active === false}
-                        />
-                      )}
                     </td>
-                  ))}
-
-                  {/* Remove */}
-                  <td>
-                    <button
-                      type="button"
-                      className="so-btn so-btn--danger"
-                      style={{ padding: '2px 8px', fontSize: 14 }}
-                      onClick={() => onRemoveLine(i)}
-                    >
-                      x
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

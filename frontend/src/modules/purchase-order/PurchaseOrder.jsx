@@ -13,7 +13,6 @@ import AttachmentsTab from './components/AttachmentsTab';
 import AddressModal from './components/AddressModal';
 import TaxInfoModal from './components/TaxInfoModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
-import StateSelectionModal from './components/StateSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import CopyFromModal from './components/CopyFromModal';
@@ -23,17 +22,19 @@ import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmploy
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
-import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
-import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
+import { getItemPrice, hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
-import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
-import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { getStateCodeValue } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
+import {
+  buildPurchaseOrderLineUdfPayload,
+  hydratePurchaseOrderLineUdfFields,
+} from './purchaseOrderLineUdfMapping';
 import {
   fetchPurchaseOrderByDocEntry,
   fetchPurchaseOrderReferenceData,
@@ -60,6 +61,7 @@ import {
   HEADER_UDF_DEFINITIONS,
   ROW_UDF_DEFINITIONS,
   createUdfState,
+  normalizePurchaseOrderMatrixColumns,
   readSavedFormSettings,
 } from '../../config/purchaseOrderForm';
 
@@ -123,7 +125,14 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
-const DEFAULT_WAREHOUSE = '01';
+const DEFAULT_WAREHOUSE = '';
+const DEFAULT_BUYER_LOCATION_OPTIONS = ['WL001', 'WL002', 'WL003', 'WL004', 'WL005', 'WL006', 'WL007']
+  .map((code) => ({ value: code, label: `${code} - ${code}` }));
+const CURRENCY_MODE_OPTIONS = [
+  { value: 'local', label: 'Local Currency' },
+  { value: 'system', label: 'System Currency' },
+  { value: 'bp', label: 'BP Currency' },
+];
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
@@ -131,10 +140,41 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   hsnCode: '',
   quantity: '',
   uomCode: '',
+  uomName: '',
   unitPrice: '',
   stdDiscount: '',
   taxCode: '',
+  forRate: '',
   total: '',
+  totalBeforeTax: '',
+  packingType: '',
+  grossWt: '',
+  totalPackage: '',
+  commPercent: '',
+  taxCodeRepeat: '',
+  price: '',
+  sellerBrokerage: '',
+  buyerBrokerage: '',
+  buyerDelivery: '',
+  sellerDelivery: '',
+  buyerPaymentTerms: '',
+  sellerPaymentTerms: '',
+  buyerQuality: '',
+  sellerQuality: '',
+  buyerPrice: '',
+  sellerPrice: '',
+  buyerSpecialInstruction: '',
+  sellerSpecialInstruction: '',
+  sellerBrokerageAmtPer: '',
+  sellerBrokeragePercent: '',
+  stcode: '',
+  sellerItem: '',
+  sellerQty: '',
+  specialRebate: '',
+  commission: '',
+  sellerBrokeragePerQty: '',
+  fixBrokBuyer: '',
+  fixBrockSeller: '',
   whse: DEFAULT_WAREHOUSE,
   loc: '',
   branch: '',
@@ -161,22 +201,28 @@ const INIT_HEADER = {
   documentDate: today(),
   contractDate: '',
   branchRegNo: '',
+  currencyMode: 'bp',
+  currency: 'INR',
   shipTo: '',
   shipToCode: '',
+  shipToAddress: '',
+  buyerLocation: '',
   billTo: '',
   billToCode: '',
   payTo: '',
   payToCode: '',
+  payToAddress: '',
+  billToAddress: '',
   shippingType: '',
   useBillToForTax: false,
-  usePayToForTax: false,
+  usePayToForTax: true,
   toOrder: '',
   notifyPartyCode: '',
   notifyPartyName: '',
   notifyPartyAddress: '',
   language: '',
   splitPurchaseOrder: false,
-  confirmed: false,
+  confirmed: true,
   journalRemark: '',
   paymentTerms: '',
   paymentMethod: '',
@@ -275,6 +321,8 @@ function PurchaseOrder() {
   const [refData, setRefData] = useState({
     company: '',
     company_state: '',
+    local_currency: '',
+    system_currency: '',
     vendors: [],
     contacts: [],
     pay_to_addresses: [],
@@ -316,7 +364,6 @@ function PurchaseOrder() {
   const [taxInfoModal, setTaxInfoModal] = useState(false);
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
-  const [stateModal, setStateModal] = useState(false);
   const [bpModal, setBpModal] = useState(false);
   const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1 });
   const [copyFromModal, setCopyFromModal] = useState(false);
@@ -437,11 +484,11 @@ function PurchaseOrder() {
           const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
             ? refDataRes.data.line_field_metadata.matrix_columns
             : BASE_MATRIX_COLUMNS;
-          const nextMatrixColumns = buildMatrixColumnsFromSapLayout({
+          const nextMatrixColumns = normalizePurchaseOrderMatrixColumns(buildMatrixColumnsFromSapLayout({
             baseColumns: liveMatrixColumns,
             layoutColumns: layoutRes?.data?.columns || [],
             fallbackColumns: BASE_MATRIX_COLUMNS,
-          });
+          }));
           const hasSapMatrixPreferences =
             Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0 ||
             Boolean((layoutRes?.data?.columns || []).length && layoutRes?.data?.source !== 'fallback');
@@ -450,7 +497,7 @@ function PurchaseOrder() {
           setMatrixColumnDefinitions(nextMatrixColumns);
           setHeaderUdfs((prev) => createUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
-            ...line,
+            ...hydratePurchaseOrderLineUdfFields(line),
             udf: createUdfState(nextRowUdfs, line.udf || {}),
           })));
           const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
@@ -470,6 +517,8 @@ function PurchaseOrder() {
           setRefData({
             company: refDataRes.data.company || '',
             company_state: refDataRes.data.company_state || '',
+            local_currency: refDataRes.data.local_currency || '',
+            system_currency: refDataRes.data.system_currency || '',
             vendors: refDataRes.data.vendors || [],
             contacts: refDataRes.data.contacts || [],
             pay_to_addresses: refDataRes.data.pay_to_addresses || [],
@@ -529,15 +578,22 @@ function PurchaseOrder() {
         const po = r.data.purchase_order;
         if (ignore || !po) return;
         setCurrentDocEntry(po.doc_entry || Number(docEntry));
+        const firstLineWarehouse = Array.isArray(po.lines)
+          ? po.lines.find((line) => String(line?.whse || '').trim())?.whse
+          : '';
         setHeader(prev => ({
           ...prev,
           ...INIT_HEADER,
           ...(po.header || {}),
+          currencyMode: po.header?.currencyMode || INIT_HEADER.currencyMode,
+          currency: po.header?.currency || INIT_HEADER.currency,
+          warehouse: po.header?.warehouse || firstLineWarehouse || '',
+          nextNumber: po.header?.docNo || po.doc_num || po.header?.nextNumber || '',
         }));
 
         setLines(
           Array.isArray(po.lines) && po.lines.length
-            ? po.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, taxCodeManuallyOverridden: true, udf: { ...createUdfState(rowUdfDefinitions), ...(l.udf || {}) } }))
+            ? po.lines.map(l => hydratePurchaseOrderLineUdfFields({ ...createLine(rowUdfDefinitions), ...l, taxCodeManuallyOverridden: true, udf: { ...createUdfState(rowUdfDefinitions), ...(l.udf || {}) } }))
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(po.header_udfs || {}) });
@@ -582,7 +638,12 @@ function PurchaseOrder() {
       taxCodeManuallyOverridden: false,
     }));
 
-    setHeader((prev) => ({ ...prev, ...normalizedHeader }));
+    const firstLineWarehouse = copiedLines.find((line) => String(line?.whse || '').trim())?.whse || '';
+    setHeader((prev) => ({
+      ...prev,
+      ...normalizedHeader,
+      warehouse: normalizedHeader.warehouse || firstLineWarehouse || prev.warehouse || '',
+    }));
     setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
     setFreightModal({ open: false, freightCharges: [], loading: false });
     setValErrors({ header: {}, lines: {}, form: '' });
@@ -641,13 +702,49 @@ function PurchaseOrder() {
   const vendorPayToAddresses = refData.pay_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
   const vendorShipToAddresses = refData.ship_to_addresses?.filter(a => String(a.CardCode || '') === String(header.vendor || '')) || [];
   const vendorBillToAddresses = refData.bill_to_addresses?.filter(a => String(a.CardCode || '') === String(header.vendor || '')) || [];
-  const vendorEffectiveShipToAddresses = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
+  const vendorEffectiveShipToAddresses = vendorShipToAddresses;
   const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
   const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
+  const getCurrencyForMode = useCallback((mode, vendorCode = header.vendor) => {
+    const selectedMode = mode || INIT_HEADER.currencyMode;
+    const vendor = refData.vendors.find(v => String(v.CardCode || '') === String(vendorCode || ''));
+    const bpCurrency = String(vendor?.Currency || '').trim();
+    const localCurrency = String(refData.local_currency || INIT_HEADER.currency).trim();
+    const systemCurrency = String(refData.system_currency || localCurrency || INIT_HEADER.currency).trim();
+
+    if (selectedMode === 'local') return localCurrency || INIT_HEADER.currency;
+    if (selectedMode === 'system') return systemCurrency || localCurrency || INIT_HEADER.currency;
+    if (bpCurrency && bpCurrency !== '##') return bpCurrency;
+    return localCurrency || INIT_HEADER.currency;
+  }, [header.vendor, refData.local_currency, refData.system_currency, refData.vendors]);
+
+  const getBuyerBillToAddress = useCallback(() => {
+    const companyAddress = refData.company_address || {};
+    const formattedCompanyAddress = String(companyAddress.Address || '').trim() || fmtAddr(companyAddress);
+    return {
+      code: companyAddress.AddressName || companyAddress.Address || '',
+      address: formattedCompanyAddress,
+      source: companyAddress,
+    };
+  }, [refData.company_address]);
 
   const payTermOpts = refData.payment_terms.length
     ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
     : [{ value: 'Net 30', label: 'Net 30' }, { value: 'Net 60', label: 'Net 60' }];
+
+  const buyerLocationField = headerUdfDefinitions.find((field) => {
+    const key = String(field?.key || field?.sapField || '').trim().toUpperCase();
+    return key === 'U_SHIPLOCATION';
+  });
+  const buyerLocationMetadataOptions = (buyerLocationField?.options || [])
+    .map((option) => ({
+      value: String(option?.value ?? option ?? ''),
+      label: String(option?.label ?? option?.value ?? option ?? ''),
+    }))
+    .filter((option) => option.value);
+  const buyerLocationOptions = buyerLocationMetadataOptions.length
+    ? buyerLocationMetadataOptions
+    : DEFAULT_BUYER_LOCATION_OPTIONS;
 
   const shipTypeOpts = refData.shipping_types.length
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
@@ -674,8 +771,15 @@ function PurchaseOrder() {
   }, [refData.items, uomGroupMap]);
   const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : [];
-  const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
+  const branchFilteredWarehouses = effectiveWarehouses;
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
+
+  useEffect(() => {
+    if (!header.warehouse) return;
+    setLines(prev => prev.map(line => (
+      line.whse ? line : { ...line, whse: header.warehouse }
+    )));
+  }, [header.warehouse]);
 
   const fmtTaxLabel = (t) => {
     const code = String(t?.Code || '').trim();
@@ -710,14 +814,17 @@ function PurchaseOrder() {
   };
 
   // ── calculations ──────────────────────────────────────────────────────────
-  const calcLineTotal = (line) => {
+  const calcLineTotal = (line, { preferStored = false } = {}) => {
+    if (preferStored && line.total !== undefined && line.total !== null && String(line.total).trim() !== '') {
+      return roundTo(parseNum(line.total), numDec.total);
+    }
     const qty = parseNum(line.quantity), price = parseNum(line.unitPrice), disc = parseNum(line.stdDiscount);
     return roundTo(qty * price * (1 - disc / 100), numDec.total);
   };
 
   const calcTotals = () => {
     const taxRateMap = new Map(effectiveTaxCodes.map(t => [String(t.Code || ''), parseNum(t.Rate)]));
-    const subtotal = lines.reduce((s, l) => s + calcLineTotal(l), 0);
+    const subtotal = lines.reduce((s, l) => s + calcLineTotal(l, { preferStored: true }), 0);
     const discPct = parseNum(header.discount);
     const discAmt = roundTo(subtotal * discPct / 100, numDec.total);
     const discSub = Math.max(0, subtotal - discAmt);
@@ -727,7 +834,7 @@ function PurchaseOrder() {
     const taxMap = new Map();
     if (subtotal > 0) {
       lines.forEach(l => {
-        const net = calcLineTotal(l);
+        const net = calcLineTotal(l, { preferStored: true });
         if (net <= 0 || !l.taxCode) return;
         const rate = taxRateMap.get(String(l.taxCode || '')) || 0;
         const base = discSub * (net / subtotal);
@@ -746,6 +853,13 @@ function PurchaseOrder() {
   };
 
   const totals = calcTotals();
+  const totalsForDisplay = currentDocEntry && !isDirty
+    ? {
+      ...totals,
+      taxAmt: header.tax !== '' ? parseNum(header.tax) : totals.taxAmt,
+      total: header.totalPaymentDue !== '' ? parseNum(header.totalPaymentDue) : totals.total,
+    }
+    : totals;
 
   useEffect(() => {
     if (!derivedGstType) return;
@@ -815,62 +929,41 @@ function PurchaseOrder() {
   }, [header.branch]);
 
   useEffect(() => {
-    if (!header.branch || !refData.warehouses.length) return;
-
-    const allowedWarehouseCodes = new Set(
-      branchFilteredWarehouses.map(w => String(w.WhsCode || ''))
-    );
-
-    setHeader(prev => (
-      prev.warehouse && !allowedWarehouseCodes.has(String(prev.warehouse))
-        ? { ...prev, warehouse: '' }
-        : prev
-    ));
-
-    setLines(prev => prev.map(line => (
-      line.whse && !allowedWarehouseCodes.has(String(line.whse))
-        ? { ...line, whse: '' }
-        : line
-    )));
-  }, [branchFilteredWarehouses, header.branch, refData.warehouses.length]);
-
-  // Sync warehouse to all lines when header warehouse changes
-  useEffect(() => {
-    if (header.warehouse) {
-      setLines(prev => prev.map(l => ({ ...l, whse: header.warehouse })));
-    }
-  }, [header.warehouse]);
-
-  useEffect(() => {
     const shouldAutoPopulateAddresses = true;
     if (!shouldAutoPopulateAddresses) return;
-    if (!header.vendor) return;
     setHeader(prev => {
-      const existing = vendorEffectiveShipToAddresses.find(a => String(a.Address || '') === String(prev.shipToCode || ''));
-      if (existing) return prev;
-      const def = vendorEffectiveShipToAddresses[0];
-      if (!def) return prev;
-      const fmt = fmtAddr(def);
-      const nextPlaceOfSupply = def.State || prev.placeOfSupply || '';
-      if (prev.shipToCode === def.Address && prev.shipTo === fmt && prev.placeOfSupply === nextPlaceOfSupply) return prev;
-      return { ...prev, shipToCode: def.Address || '', shipTo: fmt, placeOfSupply: nextPlaceOfSupply };
+      const buyerBillTo = getBuyerBillToAddress();
+      if (!buyerBillTo.address) return prev;
+      if (prev.billTo || prev.billToAddress) return prev;
+      if (
+        prev.billToCode === buyerBillTo.code
+        && prev.billTo === buyerBillTo.address
+        && prev.billToAddress === buyerBillTo.address
+      ) return prev;
+      return {
+        ...prev,
+        billToCode: buyerBillTo.code || prev.billToCode || '',
+        billTo: buyerBillTo.address,
+        billToAddress: buyerBillTo.address,
+      };
     });
-  }, [header.vendor, vendorEffectiveShipToAddresses]);
+  }, [getBuyerBillToAddress, header.vendor]);
 
   useEffect(() => {
     const shouldAutoPopulateAddresses = true;
     if (!shouldAutoPopulateAddresses) return;
     if (!header.vendor) return;
     setHeader(prev => {
-      const existing = vendorEffectiveBillToAddresses.find(a => String(a.Address || '') === String(prev.payToCode || ''));
+      if (prev.payToCode || prev.payTo || prev.payToAddress) return prev;
+      const existing = vendorPayToAddresses.find(a => String(a.Address || '') === String(prev.payToCode || ''));
       if (existing) return prev;
-      const def = vendorEffectiveBillToAddresses[0];
+      const def = vendorPayToAddresses[0];
       if (!def) return prev;
       const fmt = fmtAddr(def);
       if (prev.payToCode === def.Address && prev.payTo === fmt) return prev;
-      return { ...prev, payToCode: def.Address || '', payTo: fmt };
+      return { ...prev, payToCode: def.Address || '', payTo: fmt, payToAddress: fmt };
     });
-  }, [header.vendor, vendorEffectiveBillToAddresses]);
+  }, [header.vendor, vendorPayToAddresses]);
 
   // ── vendor details ────────────────────────────────────────────────────────
   const loadVendorDetails = async (code) => {
@@ -904,33 +997,21 @@ function PurchaseOrder() {
       if (contacts.length > 0) {
         setHeader(prev => ({
           ...prev,
-          contactPerson: contacts[0].CntctCode
+          contactPerson: prev.contactPerson || contacts[0].CntctCode
         }));
       }
 
-      // Auto-populate logistics addresses from vendor, matching sales documents.
-      const effectiveShipTo = shipToAddresses.length ? shipToAddresses : payToAddresses;
-      const effectiveBillTo = billToAddresses.length ? billToAddresses : payToAddresses;
+      // Auto-populate Pay to from vendor. Bill To is buyer/company-side on purchase orders.
+      const effectivePayTo = payToAddresses.length ? payToAddresses : billToAddresses;
 
-      if (effectiveShipTo.length > 0) {
-        const defaultShipTo = effectiveShipTo[0];
-        if (defaultShipTo.State) {
-          console.log('🌍 Auto-setting Place of Supply from vendor ship-to address:', defaultShipTo.State);
-          setHeader(prev => ({
-            ...prev,
-            placeOfSupply: defaultShipTo.State,
-            shipToCode: defaultShipTo.Address || '',
-            shipTo: fmtAddr(defaultShipTo)
-          }));
-        }
-      }
-
-      if (effectiveBillTo.length > 0) {
-        const defaultBillTo = effectiveBillTo[0];
+      if (effectivePayTo.length > 0) {
+        const defaultPayTo = effectivePayTo[0];
         setHeader(prev => ({
           ...prev,
-          billToCode: defaultBillTo.Address || '',
-          billTo: fmtAddr(defaultBillTo)
+          placeOfSupply: prev.placeOfSupply || defaultPayTo.State || '',
+          payToCode: prev.payToCode || defaultPayTo.Address || '',
+          payTo: prev.payTo || prev.payToAddress || fmtAddr(defaultPayTo),
+          payToAddress: prev.payToAddress || prev.payTo || fmtAddr(defaultPayTo)
         }));
       }
       setHeader(prev => ({
@@ -956,14 +1037,19 @@ function PurchaseOrder() {
       nextHeader: {
         ...hdr,
         name: m.CardName || m.Name || hdr.name,
+        currencyMode: hdr.currencyMode || INIT_HEADER.currencyMode,
+        currency: getCurrencyForMode(hdr.currencyMode || INIT_HEADER.currencyMode, code),
         paymentTerms: m.GroupNum != null ? String(m.GroupNum) : hdr.paymentTerms,
         contactPerson: '',
         shipTo: '',
         shipToCode: '',
-        billTo: '',
-        billToCode: '',
+        shipToAddress: '',
+        billTo: hdr.billTo || '',
+        billToCode: hdr.billToCode || '',
         payTo: '',
         payToCode: '',
+        payToAddress: '',
+        billToAddress: hdr.billToAddress || '',
         placeOfSupply: '',
         gstin: '',
         vendorState: '',
@@ -975,6 +1061,15 @@ function PurchaseOrder() {
   };
 
   // ── handlers ──────────────────────────────────────────────────────────────
+  const handleCurrencyModeChange = (e) => {
+    const mode = e.target.value;
+    setHeader(prev => ({
+      ...prev,
+      currencyMode: mode,
+      currency: getCurrencyForMode(mode, prev.vendor),
+    }));
+  };
+
    const handleHeaderChange = (e) => {
     const { name, value, type, checked } = e.target;
     setValErrors(p => ({ ...p, header: { ...p.header, [name]: '' }, form: '' }));
@@ -984,9 +1079,29 @@ function PurchaseOrder() {
       handleSeriesChange(value);
       return;
     }
+    if (name === 'currencyMode') {
+      handleCurrencyModeChange(e);
+      return;
+    }
     
     if (name === 'shipToCode') {
       handleShipToChange(value);
+      return;
+    }
+    if (name === 'payToCode' || name === 'billToCode') {
+      handlePayToCodeChange(value);
+      return;
+    }
+    if (name === 'shipTo') {
+      setHeader(p => ({ ...p, shipTo: value, shipToAddress: value }));
+      return;
+    }
+    if (name === 'payTo') {
+      setHeader(p => ({ ...p, payTo: value, payToAddress: value }));
+      return;
+    }
+    if (name === 'billTo') {
+      setHeader(p => ({ ...p, billTo: value, billToAddress: value }));
       return;
     }
     
@@ -1029,7 +1144,21 @@ function PurchaseOrder() {
       ...prev,
       shipToCode: selectedCode,
       shipTo: fmtAddr(selectedAddress),
+      shipToAddress: fmtAddr(selectedAddress),
       placeOfSupply: selectedAddress?.State || prev.placeOfSupply || '',
+    }));
+  };
+
+  const handlePayToCodeChange = (selectedCode) => {
+    const selectedAddress = vendorPayToAddresses.find(a => String(a.Address || '') === String(selectedCode || ''))
+      || vendorBillToAddresses.find(a => String(a.Address || '') === String(selectedCode || ''));
+    const formattedAddress = selectedAddress ? fmtAddr(selectedAddress) : '';
+
+    setHeader(prev => ({
+      ...prev,
+      payToCode: selectedCode,
+      payTo: formattedAddress,
+      payToAddress: formattedAddress,
     }));
   };
 
@@ -1051,6 +1180,9 @@ function PurchaseOrder() {
           next.itemDescription = item.ItemName || next.itemDescription;
           next.hsnCode = item.HSNCode || next.hsnCode || '';
           next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
+          if (!next.unitPrice || Number(next.unitPrice) <= 0) {
+            next.unitPrice = getItemPrice(item, 'purchase') || next.unitPrice;
+          }
 
           // Auto-assign default warehouse
           if (item.DefaultWarehouse) {
@@ -1158,7 +1290,7 @@ function PurchaseOrder() {
       ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
-      whse: header.warehouse || DEFAULT_WAREHOUSE
+      whse: header.warehouse || ''
     }]);
   };
 
@@ -1215,7 +1347,7 @@ function PurchaseOrder() {
 
   const handleShipToChange = (addressCode) => {
     if (!addressCode) {
-      setHeader(p => ({ ...p, shipToCode: addressCode, shipTo: '', placeOfSupply: '' }));
+      setHeader(p => ({ ...p, shipToCode: addressCode, shipTo: '', shipToAddress: '', placeOfSupply: '' }));
       return;
     }
 
@@ -1225,12 +1357,30 @@ function PurchaseOrder() {
       ...p,
       shipToCode: addressCode,
       shipTo: fmtAddr(addr),
+      shipToAddress: fmtAddr(addr),
       placeOfSupply: addr?.State || p.placeOfSupply || '',
     }));
   };
 
   // ── Address Modal handlers ────────────────────────────────────────────────
+  const buildAddressObjectFromText = (text = '', source = {}) => {
+    const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return {
+      ...source,
+      Street: source.Street || lines[0] || '',
+      Building: source.Building || lines[1] || '',
+      Block: source.Block || lines[2] || '',
+      City: source.City || '',
+      ZipCode: source.ZipCode || '',
+      State: source.State || '',
+      Country: source.Country || 'IN',
+      Address2: source.Address2 || lines[3] || '',
+      Address3: source.Address3 || lines[4] || '',
+    };
+  };
+
   const openAddressModal = (type) => {
+    const buyerBillTo = getBuyerBillToAddress();
     const shipAddress = resolveAddressForModal(
       header.shipToCode,
       vendorEffectiveShipToAddresses,
@@ -1238,18 +1388,23 @@ function PurchaseOrder() {
       fmtAddr,
     );
     const payAddress = resolveAddressForModal(
-      header.payToCode || header.billToCode,
-      vendorEffectiveBillToAddresses,
-      header.billToAddress || header.billTo || header.payTo,
+      header.payToCode,
+      vendorPayToAddresses,
+      header.payToAddress || header.payTo,
       fmtAddr,
     );
-    const activeAddress = type === 'payTo' || type === 'billTo' ? payAddress : shipAddress;
+    const billAddress = buildAddressObjectFromText(header.billToAddress || header.billTo || buyerBillTo.address, buyerBillTo.source || {});
+    const activeAddress = type === 'billTo'
+      ? billAddress
+      : type === 'payTo'
+        ? (payAddress || buildAddressObjectFromText(header.payToAddress || header.payTo))
+        : (shipAddress || buildAddressObjectFromText(header.shipToAddress || header.shipTo));
 
     setAddressForm(mapAddressToModalForm(activeAddress, {
       shipToCode: header.shipToCode || shipAddress?.Address || '',
       shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
-      billToCode: header.billToCode || header.payToCode || payAddress?.Address || '',
-      billToAddress: header.billToAddress || header.billTo || header.payTo || (payAddress ? fmtAddr(payAddress) : ''),
+      billToCode: header.billToCode || buyerBillTo.code || '',
+      billToAddress: header.billToAddress || header.billTo || buyerBillTo.address || '',
     }));
     setAddressModal({ type });
   };
@@ -1271,8 +1426,10 @@ function PurchaseOrder() {
 
     if (addressModal.type === 'shipTo') {
       setHeader(p => ({ ...p, shipTo: formatted, shipToAddress: formatted }));
+    } else if (addressModal.type === 'billTo') {
+      setHeader(p => ({ ...p, billTo: formatted, billToAddress: formatted }));
     } else {
-      setHeader(p => ({ ...p, payTo: formatted, billTo: formatted, billToAddress: formatted }));
+      setHeader(p => ({ ...p, payTo: formatted, payToAddress: formatted }));
     }
     closeAddressModal();
   };
@@ -1322,7 +1479,7 @@ function PurchaseOrder() {
         const next = hydrateDocumentLineFromItem(line, mergedItem, {
           side: 'purchase',
           hsnCode,
-          fallbackWarehouse: header.warehouse,
+          fallbackWarehouse: header.warehouse || '',
           calcLineTotal,
           formatTotal: (value) => fmtDec(value, numDec.total),
         });
@@ -1341,7 +1498,7 @@ function PurchaseOrder() {
         const next = hydrateDocumentLineFromItem(line, mergedItem, {
           side: 'purchase',
           hsnCode: mergedItem.HSNCode || '',
-          fallbackWarehouse: header.warehouse,
+          fallbackWarehouse: header.warehouse || '',
           calcLineTotal,
           formatTotal: (value) => fmtDec(value, numDec.total),
         });
@@ -1398,20 +1555,6 @@ function PurchaseOrder() {
     closeBpModal();
   };
 
-  // ── State Selection Modal handlers ────────────────────────────────────────
-  const openStateModal = () => {
-    setStateModal(true);
-  };
-
-  const closeStateModal = () => {
-    setStateModal(false);
-  };
-
-  const handleStateSelect = (state) => {
-    setHeader(prev => ({ ...prev, placeOfSupply: getStateCodeValue(state, refData.states) }));
-    closeStateModal();
-  };
-
   // ── Browse Attachment handler ─────────────────────────────────────────────
   const handleBrowseAttachment = () => {
     const input = document.createElement('input');
@@ -1428,14 +1571,17 @@ function PurchaseOrder() {
     const copySource = unwrapCopyFromDocument(data);
     const baseType = PURCHASE_COPY_BASE_TYPE[docType] || 540000006;
     const normalizedHeader = normaliseDocumentHeader(copySource.header);
-
-    setHeader((prev) => ({ ...prev, ...normalizedHeader }));
-
     const rawLines = copySource.lines;
     const copiedLines = rawLines.map((line, index) => ({
       ...createLine(rowUdfDefinitions),
       ...normaliseDocumentLine(line, index, copySource.docEntry, baseType, normalizedHeader.branch),
       taxCodeManuallyOverridden: false,
+    }));
+    const firstLineWarehouse = copiedLines.find((line) => String(line?.whse || '').trim())?.whse || '';
+    setHeader((prev) => ({
+      ...prev,
+      ...normalizedHeader,
+      warehouse: normalizedHeader.warehouse || firstLineWarehouse || prev.warehouse || '',
     }));
 
     setLines(copiedLines.length > 0 ? copiedLines : [createLine(rowUdfDefinitions)]);
@@ -1543,13 +1689,6 @@ function PurchaseOrder() {
     if (!isUpdate) {
       const vc = String(header.vendor || '').trim();
       if (!vc) { e.header.vendor = 'Select a vendor.'; e.form = 'Please correct the highlighted fields.'; return e; }
-      
-      // Place of Supply is mandatory (based on Ship-To address)
-      if (!String(header.placeOfSupply || '').trim()) { 
-        e.header.placeOfSupply = 'Place of Supply is required.'; 
-        e.form = 'Please correct the highlighted fields.'; 
-        return e; 
-      }
     }
 
     if (!String(header.postingDate || '').trim()) { e.header.postingDate = 'Posting date is required.'; e.form = 'Please correct the highlighted fields.'; return e; }
@@ -1635,16 +1774,25 @@ function PurchaseOrder() {
 
       const payloadLines = lines.map((line) => ({
         ...line,
-        udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
+        udf: buildPurchaseOrderLineUdfPayload(line, rowUdfDefinitions, formSettings),
       }));
-      const payload = { company_id: activeCompanyId, header: prep, lines: payloadLines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
+      const payload = {
+        company_id: activeCompanyId,
+        header: prep,
+        lines: payloadLines,
+        freightCharges: freightModal.freightCharges,
+        header_udfs: {
+          ...headerUdfs,
+          U_ShipLocation: prep.buyerLocation || '',
+        },
+      };
       const r = currentDocEntry ? await updatePurchaseOrder(currentDocEntry, payload) : await submitPurchaseOrder(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       setSnapshotPending(false);
       setIsDirty(false);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
       setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
-      setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [] }));
+      setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setValErrors({ header: {}, lines: {}, form: '' });
 
       if (refData.series.length > 0) {
@@ -1672,7 +1820,6 @@ function PurchaseOrder() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
-  const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
@@ -1800,9 +1947,9 @@ function PurchaseOrder() {
 
             {/* ══ HEADER CARD ══════════════════════════════════════════════ */}
             <div className="po-header-card">
-              <div className="row g-2">
+              <div className="po-document-header-grid">
                 {/* LEFT COLUMN */}
-                <div className="col-md-6">
+                <div className="po-document-header-column">
                   <div className="po-field-grid" style={{ gridTemplateColumns: '1fr' }}>
                     
                     {/* Vendor Code */}
@@ -1862,42 +2009,71 @@ function PurchaseOrder() {
                       </select>
                     </div>
 
-                    {/* Place of Supply */}
                     <div className="po-field">
-                      <label className="po-field__label">Place of Supply *</label>
-                      <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
-                        <input
-                          name="placeOfSupply"
-                          className={`po-field__input${valErrors.header.placeOfSupply ? ' po-field__input--error' : ''}`}
-                          value={getStateDisplayName(header.placeOfSupply, refData.states)}
+                      <label className="po-field__label">BP Currency</label>
+                      <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+                        <select
+                          name="currencyMode"
+                          className="po-field__select"
+                          value={header.currencyMode || INIT_HEADER.currencyMode}
                           onChange={handleHeaderChange}
-                          placeholder="State code"
-                          style={{ flex: 1 }}
-                        />
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={openStateModal}
-                          style={{
-                            padding: '0 8px',
-                            fontSize: 11,
-                            border: '1px solid #a0aab4',
-                            background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                            minWidth: '28px'
-                          }}
-                          title="Select State"
+                          style={{ flex: '0 0 58%' }}
                         >
-                          ...
-                        </button>
+                          {CURRENCY_MODE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <input
+                          name="currency"
+                          className="po-field__input"
+                          value={header.currency || ''}
+                          onChange={handleHeaderChange}
+                          placeholder="Currency"
+                          style={{ flex: '1 1 0', minWidth: 72 }}
+                        />
                       </div>
                     </div>
 
-                    {/* Payment Terms */}
+                    {/* Ship From */}
                     <div className="po-field">
-                      <label className="po-field__label">Payment Terms</label>
-                      <select name="paymentTerms" className="po-field__select" value={header.paymentTerms} onChange={handleHeaderChange}>
+                      <label className="po-field__label">Ship From</label>
+                      <select
+                        name="shipToCode"
+                        className="po-field__select"
+                        value={header.shipToCode || ''}
+                        onChange={handleShipToCodeChange}
+                        disabled={!header.vendor}
+                      >
                         <option value="">Select</option>
-                        {payTermOpts.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                        {vendorEffectiveShipToAddresses.map((address) => (
+                          <option key={address.Address} value={address.Address}>
+                            {address.Address}
+                          </option>
+                        ))}
+                        {header.shipToCode && !vendorEffectiveShipToAddresses.some((address) => String(address.Address || '') === String(header.shipToCode)) && (
+                          <option value={header.shipToCode}>{header.shipToCode}</option>
+                        )}
+                      </select>
+                    </div>
+
+                    {/* Buyer Location */}
+                    <div className="po-field">
+                      <label className="po-field__label">Buyer-Location</label>
+                      <select
+                        name="buyerLocation"
+                        className="po-field__select"
+                        value={header.buyerLocation || ''}
+                        onChange={handleHeaderChange}
+                      >
+                        <option value="">Select</option>
+                        {buyerLocationOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                        {header.buyerLocation && !buyerLocationOptions.some((option) => String(option.value) === String(header.buyerLocation)) && (
+                          <option value={header.buyerLocation}>{header.buyerLocation}</option>
+                        )}
                       </select>
                     </div>
 
@@ -1952,7 +2128,7 @@ function PurchaseOrder() {
                 </div>
 
                 {/* RIGHT COLUMN */}
-                <div className="col-md-6">
+                <div className="po-document-header-column">
                   <div className="po-field-grid" style={{ gridTemplateColumns: '1fr' }}>
 
                     {/* Series */}
@@ -1971,6 +2147,9 @@ function PurchaseOrder() {
                             {s.SeriesName}
                           </option>
                         ))}
+                        {header.series && !refData.series.some(s => String(s.Series) === String(header.series)) && (
+                          <option value={header.series}>{header.series}</option>
+                        )}
                       </select>
                     </div>
 
@@ -1980,7 +2159,7 @@ function PurchaseOrder() {
                       <input 
                         name="nextNumber" 
                         className="po-field__input" 
-                        value={header.nextNumber || ''} 
+                        value={currentDocEntry ? (header.docNo || header.nextNumber || '') : (header.nextNumber || '')} 
                         readOnly 
                         style={{ background: '#f0f2f5' }}
                       />
@@ -2058,12 +2237,12 @@ function PurchaseOrder() {
                 lineItemOptions={lineItemOptions}
                 getUomOptions={getUomOptions}
                 effectiveTaxCodes={effectiveTaxCodes}
-                effectiveWarehouses={branchFilteredWarehouses}
+                effectiveWarehouses={effectiveWarehouses}
                 fmtTaxLabel={fmtTaxLabel}
                 getBranchName={getBranchName}
                 matrixFields={matrixColumnDefinitions}
                 formSettings={formSettings}
-                rowUdfFields={visibleRowUdfs}
+                rowUdfFields={rowUdfDefinitions}
                 onRowUdfChange={handleRowUdfChange}
                 valErrors={valErrors}
               />
@@ -2078,6 +2257,7 @@ function PurchaseOrder() {
                 vendorBillToAddresses={vendorBillToAddresses}
                 shippingTypeOptions={shipTypeOpts}
                 onShipToCodeChange={handleShipToCodeChange}
+                onPayToCodeChange={(event) => handlePayToCodeChange(event.target.value)}
                 onOpenAddressModal={openAddressModal}
               />
             )}
@@ -2129,9 +2309,9 @@ function PurchaseOrder() {
                 </div>
                 <div>
                   <div className="po-section-title">Tax Summary</div>
-                  {totals.taxBreakdown.length > 0 && (
+                  {totalsForDisplay.taxBreakdown.length > 0 && (
                     <div style={{ marginBottom: '12px' }}>
-                      {totals.taxBreakdown.map(t => (
+                      {totalsForDisplay.taxBreakdown.map(t => (
                         <div key={t.taxCode} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
                           <span>{t.taxCode} ({t.taxRate}%)</span>
                           <span>{fmtDec(t.taxAmount, numDec.tax)}</span>
@@ -2144,7 +2324,7 @@ function PurchaseOrder() {
                       <tbody>
                         <tr>
                           <td>Total Before Discount</td>
-                          <td className="po-grid__cell--num"><input className="po-grid__input" value={fmtDec(totals.subtotal, numDec.total)} readOnly /></td>
+                          <td className="po-grid__cell--num"><input className="po-grid__input" value={fmtDec(totalsForDisplay.subtotal, numDec.total)} readOnly /></td>
                         </tr>
                         <tr>
                           <td>Discount %</td>
@@ -2166,11 +2346,11 @@ function PurchaseOrder() {
                         </tr>
                         <tr>
                           <td>Tax</td>
-                          <td className="po-grid__cell--num"><input className="po-grid__input" value={fmtDec(totals.taxAmt, numDec.tax)} readOnly /></td>
+                          <td className="po-grid__cell--num"><input className="po-grid__input" value={fmtDec(totalsForDisplay.taxAmt, numDec.tax)} readOnly /></td>
                         </tr>
                         <tr style={{ borderTop: '2px solid #a0aab4' }}>
                           <td style={{ fontWeight: 700, color: '#003366' }}>Total</td>
-                          <td className="po-grid__cell--num" style={{ fontWeight: 700, color: '#003366' }}><input className="po-grid__input" style={{ fontWeight: 700, color: '#003366' }} value={fmtDec(totals.total, numDec.totalPaymentDue)} readOnly /></td>
+                          <td className="po-grid__cell--num" style={{ fontWeight: 700, color: '#003366' }}><input className="po-grid__input" style={{ fontWeight: 700, color: '#003366' }} value={fmtDec(totalsForDisplay.total, numDec.totalPaymentDue)} readOnly /></td>
                         </tr>
                       </tbody>
                     </table>
@@ -2318,14 +2498,6 @@ function PurchaseOrder() {
         onClose={closeHSNModal}
         onSelect={handleHSNSelect}
         hsnCodes={refData.hsn_codes || []}
-      />
-
-      {/* State Selection Modal */}
-      <StateSelectionModal
-        isOpen={stateModal}
-        onClose={closeStateModal}
-        onSelect={handleStateSelect}
-        states={refData.states || []}
       />
 
       {/* Business Partner Selection Modal */}

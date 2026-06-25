@@ -135,16 +135,23 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   unitPriceUdf: '',
   stdDiscount: '',
   taxCode: '',
+  taxCodeRepeat: '',
   taxAmount: '',
   totalBeforeTax: '',
   totalLC: '',
   total: '',
+  price: '',
   whse: '',
   distRule: '',
   countryOfOrigin: '',
   loc: '',
   branch: '',
   blanketAgreementNo: '',
+  U_Cost_Sheet: '',
+  U_PackingType: '',
+  U_ContainerType: '',
+  U_GrossWt: '',
+  U_TotalPackage: '',
   saudaNodeRef: '',
   apInvDocKey: '',
   apInvDocNum: '',
@@ -172,6 +179,8 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   sellerSpecialInstruction: '',
   sellerBrokerageAmtPer: '',
   sellerBrokeragePercent: '',
+  U_Fix_Brock_B: '',
+  U_Fix_Brock_S: '',
   buyerBillDiscount: '',
   sellerBillDiscount: '',
   stcode: '',
@@ -398,6 +407,7 @@ function PurchaseOrder() {
     sellerBrokeragePerQty: Number(dec.PriceDec),
     unitPrice: Number(dec.PriceDec),
     unitPriceUdf: Number(dec.PriceDec),
+    price: Number(dec.PriceDec),
     assessableValue: Number(dec.SumDec),
     bedRate: Number(dec.PercentDec),
     bedAmount: Number(dec.SumDec),
@@ -406,6 +416,10 @@ function PurchaseOrder() {
     sellerBrokerage: Number(dec.SumDec),
     buyerBrokerage: Number(dec.SumDec),
     sellerBrokeragePercent: Number(dec.PercentDec),
+    U_GrossWt: Number(dec.SumDec),
+    U_TotalPackage: Number(dec.QtyDec),
+    U_Fix_Brock_B: Number(dec.SumDec),
+    U_Fix_Brock_S: Number(dec.SumDec),
     buyerBillDiscount: Number(dec.PercentDec),
     sellerBillDiscount: Number(dec.PercentDec),
     freightPurchase: Number(dec.SumDec),
@@ -484,14 +498,17 @@ function PurchaseOrder() {
           const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
             ? refDataRes.data.line_field_metadata.matrix_columns
             : BASE_MATRIX_COLUMNS;
+          const sapLayoutColumns = layoutRes?.data?.source === 'fallback'
+            ? []
+            : (layoutRes?.data?.columns || []);
           const nextMatrixColumns = buildMatrixColumnsFromSapLayout({
             baseColumns: liveMatrixColumns,
-            layoutColumns: layoutRes?.data?.columns || [],
+            layoutColumns: sapLayoutColumns,
             fallbackColumns: BASE_MATRIX_COLUMNS,
           });
           const hasSapMatrixPreferences = Boolean(
             Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) ||
-            ((layoutRes?.data?.columns || []).length && layoutRes?.data?.source !== 'fallback')
+            sapLayoutColumns.length
           );
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
@@ -1047,6 +1064,11 @@ function PurchaseOrder() {
 
       if (name === 'taxCode') {
         next.taxCodeManuallyOverridden = true;
+        next.taxCodeRepeat = value;
+      }
+
+      if (name === 'unitPrice' && !String(line.price || '').trim()) {
+        next.price = next.unitPrice;
       }
 
       if (name === 'itemNo') {
@@ -1066,6 +1088,13 @@ function PurchaseOrder() {
           if (preferredTaxCode) {
             next.taxCode = preferredTaxCode;
           }
+        }
+
+        if (!String(next.taxCodeRepeat || '').trim()) {
+          next.taxCodeRepeat = next.taxCode || '';
+        }
+        if (!String(next.price || '').trim()) {
+          next.price = next.unitPrice || '';
         }
       }
       
@@ -1745,9 +1774,9 @@ function PurchaseOrder() {
 
             {/* ══ HEADER CARD ══════════════════════════════════════════════ */}
             <div className="po-header-card">
-              <div className="row g-2">
+              <div className="po-document-header-grid">
                 {/* LEFT COLUMN */}
-                <div className="col-md-6">
+                <div className="po-document-header-column">
                   <div className="po-field-grid" style={{ gridTemplateColumns: '1fr' }}>
                     
                     {/* Vendor Code */}
@@ -1894,7 +1923,7 @@ function PurchaseOrder() {
                 </div>
 
                 {/* RIGHT COLUMN */}
-                <div className="col-md-6">
+                <div className="po-document-header-column">
                   <div className="po-field-grid" style={{ gridTemplateColumns: '1fr' }}>
 
                     {/* Series */}

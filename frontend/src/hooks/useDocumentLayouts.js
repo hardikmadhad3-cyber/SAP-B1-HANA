@@ -119,12 +119,15 @@ const useDocumentLayouts = ({
         setDocCode((currentDocCode) => chooseLayoutCode(nextLayouts, currentDocCode, preferredDocCode));
       } catch (error) {
         if (!ignore) {
-          onErrorRef.current?.(
-            error.response?.data?.detail ||
-              error.response?.data?.message ||
-              error.message ||
-              'Failed to load document print layouts.',
-          );
+          setLayouts([]);
+          setMetadata({
+            documentType,
+            documentLabel: '',
+            objectType: '',
+            typeCode: '',
+            defaultSchema: '',
+          });
+          setDocCode((currentDocCode) => currentDocCode || defaultDocCode || '');
         }
       } finally {
         if (!ignore) {

@@ -5,18 +5,81 @@ const HEADER_UDF_DEFINITIONS = [];
 const ROW_UDF_DEFINITIONS = [];
 
 const BASE_MATRIX_COLUMNS = [
-  { key: 'itemNo', label: 'Item No.' },
-  { key: 'itemDescription', label: 'Item Description' },
-  { key: 'hsnCode', label: 'HSN Code' },
-  { key: 'quantity', label: 'Quantity' },
-  { key: 'uomCode', label: 'UoM' },
-  { key: 'unitPrice', label: 'Unit Price' },
-  { key: 'stdDiscount', label: 'Discount %' },
-  { key: 'taxCode', label: 'Tax Code' },
-  { key: 'totalBeforeTax', label: 'Total Before Tax' },
-  { key: 'total', label: 'Total (LC)' },
-  { key: 'whse', label: 'Whse' },
+  { key: 'itemNo', label: 'Item No.', minWidth: 160 },
+  { key: 'itemDescription', label: 'Item Description', minWidth: 240 },
+  { key: 'quantity', label: 'Quantity', minWidth: 90 },
+  { key: 'uomName', label: 'UoM Name', minWidth: 120 },
+  { key: 'hsnCode', label: 'HSN', minWidth: 145 },
+  { key: 'unitPrice', label: 'Unit Price', minWidth: 110 },
+  { key: 'taxCode', label: 'Tax Code', minWidth: 115 },
+  { key: 'forRate', label: 'FOR-Price', minWidth: 110 },
+  { key: 'total', label: 'Total', minWidth: 110 },
+  { key: 'packingType', label: 'Packing-Type', minWidth: 140 },
+  { key: 'grossWt', label: 'GrossWt', minWidth: 110 },
+  { key: 'totalPackage', label: 'Total-Package', minWidth: 130 },
+  { key: 'whse', label: 'Whse', minWidth: 90 },
+  {
+    key: 'commPercent',
+    label: 'Comm. %',
+    minWidth: 95,
+    sapField: 'Commission',
+    sapColumnIds: ['28', 'Commission', 'CommissionPercent', 'Commission Percentage', 'Comm. %'],
+  },
+  { key: 'taxCodeRepeat', label: 'TaxCode', minWidth: 110 },
+  { key: 'price', label: 'Price', minWidth: 110 },
+  { key: 'sellerBrokerage', label: 'Seller Brokerage', minWidth: 125 },
+  { key: 'buyerBrokerage', label: 'Buyer Brokerage', minWidth: 125 },
+  { key: 'buyerDelivery', label: 'Buyer - Delivery', minWidth: 135 },
+  { key: 'sellerDelivery', label: 'Seller - Delivery', minWidth: 135 },
+  { key: 'buyerPaymentTerms', label: 'Buyer - Terms of payment', minWidth: 180 },
+  { key: 'sellerPaymentTerms', label: 'Seller - Terms of Payment', minWidth: 180 },
+  { key: 'buyerQuality', label: 'Buyer - Quality', minWidth: 155 },
+  { key: 'sellerQuality', label: 'Seller - Quality', minWidth: 155 },
+  { key: 'buyerPrice', label: 'Buyer - Price', minWidth: 135 },
+  { key: 'sellerPrice', label: 'Seller - Price', minWidth: 135 },
+  { key: 'buyerSpecialInstruction', label: 'Buyer - Special Instruction', minWidth: 190 },
+  { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', minWidth: 190 },
+  { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', minWidth: 165 },
+  { key: 'sellerBrokeragePercent', label: 'Seller Brokerage in Percentage', minWidth: 180 },
+  { key: 'stcode', label: 'STCODE', minWidth: 110 },
+  { key: 'sellerItem', label: 'S_Item', minWidth: 125 },
+  { key: 'sellerQty', label: 'S_Qty', minWidth: 110 },
+  { key: 'specialRebate', label: 'Special Rebate', minWidth: 120 },
+  { key: 'commission', label: 'Commision', minWidth: 110, sapField: 'U_COMPRC', isUdf: true },
+  { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', minWidth: 115 },
+  { key: 'fixBrokBuyer', label: 'FIX Brok BUYER', minWidth: 135 },
+  { key: 'fixBrockSeller', label: 'Fix Brock Seller', minWidth: 140 },
 ];
+
+const BASE_MATRIX_COLUMN_KEYS = new Set(BASE_MATRIX_COLUMNS.map((column) => column.key));
+
+const normalizePurchaseOrderMatrixColumns = (columns = BASE_MATRIX_COLUMNS) => {
+  const metadataByKey = new Map(
+    (Array.isArray(columns) ? columns : [])
+      .filter((column) => column?.key && BASE_MATRIX_COLUMN_KEYS.has(column.key))
+      .map((column) => [column.key, column])
+  );
+
+  return BASE_MATRIX_COLUMNS.map((baseColumn, index) => {
+    const metadata = metadataByKey.get(baseColumn.key) || {};
+    const metadataMinWidth = Number(metadata.minWidth || metadata.width || 0);
+    const metadataWidth = Number(metadata.width || metadata.minWidth || 0);
+    const baseMinWidth = Number(baseColumn.minWidth || 125);
+    const effectiveMinWidth = Math.max(metadataMinWidth || 0, baseMinWidth);
+    const effectiveWidth = Math.max(metadataWidth || 0, effectiveMinWidth);
+    return {
+      ...metadata,
+      ...baseColumn,
+      key: baseColumn.key,
+      label: baseColumn.label,
+      minWidth: effectiveMinWidth,
+      width: effectiveWidth,
+      visible: true,
+      active: metadata.active !== false && metadata.editable !== false && baseColumn.active !== false,
+      order: index + 1,
+    };
+  });
+};
 
 const getUdfIdentity = (field = {}) =>
   [
@@ -91,10 +154,12 @@ const readSavedFormSettings = (
 
 export {
   BASE_MATRIX_COLUMNS,
+  BASE_MATRIX_COLUMN_KEYS,
   FORM_SETTINGS_STORAGE_KEY,
   HEADER_UDF_DEFINITIONS,
   ROW_UDF_DEFINITIONS,
   createDefaultFormSettings,
   createUdfState,
+  normalizePurchaseOrderMatrixColumns,
   readSavedFormSettings,
 };

@@ -2597,7 +2597,7 @@ const getSalesOrder = async (docEntry) => {
     ${lineField('U_SPLRBT', 'SpecialRebate')},
     ${lineField('U_COMPRC', 'Commission')},
     ${lineField('U_S_BrokPerQty', 'SellerBrokeragePerQty')},
-    ${lineField('U_Unit_Price', 'UnitPriceUdf', 'COALESCE(T1.PriceBefDi, T1.Price)')},
+    ${lineField('U_Unit_Price', 'UnitPriceUdf', "''")},
     ${lineField('U_Rate', 'DiscountAmount', 'CAST(NULL AS DECIMAL(19, 6))')},
     ${lineField('U_Brok_Seller', 'SellerBrokerage')},
     ${lineField('U_Brok_Buyer', 'BuyerBrokerage')},
@@ -2954,14 +2954,12 @@ ORDER BY T1.LineNum
       header_udfs: headerUdfs,
       lines: lineRows.map(line => {
         const lineUdf = lineUdfs[line.LineNum] || {};
-        const savedUnitPrice = lineUdf.U_Unit_Price != null && lineUdf.U_Unit_Price !== ''
+        const savedUnitPriceUdf = lineUdf.U_Unit_Price != null && lineUdf.U_Unit_Price !== ''
           ? lineUdf.U_Unit_Price
-          : (line.UnitPriceUdf != null && line.UnitPriceUdf !== ''
-            ? line.UnitPriceUdf
-            : (line.PriceBefDi != null && line.PriceBefDi !== '' ? line.PriceBefDi : line.Price));
-        const displayUnitPrice = savedUnitPrice != null && savedUnitPrice !== ''
-          ? String(savedUnitPrice)
-          : '0';
+          : line.UnitPriceUdf;
+        const displayUnitPrice = line.PriceBefDi != null && line.PriceBefDi !== ''
+          ? String(line.PriceBefDi)
+          : String(line.Price || 0);
         const savedDiscountAmount = lineUdf.U_Rate != null && String(lineUdf.U_Rate).trim() !== ''
           ? lineUdf.U_Rate
           : line.DiscountAmount;
@@ -2984,7 +2982,7 @@ ORDER BY T1.LineNum
           sacServiceCode: line.SACServiceCode || '',
           quantity: String(line.Quantity || 0),
           unitPrice: displayUnitPrice,
-          unitPriceUdf: displayUnitPrice,
+          unitPriceUdf: savedUnitPriceUdf != null && savedUnitPriceUdf !== '' ? String(savedUnitPriceUdf) : '',
           sellerQuality: lineUdf.U_Seller_Quality || line.SellerQuality || '',
           buyerQuality: lineUdf.U_Buyer_Quality || line.BuyerQuality || '',
           sellerPrice: lineUdf.U_Seller_Price || line.SellerPrice || '',
@@ -3185,7 +3183,7 @@ const getSalesOrderForCopy = async (docEntry) => {
       ${lineField('U_SPLRBT', 'SpecialRebate')},
       ${lineField('U_COMPRC', 'Commission')},
       ${lineField('U_S_BrokPerQty', 'SellerBrokeragePerQty')},
-      ${lineField('U_Unit_Price', 'UnitPriceUdf', 'COALESCE(T0.PriceBefDi, T0.Price)')},
+      ${lineField('U_Unit_Price', 'UnitPriceUdf', "''")},
       ${lineField('U_Rate', 'DiscountAmount', 'CAST(NULL AS DECIMAL(19, 6))')},
       ${lineField('U_Brok_Seller', 'SellerBrokerage')},
       ${lineField('U_Brok_Buyer', 'BuyerBrokerage')},

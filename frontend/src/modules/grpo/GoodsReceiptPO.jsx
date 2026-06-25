@@ -16,19 +16,17 @@ import BatchAllocationModal from './components/BatchAllocationModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
-import StateSelectionModal from './components/StateSelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
-import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
-import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
-import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { getStateCodeValue } from '../../utils/stateDisplay';
+import { getItemPrice } from '../../utils/documentItemHydration';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import {
   BATCH_QTY_TOLERANCE,
@@ -46,6 +44,7 @@ import {
   fetchNextNumber,
   fetchPurchaseOrderForCopy,
   fetchBatchesByItem,
+  fetchNextBatchNumber,
   fetchItemsForModal,
   fetchFreightCharges,
 } from '../../api/grpoApi';
@@ -54,9 +53,11 @@ import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import {
   BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
+  GRPO_LINE_UDF_FIELD_MAP,
   HEADER_UDF_DEFINITIONS,
   ROW_UDF_DEFINITIONS,
   createUdfState,
+  normalizeGRPOMatrixColumns,
   readSavedFormSettings,
 } from '../../config/grpoForm';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -64,6 +65,14 @@ import { consumeCopyToState } from '../../utils/copyToState';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
+import { hydrateWorkbookDocumentLine } from '../../utils/workbookLineHydration';
+import {
+  buildGRPOLineUdfPayload,
+  getFirstLineValue,
+  getLineUdfValue,
+  hydrateGRPOLineUdfFields,
+  resolveUdfDefinitionKey,
+} from './grpoLineUdfMapping';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
@@ -126,7 +135,38 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 // ─── constants ────────────────────────────────────────────────────────────────
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
-const DEFAULT_WAREHOUSE = '01';
+const DEFAULT_WAREHOUSE = '';
+const CURRENCY_MODE_OPTIONS = [
+  { value: 'local', label: 'Local Currency' },
+  { value: 'system', label: 'System Currency' },
+  { value: 'bp', label: 'BP Currency' },
+];
+
+const hydrateGRPOLine = (line = {}, rowUdfDefinitions = ROW_UDF_DEFINITIONS, items = [], fallbackWarehouse = DEFAULT_WAREHOUSE) => {
+  const hydrated = hydrateWorkbookDocumentLine({
+    line,
+    createLine,
+    rowUdfDefinitions,
+    normalizeUdfState: createUdfState,
+    items,
+    fallbackWarehouse,
+  });
+  const sellerPaymentTermsKey = resolveUdfDefinitionKey(
+    GRPO_LINE_UDF_FIELD_MAP.sellerPaymentTermsDuplicate,
+    rowUdfDefinitions
+  );
+  const explicitUdfPrice = getLineUdfValue(line, ['U_PRICE', 'U_Price']);
+
+  return hydrateGRPOLineUdfFields({
+    ...hydrated,
+    price: explicitUdfPrice === '' ? '' : String(explicitUdfPrice),
+    sellerPaymentTermsDuplicate: getFirstLineValue(
+      hydrated.sellerPaymentTermsDuplicate,
+      hydrated.sellerPaymentTerms,
+      sellerPaymentTermsKey ? hydrated.udf?.[sellerPaymentTermsKey] : ''
+    ),
+  });
+};
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
@@ -134,9 +174,39 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   hsnCode: '',
   quantity: '',
   uomCode: '',
+  uomName: '',
   unitPrice: '',
   stdDiscount: '',
   taxCode: '',
+  packingType: '',
+  grossWt: '',
+  totalPackage: '',
+  binLocationAllocation: '',
+  taxCodeRepeat: '',
+  price: '',
+  sellerBrokerage: '',
+  buyerBrokerage: '',
+  buyerDelivery: '',
+  sellerDelivery: '',
+  buyerPaymentTerms: '',
+  sellerPaymentTerms: '',
+  buyerQuality: '',
+  sellerQuality: '',
+  buyerPrice: '',
+  sellerPrice: '',
+  buyerSpecialInstruction: '',
+  sellerSpecialInstruction: '',
+  sellerBrokerageAmtPer: '',
+  sellerBrokeragePercent: '',
+  stcode: '',
+  sellerItem: '',
+  sellerQty: '',
+  specialRebate: '',
+  commission: '',
+  sellerBrokeragePerQty: '',
+  fixBrokBuyer: '',
+  fixBrockSeller: '',
+  sellerPaymentTermsDuplicate: '',
   total: '',
   whse: DEFAULT_WAREHOUSE,
   batchManaged: false,
@@ -167,10 +237,18 @@ const INIT_HEADER = {
   documentDate: today(),
   contractDate: '',
   branchRegNo: '',
+  currencyMode: 'bp',
+  currency: 'INR',
   shipTo: '',
   shipToCode: '',
+  shipToAddress: '',
+  buyerLocation: '',
+  billTo: '',
+  billToCode: '',
+  billToAddress: '',
   payTo: '',
   payToCode: '',
+  payToAddress: '',
   shippingType: '',
   usePayToForTax: false,
   toOrder: '',
@@ -270,6 +348,8 @@ function GoodsReceiptPO() {
   const [refData, setRefData] = useState({
     company: '',
     company_state: '',
+    local_currency: '',
+    system_currency: '',
     vendors: [],
     contacts: [],
     pay_to_addresses: [],
@@ -298,6 +378,7 @@ function GoodsReceiptPO() {
     error: '',
     success: '',
   });
+  const [referenceDataLoaded, setReferenceDataLoaded] = useState(false);
   const [valErrors, setValErrors] = useState({
     header: {},
     lines: {},
@@ -309,12 +390,12 @@ function GoodsReceiptPO() {
   const [addressModal, setAddressModal] = useState(null);
   const [taxInfoModal, setTaxInfoModal] = useState(false);
   const [copyFromModal, setCopyFromModal] = useState(false);
+  const [pendingCopyFrom, setPendingCopyFrom] = useState(null);
   const [batchModal, setBatchModal] = useState({ open: false, lineIndex: null, availableBatches: [], loading: false, error: '' });
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
   const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1 });
   const [bpModal, setBpModal] = useState(false);
-  const [stateModal, setStateModal] = useState(false);
   const [addressForm, setAddressForm] = useState({
     streetPoBox: '', streetNo: '', buildingFloorRoom: '', block: '', city: '', zipCode: '', county: '',
     state: '', countryRegion: '', addressName2: '', addressName3: '', gln: '', gstin: ''
@@ -407,6 +488,7 @@ function GoodsReceiptPO() {
   useEffect(() => {
     let ignore = false;
     const load = async () => {
+      setReferenceDataLoaded(false);
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
         const [refDataRes, seriesRes, layoutRes] = await Promise.all([
@@ -425,13 +507,18 @@ function GoodsReceiptPO() {
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
           const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
           const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
-            ? refDataRes.data.line_field_metadata.matrix_columns
+            ? [
+              ...BASE_MATRIX_COLUMNS,
+              ...refDataRes.data.line_field_metadata.matrix_columns.filter(
+                (field) => field?.key && !BASE_MATRIX_COLUMNS.some((column) => column.key === field.key)
+              ),
+            ]
             : BASE_MATRIX_COLUMNS;
-          const nextMatrixColumns = buildMatrixColumnsFromSapLayout({
+          const nextMatrixColumns = normalizeGRPOMatrixColumns(buildMatrixColumnsFromSapLayout({
             baseColumns: liveMatrixColumns,
             layoutColumns: layoutRes?.data?.columns || [],
             fallbackColumns: BASE_MATRIX_COLUMNS,
-          });
+          }));
           const hasSapMatrixPreferences = Boolean(
             Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) ||
             ((layoutRes?.data?.columns || []).length && layoutRes?.data?.source !== 'fallback')
@@ -441,15 +528,31 @@ function GoodsReceiptPO() {
           setMatrixColumnDefinitions(nextMatrixColumns);
           setHeaderUdfs((prev) => createUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
-            ...line,
+            ...hydrateGRPOLine(line, nextRowUdfs, refData.items, line.whse || header.warehouse || ''),
             udf: createUdfState(nextRowUdfs, line.udf || {}),
           })));
           const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
-          setFormSettings((prev) => mergeLiveMatrixSettings(nextDefaults, prev, hasSapMatrixPreferences));
+          setFormSettings((prev) => {
+            const merged = mergeLiveMatrixSettings(nextDefaults, prev, hasSapMatrixPreferences);
+            return {
+              ...merged,
+              rowUdfs: nextRowUdfs.reduce((settings, field) => ({
+                ...settings,
+                [field.key]: hasSapMatrixPreferences && field.sapColumnId
+                  ? nextDefaults.rowUdfs[field.key]
+                  : {
+                      ...(nextDefaults.rowUdfs[field.key] || {}),
+                      ...((prev.rowUdfs || {})[field.key] || {}),
+                    },
+              }), merged.rowUdfs),
+            };
+          });
 
           setRefData({
             company: refDataRes.data.company || '',
             company_state: refDataRes.data.company_state || '',
+            local_currency: refDataRes.data.local_currency || '',
+            system_currency: refDataRes.data.system_currency || '',
             vendors: refDataRes.data.vendors || [],
             contacts: refDataRes.data.contacts || [],
             pay_to_addresses: refDataRes.data.pay_to_addresses || [],
@@ -491,7 +594,10 @@ function GoodsReceiptPO() {
       } catch (e) {
         if (!ignore) setPageState(p => ({ ...p, error: getErrMsg(e, 'Failed to load reference data.') }));
       } finally {
-        if (!ignore) setPageState(p => ({ ...p, loading: false }));
+        if (!ignore) {
+          setReferenceDataLoaded(true);
+          setPageState(p => ({ ...p, loading: false }));
+        }
       }
     };
     load();
@@ -510,15 +616,22 @@ function GoodsReceiptPO() {
         const grpo = r.data.grpo;
         if (ignore || !grpo) return;
         setCurrentDocEntry(grpo.doc_entry || Number(docEntry));
+        const firstLineWarehouse = Array.isArray(grpo.lines)
+          ? grpo.lines.find((line) => String(line?.whse || '').trim())?.whse
+          : '';
         setHeader(prev => ({
           ...prev,
           ...INIT_HEADER,
           ...(grpo.header || {}),
+          currencyMode: grpo.header?.currencyMode || INIT_HEADER.currencyMode,
+          currency: grpo.header?.currency || INIT_HEADER.currency,
+          warehouse: grpo.header?.warehouse || firstLineWarehouse || '',
+          nextNumber: grpo.header?.docNo || grpo.doc_num || grpo.header?.nextNumber || '',
         }));
 
         setLines(
           Array.isArray(grpo.lines) && grpo.lines.length
-            ? grpo.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, taxCodeManuallyOverridden: true, udf: { ...createUdfState(rowUdfDefinitions), ...(l.udf || {}) } }))
+            ? grpo.lines.map(l => ({ ...hydrateGRPOLine(l, rowUdfDefinitions, refData.items, header.warehouse || ''), taxCodeManuallyOverridden: true }))
             : [createLine(rowUdfDefinitions)]
         );
         setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(grpo.header_udfs || {}) });
@@ -545,46 +658,96 @@ function GoodsReceiptPO() {
     const routedCopyFrom = location.state?.copyFrom;
     const persistedCopyState = routedCopyFrom ? null : consumeCopyToState(location.pathname, ['/grpo']);
     const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
-    if (!copyFrom) return;
+    if (copyFrom) setPendingCopyFrom(copyFrom);
+  }, [location.pathname, location.state]);
 
-    const { header: sourceHeader = {}, lines: sourceLines = [], baseDocument } = copyFrom;
+  useEffect(() => {
+    if (!pendingCopyFrom || !referenceDataLoaded) return;
 
-    setHeader((prev) => ({
-      ...prev,
-      vendor: sourceHeader.vendor || sourceHeader.CardCode || '',
-      name: sourceHeader.name || sourceHeader.CardName || '',
-      contactPerson: sourceHeader.contactPerson || sourceHeader.CntctCode || '',
-      branch: sourceHeader.branch || sourceHeader.BPL_IDAssignedToInvoice || '',
-      paymentTerms: sourceHeader.paymentTerms || sourceHeader.GroupNum || '',
-      placeOfSupply: sourceHeader.placeOfSupply || '',
-      otherInstruction: sourceHeader.otherInstruction || sourceHeader.Comments || '',
-    }));
+    let ignore = false;
+    const loadCopiedPurchaseOrder = async () => {
+      setPageState((prev) => ({ ...prev, loading: true, error: '', success: '' }));
+      try {
+        let copyData = pendingCopyFrom;
+        const sourceType = String(copyData.type || '').toLowerCase();
+        const sourceDocEntry = copyData.docEntry || copyData.baseDocument?.baseEntry;
 
-    if (Array.isArray(sourceLines) && sourceLines.length > 0) {
-      setLines(sourceLines.map((line, index) => ({
-        ...createLine(rowUdfDefinitions),
-        itemNo: line.itemNo || line.ItemCode || '',
-        itemDescription: line.itemDescription || line.ItemDescription || line.Dscription || '',
-        quantity: String(line.quantity || line.Quantity || line.OpenQty || 0),
-        unitPrice: String(line.unitPrice || line.UnitPrice || line.Price || 0),
-        uomCode: line.uomCode || line.UomCode || line.unitMsr || '',
-        hsnCode: line.hsnCode || line.HSNCode || '',
-        taxCode: '',
-        whse: line.whse || line.WarehouseCode || line.WhsCode || '',
-        stdDiscount: String(line.stdDiscount || line.discount || line.DiscountPercent || line.DiscPrcnt || 0),
-        baseEntry: baseDocument?.baseEntry || copyFrom.docEntry,
-        baseType: baseDocument?.baseType || 22,
-        baseLine: line.lineNum ?? line.LineNum ?? index,
-        branch: line.branch || sourceHeader.branch || '',
-      })));
-    }
+        if (sourceType === 'purchaseorder' && sourceDocEntry) {
+          try {
+            const response = await fetchPurchaseOrderForCopy(sourceDocEntry);
+            copyData = {
+              ...copyData,
+              header: response.data?.header || copyData.header || {},
+              lines: response.data?.lines || copyData.lines || [],
+              headerUdfs: response.data?.header_udfs || copyData.headerUdfs || {},
+              baseDocument: copyData.baseDocument || { baseEntry: sourceDocEntry, baseType: 22 },
+            };
+          } catch (_error) {
+            copyData = pendingCopyFrom;
+          }
+        }
 
-    const vendorCode = sourceHeader.vendor || sourceHeader.CardCode;
-    if (vendorCode) loadVendorDetails(vendorCode);
+        if (ignore) return;
 
-    setPageState((prev) => ({ ...prev, success: 'Copied from Purchase Order. Please review and save.' }));
-    navigate(location.pathname, { replace: true, state: null });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+        const { header: sourceHeader = {}, lines: sourceLines = [], baseDocument } = copyData;
+        const copiedLines = Array.isArray(sourceLines) && sourceLines.length
+          ? sourceLines.map((line, index) => hydrateGRPOLine(
+            {
+              ...line,
+              quantity: String(line.quantity || line.Quantity || line.OpenQty || 0),
+              stdDiscount: String(line.stdDiscount || line.discount || line.DiscountPercent || line.DiscPrcnt || 0),
+              baseEntry: line.baseEntry ?? line.BaseEntry ?? baseDocument?.baseEntry ?? sourceDocEntry,
+              baseType: line.baseType ?? line.BaseType ?? baseDocument?.baseType ?? 22,
+              baseLine: line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? index,
+              branch: line.branch || sourceHeader.branch || '',
+            },
+            rowUdfDefinitions,
+            refData.items,
+            ''
+          ))
+          : [createLine(rowUdfDefinitions)];
+        const firstLineWarehouse = copiedLines.find((line) => String(line?.whse || '').trim())?.whse || '';
+
+        setHeader((prev) => ({
+          ...prev,
+          vendor: sourceHeader.vendor || sourceHeader.CardCode || '',
+          name: sourceHeader.name || sourceHeader.CardName || '',
+          contactPerson: sourceHeader.contactPerson || sourceHeader.CntctCode || '',
+          salesContractNo: sourceHeader.salesContractNo || sourceHeader.VendorRefNo || sourceHeader.NumAtCard || '',
+          branch: sourceHeader.branch || sourceHeader.BPL_IDAssignedToInvoice || '',
+          paymentTerms: sourceHeader.paymentTerms || sourceHeader.GroupNum || '',
+          currencyMode: sourceHeader.currencyMode || prev.currencyMode || INIT_HEADER.currencyMode,
+          currency: sourceHeader.currency || sourceHeader.DocCur || prev.currency || INIT_HEADER.currency,
+          shipToCode: sourceHeader.shipToCode || sourceHeader.ShipToCode || '',
+          shipTo: sourceHeader.shipTo || sourceHeader.shipToAddress || sourceHeader.ShipToAddress || '',
+          shipToAddress: sourceHeader.shipToAddress || sourceHeader.ShipToAddress || sourceHeader.shipTo || '',
+          buyerLocation: sourceHeader.buyerLocation || sourceHeader.U_ShipLocation || '',
+          warehouse: sourceHeader.warehouse || firstLineWarehouse || prev.warehouse || '',
+          placeOfSupply: sourceHeader.placeOfSupply || prev.placeOfSupply || '',
+          otherInstruction: sourceHeader.otherInstruction || sourceHeader.Comments || '',
+        }));
+        setLines(copiedLines);
+        setHeaderUdfs((prev) => ({ ...prev, ...(copyData.headerUdfs || {}) }));
+        setValErrors({ header: {}, lines: {}, form: '' });
+        setFreightModal({ open: false, freightCharges: [], loading: false });
+
+        const vendorCode = sourceHeader.vendor || sourceHeader.CardCode;
+        if (vendorCode) loadVendorDetails(vendorCode);
+
+        setPendingCopyFrom(null);
+        setPageState((prev) => ({ ...prev, loading: false, error: '', success: 'Copied from Purchase Order. Please review and save.' }));
+        navigate(location.pathname, { replace: true, state: null });
+      } catch (error) {
+        if (!ignore) {
+          setPendingCopyFrom(null);
+          setPageState((prev) => ({ ...prev, loading: false, error: getErrMsg(error, 'Failed to copy from Purchase Order.'), success: '' }));
+        }
+      }
+    };
+
+    loadCopiedPurchaseOrder();
+    return () => { ignore = true; };
+  }, [pendingCopyFrom, referenceDataLoaded, rowUdfDefinitions, refData.items, location.pathname, navigate]);
 
   useEffect(() => {
     if (!currentDocEntry) {
@@ -631,6 +794,40 @@ function GoodsReceiptPO() {
   const vendorPayToAddresses = refData.pay_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
   const vendorShipToAddresses = refData.ship_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
   const vendorEffectiveShipToAddresses = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
+  const selectedWarehouse = refData.warehouses.find(w => String(w.WhsCode || '') === String(header.warehouse || ''));
+  const getCurrencyForMode = useCallback((mode, vendorCode = header.vendor) => {
+    const selectedMode = mode || INIT_HEADER.currencyMode;
+    const vendor = refData.vendors.find(v => String(v.CardCode || '') === String(vendorCode || ''));
+    const bpCurrency = String(vendor?.Currency || '').trim();
+    const localCurrency = String(refData.local_currency || INIT_HEADER.currency).trim();
+    const systemCurrency = String(refData.system_currency || localCurrency || INIT_HEADER.currency).trim();
+
+    if (selectedMode === 'local') return localCurrency || INIT_HEADER.currency;
+    if (selectedMode === 'system') return systemCurrency || localCurrency || INIT_HEADER.currency;
+    if (bpCurrency && bpCurrency !== '##') return bpCurrency;
+    return localCurrency || INIT_HEADER.currency;
+  }, [header.vendor, refData.local_currency, refData.system_currency, refData.vendors]);
+
+  const getBuyerBillToAddress = useCallback(() => {
+    if (selectedWarehouse) {
+      const formattedWarehouseAddress = fmtAddr(selectedWarehouse);
+      if (formattedWarehouseAddress) {
+        return {
+          code: selectedWarehouse.WhsCode || '',
+          address: formattedWarehouseAddress,
+          source: selectedWarehouse,
+        };
+      }
+    }
+
+    const companyAddress = refData.company_address || {};
+    const formattedCompanyAddress = fmtAddr(companyAddress) || companyAddress.Address || '';
+    return {
+      code: companyAddress.AddressName || companyAddress.Address || '',
+      address: formattedCompanyAddress,
+      source: companyAddress,
+    };
+  }, [refData.company_address, selectedWarehouse]);
 
   const payTermOpts = refData.payment_terms.length
     ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
@@ -666,7 +863,7 @@ function GoodsReceiptPO() {
   }, {});
   const effectiveTaxCodes = refData.tax_codes || [];
   const effectiveWarehouses = refData.warehouses.length ? refData.warehouses : [];
-  const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
+  const branchFilteredWarehouses = effectiveWarehouses;
   const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
 
   const fmtTaxLabel = (t) => {
@@ -701,14 +898,17 @@ function GoodsReceiptPO() {
   }, [derivedGstType, effectiveTaxCodes, header.vendor, refData.vendors]);
 
   // ── calculations ──────────────────────────────────────────────────────────
-  const calcLineTotal = (line) => {
+  const calcLineTotal = (line, { preferStored = false } = {}) => {
+    if (preferStored && line.total !== undefined && line.total !== null && String(line.total).trim() !== '') {
+      return roundTo(parseNum(line.total), numDec.total);
+    }
     const qty = parseNum(line.quantity), price = parseNum(line.unitPrice), disc = parseNum(line.stdDiscount);
     return roundTo(qty * price * (1 - disc / 100), numDec.total);
   };
 
   const calcTotals = () => {
     const taxRateMap = new Map(effectiveTaxCodes.map(t => [String(t.Code || ''), parseNum(t.Rate)]));
-    const subtotal = lines.reduce((s, l) => s + calcLineTotal(l), 0);
+    const subtotal = lines.reduce((s, l) => s + calcLineTotal(l, { preferStored: true }), 0);
     const discPct = parseNum(header.discount);
     const discAmt = roundTo(subtotal * discPct / 100, numDec.total);
     const discSub = Math.max(0, subtotal - discAmt);
@@ -718,7 +918,7 @@ function GoodsReceiptPO() {
     const taxMap = new Map();
     if (subtotal > 0) {
       lines.forEach(l => {
-        const net = calcLineTotal(l);
+        const net = calcLineTotal(l, { preferStored: true });
         if (net <= 0 || !l.taxCode) return;
         const rate = taxRateMap.get(String(l.taxCode || '')) || 0;
         const base = discSub * (net / subtotal);
@@ -737,6 +937,13 @@ function GoodsReceiptPO() {
   };
 
   const totals = calcTotals();
+  const totalsForDisplay = currentDocEntry && !isDirty
+    ? {
+      ...totals,
+      taxAmt: header.tax !== '' ? parseNum(header.tax) : totals.taxAmt,
+      total: header.totalPaymentDue !== '' ? parseNum(header.totalPaymentDue) : totals.total,
+    }
+    : totals;
 
   // ── GST Logic ─────────────────────────────────────────────────────────────
   const applyGstLogic = useCallback(() => {
@@ -779,30 +986,14 @@ function GoodsReceiptPO() {
     }
   }, [header.branch]);
 
-  useEffect(() => {
-    if (!header.branch || !refData.warehouses.length) return;
-
-    const allowedWarehouseCodes = new Set(
-      branchFilteredWarehouses.map(w => String(w.WhsCode || ''))
-    );
-
-    setHeader(prev => (
-      prev.warehouse && !allowedWarehouseCodes.has(String(prev.warehouse))
-        ? { ...prev, warehouse: '' }
-        : prev
-    ));
-
-    setLines(prev => prev.map(line => (
-      line.whse && !allowedWarehouseCodes.has(String(line.whse))
-        ? { ...line, whse: '' }
-        : line
-    )));
-  }, [branchFilteredWarehouses, header.branch, refData.warehouses.length]);
-
-  // Sync warehouse to all lines when header warehouse changes
+  // Header warehouse is a default for blank rows; SAP B1 allows different line warehouses.
   useEffect(() => {
     if (header.warehouse) {
-      setLines(prev => prev.map(l => ({ ...l, whse: header.warehouse })));
+      setLines(prev => prev.map(l => (
+        String(l.itemNo || '').trim()
+          ? l
+          : { ...l, whse: header.warehouse }
+      )));
     }
   }, [header.warehouse]);
 
@@ -817,9 +1008,27 @@ function GoodsReceiptPO() {
       const fmt = fmtAddr(def);
       const nextState = String(def.State || '').trim();
       if (prev.shipToCode === def.Address && prev.shipTo === fmt && prev.placeOfSupply === nextState) return prev;
-      return { ...prev, shipToCode: def.Address || '', shipTo: fmt, placeOfSupply: nextState };
+      return { ...prev, shipToCode: def.Address || '', shipTo: fmt, shipToAddress: fmt, placeOfSupply: nextState };
     });
   }, [header.vendor, vendorEffectiveShipToAddresses]);
+
+  useEffect(() => {
+    const buyerBillTo = getBuyerBillToAddress();
+    if (!buyerBillTo.address) return;
+    setHeader(prev => {
+      if (
+        prev.billToCode === buyerBillTo.code
+        && prev.billTo === buyerBillTo.address
+        && prev.billToAddress === buyerBillTo.address
+      ) return prev;
+      return {
+        ...prev,
+        billToCode: buyerBillTo.code || prev.billToCode || '',
+        billTo: buyerBillTo.address,
+        billToAddress: buyerBillTo.address,
+      };
+    });
+  }, [getBuyerBillToAddress]);
 
   useEffect(() => {
     if (!header.vendor) return;
@@ -830,7 +1039,7 @@ function GoodsReceiptPO() {
       if (!def) return prev;
       const fmt = fmtAddr(def);
       if (prev.payToCode === def.Address && prev.payTo === fmt) return prev;
-      return { ...prev, payToCode: def.Address || '', payTo: fmt };
+      return { ...prev, payToCode: def.Address || '', payTo: fmt, payToAddress: fmt };
     });
   }, [header.vendor, vendorPayToAddresses]);
 
@@ -902,12 +1111,19 @@ function GoodsReceiptPO() {
       nextHeader: {
         ...hdr,
         name: m.CardName || m.Name || hdr.name,
+        currencyMode: hdr.currencyMode || INIT_HEADER.currencyMode,
+        currency: getCurrencyForMode(hdr.currencyMode || INIT_HEADER.currencyMode, code),
         paymentTerms: m.GroupNum != null ? String(m.GroupNum) : hdr.paymentTerms,
         contactPerson: '',
         shipTo: '',
         shipToCode: '',
+        shipToAddress: '',
+        billTo: '',
+        billToCode: '',
+        billToAddress: '',
         payTo: '',
         payToCode: '',
+        payToAddress: '',
         placeOfSupply: '',
       },
       vatGroup: String(m.VatGroup || '').trim(),
@@ -915,6 +1131,15 @@ function GoodsReceiptPO() {
   };
 
   // ── handlers ──────────────────────────────────────────────────────────────
+  const handleCurrencyModeChange = (e) => {
+    const mode = e.target.value;
+    setHeader(prev => ({
+      ...prev,
+      currencyMode: mode,
+      currency: getCurrencyForMode(mode, prev.vendor),
+    }));
+  };
+
   const handleHeaderChange = (e) => {
     const { name, value, type, checked } = e.target;
     setValErrors(p => ({ ...p, header: { ...p.header, [name]: '' }, form: '' }));
@@ -925,8 +1150,29 @@ function GoodsReceiptPO() {
       return;
     }
 
+    if (name === 'currencyMode') {
+      handleCurrencyModeChange(e);
+      return;
+    }
+
     if (name === 'shipToCode') {
       handleShipToChange(value);
+      return;
+    }
+    if (name === 'payToCode') {
+      handlePayToCodeChange(value);
+      return;
+    }
+    if (name === 'shipTo') {
+      setHeader(p => ({ ...p, shipTo: value, shipToAddress: value }));
+      return;
+    }
+    if (name === 'payTo') {
+      setHeader(p => ({ ...p, payTo: value, payToAddress: value }));
+      return;
+    }
+    if (name === 'billTo') {
+      setHeader(p => ({ ...p, billTo: value, billToAddress: value }));
       return;
     }
 
@@ -968,7 +1214,20 @@ function GoodsReceiptPO() {
       ...prev,
       shipToCode: selectedCode,
       shipTo: fmtAddr(selectedAddress),
+      shipToAddress: fmtAddr(selectedAddress),
       placeOfSupply: String(selectedAddress?.State || '').trim(),
+    }));
+  };
+
+  const handlePayToCodeChange = (selectedCode) => {
+    const selectedAddress = vendorPayToAddresses.find(a => String(a.Address || '') === String(selectedCode || ''));
+    const formattedAddress = selectedAddress ? fmtAddr(selectedAddress) : '';
+
+    setHeader(prev => ({
+      ...prev,
+      payToCode: selectedCode,
+      payTo: formattedAddress,
+      payToAddress: formattedAddress,
     }));
   };
 
@@ -983,15 +1242,26 @@ function GoodsReceiptPO() {
       if (name === 'taxCode') {
         next.taxCodeManuallyOverridden = true;
       }
+      if (name === 'sellerPaymentTerms') {
+        next.sellerPaymentTermsDuplicate = value;
+      }
+      if (name === 'sellerPaymentTermsDuplicate') {
+        next.sellerPaymentTerms = value;
+      }
 
       if (name === 'itemNo') {
         const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
         next.batches = [];
         next.batchManaged = isBatchManaged(item);
         if (item) {
+          const itemPrice = getItemPrice(item, 'purchase');
           next.itemDescription = item.ItemName || next.itemDescription;
           next.hsnCode = item.HSNCode || next.hsnCode || '';
           next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
+          next.uomName = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
+          if (!next.unitPrice && itemPrice) {
+            next.unitPrice = itemPrice;
+          }
           next.inventoryUOM = String(item.InventoryUOM || '').trim();
           next.uomFactor = getLineUomFactor({
             uomCode: String(item.PurchaseUnit || item.InventoryUOM || '').trim(),
@@ -1013,6 +1283,7 @@ function GoodsReceiptPO() {
       }
       if (name === 'uomCode') {
         next.batches = [];
+        next.uomName = value;
         next.uomFactor = getLineUomFactor({ ...next, uomCode: value });
       }
       if (name === 'whse') {
@@ -1073,7 +1344,7 @@ function GoodsReceiptPO() {
   const addLine = () => {
     markDirty();
     setValErrors(p => ({ ...p, form: '' }));
-    setLines(p => [...p, { ...createLine(rowUdfDefinitions), whse: header.warehouse || DEFAULT_WAREHOUSE, branch: header.branch || '', loc: header.branch || '' }]);
+    setLines(p => [...p, { ...createLine(rowUdfDefinitions), whse: header.warehouse || '', branch: header.branch || '', loc: header.branch || '' }]);
   };
 
   const removeLine = (i) => {
@@ -1120,7 +1391,7 @@ function GoodsReceiptPO() {
 
   const handleShipToChange = (addressCode) => {
     if (!addressCode) {
-      setHeader(p => ({ ...p, shipToCode: addressCode, shipTo: '', placeOfSupply: '' }));
+      setHeader(p => ({ ...p, shipToCode: addressCode, shipTo: '', shipToAddress: '', placeOfSupply: '' }));
       return;
     }
 
@@ -1129,12 +1400,30 @@ function GoodsReceiptPO() {
       ...p,
       shipToCode: addressCode,
       shipTo: fmtAddr(addr),
+      shipToAddress: fmtAddr(addr),
       placeOfSupply: String(addr?.State || '').trim(),
     }));
   };
 
   // ── Address Modal handlers ────────────────────────────────────────────────
+  const buildAddressObjectFromText = (text = '', source = {}) => {
+    const lines = String(text || '').split('\n').map((line) => line.trim()).filter(Boolean);
+    return {
+      ...source,
+      Street: source.Street || lines[0] || '',
+      Building: source.Building || lines[1] || '',
+      Block: source.Block || lines[2] || '',
+      City: source.City || '',
+      ZipCode: source.ZipCode || '',
+      State: source.State || '',
+      Country: source.Country || 'IN',
+      Address2: source.Address2 || lines[3] || '',
+      Address3: source.Address3 || lines[4] || '',
+    };
+  };
+
   const openAddressModal = (type) => {
+    const buyerBillTo = getBuyerBillToAddress();
     const shipAddress = resolveAddressForModal(
       header.shipToCode,
       vendorEffectiveShipToAddresses,
@@ -1142,18 +1431,23 @@ function GoodsReceiptPO() {
       fmtAddr,
     );
     const payAddress = resolveAddressForModal(
-      header.payToCode || header.billToCode,
+      header.payToCode,
       vendorPayToAddresses,
-      header.billToAddress || header.billTo || header.payTo,
+      header.payToAddress || header.payTo,
       fmtAddr,
     );
-    const activeAddress = type === 'payTo' || type === 'billTo' ? payAddress : shipAddress;
+    const billAddress = buildAddressObjectFromText(header.billToAddress || header.billTo || buyerBillTo.address, buyerBillTo.source || {});
+    const activeAddress = type === 'billTo'
+      ? billAddress
+      : type === 'payTo'
+        ? (payAddress || buildAddressObjectFromText(header.payToAddress || header.payTo))
+        : (shipAddress || buildAddressObjectFromText(header.shipToAddress || header.shipTo));
 
     setAddressForm(mapAddressToModalForm(activeAddress, {
       shipToCode: header.shipToCode || shipAddress?.Address || '',
       shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
-      billToCode: header.billToCode || header.payToCode || payAddress?.Address || '',
-      billToAddress: header.billToAddress || header.billTo || header.payTo || (payAddress ? fmtAddr(payAddress) : ''),
+      billToCode: header.billToCode || buyerBillTo.code || '',
+      billToAddress: header.billToAddress || header.billTo || buyerBillTo.address || '',
     }));
     setAddressModal({ type });
   };
@@ -1175,8 +1469,10 @@ function GoodsReceiptPO() {
 
     if (addressModal.type === 'shipTo') {
       setHeader(p => ({ ...p, shipTo: formatted, shipToAddress: formatted }));
+    } else if (addressModal.type === 'billTo') {
+      setHeader(p => ({ ...p, billTo: formatted, billToAddress: formatted }));
     } else {
-      setHeader(p => ({ ...p, payTo: formatted, billTo: formatted, billToAddress: formatted }));
+      setHeader(p => ({ ...p, payTo: formatted, payToAddress: formatted }));
     }
     closeAddressModal();
   };
@@ -1226,6 +1522,10 @@ function GoodsReceiptPO() {
         next.itemNo = item.ItemCode;
         next.itemDescription = item.ItemName || '';
         next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
+        next.uomName = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
+        if (!next.unitPrice) {
+          next.unitPrice = getItemPrice(item, 'purchase');
+        }
         next.hsnCode = hsnCode;
         next.batches = [];
         next.batchManaged = item.BatchManaged === 'Y';
@@ -1246,11 +1546,14 @@ function GoodsReceiptPO() {
     } catch {
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        return {
+        const unitPrice = line.unitPrice || getItemPrice(item, 'purchase');
+        const next = {
           ...line,
           itemNo: item.ItemCode,
           itemDescription: item.ItemName || '',
           uomCode: String(item.PurchaseUnit || item.InventoryUOM || '').trim(),
+          uomName: String(item.PurchaseUnit || item.InventoryUOM || '').trim(),
+          unitPrice,
           hsnCode: item.HSNCode || '',
           batches: [],
           batchManaged: item.BatchManaged === 'Y',
@@ -1260,6 +1563,8 @@ function GoodsReceiptPO() {
           }),
           taxCode: !line.taxCodeManuallyOverridden ? (getPreferredLineTaxCode(line.taxCode) || line.taxCode) : line.taxCode,
         };
+        next.total = fmtDec(calcLineTotal(next), numDec.total);
+        return next;
       }));
     }
     closeItemModal();
@@ -1293,15 +1598,6 @@ function GoodsReceiptPO() {
     closeBpModal();
   };
 
-  // ── State Selection Modal handlers ────────────────────────────────────────
-  const openStateModal = () => setStateModal(true);
-  const closeStateModal = () => setStateModal(false);
-
-  const handleStateSelect = (state) => {
-    setHeader(prev => ({ ...prev, placeOfSupply: getStateCodeValue(state, refData.states) }));
-    closeStateModal();
-  };
-
   const handleTaxInfoFormChange = (e) => {
     const { name, value } = e.target;
     setTaxInfoForm(p => ({ ...p, [name]: value }));
@@ -1312,8 +1608,15 @@ function GoodsReceiptPO() {
     try {
       setPageState(p => ({ ...p, loading: true }));
       const res = await fetchPurchaseOrderForCopy(poDocEntry);
-      setHeader(prev => ({ ...prev, ...res.data.header }));
-      setLines(res.data.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, udf: { ...createUdfState(rowUdfDefinitions), ...(l.udf || {}) } })));
+      const copiedLines = res.data.lines.map(l => hydrateGRPOLine(l, rowUdfDefinitions, refData.items, header.warehouse || ''));
+      const firstLineWarehouse = copiedLines.find((line) => String(line?.whse || '').trim())?.whse || '';
+      setHeader(prev => ({
+        ...prev,
+        ...res.data.header,
+        warehouse: res.data.header?.warehouse || firstLineWarehouse || prev.warehouse || '',
+      }));
+      setHeaderUdfs((prev) => ({ ...prev, ...(res.data.header_udfs || {}) }));
+      setLines(copiedLines);
       setCopyFromModal(false);
       if (res.data.header.vendor) {
         loadVendorDetails(res.data.header.vendor);
@@ -1445,6 +1748,17 @@ function GoodsReceiptPO() {
     setLines(prev => prev.map((line, index) => (
       index === batchModal.lineIndex ? { ...line, batches: nextBatches } : line
     )));
+    setValErrors(prev => {
+      const nextLineErrors = { ...(prev.lines[batchModal.lineIndex] || {}) };
+      delete nextLineErrors.batches;
+      return {
+        ...prev,
+        lines: {
+          ...prev.lines,
+          [batchModal.lineIndex]: nextLineErrors,
+        },
+      };
+    });
     closeBatchModal();
   };
 
@@ -1456,13 +1770,6 @@ function GoodsReceiptPO() {
     if (!isUpdate) {
       const vc = String(header.vendor || '').trim();
       if (!vc) { e.header.vendor = 'Select a vendor.'; e.form = 'Please correct the highlighted fields.'; return e; }
-
-      // Place of Supply is mandatory (based on Ship-To warehouse)
-      if (!String(header.placeOfSupply || '').trim()) {
-        e.header.placeOfSupply = 'Place of Supply is required.';
-        e.form = 'Please correct the highlighted fields.';
-        return e;
-      }
     }
 
     if (!String(header.postingDate || '').trim()) { e.header.postingDate = 'Posting date is required.'; e.form = 'Please correct the highlighted fields.'; return e; }
@@ -1523,7 +1830,7 @@ function GoodsReceiptPO() {
 
       if (l.batchManaged) {
         if (!Array.isArray(l.batches) || l.batches.length === 0) {
-          e.lines[i] = { ...(e.lines[i] || {}), itemNo: 'Allocate at least one batch for this item.' };
+          e.lines[i] = { ...(e.lines[i] || {}), batches: 'Batch selection is mandatory for batch-managed item' };
           e.form = 'Please correct the highlighted fields.';
           return e;
         }
@@ -1533,7 +1840,7 @@ function GoodsReceiptPO() {
         if (Math.abs(assignedBatchQty - requiredBatchQty) > BATCH_QTY_TOLERANCE) {
           e.lines[i] = {
             ...(e.lines[i] || {}),
-            quantity: `Batch quantity (${assignedBatchQty.toFixed(2)} ${inventoryUOM}) must match base quantity (${requiredBatchQty.toFixed(2)} ${inventoryUOM}).`
+            batches: `Batch quantity (${assignedBatchQty.toFixed(2)} ${inventoryUOM}) must match base quantity (${requiredBatchQty.toFixed(2)} ${inventoryUOM}).`
           };
           e.form = 'Please correct the highlighted fields.';
           return e;
@@ -1556,6 +1863,16 @@ function GoodsReceiptPO() {
     if (e.form || Object.values(e.header).some(Boolean) || Object.values(e.lines).some(le => Object.values(le || {}).some(Boolean))) {
       setValErrors(e);
       setPageState(p => ({ ...p, error: e.form || 'Please correct the highlighted fields.', success: '' }));
+      const firstBatchErrorLineIndex = Object.entries(e.lines || {}).find(([, lineErrors]) =>
+        Boolean(lineErrors?.batches)
+      )?.[0];
+      if (firstBatchErrorLineIndex !== undefined) {
+        const lineIndex = Number(firstBatchErrorLineIndex);
+        if (Number.isInteger(lineIndex) && lineIndex >= 0) {
+          setActiveTab('Contents');
+          window.setTimeout(() => openBatchModal(lineIndex), 0);
+        }
+      }
       return;
     }
     setValErrors({ header: {}, lines: {}, form: '' });
@@ -1569,9 +1886,18 @@ function GoodsReceiptPO() {
 
       const payloadLines = lines.map((line) => ({
         ...line,
-        udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
+        udf: buildGRPOLineUdfPayload(line, rowUdfDefinitions, formSettings),
       }));
-      const payload = { company_id: PURCHASE_ORDER_COMPANY_ID, header: prep, lines: payloadLines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
+      const payload = {
+        company_id: PURCHASE_ORDER_COMPANY_ID,
+        header: prep,
+        lines: payloadLines,
+        freightCharges: freightModal.freightCharges,
+        header_udfs: {
+          ...headerUdfs,
+          U_ShipLocation: prep.buyerLocation || '',
+        },
+      };
       const r = currentDocEntry ? await updateGRPO(currentDocEntry, payload) : await submitGRPO(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       setSnapshotPending(false);
@@ -1619,15 +1945,15 @@ function GoodsReceiptPO() {
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <form className={`po-page sap-document-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form className={`po-page sap-document-page grpo-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
       {/* ── Toolbar ── */}
       <div className="po-toolbar sap-document-toolbar">
-        <span className="po-toolbar__title">Goods Receipt PO{currentDocEntry ? ` — #${header.docNo || currentDocEntry}` : ''}</span>
+        <span className="po-toolbar__title sap-document-toolbar__title">Goods Receipt PO{currentDocEntry ? ` — #${header.docNo || currentDocEntry}` : ''}</span>
         <button type="submit" className="po-btn po-btn--primary sap-document-toolbar__primary" disabled={pageState.posting}>
           {primaryActionLabel}
         </button>
-        <button type="button" className="po-btn po-btn--danger sap-document-toolbar__cancel" onClick={resetForm}>Cancel</button>
+        <button type="button" className="po-btn sap-document-toolbar__cancel" onClick={resetForm}>Cancel</button>
         <button type="button" className="po-btn sap-document-toolbar__find" onClick={() => navigate('/grpo/find')}>Find</button>
         <button type="button" className="po-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
         <button type="button" className="po-btn sap-document-toolbar__udf" onClick={toggleHeaderUdfs}>
@@ -1729,12 +2055,12 @@ function GoodsReceiptPO() {
 
             {/* ══ HEADER CARD ══════════════════════════════════════════════ */}
             <div className="po-header-card">
-              <div className="po-field-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div className="po-document-header-grid po-header-grid">
 
                 {/* LEFT — Vendor info */}
-                <div style={{ borderRight: '2px solid #e0e6ed', paddingRight: 16 }}>
+                <div className="po-document-header-column po-header-grid__section po-header-grid__section--left">
                   <div className="po-field">
-                    <label className="po-field__label">Buyer's Code *</label>
+                    <label className="po-field__label">Vendor Code *</label>
                     <div style={{ display: 'flex', gap: 2 }}>
                       <input 
                         name="vendor" 
@@ -1752,7 +2078,7 @@ function GoodsReceiptPO() {
                     {valErrors.header.vendor && <span className="po-error-feedback">{valErrors.header.vendor}</span>}
                   </div>
                   <div className="po-field">
-                    <label className="po-field__label">Buyer's Name</label>
+                    <label className="po-field__label">Vendor Name</label>
                     <input name="name" className="po-field__input" value={header.name} readOnly />
                   </div>
                   <div className="po-field">
@@ -1765,54 +2091,68 @@ function GoodsReceiptPO() {
                     </select>
                   </div>
                   <div className="po-field">
-                    <label className="po-field__label">Sales Contract No.</label>
+                    <label className="po-field__label">BP Currency</label>
+                    <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+                      <select
+                        name="currencyMode"
+                        className="po-field__select"
+                        value={header.currencyMode || INIT_HEADER.currencyMode}
+                        onChange={handleHeaderChange}
+                        style={{ flex: '0 0 58%' }}
+                      >
+                        {CURRENCY_MODE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                      <input
+                        name="currency"
+                        className="po-field__input"
+                        value={header.currency || ''}
+                        onChange={handleHeaderChange}
+                        placeholder="Currency"
+                        style={{ flex: '1 1 0', minWidth: 72 }}
+                      />
+                    </div>
+                  </div>
+                  <div className="po-field">
+                    <label className="po-field__label">Vendor Ref. No.</label>
                     <input name="salesContractNo" className="po-field__input" value={header.salesContractNo} onChange={handleHeaderChange} />
                   </div>
                   <div className="po-field">
-                    <label className="po-field__label">Our Branch</label>
+                    <label className="po-field__label">Place of Supply</label>
+                    <select
+                      name="placeOfSupply"
+                      className="po-field__select"
+                      value={header.placeOfSupply || ''}
+                      onChange={handleHeaderChange}
+                    >
+                      <option value="">Select</option>
+                      {refData.states.map((state) => (
+                        <option key={state.Code} value={state.Code}>{state.Name || state.Code}</option>
+                      ))}
+                      {header.placeOfSupply && !refData.states.some((state) => String(state.Code) === String(header.placeOfSupply)) && (
+                        <option value={header.placeOfSupply}>{header.placeOfSupply}</option>
+                      )}
+                    </select>
+                  </div>
+                  <div className="po-field">
+                    <label className="po-field__label">Branch</label>
                     <select name="branch" className="po-field__select" value={header.branch} onChange={handleHeaderChange}>
                       <option value="">Select</option>
                       {refData.branches.map(b => <option key={b.BPLId} value={b.BPLId}>{b.BPLName}</option>)}
                     </select>
                   </div>
-                  <div className="po-field">
-                    <label className="po-field__label">Warehouse</label>
-                    <select name="warehouse" className="po-field__select" value={header.warehouse || ''} onChange={handleHeaderChange}>
-                      <option value="">Select Warehouse</option>
-                      {branchFilteredWarehouses.map(w => (
-                        <option key={w.WhsCode} value={w.WhsCode}>{w.WhsCode} - {w.WhsName}</option>
-                      ))}
-                      {header.warehouse && !branchFilteredWarehouses.some(w => String(w.WhsCode) === String(header.warehouse)) && (
-                        <option value={header.warehouse}>{header.warehouse}</option>
-                      )}
-                    </select>
-                  </div>
-                  <div className="po-field">
-                    <label className="po-field__label">Place of Supply *</label>
-                    <div style={{ display: 'flex', gap: 2 }}>
-                      <input 
-                        name="placeOfSupply" 
-                        className={`po-field__input${valErrors.header.placeOfSupply ? ' po-field__input--error' : ''}`} 
-                        value={getStateDisplayName(header.placeOfSupply, refData.states)} 
-                        onChange={handleHeaderChange} 
-                        style={{ flex: 1 }} 
-                        placeholder="Select State"
-                      />
-                      <button type="button" onClick={openStateModal} style={{ padding: '0 6px', fontSize: 11, border: '1px solid #a0aab4', background: 'linear-gradient(180deg,#fff 0%,#e8ecf0 100%)', minWidth: 24, height: 22, cursor: 'pointer', borderRadius: 2 }} title="Select State">...</button>
-                    </div>
-                    {valErrors.header.placeOfSupply && <span className="po-error-feedback">{valErrors.header.placeOfSupply}</span>}
-                  </div>
                 </div>
 
                 {/* RIGHT — Document info */}
-                <div style={{ paddingLeft: 16 }}>
+                <div className="po-document-header-column po-header-grid__section po-header-grid__section--right">
                   <div className="po-field">
                     <label className="po-field__label">Series</label>
-                    <select name="series" className="po-field__select" style={{ background: '#fff3cd' }} value={header.series} onChange={handleHeaderChange} disabled={!!currentDocEntry || pageState.seriesLoading}>
+                    <select name="series" className="po-field__select" value={header.series} onChange={handleHeaderChange} disabled={!!currentDocEntry || pageState.seriesLoading}>
                       <option value="">Select Series</option>
                       {refData.series.map(s => <option key={s.Series} value={s.Series}>{s.SeriesName} ({s.Indicator})</option>)}
                     </select>
-                    <input type="text" className="po-field__input" style={{ width: 80, background: '#f0f2f5', textAlign: 'center' }} value={pageState.seriesLoading ? '...' : header.nextNumber} readOnly title="Auto-assigned on save" />
+                    <input type="text" className="po-field__input" style={{ width: 80, background: '#f0f2f5', textAlign: 'center' }} value={pageState.seriesLoading ? '...' : (currentDocEntry ? (header.docNo || header.nextNumber || '') : header.nextNumber)} readOnly title="Auto-assigned on save" />
                   </div>
                   <div className="po-field">
                     <label className="po-field__label">Status</label>
@@ -1824,7 +2164,7 @@ function GoodsReceiptPO() {
                     {valErrors.header.postingDate && <span className="po-error-feedback">{valErrors.header.postingDate}</span>}
                   </div>
                   <div className="po-field">
-                    <label className="po-field__label">Delivery Date</label>
+                    <label className="po-field__label">Due Date</label>
                     <input type="date" name="deliveryDate" className="po-field__input" value={header.deliveryDate} onChange={handleHeaderChange} />
                   </div>
                   <div className="po-field">
@@ -1833,12 +2173,36 @@ function GoodsReceiptPO() {
                     {valErrors.header.documentDate && <span className="po-error-feedback">{valErrors.header.documentDate}</span>}
                   </div>
                   <div className="po-field">
-                    <label className="po-field__label">Contract Date</label>
-                    <input type="date" name="contractDate" className="po-field__input" value={header.contractDate} onChange={handleHeaderChange} />
+                    <label className="po-field__label">Default Warehouse</label>
+                    <select name="warehouse" className="po-field__select" value={header.warehouse || ''} onChange={handleHeaderChange}>
+                      <option value="">Select Warehouse</option>
+                      {branchFilteredWarehouses.map(w => (
+                        <option key={w.WhsCode} value={w.WhsCode}>{w.WhsCode} - {w.WhsName}</option>
+                      ))}
+                      {header.warehouse && !branchFilteredWarehouses.some(w => String(w.WhsCode) === String(header.warehouse)) && (
+                        <option value={header.warehouse}>{header.warehouse}</option>
+                      )}
+                    </select>
                   </div>
                   <div className="po-field">
-                    <label className="po-field__label">Branch Reg. No.</label>
-                    <input name="branchRegNo" className="po-field__input" value={header.branchRegNo || ''} onChange={handleHeaderChange} />
+                    <label className="po-field__label">Ship From</label>
+                    <select
+                      name="shipToCode"
+                      className="po-field__select"
+                      value={header.shipToCode || ''}
+                      onChange={handleShipToCodeChange}
+                      disabled={!header.vendor}
+                    >
+                      <option value="">Select</option>
+                      {vendorEffectiveShipToAddresses.map((address) => (
+                        <option key={address.Address} value={address.Address}>
+                          {address.Address}
+                        </option>
+                      ))}
+                      {header.shipToCode && !vendorEffectiveShipToAddresses.some((address) => String(address.Address || '') === String(header.shipToCode)) && (
+                        <option value={header.shipToCode}>{header.shipToCode}</option>
+                      )}
+                    </select>
                   </div>
                 </div>
 
@@ -1885,6 +2249,7 @@ function GoodsReceiptPO() {
                 vendorPayToAddresses={vendorPayToAddresses}
                 shippingTypeOptions={shipTypeOpts}
                 onShipToCodeChange={handleShipToCodeChange}
+                onPayToCodeChange={(event) => handlePayToCodeChange(event.target.value)}
                 onOpenAddressModal={openAddressModal}
               />
             )}
@@ -1936,10 +2301,10 @@ function GoodsReceiptPO() {
                   </div>
                 </div>
                 <div style={{ flex: 1 }}>
-                  {totals.taxBreakdown.length > 0 && (
+                  {totalsForDisplay.taxBreakdown.length > 0 && (
                     <div style={{ marginBottom: 8 }}>
                       <div className="po-section-title">Tax Summary</div>
-                      {totals.taxBreakdown.map(t => (
+                      {totalsForDisplay.taxBreakdown.map(t => (
                         <div key={t.taxCode} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
                           <span>{t.taxCode} ({t.taxRate}%)</span>
                           <span>{fmtDec(t.taxAmount, numDec.tax)}</span>
@@ -1951,7 +2316,7 @@ function GoodsReceiptPO() {
                     <tbody>
                       <tr>
                         <td style={{ fontWeight: 600 }}>Total Before Discount</td>
-                        <td><input className="po-grid__input" value={fmtDec(totals.subtotal, numDec.total)} readOnly style={{ background: '#f5f8fc' }} /></td>
+                        <td><input className="po-grid__input" value={fmtDec(totalsForDisplay.subtotal, numDec.total)} readOnly style={{ background: '#f5f8fc' }} /></td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: 600 }}>Discount %</td>
@@ -1982,11 +2347,11 @@ function GoodsReceiptPO() {
                       </tr>
                       <tr>
                         <td style={{ fontWeight: 600 }}>Tax</td>
-                        <td><input className="po-grid__input" value={fmtDec(totals.taxAmt, numDec.tax)} readOnly style={{ background: '#f5f8fc' }} /></td>
+                        <td><input className="po-grid__input" value={fmtDec(totalsForDisplay.taxAmt, numDec.tax)} readOnly style={{ background: '#f5f8fc' }} /></td>
                       </tr>
                       <tr className="po-grid__total">
                         <td style={{ fontWeight: 700, color: '#003366', fontSize: 12 }}>Total</td>
-                        <td><input className="po-grid__input" value={fmtDec(totals.total, numDec.totalPaymentDue)} readOnly style={{ background: '#e8f4fc', fontWeight: 700, color: '#003366' }} /></td>
+                        <td><input className="po-grid__input" value={fmtDec(totalsForDisplay.total, numDec.totalPaymentDue)} readOnly style={{ background: '#e8f4fc', fontWeight: 700, color: '#003366' }} /></td>
                       </tr>
                     </tbody>
                   </table>
@@ -2001,7 +2366,7 @@ function GoodsReceiptPO() {
                 <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting}>
                   {secondaryActionLabel}
                 </button>
-                <button type="button" className="po-btn po-btn--danger" onClick={resetForm}>Cancel</button>
+                <button type="button" className="po-btn" onClick={resetForm}>Cancel</button>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <div className="po-dropdown">
@@ -2138,6 +2503,7 @@ function GoodsReceiptPO() {
         availableBatches={batchModal.availableBatches}
         loading={batchModal.loading}
         error={batchModal.error}
+        onGenerateBatchNumber={() => fetchNextBatchNumber('JKL')}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />
@@ -2164,14 +2530,6 @@ function GoodsReceiptPO() {
         onClose={closeBpModal}
         onSelect={handleBpSelect}
         businessPartners={refData.vendors || []}
-      />
-
-      {/* State Selection Modal */}
-      <StateSelectionModal
-        isOpen={stateModal}
-        onClose={closeStateModal}
-        onSelect={handleStateSelect}
-        states={refData.states || []}
       />
 
       <FreightChargesModal

@@ -549,7 +549,7 @@ export default function ContentsTab({
         return renderGenericInput(column, line, i, { value: line.uomName || line.uomCode || '' });
       case 'loc':
         return renderGenericInput(column, line, i, {
-          value: getBranchName ? getBranchName(line.branch) : line.loc || '',
+          value: line.loc || line.LocCode || line.LocationCode || line.Location || '',
           style: { background: '#f5f8fc', cursor: 'not-allowed' },
         });
       case 'qtyInventoryUom':

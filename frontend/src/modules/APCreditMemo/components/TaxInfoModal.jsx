@@ -18,7 +18,6 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
                   </label>
                   <input
                     className="form-control form-control-sm"
-                    style={{ background: '#ffffcc' }}
                     name="panNo"
                     value={taxInfoForm.panNo}
                     onChange={onFormChange}
@@ -200,7 +199,7 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
             </div>
           </div>
           <div className="modal-footer" style={{ padding: '8px 16px' }}>
-            <button type="button" className="btn btn-warning btn-sm px-4" onClick={onSave}>
+            <button type="button" className="btn btn-primary btn-sm px-4" onClick={onSave}>
               OK
             </button>
             <button type="button" className="btn btn-secondary btn-sm px-4" onClick={onClose}>

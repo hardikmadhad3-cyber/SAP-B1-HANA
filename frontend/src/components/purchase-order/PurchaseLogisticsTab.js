@@ -1,53 +1,76 @@
 import React from 'react';
 
+export const PURCHASE_LOGISTICS_LANGUAGE_OPTIONS = [
+  { value: '3', label: 'English' },
+  { value: '8', label: 'Hindi' },
+  { value: '26', label: 'Gujarati' },
+];
+
+export const PURCHASE_LOGISTICS_SELECT_OPTION = { value: '', label: 'Select' };
+
+export const formatPurchaseLogisticsAddress = (address) => {
+  if (!address) return '';
+
+  return [
+    [address.Street, address.StreetNo],
+    [address.Block, address.Building, address.Address2, address.Address3],
+    [address.City, address.County, address.State, address.ZipCode],
+    [address.Country],
+  ]
+    .map((parts) => parts.filter(Boolean).join(', '))
+    .filter(Boolean)
+    .join('\n');
+};
+
 export default function PurchaseLogisticsTab({
   header,
   onHeaderChange,
   vendorPayToAddresses = [],
-  vendorShipToAddresses = [],
   vendorBillToAddresses = [],
   shippingTypeOptions = [],
-  onShipToCodeChange,
+  onPayToCodeChange,
   onOpenAddressModal,
 }) {
-  const shipToOptions = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
-  const billToOptions = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
-  const handleShipToChange = onShipToCodeChange || onHeaderChange;
+  const payToOptions = vendorPayToAddresses.length ? vendorPayToAddresses : vendorBillToAddresses;
+  const hasCurrentLanguageOption = PURCHASE_LOGISTICS_LANGUAGE_OPTIONS.some((option) => String(option.value) === String(header.language || ''));
+
+  const emitHeaderChange = (name, value, type = 'text', checked = false) => {
+    onHeaderChange?.({ target: { name, value, type, checked } });
+  };
+
+  const handlePayToChange = (event) => {
+    if (onPayToCodeChange) {
+      onPayToCodeChange(event);
+      return;
+    }
+
+    const selectedCode = event.target.value;
+    const selectedAddress = payToOptions.find((address) => String(address.Address || '') === String(selectedCode || ''));
+    const formattedAddress = selectedAddress ? formatPurchaseLogisticsAddress(selectedAddress) : '';
+
+    emitHeaderChange('payToCode', selectedCode);
+    emitHeaderChange('payTo', formattedAddress);
+    emitHeaderChange('payToAddress', formattedAddress);
+  };
 
   return (
-    <div className="po-tab-panel">
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 32px' }}>
-        <div>
-          <div className="po-section-title">Shipping Information</div>
-
-          <div className="po-field">
-            <label className="po-field__label">Ship To Code</label>
-            <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
-              <select
-                className="po-field__select"
-                name="shipToCode"
-                value={header.shipToCode || ''}
-                onChange={handleShipToChange}
-                style={{ flex: 1 }}
-              >
-                <option value="">Select</option>
-                {shipToOptions.map((addr) => (
-                  <option key={addr.Address} value={addr.Address}>
-                    {addr.AddressName || addr.Address || addr.CardCode} - {addr.State || 'No State'}
-                  </option>
-                ))}
-              </select>
+    <div className="po-tab-panel po-logistics-tab">
+      <div className="po-logistics-grid">
+        <div className="po-logistics-left">
+          <div className="po-field po-logistics-address-field">
+            <label className="po-field__label">Bill To</label>
+            <div className="po-logistics-address-control">
+              <textarea
+                className="po-textarea"
+                rows={3}
+                name="billTo"
+                value={header.billToAddress || header.billTo || ''}
+                onChange={onHeaderChange}
+              />
               <button
                 type="button"
-                className="btn btn-sm"
-                onClick={() => onOpenAddressModal('shipTo')}
-                style={{
-                  padding: '0 8px',
-                  fontSize: 11,
-                  border: '1px solid #a0aab4',
-                  background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                  minWidth: '28px',
-                }}
+                className="po-lookup-btn"
+                onClick={() => onOpenAddressModal('billTo')}
                 title="Select Address"
               >
                 ...
@@ -55,46 +78,39 @@ export default function PurchaseLogisticsTab({
             </div>
           </div>
 
-          <div className="po-field" style={{ alignItems: 'flex-start' }}>
-            <label className="po-field__label" style={{ paddingTop: '4px' }}>Ship To Address</label>
-            <textarea
-              className="po-textarea"
-              rows={3}
-              name="shipTo"
-              value={header.shipToAddress || header.shipTo || ''}
-              onChange={onHeaderChange}
-              style={{ flex: 1 }}
-            />
-          </div>
-
           <div className="po-field">
-            <label className="po-field__label">Bill To Code</label>
-            <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+            <label className="po-field__label">Pay to</label>
+            <div className="po-logistics-code-control">
               <select
                 className="po-field__select"
                 name="payToCode"
-                value={header.billToCode || header.payToCode || ''}
-                onChange={onHeaderChange}
-                style={{ flex: 1 }}
+                value={header.payToCode || ''}
+                onChange={handlePayToChange}
               >
-                <option value="">Select</option>
-                {billToOptions.map((addr) => (
+                <option value={PURCHASE_LOGISTICS_SELECT_OPTION.value}>{PURCHASE_LOGISTICS_SELECT_OPTION.label}</option>
+                {payToOptions.map((addr) => (
                   <option key={addr.Address} value={addr.Address}>
-                    {addr.AddressName || addr.Address || addr.CardCode} - {addr.State || 'No State'}
+                    {addr.AddressName || addr.Address || addr.CardCode}
                   </option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          <div className="po-field po-logistics-address-field">
+            <label className="po-field__label" />
+            <div className="po-logistics-address-control">
+              <textarea
+                className="po-textarea"
+                rows={3}
+                name="payTo"
+                value={header.payToAddress || header.payTo || ''}
+                onChange={onHeaderChange}
+              />
               <button
                 type="button"
-                className="btn btn-sm"
+                className="po-lookup-btn"
                 onClick={() => onOpenAddressModal('payTo')}
-                style={{
-                  padding: '0 8px',
-                  fontSize: 11,
-                  border: '1px solid #a0aab4',
-                  background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                  minWidth: '28px',
-                }}
                 title="Select Address"
               >
                 ...
@@ -102,16 +118,21 @@ export default function PurchaseLogisticsTab({
             </div>
           </div>
 
-          <div className="po-field" style={{ alignItems: 'flex-start' }}>
-            <label className="po-field__label" style={{ paddingTop: '4px' }}>Bill To Address</label>
-            <textarea
-              className="po-textarea"
-              rows={3}
-              name="payTo"
-              value={header.billToAddress || header.billTo || header.payTo || ''}
+          <div className="po-field">
+            <label className="po-field__label">Shipping Type</label>
+            <select
+              className="po-field__select"
+              name="shippingType"
+              value={header.shippingType || ''}
               onChange={onHeaderChange}
-              style={{ flex: 1 }}
-            />
+            >
+              <option value={PURCHASE_LOGISTICS_SELECT_OPTION.value}>{PURCHASE_LOGISTICS_SELECT_OPTION.label}</option>
+              {shippingTypeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="po-field">
@@ -123,31 +144,12 @@ export default function PurchaseLogisticsTab({
                 checked={header.usePayToForTax || false}
                 onChange={onHeaderChange}
               />
-              <span>Use Bill To Address to Determine Tax</span>
+              <span>Use Pay to Address to Determine Tax</span>
             </label>
           </div>
         </div>
 
-        <div>
-          <div className="po-section-title">Delivery Information</div>
-
-          <div className="po-field">
-            <label className="po-field__label">Shipping Type</label>
-            <select
-              className="po-field__select"
-              name="shippingType"
-              value={header.shippingType || ''}
-              onChange={onHeaderChange}
-            >
-              <option value="">Select</option>
-              {shippingTypeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
+        <div className="po-logistics-right">
           <div className="po-field">
             <label className="po-field__label">Language</label>
             <select
@@ -156,42 +158,14 @@ export default function PurchaseLogisticsTab({
               value={header.language || ''}
               onChange={onHeaderChange}
             >
-              <option value="">Select</option>
-              <option>English</option>
-              <option>Hindi</option>
-              <option>Gujarati</option>
+              <option value={PURCHASE_LOGISTICS_SELECT_OPTION.value}>{PURCHASE_LOGISTICS_SELECT_OPTION.label}</option>
+              {PURCHASE_LOGISTICS_LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+              {header.language && !hasCurrentLanguageOption && (
+                <option value={header.language}>{header.language}</option>
+              )}
             </select>
-          </div>
-
-          <div className="po-field">
-            <label className="po-field__label">Tracking No.</label>
-            <input className="po-field__input" name="trackingNo" value={header.trackingNo || ''} onChange={onHeaderChange} />
-          </div>
-
-          <div className="po-field">
-            <label className="po-field__label">To Order</label>
-            <input className="po-field__input" name="toOrder" value={header.toOrder || ''} onChange={onHeaderChange} />
-          </div>
-
-          <div className="po-field">
-            <label className="po-field__label">Notify Party Code</label>
-            <input className="po-field__input" name="notifyPartyCode" value={header.notifyPartyCode || ''} onChange={onHeaderChange} />
-          </div>
-
-          <div className="po-field">
-            <label className="po-field__label">Notify Party Name</label>
-            <input className="po-field__input" name="notifyPartyName" value={header.notifyPartyName || ''} onChange={onHeaderChange} />
-          </div>
-
-          <div className="po-field" style={{ alignItems: 'flex-start' }}>
-            <label className="po-field__label" style={{ paddingTop: '4px' }}>Notify Party Addr.</label>
-            <textarea
-              className="po-textarea"
-              rows={3}
-              name="notifyPartyAddress"
-              value={header.notifyPartyAddress || ''}
-              onChange={onHeaderChange}
-            />
           </div>
 
           <div className="po-field">
@@ -206,7 +180,7 @@ export default function PurchaseLogisticsTab({
             <label className="po-field__label" />
             <label className="po-checkbox-label">
               <input type="checkbox" name="confirmed" checked={header.confirmed || false} onChange={onHeaderChange} />
-              <span>Confirmed</span>
+              <span>Approved</span>
             </label>
           </div>
         </div>

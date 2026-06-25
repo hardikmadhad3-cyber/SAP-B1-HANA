@@ -16,11 +16,29 @@ const safe = async (promise) => {
   }
 };
 
+const normalizeUdfLookupToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]+/g, '');
+
+const getUdfValue = (udfs = {}, aliases = []) => {
+  const aliasTokens = new Set((Array.isArray(aliases) ? aliases : [aliases]).map(normalizeUdfLookupToken).filter(Boolean));
+  const match = Object.entries(udfs || {}).find(([key, value]) =>
+    aliasTokens.has(normalizeUdfLookupToken(key)) &&
+    value !== undefined &&
+    value !== null &&
+    String(value) !== ''
+  );
+  return match ? match[1] : '';
+};
+
 // ── REFERENCE DATA QUERIES ────────────────────────────────────────────────────
 
 const getVendors = () => safe(db.query(`
   SELECT CardCode, CardName, CardType, Currency,
-         VatGroup, GroupNum AS PayTermsGrpCode
+         VatGroup, GroupNum AS PayTermsGrpCode, ListNum
   FROM   OCRD
   WHERE  CardType = 'S'
     AND  frozenFor <> 'Y'
@@ -33,7 +51,11 @@ const getItems = () => safe(db.query(`
          T0.InvntryUom  AS InventoryUOM,
          T0.PUoMEntry   AS UoMGroupEntry,
          T0.DfltWH      AS DefaultWarehouse,
-         CHP.ChapterID  AS HSNCode,
+         CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS UnitPrice,
+         CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS Price,
+         T0.LastPurPrc  AS LastPurchasePrice,
+         T0.AvgPrice    AS MovingAveragePrice,
+         COALESCE(CHP.ChapterID, T0.SWW, '') AS HSNCode,
          T0.ManBtchNum  AS BatchManaged,
          T0.ManSerNum   AS SerialManaged
   FROM   OITM T0
@@ -54,7 +76,11 @@ const getItemsForModal = () => safe(db.query(`
     T0.InvntryUom      AS InventoryUOM,
     T0.PUoMEntry       AS UoMGroupEntry,
     T0.DfltWH          AS DefaultWarehouse,
-    CHP.ChapterID      AS HSNCode,
+    CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS UnitPrice,
+    CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS Price,
+    T0.LastPurPrc      AS LastPurchasePrice,
+    T0.AvgPrice        AS MovingAveragePrice,
+    COALESCE(CHP.ChapterID, T0.SWW, '') AS HSNCode,
     T0.ManBtchNum      AS BatchManaged,
     T0.ManSerNum       AS SerialManaged
   FROM OITM T0
@@ -135,9 +161,285 @@ const getCompanyInfo = () => safe(db.query(`
   SELECT TOP 1
     CompnyName,
     CompnyAddr AS Address,
-    State
+    State,
+    MainCurncy,
+    SysCurrncy
   FROM OADM
 `));
+
+const GRPO_FORM_ID = '143';
+const GRPO_MATRIX_ITEM_ID = '38';
+
+const GRPO_LINE_COLUMNS = [
+  { key: 'itemNo', label: 'Item No.', sapField: 'ItemCode', sapColumnIds: ['1', 'ItemCode', 'Item No.', 'ItemNo'], minWidth: 160 },
+  { key: 'itemDescription', label: 'Description', sapField: 'Dscription', sapColumnIds: ['3', 'Dscription', 'ItemDescription', 'Item Description'], minWidth: 220 },
+  { key: 'hsnCode', label: 'HSN', sapField: 'ChapterID', source: 'item-master', sapColumnIds: ['HSN', 'HSN/SAC', 'ChapterID', 'U_HSNCode', 'U_HSN'], minWidth: 115 },
+  { key: 'quantity', label: 'Qty', sapField: 'Quantity', sapColumnIds: ['11', 'Quantity', 'Qty'], minWidth: 80 },
+  { key: 'unitPrice', label: 'Price', sapField: 'Price', alternativeFields: ['PriceBefDi'], sapColumnIds: ['14', 'Price', 'PriceBefDi', 'UnitPrice', 'Unit Price'], minWidth: 95 },
+  { key: 'uomCode', label: 'UoM', sapField: 'unitMsr', alternativeFields: ['UomCode', 'UomEntry'], sapColumnIds: ['1470002145', 'unitMsr', 'UomCode', 'UoMCode', 'UoM'], minWidth: 85 },
+  { key: 'stdDiscount', label: 'Disc%', sapField: 'DiscPrcnt', sapColumnIds: ['15', 'DiscPrcnt', 'DiscountPercent', 'Discount %', 'Disc%'], minWidth: 85 },
+  { key: 'taxCode', label: 'Tax Code', sapField: 'TaxCode', sapColumnIds: ['160', 'TaxCode', 'Tax Code'], minWidth: 115 },
+  { key: 'totalBeforeTax', label: 'Total Before Tax', sapField: 'LineTotal', calculated: true, sapColumnIds: ['21', 'LineTotal', 'Total Before Tax'], minWidth: 135 },
+  { key: 'total', label: 'Total', sapField: 'LineTotal', calculated: true, sapColumnIds: ['17', 'GTotal', 'Total', 'Total (LC)', 'LineTotal'], minWidth: 105 },
+  { key: 'whse', label: 'Whse', sapField: 'WhsCode', sapColumnIds: ['24', 'WhsCode', 'WarehouseCode', 'Warehouse', 'Whse'], minWidth: 90 },
+  { key: 'binLocationAllocation', label: 'Bin Location Allocation', source: 'batch-bin', sapColumnIds: ['BinAlloc', 'Bin Location Allocation'], minWidth: 160 },
+];
+
+const truthySapFlag = (value) => ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(
+  String(value ?? '').trim().toUpperCase(),
+);
+
+const falsySapFlag = (value) => ['N', 'NO', 'FALSE', '0', 'TNO'].includes(
+  String(value ?? '').trim().toUpperCase(),
+);
+
+const sapFlagToBoolean = (value, fallback = true) => {
+  if (truthySapFlag(value)) return true;
+  if (falsySapFlag(value)) return false;
+  return fallback;
+};
+
+const normalizePreferenceKey = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]/g, '');
+
+const getLineTableColumns = async (tableName) => {
+  const rows = await safe(db.query(`
+    SELECT
+      COLUMN_NAME,
+      DATA_TYPE,
+      CHARACTER_MAXIMUM_LENGTH,
+      NUMERIC_PRECISION,
+      NUMERIC_SCALE,
+      IS_NULLABLE,
+      ORDINAL_POSITION
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+    ORDER BY ORDINAL_POSITION
+  `, { tableName }));
+
+  return rows.reduce((acc, row) => {
+    const columnName = String(row.COLUMN_NAME || '').trim();
+    if (!columnName) return acc;
+    acc[columnName.toUpperCase()] = {
+      name: columnName,
+      dataType: String(row.DATA_TYPE || '').trim().toLowerCase(),
+      maxLength: row.CHARACTER_MAXIMUM_LENGTH,
+      precision: row.NUMERIC_PRECISION,
+      scale: row.NUMERIC_SCALE,
+      nullable: String(row.IS_NULLABLE || '').toUpperCase() === 'YES',
+      ordinal: Number(row.ORDINAL_POSITION || 0),
+    };
+    return acc;
+  }, {});
+};
+
+const resolveSapUserSign = async () => {
+  let sapUsername = '';
+
+  try {
+    const { getActiveCompanyConfig } = require('./companyConfigService');
+    const activeConfig = await getActiveCompanyConfig();
+    sapUsername = String(activeConfig.serviceLayer?.username || '').trim();
+  } catch (_error) {
+    sapUsername = '';
+  }
+
+  if (!sapUsername) return null;
+
+  const rows = await safe(db.query(`
+    SELECT TOP 1 USERID
+    FROM OUSR
+    WHERE USER_CODE = @sapUsername
+       OR U_NAME = @sapUsername
+    ORDER BY
+      CASE WHEN USER_CODE = @sapUsername THEN 0 ELSE 1 END,
+      USERID
+  `, { sapUsername }));
+
+  const userSign = Number(rows[0]?.USERID);
+  return Number.isFinite(userSign) ? userSign : null;
+};
+
+const getColumnPreferences = async ({ formId, itemId, tableName }) => {
+  const tableRows = await safe(db.query(`
+    SELECT TABLE_NAME
+    FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_NAME = 'CPRF'
+  `));
+
+  if (!tableRows.length) return { byKey: {}, rows: [], userSign: null };
+
+  const cprfColumns = await safe(db.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'CPRF'
+  `));
+  const columnSet = new Set(cprfColumns.map((row) => String(row.COLUMN_NAME || '').trim()));
+  const hasItemUid = columnSet.has('ItemUID');
+  const hasTableName = columnSet.has('TableName');
+  const userSign = await resolveSapUserSign();
+  if (userSign == null) return { byKey: {}, rows: [], userSign: null };
+
+  const rows = await safe(db.query(`
+    SELECT
+      FormID,
+      ItemID,
+      ColID,
+      Width,
+      VisInForm,
+      VisualIndx,
+      EditInForm,
+      VisInExpnd,
+      ExpandIndx,
+      EditInEXP,
+      UserSign,
+      TPLId
+      ${hasTableName ? ', TableName' : ", '' AS TableName"}
+      ${hasItemUid ? ', ItemUID' : ", '' AS ItemUID"}
+    FROM CPRF
+    WHERE FormID = @formId
+      AND (
+        ItemID = @itemId
+        ${hasItemUid ? 'OR ItemUID = @itemId' : ''}
+        ${hasTableName ? 'OR TableName = @tableName' : ''}
+      )
+      AND UserSign = @userSign
+    ORDER BY
+      CASE WHEN TPLId = 0 THEN 0 ELSE 1 END,
+      VisualIndx,
+      ColID
+  `, { formId, itemId, tableName, userSign }));
+
+  const byKey = rows.reduce((acc, row) => {
+    [row.ColID, row.TableName, row.ItemUID]
+      .map(normalizePreferenceKey)
+      .filter(Boolean)
+      .forEach((key) => {
+        if (!acc[key]) acc[key] = row;
+      });
+
+    return acc;
+  }, {});
+
+  return { byKey, rows, userSign };
+};
+
+const findColumnPreference = (column, preferences = {}) => {
+  const candidates = [
+    column.key,
+    column.sapField,
+    ...(column.alternativeFields || []),
+    ...(column.sapColumnIds || []),
+  ].map(normalizePreferenceKey).filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (preferences[candidate]) return preferences[candidate];
+  }
+
+  return null;
+};
+
+const getColumnMetadata = (column, lineColumns = {}) => {
+  const candidates = [
+    column.sapField,
+    ...(column.alternativeFields || []),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const metadata = lineColumns[String(candidate).toUpperCase()];
+    if (metadata) return metadata;
+  }
+
+  return null;
+};
+
+const getGRPOLineFieldMetadata = async () => {
+  const [lineColumns, preferencesResult] = await Promise.all([
+    getLineTableColumns('PDN1'),
+    getColumnPreferences({
+      formId: GRPO_FORM_ID,
+      itemId: GRPO_MATRIX_ITEM_ID,
+      tableName: 'PDN1',
+    }),
+  ]);
+
+  const matrixColumns = GRPO_LINE_COLUMNS
+    .map((column, index) => {
+      const metadata = getColumnMetadata(column, lineColumns);
+      const exists = Boolean(metadata || column.calculated || column.source);
+      if (!exists) return null;
+
+      const preference = findColumnPreference(column, preferencesResult.byKey);
+      const visible = preference ? sapFlagToBoolean(preference.VisInForm, true) : true;
+      const active = preference ? sapFlagToBoolean(preference.EditInForm, true) : true;
+      const width = Number(preference?.Width);
+
+      return {
+        key: column.key,
+        label: column.label,
+        sapField: column.sapField || '',
+        source: column.source || (column.calculated ? 'calculated' : 'PDN1'),
+        dataType: metadata?.dataType || '',
+        maxLength: metadata?.maxLength || undefined,
+        precision: metadata?.precision || undefined,
+        scale: metadata?.scale || undefined,
+        required: metadata ? !metadata.nullable : false,
+        readOnly: Boolean(column.calculated),
+        visible,
+        active,
+        minWidth: Number.isFinite(width) && width > 0
+          ? Math.max(width, column.minWidth || 125)
+          : (column.minWidth || 125),
+        order: Number.isFinite(Number(preference?.VisualIndx))
+          ? Number(preference.VisualIndx)
+          : index + 1,
+        sapColumnId: preference?.ColID || '',
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => (left.order || 0) - (right.order || 0));
+
+  return {
+    matrix_columns: matrixColumns,
+    sap_form: {
+      formId: GRPO_FORM_ID,
+      matrixItemId: GRPO_MATRIX_ITEM_ID,
+      userSign: preferencesResult.userSign,
+      preferenceRows: preferencesResult.rows.length,
+    },
+    _preferencesByKey: preferencesResult.byKey,
+  };
+};
+
+const applyLineColumnPreferencesToUdfs = (udfMetadata = {}, preferences = {}) => {
+  const rows = (udfMetadata.rows || []).map((field) => {
+    const preference = findColumnPreference({
+      key: field.key,
+      sapField: field.sapField,
+      sapColumnIds: [field.key, field.aliasId, field.label],
+    }, preferences);
+
+    if (!preference) return field;
+
+    return {
+      ...field,
+      visible: sapFlagToBoolean(preference.VisInForm, true),
+      active: sapFlagToBoolean(preference.EditInForm, true),
+      minWidth: Number(preference.Width) > 0 ? Number(preference.Width) : field.minWidth,
+      order: Number(preference.VisualIndx) || field.order,
+      sapColumnId: preference.ColID || field.sapColumnId,
+    };
+  });
+
+  return {
+    ...udfMetadata,
+    rows,
+  };
+};
 
 // ── VENDOR DETAILS ────────────────────────────────────────────────────────────
 
@@ -248,8 +550,13 @@ const getPurchaseOrderForCopy = async (docEntry) => {
       T0.DiscPrcnt AS DiscountPercent,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
-      T0.DocTotal AS TotalPaymentDue
+      T0.DocTotal AS TotalPaymentDue,
+      T0.ShipToCode,
+      T0.PayToCode,
+      T0.Address AS ShipToAddress,
+      T0.Address2 AS PayToAddress
     FROM OPOR T0
+    LEFT JOIN OSLP T1 ON T1.SlpCode = T0.SlpCode
     WHERE T0.DocEntry = @docEntry
   `, { docEntry }));
 
@@ -258,6 +565,10 @@ const getPurchaseOrderForCopy = async (docEntry) => {
   }
 
   const header = headerRows[0];
+  const [headerUdfs, lineUdfsByLineNum] = await Promise.all([
+    getHeaderUdfValues({ tableId: 'OPOR', keyValue: docEntry }),
+    getLineUdfValues({ tableId: 'POR1', keyValue: docEntry }),
+  ]);
 
   // Get lines with open quantity
   const lineRows = await safe(db.query(`
@@ -267,10 +578,18 @@ const getPurchaseOrderForCopy = async (docEntry) => {
       T0.Dscription AS ItemDescription,
       T0.Quantity,
       T0.OpenQty,
-      T0.Price AS UnitPrice,
+      COALESCE(T0.PriceBefDi, T0.Price) AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
-      T0.LineTotal,
+      CASE
+        WHEN ISNULL(T0.Quantity, 0) = 0 THEN ISNULL(T0.LineTotal, 0)
+        ELSE ISNULL(T0.LineTotal, 0) * ISNULL(T0.OpenQty, 0) / NULLIF(T0.Quantity, 0)
+      END AS LineTotal,
+      CASE
+        WHEN ISNULL(T0.Quantity, 0) = 0 THEN ISNULL(T0.VatSum, 0)
+        ELSE ISNULL(T0.VatSum, 0) * ISNULL(T0.OpenQty, 0) / NULLIF(T0.Quantity, 0)
+      END AS TaxAmount,
+      T0.Commission AS CommissionPercent,
       T0.WhsCode AS Warehouse,
       T0.unitMsr AS UoMCode
     FROM POR1 T0
@@ -288,7 +607,7 @@ const getPurchaseOrderForCopy = async (docEntry) => {
     try {
       const itemRows = await safe(db.query(`
         SELECT T0.ItemCode,
-               CHP.ChapterID AS HSNCode,
+               COALESCE(CHP.ChapterID, T0.SWW, '') AS HSNCode,
                T0.ManBtchNum AS BatchManaged
         FROM OITM T0
         LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID
@@ -315,8 +634,24 @@ const getPurchaseOrderForCopy = async (docEntry) => {
       salesContractNo: header.VendorRefNo || '',
       branch: header.Branch ? String(header.Branch) : '',
       paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
-      otherInstruction: header.Remarks || '',
+      salesEmployee: header.SalesEmployeeCode ? String(header.SalesEmployeeCode) : '',
+      purchaser: header.SalesEmployeeName || '',
+      currency: header.Currency || 'INR',
+      shipToCode: header.ShipToCode || '',
+      shipTo: header.ShipToAddress || '',
+      shipToAddress: header.ShipToAddress || '',
+      payToCode: header.PayToCode || '',
+      payTo: header.PayToAddress || '',
+      payToAddress: header.PayToAddress || '',
+      buyerLocation: getUdfValue(headerUdfs, ['U_ShipLocation', 'U_SHIPLOCATION']) || '',
+      journalRemark: header.JournalRemark || '',
+      discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+      freight: header.Freight != null ? String(header.Freight) : '',
+      tax: header.Tax != null ? String(header.Tax) : '',
+      totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
+      otherInstruction: header.DocNum ? `Based On Purchase Orders ${header.DocNum}.` : (header.Remarks || ''),
     },
+    header_udfs: headerUdfs,
     lines: lineRows.map(l => {
       const itemInfo = itemInfoMap[l.ItemCode] || { hsnCode: '', batchManaged: false };
       return ({
@@ -332,11 +667,17 @@ const getPurchaseOrderForCopy = async (docEntry) => {
       stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
       taxCode: l.TaxCode || '',
       total: l.LineTotal != null ? String(l.LineTotal) : '',
+      totalBeforeTax: l.LineTotal != null ? String(l.LineTotal) : '',
+      totalLC: l.LineTotal != null ? String(l.LineTotal) : '',
+      LineTotal: l.LineTotal != null ? String(l.LineTotal) : '',
+      taxAmount: l.TaxAmount != null ? String(l.TaxAmount) : '',
+      LineTaxAmount: l.TaxAmount != null ? String(l.TaxAmount) : '',
+      commPercent: l.CommissionPercent != null ? String(l.CommissionPercent) : '',
       whse: l.Warehouse || '',
       uomCode: l.UoMCode || '',
       batchManaged: itemInfo.batchManaged,
       batches: [],
-      udf: {},
+      udf: lineUdfsByLineNum[l.LineNum] || {},
     })}),
   };
 };
@@ -443,12 +784,18 @@ const getGRPO = async (docEntry) => {
       T0.BPLId AS Branch,
       T0.DocCur AS Currency,
       T0.GroupNum AS PaymentTerms,
+      T0.SlpCode AS SalesEmployeeCode,
+      T1.SlpName AS SalesEmployeeName,
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
+      T0.ShipToCode,
+      T0.PayToCode,
+      T0.Address AS ShipToAddress,
+      T0.Address2 AS PayToAddress,
       CASE T0.DocStatus
         WHEN 'O' THEN 'Open'
         WHEN 'C' THEN 'Closed'
@@ -475,10 +822,12 @@ const getGRPO = async (docEntry) => {
       T0.ItemCode,
       T0.Dscription AS ItemDescription,
       T0.Quantity,
-      T0.Price AS UnitPrice,
+      COALESCE(T0.PriceBefDi, T0.Price) AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
       T0.LineTotal,
+      T0.VatSum AS TaxAmount,
+      T0.Commission AS CommissionPercent,
       T0.WhsCode AS Warehouse,
       T0.unitMsr AS UoMCode,
       T0.BaseEntry,
@@ -496,7 +845,7 @@ const getGRPO = async (docEntry) => {
     try {
       const itemRows = await safe(db.query(`
         SELECT T0.ItemCode,
-               CHP.ChapterID AS HSNCode,
+               COALESCE(CHP.ChapterID, T0.SWW, '') AS HSNCode,
                T0.ManBtchNum AS BatchManaged
         FROM OITM T0
         LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID
@@ -553,8 +902,16 @@ const getGRPO = async (docEntry) => {
         postingDate: header.PostingDate ? header.PostingDate.toISOString().split('T')[0] : '',
         deliveryDate: header.DeliveryDate ? header.DeliveryDate.toISOString().split('T')[0] : '',
         documentDate: header.DocumentDate ? header.DocumentDate.toISOString().split('T')[0] : '',
+        currency: header.Currency || 'INR',
         journalRemark: header.JournalRemark || '',
         paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
+        shipToCode: header.ShipToCode || '',
+        shipTo: header.ShipToAddress || '',
+        shipToAddress: header.ShipToAddress || '',
+        payToCode: header.PayToCode || '',
+        payTo: header.PayToAddress || '',
+        payToAddress: header.PayToAddress || '',
+        buyerLocation: getUdfValue(headerUdfs, ['U_ShipLocation', 'U_SHIPLOCATION']) || '',
         otherInstruction: header.Remarks || '',
         discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
         freight: header.Freight != null ? String(header.Freight) : '',
@@ -575,6 +932,12 @@ const getGRPO = async (docEntry) => {
         stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
         taxCode: l.TaxCode || '',
         total: l.LineTotal != null ? String(l.LineTotal) : '',
+        totalBeforeTax: l.LineTotal != null ? String(l.LineTotal) : '',
+        totalLC: l.LineTotal != null ? String(l.LineTotal) : '',
+        LineTotal: l.LineTotal != null ? String(l.LineTotal) : '',
+        taxAmount: l.TaxAmount != null ? String(l.TaxAmount) : '',
+        LineTaxAmount: l.TaxAmount != null ? String(l.TaxAmount) : '',
+        commPercent: l.CommissionPercent != null ? String(l.CommissionPercent) : '',
         whse: l.Warehouse || '',
         uomCode: l.UoMCode || '',
         batchManaged: itemInfo.batchManaged,
@@ -602,25 +965,71 @@ const getBatchesByItem = async (itemCode, whsCode) => {
   return { batches: result };
 };
 
+const buildNextBatchNumber = (latestBatchNumber = '', prefix = 'JKL') => {
+  const normalizedPrefix = String(prefix || 'JKL').trim().toUpperCase() || 'JKL';
+  const suffix = String(latestBatchNumber || '').trim().slice(normalizedPrefix.length);
+  const numeric = Number.parseInt(suffix, 10);
+
+  if (Number.isFinite(numeric)) {
+    return `${normalizedPrefix}${String(numeric + 1).padStart(Math.max(suffix.length, 6), '0')}`;
+  }
+
+  const year = String(new Date().getFullYear()).slice(-2);
+  return `${normalizedPrefix}${year}0001`;
+};
+
+const getNextBatchNumber = async ({ prefix = 'JKL' } = {}) => {
+  const normalizedPrefix = String(prefix || 'JKL').trim().toUpperCase() || 'JKL';
+  const rows = await safe(db.query(`
+    SELECT TOP 1
+      T0.DistNumber
+    FROM OBTN T0
+    WHERE UPPER(T0.DistNumber) LIKE @prefixLike
+      AND LEN(T0.DistNumber) > LEN(@prefix)
+      AND PATINDEX('%[^0-9]%', SUBSTRING(T0.DistNumber, LEN(@prefix) + 1, 50)) = 0
+    ORDER BY
+      TRY_CONVERT(BIGINT, SUBSTRING(T0.DistNumber, LEN(@prefix) + 1, 50)) DESC,
+      T0.DistNumber DESC
+  `, {
+    prefix: normalizedPrefix,
+    prefixLike: `${normalizedPrefix}%`,
+  }));
+
+  return {
+    prefix: normalizedPrefix,
+    nextBatchNumber: buildNextBatchNumber(rows[0]?.DistNumber || '', normalizedPrefix),
+    previousBatchNumber: rows[0]?.DistNumber || '',
+  };
+};
+
 // ── DOCUMENT SERIES ───────────────────────────────────────────────────────────
 
 const getDocumentSeries = async () => {
   const result = await safe(db.query(`
-     SELECT 
-    T0.Series,
-    T0.SeriesName,
-    T0.Indicator,
-    T0.NextNumber,
-    T1.Name AS FinancialYear,
-    T1.F_RefDate AS FromDate,
-    T1.T_RefDate AS ToDate
-FROM NNM1 T0
-INNER JOIN OFPR T1 
-    ON T0.Indicator = T1.Indicator
-WHERE T0.ObjectCode = '20'
-    AND T0.Locked = 'N'
-    AND CAST(CURRENT_TIMESTAMP AS DATE) BETWEEN T1.F_RefDate AND T1.T_RefDate
-ORDER BY T0.SeriesName `));
+    SELECT
+      T0.Series,
+      T0.SeriesName,
+      T0.Indicator,
+      T0.NextNumber,
+      FY.FinancialYear,
+      FY.FromDate,
+      FY.ToDate,
+      CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault
+    FROM NNM1 T0
+    LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
+    LEFT JOIN (
+      SELECT
+        Indicator,
+        MAX(Name) AS FinancialYear,
+        MIN(F_RefDate) AS FromDate,
+        MAX(T_RefDate) AS ToDate
+      FROM OFPR
+      GROUP BY Indicator
+    ) FY ON FY.Indicator = T0.Indicator
+    WHERE T0.ObjectCode = '20'
+      AND T0.Locked = 'N'
+    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName
+  `));
 
   return { series: result };
 };
@@ -673,6 +1082,7 @@ const getReferenceData = async () => {
     decimalRows,
     companyRows,
     udfMetadata,
+    lineFieldMetadata,
   ] = await Promise.all([
     getVendors(),
     getItems(),
@@ -687,7 +1097,12 @@ const getReferenceData = async () => {
     getDecimalSettings(),
     getCompanyInfo(),
     getMarketingDocumentUdfs({ headerTable: 'OPDN', lineTable: 'PDN1' }),
+    getGRPOLineFieldMetadata(),
   ]);
+  const effectiveUdfMetadata = applyLineColumnPreferencesToUdfs(
+    udfMetadata,
+    lineFieldMetadata._preferencesByKey || {},
+  );
 
   const uomGroupMap = {};
   uomGroupsRaw.forEach(row => {
@@ -722,15 +1137,21 @@ const getReferenceData = async () => {
     name: companyRows[0].CompnyName || 'SAP B1',
     address: companyRows[0].Address || '',
     state: companyRows[0].State || '',
+    localCurrency: companyRows[0].MainCurncy || '',
+    systemCurrency: companyRows[0].SysCurrncy || '',
   } : {
     name: 'SAP B1',
     address: '',
     state: '',
+    localCurrency: '',
+    systemCurrency: '',
   };
 
   return {
     company: companyInfo.name,
     company_state: companyInfo.state,
+    local_currency: companyInfo.localCurrency,
+    system_currency: companyInfo.systemCurrency,
     vendors,
     contacts: [],
     pay_to_addresses: [],
@@ -739,7 +1160,7 @@ const getReferenceData = async () => {
     items,
     warehouses,
     warehouse_addresses: warehouses,
-    company_address: { State: companyInfo.state },
+    company_address: { Address: companyInfo.address, State: companyInfo.state },
     tax_codes: taxCodes,
     payment_terms: paymentTerms,
     sales_employees: salesEmployees.map((e) => ({ SlpCode: e.SlpCode, SlpName: e.SlpName, Memo: e.Memo, Commission: e.Commission, Active: e.Active })),
@@ -748,7 +1169,11 @@ const getReferenceData = async () => {
     states,
     uom_groups,
     decimal_settings: decimalSettings,
-    udf_metadata: udfMetadata,
+    udf_metadata: effectiveUdfMetadata,
+    line_field_metadata: {
+      matrix_columns: lineFieldMetadata.matrix_columns || [],
+      sap_form: lineFieldMetadata.sap_form || {},
+    },
     warnings: [],
   };
 };
@@ -799,5 +1224,6 @@ module.exports = {
   getOpenPurchaseOrders,
   getPurchaseOrderForCopy,
   getBatchesByItem,
+  getNextBatchNumber,
   getItemsForModal,
 };

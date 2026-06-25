@@ -206,15 +206,21 @@ const getMatrixColumnTokens = (column = {}) => [
   column.label,
 ].map(normalizeFieldIdentity).filter(Boolean);
 
+const isTaxLiableMatrixColumn = (column = {}) => {
+  const tokens = new Set(getMatrixColumnTokens(column));
+  return tokens.has('taxliable') || tokens.has('taxonly');
+};
+
 const isSameMatrixColumn = (left = {}, right = {}) => {
   const rightTokens = new Set(getMatrixColumnTokens(right));
   return getMatrixColumnTokens(left).some((token) => rightTokens.has(token));
 };
 
 const ensureARInvoiceMatrixColumns = (columns = [], { respectSapVisibility = false } = {}) => {
-  const sourceColumns = (Array.isArray(columns) ? columns : []).filter((column) => column && column.key);
+  const sourceColumns = (Array.isArray(columns) ? columns : [])
+    .filter((column) => column && column.key && !isTaxLiableMatrixColumn(column));
   const usedSourceIndexes = new Set();
-  const fallbackColumns = AR_INVOICE_WORKBOOK_COLUMNS;
+  const fallbackColumns = AR_INVOICE_WORKBOOK_COLUMNS.filter((column) => !isTaxLiableMatrixColumn(column));
 
   if (!sourceColumns.length) {
     return fallbackColumns.map((fallbackColumn, index) => ({
@@ -1560,7 +1566,6 @@ function ARInvoicePage() {
             next.glAccount = next.glAccount || item.SalesGLAccount || item.IncomeAccount || item.IncomeAcct || item.RevenuesAccount || item.RevenuesAc || '';
             next.distRule = next.distRule || item.DistributionRule || item.OcrCode || '';
             next.cogsDistRule = next.cogsDistRule || item.COGSDistributionRule || item.COGSCostingCode || item.CogsOcrCod || next.distRule || '';
-            next.sellerItem = next.sellerItem || value;
             next.stcode = next.stcode || '';
             
             // Step 2: Set HSN Code from API response (OCHP.ChapterID via JOIN)
@@ -1629,7 +1634,6 @@ function ARInvoicePage() {
             next.glAccount = next.glAccount || item.SalesGLAccount || item.IncomeAccount || item.IncomeAcct || item.RevenuesAccount || item.RevenuesAc || '';
             next.distRule = next.distRule || item.DistributionRule || item.OcrCode || '';
             next.cogsDistRule = next.cogsDistRule || item.COGSDistributionRule || item.COGSCostingCode || item.CogsOcrCod || next.distRule || '';
-            next.sellerItem = next.sellerItem || value;
             next.stcode = next.stcode || '';
             next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
           }
@@ -2104,7 +2108,6 @@ function ARInvoicePage() {
           updatedLine.inventoryUOM = mergedItem.InventoryUOM || updatedLine.inventoryUOM || '';
           updatedLine.qtyInventoryUom = updatedLine.qtyInventoryUom || updatedLine.quantity || '';
           updatedLine.uomGroup = getUomGroupName(mergedItem);
-          updatedLine.sellerItem = updatedLine.sellerItem || mergedItem.ItemCode || '';
           updatedLine.stcode = updatedLine.stcode || '';
           
           // Auto-populate tax code based on HSN
@@ -2136,7 +2139,6 @@ function ARInvoicePage() {
           updatedLine.inventoryUOM = mergedItem.InventoryUOM || updatedLine.inventoryUOM || '';
           updatedLine.qtyInventoryUom = updatedLine.qtyInventoryUom || updatedLine.quantity || '';
           updatedLine.uomGroup = getUomGroupName(mergedItem);
-          updatedLine.sellerItem = updatedLine.sellerItem || mergedItem.ItemCode || '';
           updatedLine.stcode = updatedLine.stcode || '';
           return updatedLine;
         }
@@ -2563,7 +2565,7 @@ function ARInvoicePage() {
     });
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -2586,7 +2588,19 @@ function ARInvoicePage() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      const seriesDate = String(header.postingDate || header.documentDate || today()).trim();
+      try {
+        const seriesResponse = await fetchDocumentSeries(seriesDate);
+        const duplicateSeries = seriesResponse.data?.series || [];
+        setRefData((prev) => ({ ...prev, series: duplicateSeries }));
+
+        const preferredSeries = resolvePreferredSeries(duplicateSeries, seriesDate, header.series);
+        if (preferredSeries?.Series != null) {
+          handleSeriesChange(preferredSeries.Series);
+        }
+      } catch (_error) {
+        refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      }
     }
   };
 

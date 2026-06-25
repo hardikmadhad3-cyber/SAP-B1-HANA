@@ -12,6 +12,12 @@ const normalizeForCompare = (value) =>
     .toLowerCase();
 
 const compactForCompare = (value) => normalizeForCompare(value).replace(/[^a-z0-9]/g, '');
+const normalizeUdfToken = (value) =>
+  String(value ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]+/g, '');
 
 const toUdfDefinitionMap = (definitions = null) => {
   if (!definitions) return null;
@@ -114,13 +120,19 @@ const normalizeUdfValue = (value, field = null, key = '') => {
 
 const normalizeUdfValues = (values = {}, allowedKeys = null, definitions = null) => {
   const definitionsByKey = toUdfDefinitionMap(definitions);
+  const definitionKeyByToken = definitionsByKey
+    ? new Map(Array.from(definitionsByKey.keys()).map((key) => [normalizeUdfToken(key), key]))
+    : null;
 
   return Object.entries(values || {}).reduce((normalized, [key, value]) => {
     if (!isSapUdfKey(key)) return normalized;
-    if (allowedKeys && !allowedKeys.has(key)) return normalized;
+    const actualKey = definitionsByKey?.has(key)
+      ? key
+      : definitionKeyByToken?.get(normalizeUdfToken(key)) || key;
+    if (allowedKeys && !allowedKeys.has(actualKey)) return normalized;
 
-    const normalizedValue = normalizeUdfValue(value, definitionsByKey?.get(key), key);
-    if (normalizedValue !== undefined) normalized[key] = normalizedValue;
+    const normalizedValue = normalizeUdfValue(value, definitionsByKey?.get(actualKey), actualKey);
+    if (normalizedValue !== undefined) normalized[actualKey] = normalizedValue;
     return normalized;
   }, {});
 };

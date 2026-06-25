@@ -81,7 +81,7 @@ const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
 
-const createLine = () => ({
+const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '',
   itemDescription: '',
   hsnCode: '',
@@ -94,7 +94,7 @@ const createLine = () => ({
   whse: '',
   loc: '',
   branch: '',
-  udf: createUdfState(ROW_UDF_DEFINITIONS),
+  udf: createUdfState(rowUdfDefinitions),
 });
 
 const INIT_HEADER = {
@@ -195,15 +195,17 @@ function PurchaseRequest() {
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
+  const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
+  const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
   const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(BASE_MATRIX_COLUMNS);
-  const [lines, setLines] = useState([createLine()]);
+  const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => createUdfState(HEADER_UDF_DEFINITIONS));
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
-    [HEADER_UDF_DEFINITIONS, ROW_UDF_DEFINITIONS, matrixColumnDefinitions],
+    [headerUdfDefinitions, rowUdfDefinitions, matrixColumnDefinitions],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
@@ -335,10 +337,19 @@ function PurchaseRequest() {
             Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) ||
             ((layoutRes?.data?.columns || []).length && layoutRes?.data?.source !== 'fallback')
           );
+          const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
+          const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          setHeaderUdfDefinitions(nextHeaderUdfs);
+          setRowUdfDefinitions(nextRowUdfs);
+          setHeaderUdfs((prev) => ({ ...createUdfState(nextHeaderUdfs), ...prev }));
+          setLines((prev) => prev.map((line) => ({
+            ...line,
+            udf: createUdfState(nextRowUdfs, line.udf || {}),
+          })));
           setMatrixColumnDefinitions(nextMatrixColumns);
           const nextDefaults = readSavedFormSettings(
-            HEADER_UDF_DEFINITIONS,
-            ROW_UDF_DEFINITIONS,
+            nextHeaderUdfs,
+            nextRowUdfs,
             nextMatrixColumns,
             formSettingsStorageKey,
           );
@@ -362,6 +373,7 @@ function PurchaseRequest() {
             states: refDataRes.data.states || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
+            udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             line_field_metadata: {
               ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
               matrix_columns: nextMatrixColumns,
@@ -412,10 +424,10 @@ function PurchaseRequest() {
 
         setLines(
           Array.isArray(purchaseRequest.lines) && purchaseRequest.lines.length
-            ? purchaseRequest.lines.map(l => ({ ...createLine(), ...l, udf: { ...createUdfState(ROW_UDF_DEFINITIONS), ...(l.udf || {}) } }))
-            : [createLine()]
+            ? purchaseRequest.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, udf: { ...createUdfState(rowUdfDefinitions), ...(l.udf || {}) } }))
+            : [createLine(rowUdfDefinitions)]
         );
-        setHeaderUdfs({ ...createUdfState(HEADER_UDF_DEFINITIONS), ...(purchaseRequest.header_udfs || {}) });
+        setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(purchaseRequest.header_udfs || {}) });
         setIsDirty(false);
         if (purchaseRequest.header?.vendor) {
           loadVendorDetails(purchaseRequest.header.vendor);
@@ -437,7 +449,7 @@ function PurchaseRequest() {
     };
     load();
     return () => { ignore = true; };
-  }, [location.pathname, location.state, navigate]);
+  }, [location.pathname, location.state, navigate, headerUdfDefinitions, rowUdfDefinitions]);
 
   useEffect(() => {
     if (!currentDocEntry) {
@@ -934,7 +946,7 @@ function PurchaseRequest() {
     setValErrors(p => ({ ...p, form: '' }));
     setPageState(p => ({ ...p, error: '', success: '' }));
     setLines(p => [...p, { 
-      ...createLine(), 
+      ...createLine(rowUdfDefinitions), 
       branch: header.branch || '', 
       loc: header.branch || '',
       whse: header.warehouse || ''
@@ -1286,7 +1298,7 @@ function PurchaseRequest() {
 
       const payloadLines = lines.map((line) => ({
         ...line,
-        udf: buildVisibleEnteredRowUdfPayload(ROW_UDF_DEFINITIONS, line.udf || {}, formSettings),
+        udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
       }));
       const payload = { company_id: PURCHASE_ORDER_COMPANY_ID, header: prep, lines: payloadLines, freightCharges: freightModal.freightCharges, header_udfs: headerUdfs };
       const r = currentDocEntry
@@ -1294,8 +1306,8 @@ function PurchaseRequest() {
         : await submitPurchaseRequest(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       setIsDirty(false);
-      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-      setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+      setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({
         ...p,
         contacts: [],
@@ -1320,8 +1332,8 @@ function PurchaseRequest() {
 
   const resetForm = () => {
     setIsDirty(false);
-    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine()]);
-    setHeaderUdfs(createUdfState(HEADER_UDF_DEFINITIONS)); setActiveTab('Contents');
+    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
     setItemModal({ open: false, lineIndex: -1, items: [], loading: false });
@@ -1329,7 +1341,7 @@ function PurchaseRequest() {
   };
 
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
-  const visHdrUdfs = HEADER_UDF_DEFINITIONS.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
+  const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
 
   // ── render ────────────────────────────────────────────────────────────────
@@ -1374,15 +1386,14 @@ function PurchaseRequest() {
       )}
 
       <fieldset disabled={!isDocumentEditable} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-      <div style={{ padding: '0 12px' }}>
-        <div className={`po-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`} style={{ padding: 0 }}>
+        <div className={`po-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`}>
           <div className="po-layout__main">
 
             {/* ══ HEADER CARD ══════════════════════════════════════════════ */}
             <div className="po-header-card">
-              <div className="row g-2">
+              <div className="po-document-header-grid">
                 {/* LEFT COLUMN */}
-                <div className="col-md-6">
+                <div className="po-document-header-column">
                   <div className="po-field-grid" style={{ gridTemplateColumns: '1fr' }}>
                     
                     {/* Vendor Code */}
@@ -1529,7 +1540,7 @@ function PurchaseRequest() {
                 </div>
 
                 {/* RIGHT COLUMN */}
-                <div className="col-md-6">
+                <div className="po-document-header-column">
                   <div className="po-field-grid" style={{ gridTemplateColumns: '1fr' }}>
 
                     {/* Series */}
@@ -1796,13 +1807,12 @@ function PurchaseRequest() {
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={matrixColumnDefinitions}
-            headerUdfFields={HEADER_UDF_DEFINITIONS}
-            rowUdfFields={ROW_UDF_DEFINITIONS}
+            headerUdfFields={headerUdfDefinitions}
+            rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}
             onSettingChange={updateFormSetting}
           />
         </div>
-      </div>
 
       </fieldset>
 

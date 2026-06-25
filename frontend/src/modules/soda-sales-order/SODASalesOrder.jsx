@@ -1756,7 +1756,6 @@ function SODASalesOrder() {
 
                         // Step 1: Set Item Details
                         next.itemDescription = item.ItemName || next.itemDescription;
-                        next.sellerItem = next.sellerItem || value;
                         next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
                         next.uomName = next.uomName || next.uomCode;
                         next.countryOfOrigin = item.ItemCountryOrg || next.countryOfOrigin || '';
@@ -1826,7 +1825,6 @@ function SODASalesOrder() {
                     const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
                     if (item) {
                         next.itemDescription = item.ItemName || next.itemDescription;
-                        next.sellerItem = next.sellerItem || value;
                         next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
                         next.uomName = next.uomName || next.uomCode;
                         next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
@@ -1845,9 +1843,7 @@ function SODASalesOrder() {
             setLines(prev => prev.map((line, idx) => {
                 if (idx !== i) return line;
                 const next = { ...line, [name]: numDec[name] !== undefined ? sanitize(value, numDec[name]) : value };
-                if (name === 'quantity' && !String(next.sellerQty || '').trim()) next.sellerQty = next.quantity;
                 if (name === 'unitPrice') {
-                    next.unitPriceUdf = next.unitPrice;
                     if (String(next.discountAmount ?? '').trim()) {
                         next.stdDiscount = fmtDec(roundTo(getLineDiscountPercent(next), numDec.stdDiscount), numDec.stdDiscount);
                     }

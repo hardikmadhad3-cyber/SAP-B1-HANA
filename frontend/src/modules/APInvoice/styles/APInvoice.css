@@ -1,6 +1,18 @@
 @import '../../purchase-order/styles/purchaseOrder.css';
 
 /* A/P Invoice uses the shared purchase-side document shell. Page-specific overrides should live here only when the invoice workflow truly differs. */
+.ap-invoice-page .po-btn--danger.sap-document-toolbar__cancel,
+.ap-invoice-page .po-bottom-actions .po-btn--danger {
+  color: #1a1a1a;
+}
+
+.ap-invoice-page .po-field,
+.ap-invoice-page .po-grid,
+.ap-invoice-page .po-grid__input,
+.ap-invoice-page .po-layout__sidebar .po-udf-sidebar-card .form-control,
+.ap-invoice-page .po-layout__sidebar .po-udf-sidebar-card .form-control-sm {
+  font-size: 11px;
+}
 
 .ap-wtax-overlay {
   position: fixed;
@@ -33,7 +45,7 @@
   justify-content: space-between;
   padding: 0 8px;
   background: linear-gradient(180deg, #fbfbfb 0%, #d9d9d9 100%);
-  border-bottom: 3px solid #f3b300;
+  border-bottom: 1px solid #c8d0da;
   font-weight: 600;
 }
 
@@ -107,8 +119,8 @@
 }
 
 .ap-wtax-grid input:focus {
-  outline: 1px solid #f3b300;
-  background: #fff4bc;
+  outline: 1px solid #0070c0;
+  background: #fff;
 }
 
 .ap-wtax-grid__muted {
@@ -134,8 +146,8 @@
 .ap-wtax-remove {
   width: 24px;
   height: 22px;
-  border: 1px solid #b6a15b;
-  background: #ffe58a;
+  border: 1px solid #a0aab4;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
   cursor: pointer;
   font-size: 11px;
 }
@@ -156,8 +168,8 @@
 .ap-wtax-footer button {
   min-width: 80px;
   height: 26px;
-  border: 1px solid #a38a29;
-  background: linear-gradient(180deg, #ffe28a 0%, #f3b300 100%);
+  border: 1px solid #a0aab4;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
   cursor: pointer;
   font-size: 12px;
 }
@@ -197,13 +209,13 @@
 .ap-wtax-lookup__find input {
   height: 24px;
   border: 1px solid #a0a0a0;
-  background: #fff4bc;
+  background: #fff;
 }
 
 .ap-wtax-lookup__find button {
   height: 26px;
-  border: 1px solid #a38a29;
-  background: linear-gradient(180deg, #ffe28a 0%, #f3b300 100%);
+  border: 1px solid #a0aab4;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
 }
 
 .ap-wtax-lookup__grid {
@@ -219,7 +231,7 @@
 }
 
 .ap-wtax-lookup__grid tr:hover td {
-  background: #ffe28a;
+  background: #e7f2fb;
 }
 
 .ap-wtax-empty {

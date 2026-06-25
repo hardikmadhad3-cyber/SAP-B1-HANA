@@ -298,17 +298,33 @@ const normalizeAddressText = (value) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+const isTruthySapFlag = (value) => {
+  if (value === true || value === 1) return true;
+  const text = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', 'TYES', '1'].includes(text);
+};
 const isBatchManaged = (item) => {
   if (!item) return false;
-  
-  const batchManagedValue = item?.BatchManaged || item?.ManBtchNum || '';
-  const isManaged = String(batchManagedValue).toUpperCase() === 'Y';
-  
-  console.log('🔍 [isBatchManaged] Item:', item?.ItemCode, 'BatchManaged field:', batchManagedValue, 'Is managed:', isManaged);
-  console.log('🔍 [isBatchManaged] Full item data:', item);
-  
-  return isManaged;
+
+  return [
+    item.BatchManaged,
+    item.batchManaged,
+    item.ManBtchNum,
+    item.ManageBatchNumbers,
+    item.manageBatchNumbers,
+    item.isBatchManaged,
+  ].some(isTruthySapFlag);
 };
+const isLineBatchManaged = (line = {}, item = null) => (
+  [
+    line.BatchManaged,
+    line.batchManaged,
+    line.ManBtchNum,
+    line.ManageBatchNumbers,
+    line.manageBatchNumbers,
+    line.isBatchManaged,
+  ].some(isTruthySapFlag) || isBatchManaged(item)
+);
 // Check if batches are available for item in specific warehouse
 const checkBatchAvailability = async (itemCode, whsCode) => {
   if (!itemCode || !whsCode) return false;
@@ -375,6 +391,15 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS, headerUdfsParam = {
   // Merge provided header UDFs into line UDF defaults so header values auto-fill matching row UDFs
   udf: mergeUdfValues(createUdfState(rowUdfDefinitions), headerUdfsParam || {}),
 });
+
+const needsBatchAllocation = (line = {}) => (
+  Boolean(line.batchManaged) &&
+  Boolean(String(line.itemNo || '').trim()) &&
+  Boolean(String(line.whse || '').trim()) &&
+  parseNum(line.quantity) > 0 &&
+  (!Array.isArray(line.batches) || line.batches.length === 0) &&
+  line.hasBatchesAvailable !== false
+);
 
 const clearBaseDocumentLink = (line = {}) => ({
   ...line,
@@ -483,7 +508,7 @@ const getDeliveryColumnIdentity = (column = {}) => {
   if (fieldToken === 'UTAXCODE') return 'taxCodeRepeat';
   if (fieldToken === 'TAXCODE') return 'taxCode';
   if (labelToken === 'UNITPRICE') return 'unitPrice';
-  if (labelToken === 'PRICE') return 'price';
+  if (labelToken === 'PRICE' && fieldToken.startsWith('U')) return 'price';
   if (fieldToken === 'UPRICE') return 'price';
 
   const tokens = [
@@ -553,6 +578,7 @@ function Delivery() {
   const formRef = useRef(null);
   const isHydratingDocumentRef = useRef(false);
   const handledCopyFromRef = useRef('');
+  const copiedLinesNeedBatchOpenRef = useRef(false);
   const generalSettingsRef = useRef(readGeneralSettings());
   const defaultWarehouseAppliedRef = useRef(false);
   const requestedEditDocEntry = isRouteStateForActiveCompany(location.state) ? (
@@ -732,7 +758,7 @@ function Delivery() {
             expiryDate: batch.expiryDate || '',
           }))
       : [];
-    const batchManaged = line?.batchManaged != null ? !!line.batchManaged : isBatchManaged(item);
+    const batchManaged = isLineBatchManaged(line, item);
     const workbookLine = hydrateWorkbookDocumentLine({
       line,
       createLine,
@@ -813,6 +839,105 @@ function Delivery() {
     );
     return hydratedLine;
   }, [refData.items, rowUdfDefinitions]);
+
+  const openBatchModalForLine = useCallback((lineIndex, line) => {
+    if (!line?.itemNo) {
+      setPageState(p => ({ ...p, error: 'Select an item before allocating batches.' }));
+      return;
+    }
+    if (!line?.whse) {
+      setPageState(p => ({ ...p, error: 'Select a warehouse before allocating batches.' }));
+      return;
+    }
+
+    const itemNo = line.itemNo;
+    const whse = line.whse;
+    setBatchModal({ open: true, lineIndex, availableBatches: [], loading: true, error: '' });
+    window.setTimeout(async () => {
+      try {
+        const response = await fetchBatchesByItem(itemNo, whse);
+        setBatchModal(current => (
+          current.open && current.lineIndex === lineIndex
+            ? {
+              open: true,
+              lineIndex,
+              availableBatches: response.data.batches || [],
+              loading: false,
+              error: '',
+            }
+            : current
+        ));
+      } catch (error) {
+        setBatchModal(current => (
+          current.open && current.lineIndex === lineIndex
+            ? {
+              open: true,
+              lineIndex,
+              availableBatches: [],
+              loading: false,
+              error: getErrMsg(error, 'Failed to load available batches.'),
+            }
+            : current
+        ));
+      }
+    }, 0);
+  }, []);
+
+  const openBatchModal = useCallback((lineIndex, lineOverride = null) => {
+    openBatchModalForLine(lineIndex, lineOverride || lines[lineIndex]);
+  }, [lines, openBatchModalForLine]);
+
+  const refreshBatchAvailabilityForLines = useCallback((nextLines = []) => {
+    nextLines.forEach((line, lineIndex) => {
+      if (!line?.batchManaged || !line?.itemNo || !line?.whse) return;
+      checkBatchAvailability(line.itemNo, line.whse).then(hasBatches => {
+        setLines(prevLines => prevLines.map((currentLine, currentIndex) => (
+          currentIndex === lineIndex &&
+          currentLine.itemNo === line.itemNo &&
+          currentLine.whse === line.whse
+            ? { ...currentLine, hasBatchesAvailable: hasBatches }
+            : currentLine
+        )));
+      });
+    });
+  }, []);
+
+  const openFirstMissingBatchModal = useCallback((nextLines = []) => {
+    const lineIndex = nextLines.findIndex(needsBatchAllocation);
+    if (lineIndex < 0) return;
+
+    setActiveTab('Contents');
+    window.setTimeout(() => openBatchModal(lineIndex, nextLines[lineIndex]), 0);
+  }, [openBatchModal]);
+
+  const openRequiredBatchAllocationOnAdd = useCallback(() => {
+    const hydratedLines = lines.map(line => hydrateLoadedLine(line));
+    const lineIndex = hydratedLines.findIndex(needsBatchAllocation);
+    if (lineIndex < 0) return false;
+
+    setLines(hydratedLines);
+    setActiveTab('Contents');
+    setValErrors(prev => ({
+      ...prev,
+      form: 'Please assign batches before adding this delivery.',
+      lines: {
+        ...prev.lines,
+        [lineIndex]: {
+          ...(prev.lines[lineIndex] || {}),
+          batches: 'Batch selection is mandatory for batch-managed item',
+        },
+      },
+    }));
+    setPageState(p => ({
+      ...p,
+      posting: false,
+      error: 'Please assign batches before adding this delivery.',
+      success: '',
+    }));
+    refreshBatchAvailabilityForLines(hydratedLines);
+    window.setTimeout(() => openBatchModal(lineIndex, hydratedLines[lineIndex]), 0);
+    return true;
+  }, [hydrateLoadedLine, lines, openBatchModal, refreshBatchAvailabilityForLines]);
 
   // Continue in next part...
 
@@ -1143,6 +1268,23 @@ function Delivery() {
     setLines(prevLines => prevLines.map(line => hydrateLoadedLine(line)));
   }, [currentDocEntry, hydrateLoadedLine, refData.items.length]);
 
+  useEffect(() => {
+    if (currentDocEntry || !refData.items.length || !copiedLinesNeedBatchOpenRef.current) return;
+
+    copiedLinesNeedBatchOpenRef.current = false;
+    const hydratedLines = lines.map(line => hydrateLoadedLine(line));
+    setLines(hydratedLines);
+    refreshBatchAvailabilityForLines(hydratedLines);
+    openFirstMissingBatchModal(hydratedLines);
+  }, [
+    currentDocEntry,
+    hydrateLoadedLine,
+    lines,
+    openFirstMissingBatchModal,
+    refData.items.length,
+    refreshBatchAvailabilityForLines,
+  ]);
+
   // ── Copy To: populate form from Sales Order / other source ────────────────
   useEffect(() => {
     const routedCopyFrom = location.state?.copyFrom;
@@ -1228,7 +1370,7 @@ function Delivery() {
 
     // Populate lines with base document linking
     if (Array.isArray(srcLines) && srcLines.length > 0) {
-      setLines(srcLines.map((l, idx) => {
+      const copiedLines = srcLines.map((l, idx) => {
         const normalizedLine = normaliseDocumentLine(
           l,
           idx,
@@ -1237,7 +1379,7 @@ function Delivery() {
           copiedLocation.branch
         );
 
-        return {
+        return hydrateLoadedLine({
           ...createLine(rowUdfDefinitions),
           ...normalizedLine,
           taxCode: normalizedLine.taxCode || l.taxCode || l.TaxCode || l.VatGroup || '',
@@ -1250,9 +1392,15 @@ function Delivery() {
           baseType,
           baseLine: l.lineNum ?? l.LineNum ?? normalizedLine.baseLine ?? idx,
           udf: normalizeUdfState(rowUdfDefinitions, mergeUdfValues(pickLineUdfValues(l), l.line_udfs, l.lineUdfs, l.udf)),
-        };
-      }));
+        });
+      });
+      const shouldPromptForBatches = copiedLines.some(needsBatchAllocation);
+      copiedLinesNeedBatchOpenRef.current = !shouldPromptForBatches && !refData.items.length && copiedLines.some(line => line.itemNo);
+      setLines(copiedLines);
+      refreshBatchAvailabilityForLines(copiedLines);
+      if (shouldPromptForBatches) openFirstMissingBatchModal(copiedLines);
     } else {
+      copiedLinesNeedBatchOpenRef.current = false;
       setLines([createLine(rowUdfDefinitions)]);
     }
 
@@ -2375,48 +2523,6 @@ function Delivery() {
     input.click();
   };
 
-  const openBatchModal = (lineIndex) => {
-    const line = lines[lineIndex];
-    if (!line?.itemNo) {
-      setPageState(p => ({ ...p, error: 'Select an item before allocating batches.' }));
-      return;
-    }
-    if (!line?.whse) {
-      setPageState(p => ({ ...p, error: 'Select a warehouse before allocating batches.' }));
-      return;
-    }
-
-    setBatchModal({ open: true, lineIndex, availableBatches: [], loading: true, error: '' });
-    window.setTimeout(async () => {
-      try {
-        const response = await fetchBatchesByItem(line.itemNo, line.whse);
-        setBatchModal(current => (
-          current.open && current.lineIndex === lineIndex
-            ? {
-              open: true,
-              lineIndex,
-              availableBatches: response.data.batches || [],
-              loading: false,
-              error: '',
-            }
-            : current
-        ));
-      } catch (error) {
-        setBatchModal(current => (
-          current.open && current.lineIndex === lineIndex
-            ? {
-              open: true,
-              lineIndex,
-              availableBatches: [],
-              loading: false,
-              error: getErrMsg(error, 'Failed to load available batches.'),
-            }
-            : current
-        ));
-      }
-    }, 0);
-  };
-
   const closeBatchModal = () => {
     setBatchModal({ open: false, lineIndex: null, availableBatches: [], loading: false, error: '' });
   };
@@ -3436,7 +3542,7 @@ function Delivery() {
 
     const newLines = sourceLines.map((line, idx) => {
       const normalizedLine = normaliseDocumentLine(line, idx, baseEntry, baseType, copiedLocation.branch);
-      return {
+      return hydrateLoadedLine({
         ...createLine(rowUdfDefinitions),
         ...normalizedLine,
         baseEntry: line.baseEntry ?? line.BaseEntry ?? baseEntry,
@@ -3452,9 +3558,14 @@ function Delivery() {
           rowUdfDefinitions,
           mergeUdfValues(pickLineUdfValues(line), line.line_udfs, line.lineUdfs, line.udf)
         ),
-      };
+      });
     });
-    setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
+    const nextLines = newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)];
+    const shouldPromptForBatches = nextLines.some(needsBatchAllocation);
+    copiedLinesNeedBatchOpenRef.current = !shouldPromptForBatches && !refData.items.length && newLines.some(line => line.itemNo);
+    setLines(nextLines);
+    refreshBatchAvailabilityForLines(nextLines);
+    if (shouldPromptForBatches) openFirstMissingBatchModal(nextLines);
 
     const cardCode = normHeader.vendor || srcHeader.customerCode || srcHeader.customer || srcHeader.CardCode;
     if (cardCode && cardCode !== header.vendor) loadVendorDetails(cardCode);
@@ -3607,6 +3718,8 @@ function Delivery() {
       return;
     }
     if (currentDocEntry && !hasUnsavedChanges) return;
+    if (openRequiredBatchAllocationOnAdd()) return;
+
     const e = await validate(); // Make validate async
     if (e.form || Object.values(e.header).some(Boolean) || Object.values(e.lines).some(le => Object.values(le || {}).some(Boolean))) {
       setValErrors(e);
@@ -3675,7 +3788,38 @@ function Delivery() {
       setPageState(p => ({ ...p, success: `${r.data.message || 'Sales order saved.'}${dn}` }));
     } catch (e) {
       const message = getErrMsg(e, 'Delivery submission failed.');
-      if (message.includes('Warehouse') && message.toLowerCase().includes('branch')) {
+      if (
+        message.includes('batch-managed') ||
+        message.includes('Batch selection') ||
+        message.includes('Batch quantity') ||
+        message.includes('exceeds available quantity')
+      ) {
+        const itemMatch = message.match(/item ([^.,]+)/i);
+        const itemCode = itemMatch?.[1]?.trim();
+        const hydratedLines = lines.map((line) => {
+          if (itemCode && String(line.itemNo || '').trim() !== itemCode) return hydrateLoadedLine(line);
+          return hydrateLoadedLine({ ...line, batchManaged: true, hasBatchesAvailable: true });
+        });
+        const lineIndex = itemCode
+          ? hydratedLines.findIndex(line => String(line.itemNo || '').trim() === itemCode)
+          : hydratedLines.findIndex(line => line.batchManaged && line.hasBatchesAvailable !== false);
+        setLines(hydratedLines);
+        if (lineIndex >= 0) {
+          setActiveTab('Contents');
+          setValErrors({
+            header: {},
+            lines: {
+              [lineIndex]: {
+                batches: message.includes('batch-managed')
+                  ? 'Batch selection is mandatory for batch-managed item'
+                  : message,
+              },
+            },
+            form: 'Please assign batches before adding this delivery.',
+          });
+          window.setTimeout(() => openBatchModal(lineIndex, hydratedLines[lineIndex]), 0);
+        }
+      } else if (message.includes('Warehouse') && message.toLowerCase().includes('branch')) {
         const lineIndex = lines.findIndex(line => String(line.whse || '').trim());
         setValErrors({
           header: {},

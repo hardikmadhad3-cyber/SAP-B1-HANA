@@ -4,6 +4,8 @@ const arInvoiceService = require('./arInvoiceService');
 const hsnCodeDbService = require('./hsnCodeDbService');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
+const authDbService = require('./authDbService');
+const { getRequestContext } = require('./requestContextService');
 
 const parseNum = (value, fallback = 0) => {
   const parsed = Number(String(value ?? '').replace(/,/g, ''));
@@ -298,8 +300,28 @@ const updateServiceARInvoice = async (docEntry, payload) => {
   };
 };
 
+const getReferenceData = async (companyId, userId) => {
+  try {
+    if (companyId && userId) {
+      try {
+        const assignedCompany = await authDbService.getAssignedCompanyForUser(Number(userId), Number(companyId));
+        const ctx = getRequestContext();
+        if (ctx && assignedCompany && assignedCompany.DbName) {
+          ctx.databaseName = String(assignedCompany.DbName).trim();
+        }
+      } catch (innerErr) {
+        console.warn('[serviceArInvoiceService] could not resolve assigned company for user/company:', innerErr.message || innerErr);
+      }
+    }
+
+    return await serviceArInvoiceDb.getReferenceData();
+  } catch (error) {
+    throw error;
+  }
+};
+
 module.exports = {
-  getReferenceData: serviceArInvoiceDb.getReferenceData,
+  getReferenceData,
   getCustomerDetails: serviceArInvoiceDb.getCustomerDetails,
   getCustomerFilterOptions: arInvoiceService.getCustomerFilterOptions,
   getDocumentSeries: serviceArInvoiceDb.getDocumentSeries,

@@ -56,10 +56,10 @@ const SUBTYPE_MAP = {
 };
 
 const normalizeUdfKey = (aliasId) => {
-  let value = String(aliasId || '').trim().toUpperCase();
+  let value = String(aliasId || '').trim();
   if (!value) return '';
   // strip any non-alphanumeric/underscore characters to mirror frontend normalization
-  value = value.replace(/[^A-Z0-9_]+/g, '');
+  value = value.replace(/[^A-Za-z0-9_]+/g, '');
   if (!value) return '';
   if (!value.startsWith('U_')) value = `U_${value.replace(/^_+/, '')}`;
   return value;

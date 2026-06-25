@@ -31,7 +31,7 @@ export const hydrateDocumentLineFromItem = (line = {}, item = {}, {
   headerBranch = '',
   preservePrice = false,
   preserveQuantity = true,
-  syncUnitPriceUdf = true,
+  syncUnitPriceUdf = false,
   calcLineTotal,
   formatTotal,
 } = {}) => {
@@ -80,7 +80,6 @@ export const hydrateDocumentLineFromItem = (line = {}, item = {}, {
   };
 
   if (side === 'sales') {
-    next.sellerItem = line.sellerItem || itemCode;
     next.stcode = line.stcode || '';
   } else if (!line.taxCodeManuallyOverridden) {
     next.taxCode = line.taxCode || item.TaxCodeAP || item.VatGroupPu || item.ApTaxCode || '';

@@ -101,6 +101,8 @@ export const buildDuplicateHeader = (header = {}, initialHeader = {}) => {
   duplicate.nextNumber = '';
   ['Status', 'documentStatus', 'DocumentStatus'].forEach((key) => setIfPresent(duplicate, key, duplicateStatus));
   ['canceled', 'cancelled', 'Canceled', 'Cancelled'].forEach((key) => setIfPresent(duplicate, key, false));
+  ['confirmed', 'approved'].forEach((key) => setIfPresent(duplicate, key, true));
+  ['Confirmed', 'Approved'].forEach((key) => setIfPresent(duplicate, key, 'Y'));
 
   return duplicate;
 };

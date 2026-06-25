@@ -338,12 +338,7 @@ const getLayoutsQuery = (config) => {
 
 const getLayouts = async (documentType) => {
   const config = getDocumentPrintConfig(documentType);
-  const query = getLayoutsQuery(config);
-  const defaultSchema = await resolvePrintSchema();
-  const result = await dbService.query(query.sql, query.params, { databaseName: defaultSchema });
-  const layouts = filterDocumentLayouts(config, result.recordset || []);
-
-  return {
+  const fallbackPayload = (defaultSchema = '', warning = '') => ({
     documentType: config.key,
     documentLabel: config.label,
     objectType: config.objectType,
@@ -351,8 +346,41 @@ const getLayouts = async (documentType) => {
     defaultDocCode: config.defaultDocCode || '',
     defaultSchema,
     companyDatabase: defaultSchema,
-    layouts,
-  };
+    layouts: [],
+    warnings: warning ? [warning] : [],
+  });
+
+  try {
+    const query = getLayoutsQuery(config);
+    const defaultSchema = await resolvePrintSchema();
+    const result = await dbService.query(query.sql, query.params, { databaseName: defaultSchema });
+    const layouts = filterDocumentLayouts(config, result.recordset || []);
+
+    return {
+      documentType: config.key,
+      documentLabel: config.label,
+      objectType: config.objectType,
+      typeCode: config.typeCode,
+      defaultDocCode: config.defaultDocCode || '',
+      defaultSchema,
+      companyDatabase: defaultSchema,
+      layouts,
+      warnings: [],
+    };
+  } catch (error) {
+    const message =
+      error.response?.data?.error?.message?.value ||
+      error.response?.data?.error?.message ||
+      error.response?.data?.message ||
+      error.response?.data?.detail ||
+      error.message ||
+      'Failed to load document print layouts.';
+    console.warn('[DocumentPrint] Layout discovery failed; continuing without layouts', {
+      documentType: config.key,
+      message,
+    });
+    return fallbackPayload('', message);
+  }
 };
 
 const normalizeOptionalText = (value) => String(value ?? '').trim();

@@ -53,6 +53,9 @@ const SAP_FIELD_TO_INTERNAL_KEY = {
   U_UNITPRICE: 'unitPriceUdf',
   U_UNIT_PRICE: 'unitPriceUdf',
   RATE: 'forRate',
+  FORRATE: 'forRate',
+  FORPRICE: 'forRate',
+  FOR_PRICE: 'forRate',
   VATGROUP: 'taxCode',
   TAXCODE: 'taxCode',
   WTLIABLE: 'wTaxLiable',
@@ -127,7 +130,9 @@ const SAP_FIELD_TO_INTERNAL_KEY = {
   U_BUYER_BILL_DISC: 'buyerBillDiscount',
   U_SELLER_BILL_DISC: 'sellerBillDiscount',
   U_SELLTCODE: 'stcode',
+  U_STCODE: 'stcode',
   U_S_ITEM: 'sellerItem',
+  U_SITEM: 'sellerItem',
   U_S_QTY: 'sellerQty',
   U_FREIGHT_PUR: 'freightPurchase',
   U_FREIGHT_SALES: 'freightSales',
@@ -146,6 +151,8 @@ const SAP_FIELD_TO_INTERNAL_KEY = {
   U_FORRATE: 'U_ForRate',
   U_FOR_RATE: 'U_ForRate',
   U_FOR_RATE_: 'U_ForRate',
+  U_FORPRICE: 'U_ForRate',
+  U_FOR_PRICE: 'U_ForRate',
   U_FIXBROKBUYER: 'U_Fix_Brock_B',
   U_FIX_BROK_BUYER: 'U_Fix_Brock_B',
   U_FIXBROCKSELLER: 'U_Fix_Brock_S',
@@ -165,6 +172,7 @@ const LABEL_TO_INTERNAL_KEY = {
   UOMCODE: 'uomCode',
   HSN: 'hsnCode',
   UNITPRICE: 'unitPrice',
+  FORPRICE: 'forRate',
   TAXCODE: 'taxCode',
   TOTAL: 'totalLC',
   GROSSWT: 'U_GrossWt',
@@ -259,6 +267,7 @@ const STANDARD_RENDERER_KEYS = new Set([
   'hsnCode',
   'unitPrice',
   'unitPriceUdf',
+  'forRate',
   'taxCode',
   'taxCodeRepeat',
   'wTaxLiable',
@@ -332,6 +341,7 @@ const STANDARD_FIELD_OVERRIDES = {
   sacCode: { type: 'text', minWidth: 105 },
   unitPrice: { type: 'number', minWidth: 110, numeric: true },
   unitPriceUdf: { type: 'number', minWidth: 110, numeric: true },
+  forRate: { type: 'number', minWidth: 110, numeric: true },
   taxCode: { type: 'text', minWidth: 115 },
   taxCodeRepeat: { type: 'text', minWidth: 110, readOnly: true },
   totalLC: { type: 'number', minWidth: 115, readOnly: true, numeric: true },
@@ -415,7 +425,7 @@ const findInternalKey = (layoutColumn, liveFieldMap) => {
     return 'taxCodeRepeat';
   }
 
-  if (labelToken === 'PRICE' && rawTitle.toUpperCase() === 'PRICE') {
+  if (labelToken === 'PRICE' && rawTitle.toUpperCase() === 'PRICE' && rawFieldNameUpper.startsWith('U_')) {
     return 'price';
   }
 
@@ -425,6 +435,10 @@ const findInternalKey = (layoutColumn, liveFieldMap) => {
 
   if (rawFieldNameUpper.startsWith('U_') && normalizeUdfKey(rawFieldName) === 'U_PRICE') {
     return 'price';
+  }
+
+  if (['U_FORRATE', 'U_FOR_RATE', 'U_FORPRICE', 'U_FOR_PRICE'].includes(normalizeUdfKey(rawFieldName))) {
+    return 'forRate';
   }
 
   const labelMappedKey = LABEL_TO_INTERNAL_KEY[labelToken];

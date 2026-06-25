@@ -186,7 +186,7 @@ export default function ItemSelectionModal({ isOpen, onClose, onSelect, items, l
                       onClick={() => handleRowClick(index)}
                       onDoubleClick={() => handleRowDoubleClick(item)}
                       style={{
-                        backgroundColor: selectedIndex === index ? '#fff8c5' : index % 2 === 0 ? '#fff' : '#f6f8fa',
+                        backgroundColor: selectedIndex === index ? '#e7f2fb' : index % 2 === 0 ? '#fff' : '#f6f8fa',
                         cursor: 'pointer',
                         borderBottom: '1px solid #d0d7de',
                       }}

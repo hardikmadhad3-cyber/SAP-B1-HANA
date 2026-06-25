@@ -68,7 +68,6 @@ const AR_INVOICE_MATRIX_COLUMN_DEFS = [
   { key: 'whse', label: 'Whse', minWidth: 90, sapField: 'WhsCode', sapColumnIds: ['174', 'WhsCode', 'Warehouse', 'Whse'] },
   { key: 'glAccount', label: 'G/L Account', minWidth: 135, sapField: 'AcctCode', sapColumnIds: ['234001512', 'AcctCode', 'G/L Account', 'GLAccount'] },
   { key: 'distRule', label: 'Distr. Rule', minWidth: 105, sapField: 'OcrCode', sapColumnIds: ['21', 'OcrCode', 'Distr. Rule', 'DistributionRule'] },
-  { key: 'taxLiable', label: 'Tax Liable', minWidth: 95, type: 'yesNo', sapField: 'TaxOnly', sapColumnIds: ['22', 'TaxOnly', 'Tax Liable'] },
   { key: 'weight', label: 'Weight', minWidth: 95, numeric: true, sapField: 'Weight1', alternativeFields: ['Weight'], sapColumnIds: ['23', 'Weight1', 'Weight'] },
   { key: 'taxAmount', label: 'Tax Amount (LC)', minWidth: 125, readOnly: true, sapField: 'VatSum', sapColumnIds: ['24', 'VatSum', 'Tax Amount (LC)'] },
   { key: 'uomCode', label: 'UoM Code', minWidth: 105, sapField: 'UomCode', alternativeFields: ['unitMsr', 'UomEntry'], sapColumnIds: ['1470002149', '1470002145', 'UomCode', 'unitMsr', 'UoM Code', 'UoM'] },
@@ -1229,11 +1228,22 @@ const getARInvoice = async (docEntry) => {
     : sqlColumnRef(lineFieldMetadata, 'T0', 'VatGroup')
       ? sqlColumnRef(lineFieldMetadata, 'T0', 'VatGroup')
       : "''";
-  const lineUomExpression = sqlColumnRef(lineFieldMetadata, 'T0', 'unitMsr')
-    ? sqlColumnRef(lineFieldMetadata, 'T0', 'unitMsr')
-    : sqlColumnRef(lineFieldMetadata, 'T0', 'UomCode')
-      ? sqlColumnRef(lineFieldMetadata, 'T0', 'UomCode')
-      : "''";
+  const lineUomEntryRef = sqlColumnRef(lineFieldMetadata, 'T0', 'UomEntry');
+  const lineUomCodeRef = sqlColumnRef(lineFieldMetadata, 'T0', 'UomCode');
+  const lineUnitMsrRef = sqlColumnRef(lineFieldMetadata, 'T0', 'unitMsr');
+  const lineUomCodeExpression = coalesceText(
+    lineUomEntryRef ? "NULLIF(NULLIF(LTRIM(RTRIM(CAST(UOM.UomCode AS NVARCHAR(254)))), ''), 'Manual')" : 'NULL',
+    lineUomCodeRef ? `NULLIF(NULLIF(LTRIM(RTRIM(CAST(${lineUomCodeRef} AS NVARCHAR(254)))), ''), 'Manual')` : 'NULL',
+    lineUnitMsrRef ? `NULLIF(LTRIM(RTRIM(CAST(${lineUnitMsrRef} AS NVARCHAR(254)))), '')` : 'NULL',
+    "''"
+  );
+  const lineUomNameExpression = coalesceText(
+    lineUnitMsrRef ? `NULLIF(LTRIM(RTRIM(CAST(${lineUnitMsrRef} AS NVARCHAR(254)))), '')` : 'NULL',
+    lineUomCodeRef ? `NULLIF(LTRIM(RTRIM(CAST(${lineUomCodeRef} AS NVARCHAR(254)))), '')` : 'NULL',
+    lineUomEntryRef ? 'UOM.UomCode' : 'NULL',
+    "''"
+  );
+  const lineUomJoin = lineUomEntryRef ? `LEFT JOIN OUOM UOM ON UOM.UomEntry = ${lineUomEntryRef}` : '';
 
   const headerRows = await safe(db.query(`
     SELECT TOP 1
@@ -1346,7 +1356,11 @@ const getARInvoice = async (docEntry) => {
       ${lineTaxAmountExpression} AS TaxAmount,
       ${optionalColumn(lineFieldMetadata, 'T0', 'WTLiable', 'WTLiable', "'N'")},
       T0.WhsCode AS Warehouse,
-      ${lineUomExpression} AS UoMCode,
+      ${lineUomCodeExpression} AS UoMCode,
+      ${lineUomCodeExpression} AS UomCode,
+      ${lineUomNameExpression} AS UoMName,
+      ${lineUomNameExpression} AS UnitMsr,
+      ${optionalColumn(lineFieldMetadata, 'T0', 'UomEntry', 'UomEntry', 'NULL')},
       ${optionalColumn(lineFieldMetadata, 'T0', 'CountryOrg', 'CountryOfOrigin', "''")},
       ${optionalColumn(lineFieldMetadata, 'T0', 'AgrNo', 'BlanketAgreementNo', "''")},
       ${optionalColumn(lineFieldMetadata, 'T0', 'StockPrice', 'ItemCost', '0')},
@@ -1367,6 +1381,7 @@ const getARInvoice = async (docEntry) => {
     FROM INV1 T0
     LEFT JOIN OITM ITM ON ITM.ItemCode = T0.ItemCode
     LEFT JOIN OCHP CHP ON CHP.AbsEntry = ITM.ChapterID
+    ${lineUomJoin}
     WHERE T0.DocEntry = @docEntry
     ORDER BY T0.LineNum
   `, { docEntry: resolvedDocEntry }));
@@ -1386,7 +1401,11 @@ const getARInvoice = async (docEntry) => {
         ${lineTaxAmountExpression} AS TaxAmount,
         ${optionalColumn(lineFieldMetadata, 'T0', 'WTLiable', 'WTLiable', "'N'")},
         T0.WhsCode AS Warehouse,
-        ${lineUomExpression} AS UoMCode,
+        ${lineUomCodeExpression} AS UoMCode,
+        ${lineUomCodeExpression} AS UomCode,
+        ${lineUomNameExpression} AS UoMName,
+        ${lineUomNameExpression} AS UnitMsr,
+        ${optionalColumn(lineFieldMetadata, 'T0', 'UomEntry', 'UomEntry', 'NULL')},
         ${optionalColumn(lineFieldMetadata, 'T0', 'CountryOrg', 'CountryOfOrigin', "''")},
         ${optionalColumn(lineFieldMetadata, 'T0', 'AgrNo', 'BlanketAgreementNo', "''")},
         ${optionalColumn(lineFieldMetadata, 'T0', 'StockPrice', 'ItemCost', '0')},
@@ -1405,6 +1424,7 @@ const getARInvoice = async (docEntry) => {
         T0.BaseLine,
         '' AS HSNCode
       FROM INV1 T0
+      ${lineUomJoin}
       WHERE T0.DocEntry = @docEntry
       ORDER BY T0.LineNum
     `, { docEntry: resolvedDocEntry }));
@@ -1471,6 +1491,7 @@ const getARInvoice = async (docEntry) => {
       lines: lineRows.map((line) => {
         const lineUdfs = lineUdfsByLineNum[line.LineNum] || {};
         return ({
+        ...line,
         baseEntry: line.BaseEntry || null,
         baseType: line.BaseType || null,
         baseLine: line.BaseLine || null,
@@ -1508,7 +1529,12 @@ const getARInvoice = async (docEntry) => {
         COGSDistributionRule: line.COGSDistributionRule || line.DistributionRule || '',
         uomCode: line.UoMCode || '',
         UoMCode: line.UoMCode || '',
-        uomName: line.UoMCode || '',
+        UomCode: line.UomCode || line.UoMCode || '',
+        UomEntry: line.UomEntry != null ? String(line.UomEntry) : '',
+        uomName: line.UoMName || line.UnitMsr || line.UoMCode || '',
+        UoMName: line.UoMName || line.UnitMsr || '',
+        UomName: line.UoMName || line.UnitMsr || '',
+        UnitMsr: line.UnitMsr || '',
         countryOfOrigin: line.CountryOfOrigin || '',
         CountryOfOrigin: line.CountryOfOrigin || '',
         blanketAgreementNo: line.BlanketAgreementNo != null ? String(line.BlanketAgreementNo) : '',
@@ -1519,6 +1545,8 @@ const getARInvoice = async (docEntry) => {
         AssessableValue: line.AssessableValue != null ? String(line.AssessableValue) : '',
         loc: line.Loc || '',
         Loc: line.Loc || '',
+        LocCode: line.Loc || '',
+        LocationCode: line.Loc || '',
         branch: line.BranchCode || (header.Branch ? String(header.Branch) : ''),
         sacCode: line.SACCode != null ? String(line.SACCode) : '',
         SACCode: line.SACCode != null ? String(line.SACCode) : '',
