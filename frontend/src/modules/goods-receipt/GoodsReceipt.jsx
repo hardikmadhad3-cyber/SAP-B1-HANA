@@ -55,6 +55,7 @@ const createLine = (rowUdfFields = []) => ({
   quantity: '',
   unitPrice: '',
   total: '',
+  binLocationAllocation: '',
   warehouse: '',
   accountCode: '',
   itemCost: '',
@@ -327,7 +328,8 @@ function GoodsReceipt() {
     }
 
     const itemFlags = getItemFlags(item);
-    const warehouseCode = line.warehouse || item.defaultWarehouse || '';
+    const fallbackWarehouse = branchFilteredWarehouses[0]?.whsCode || warehouses[0]?.whsCode || '';
+    const warehouseCode = line.warehouse || item.defaultWarehouse || fallbackWarehouse;
     return normalizeLine({
       ...line,
       itemCode: item.itemCode,
@@ -1285,31 +1287,32 @@ function GoodsReceipt() {
   const visibleHeaderUdfFields = headerUdfFields.filter(
     (field) => formSettings.headerUdfs?.[field.key]?.visible !== false
   );
+  const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
 
   return (
-    <form className={`po-page gr-goods-receipt__page inventory-document-page${sidebarOpen || formSettingsOpen ? ' inventory-document-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
-      <div className="po-toolbar">
-        <div className="po-toolbar__title">
+    <form className={`po-page sap-document-page gr-goods-receipt__page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+      <div className="po-toolbar sap-document-toolbar">
+        <span className="po-toolbar__title sap-document-toolbar__title">
           Goods Receipt{currentDocEntry ? ` - #${header.number || currentDocEntry}` : ''}
-        </div>
+        </span>
         <span className={`po-mode-badge po-mode-badge--${currentDocEntry ? 'update' : 'add'}`}>
           {currentDocEntry ? 'Update' : 'Add'} Mode
         </span>
-        <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting} title={primaryActionLabel}>
+        <button type="submit" className="po-btn po-btn--primary sap-document-toolbar__primary" disabled={pageState.posting} title={primaryActionLabel}>
           {primaryActionLabel}
         </button>
         <button
           type="button"
-          className="po-btn po-btn--danger"
+          className="po-btn po-btn--danger sap-document-toolbar__cancel"
           onClick={resetForm}
           disabled={pageState.posting}
         >
           Cancel
         </button>
-        <button type="button" className="po-btn" onClick={() => navigate('/goods-receipt/find')}>
+        <button type="button" className="po-btn sap-document-toolbar__find" onClick={() => navigate('/goods-receipt/find')}>
           Find
         </button>
-        <button type="button" className="po-btn" onClick={resetForm}>
+        <button type="button" className="po-btn sap-document-toolbar__new" onClick={resetForm}>
           New
         </button>
         <button
@@ -1320,7 +1323,7 @@ function GoodsReceipt() {
         >
           Duplicate
         </button>
-        <button type="button" className="po-btn" onClick={() => {
+        <button type="button" className="po-btn sap-document-toolbar__udf" onClick={() => {
           setFormSettingsOpen(false);
           setSidebarOpen((open) => !open);
         }}>
@@ -1328,7 +1331,7 @@ function GoodsReceipt() {
         </button>
         <button
           type="button"
-          className="po-btn"
+          className="po-btn sap-document-toolbar__settings"
           onClick={() => {
             setSidebarOpen(false);
             setFormSettingsOpen((open) => !open);
@@ -1380,6 +1383,8 @@ function GoodsReceipt() {
       {pageState.error && <div className="po-alert po-alert--error">{pageState.error}</div>}
       {pageState.success && <div className="po-alert po-alert--success">{pageState.success}</div>}
 
+      <div className={`po-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`}>
+        <div className="po-layout__main">
       <div className="po-header-card">
         <div className="gr-goods-receipt__header-grid">
           <div className="po-field-grid" style={{ gridTemplateColumns: '1fr' }}>
@@ -1576,6 +1581,32 @@ function GoodsReceipt() {
         </div>
       </div>
 
+        </div>
+
+        <HeaderUdfSidebar
+          className="po-layout__sidebar"
+          isOpen={sidebarOpen}
+          fields={visibleHeaderUdfFields}
+          formSettings={formSettings}
+          values={headerUdfs}
+          disabled={pageState.posting}
+          onFieldChange={handleHeaderUdfChange}
+          onClose={() => setSidebarOpen(false)}
+        />
+
+        <FormSettingsPanel
+          variant="sidebar"
+          className="po-layout__sidebar"
+          isOpen={formSettingsOpen}
+          onClose={() => setFormSettingsOpen(false)}
+          matrixFields={GOODS_RECEIPT_MATRIX_COLUMNS}
+          headerUdfFields={headerUdfFields}
+          rowUdfFields={rowUdfFields}
+          formSettings={formSettings}
+          onSettingChange={updateFormSetting}
+        />
+      </div>
+
       <CopyFromModal
         isOpen={copyFromModal}
         goodsIssues={goodsIssues}
@@ -1631,29 +1662,6 @@ function GoodsReceipt() {
         error={batchModal.error}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
-      />
-
-      <HeaderUdfSidebar
-        className="inventory-document-sidebar"
-        isOpen={sidebarOpen}
-        fields={visibleHeaderUdfFields}
-        formSettings={formSettings}
-        values={headerUdfs}
-        disabled={pageState.posting}
-        onFieldChange={handleHeaderUdfChange}
-        onClose={() => setSidebarOpen(false)}
-      />
-
-      <FormSettingsPanel
-        variant="sidebar"
-        className="inventory-document-sidebar"
-        isOpen={formSettingsOpen}
-        onClose={() => setFormSettingsOpen(false)}
-        matrixFields={GOODS_RECEIPT_MATRIX_COLUMNS}
-        headerUdfFields={headerUdfFields}
-        rowUdfFields={rowUdfFields}
-        formSettings={formSettings}
-        onSettingChange={updateFormSetting}
       />
 
       <input

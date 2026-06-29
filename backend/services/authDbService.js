@@ -72,6 +72,7 @@ const ensureColumn = (database, tableName, columnName, definition) => {
 const ensureCompanyColumns = (database) => {
   ensureColumn(database, 'Companies', 'DbDialect', "DbDialect TEXT NOT NULL DEFAULT 'sqlserver'");
   ensureColumn(database, 'Companies', 'DbPort', 'DbPort INTEGER NULL');
+  ensureColumn(database, 'Companies', 'ReportServiceDbInstance', 'ReportServiceDbInstance TEXT NULL');
 };
 
 const getCached = (key) => {
@@ -384,6 +385,7 @@ const COMPANY_SELECT_COLUMNS = `
     ReportServiceUsername,
     ReportServicePassword,
     ReportServiceCompanyDb,
+    ReportServiceDbInstance,
     ReportServiceDefaultSchema,
     ReportServiceRejectUnauthorized,
     SalesOrderDefaultToVendorCode,

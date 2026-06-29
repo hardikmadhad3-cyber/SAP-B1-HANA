@@ -1,4 +1,4 @@
-const FORM_SETTINGS_STORAGE_KEY = 'sapb1.serviceArInvoice.formSettings.v5';
+const FORM_SETTINGS_STORAGE_KEY = 'sapb1.serviceArInvoice.formSettings.v7';
 
 const HEADER_UDF_DEFINITIONS = [];
 const ROW_UDF_DEFINITIONS = [];

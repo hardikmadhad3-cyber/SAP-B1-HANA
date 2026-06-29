@@ -3,6 +3,7 @@ import './styles/APInvoice.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/ap-invoice/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/ap-invoice/HeaderUdfSidebar';
+import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import ContentsTab from './components/ContentsTab';
 import LogisticsTab from './components/LogisticsTab';
 import AccountingTab from './components/AccountingTab';
@@ -31,6 +32,7 @@ import { getDefaultSeriesForCurrentYear, normalizeDocumentSeriesList } from '../
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import { useAuth } from '../../auth/AuthContext';
 import { consumeCopyToState } from '../../utils/copyToState';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
@@ -46,7 +48,6 @@ import {
   fetchItemsForModal,
   fetchFreightCharges,
 } from '../../api/apInvoiceApi';
-import { PURCHASE_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument } from '../../api/copyFromApi';
 import {
@@ -193,6 +194,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   total: '',
   binLocationAllocation: '',
   glAccount: '',
+  glAccountName: '',
   whse: '',
   itemCost: '',
   countryOfOrigin: '',
@@ -339,6 +341,8 @@ const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT
 function APInvoice() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { company } = useAuth();
+  const activeCompanyId = company?.companyId || '';
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
@@ -372,6 +376,9 @@ function APInvoice() {
     tax_codes: [],
     withholding_tax_codes: [],
     payment_terms: [],
+    gl_accounts: [],
+    distribution_rules: [],
+    business_partners: [],
     shipping_types: [],
     branches: [],
     uom_groups: [],
@@ -402,6 +409,17 @@ function APInvoice() {
   const [addressModal, setAddressModal] = useState(null);
   const [taxInfoModal, setTaxInfoModal] = useState(false);
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
+  const [lineLookupModal, setLineLookupModal] = useState({
+    open: false,
+    lineIndex: -1,
+    field: '',
+    udfKey: '',
+    title: '',
+    options: [],
+    searchPlaceholder: 'Search values',
+    emptyMessage: 'No values found',
+    columns: null,
+  });
   const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1, fieldName: 'hsnCode', udfKey: '' });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
   const [withholdingTax, setWithholdingTax] = useState({
@@ -509,7 +527,52 @@ function APInvoice() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const refDataRes = await fetchAPInvoiceReferenceData(PURCHASE_ORDER_COMPANY_ID);
+        if (!activeCompanyId) {
+          setHeaderUdfDefinitions([]);
+          setRowUdfDefinitions([]);
+          setHeaderUdfs({});
+          setHeader(INIT_HEADER);
+          setLines([createLine([])]);
+          setRefData(prev => ({
+            ...prev,
+            company: '',
+            company_state: '',
+            company_currency: '',
+            vendors: [],
+            contacts: [],
+            pay_to_addresses: [],
+            ship_to_addresses: [],
+            bill_to_addresses: [],
+            items: [],
+            warehouses: [],
+            warehouse_addresses: [],
+            company_address: {},
+            tax_codes: [],
+            withholding_tax_codes: [],
+            payment_terms: [],
+            gl_accounts: [],
+            distribution_rules: [],
+            business_partners: [],
+            shipping_types: [],
+            sales_employees: [],
+            branches: [],
+            states: [],
+            transaction_types: [],
+            transactionTypes: [],
+            uom_groups: [],
+            udf_metadata: { header: [], rows: [] },
+            warnings: [],
+            series: [],
+          }));
+          return;
+        }
+
+        if (!currentDocEntry && !location.state?.APInvoiceDocEntry) {
+          setHeader(INIT_HEADER);
+          setLines([createLine(rowUdfDefinitions)]);
+        }
+
+        const refDataRes = await fetchAPInvoiceReferenceData(activeCompanyId);
         let seriesRes = { data: { series: [] } };
         try {
           seriesRes = await fetchAPInvoiceSeries({
@@ -561,6 +624,9 @@ function APInvoice() {
             tax_codes: refDataRes.data.tax_codes || [],
             withholding_tax_codes: refDataRes.data.withholding_tax_codes || [],
             payment_terms: refDataRes.data.payment_terms || [],
+            gl_accounts: refDataRes.data.gl_accounts || [],
+            distribution_rules: refDataRes.data.distribution_rules || [],
+            business_partners: refDataRes.data.business_partners || [],
             shipping_types: refDataRes.data.shipping_types || [],
             sales_employees: refDataRes.data.sales_employees || [],
             branches: refDataRes.data.branches || [],
@@ -590,7 +656,7 @@ function APInvoice() {
     };
     load();
     return () => { ignore = true; };
-  }, []);
+  }, [activeCompanyId]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -815,6 +881,68 @@ function APInvoice() {
     acc[i] = code && !exists ? [{ ItemCode: code, ItemName: line.itemDescription || code }, ...refData.items] : refData.items;
     return acc;
   }, {});
+  const accountLookupOptions = useMemo(() => (refData.gl_accounts || []).map((account) => ({
+    value: account.code || account.AcctCode || '',
+    description: account.name || account.AcctName || '',
+    label: (account.name || account.AcctName) ? `${account.code || account.AcctCode} - ${account.name || account.AcctName}` : (account.code || account.AcctCode),
+    accountNumber: account.code || account.AcctCode || '',
+    accountName: account.name || account.AcctName || '',
+    accountBalance: Number(account.balance || account.Balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    inactive: account.inactive || 'No',
+  })).filter((option) => option.value), [refData.gl_accounts]);
+  const distributionRuleLookupOptions = useMemo(() => (refData.distribution_rules || []).map((rule) => {
+    const value = rule.FactorCode || rule.OcrCode || rule.code || '';
+    const description = rule.FactorDescription || rule.OcrName || rule.name || '';
+    return {
+      value,
+      description,
+      label: description ? `${value} - ${description}` : value,
+      factorCode: value,
+      factorDescription: description,
+    };
+  }).filter((option) => option.value), [refData.distribution_rules]);
+  const paymentTermLookupOptions = useMemo(() => (refData.payment_terms || []).map((term) => {
+    const value = term.GroupNum != null ? String(term.GroupNum) : String(term.code || term.value || '');
+    const description = term.PymntGroup || term.name || term.description || '';
+    return {
+      value,
+      description,
+      label: description ? `${value} - ${description}` : value,
+      paymentTermCode: value,
+      paymentTermName: description,
+    };
+  }).filter((option) => option.value), [refData.payment_terms]);
+  const itemLookupOptions = useMemo(() => (refData.items || []).map((item) => ({
+    value: item.ItemCode || '',
+    description: item.ItemName || '',
+    label: item.ItemName ? `${item.ItemCode} - ${item.ItemName}` : item.ItemCode,
+    itemCode: item.ItemCode || '',
+    itemName: item.ItemName || '',
+    purchaseUnit: item.PurchaseUnit || item.InventoryUOM || '',
+  })).filter((option) => option.value), [refData.items]);
+  const getUdfLookupOptions = useCallback((fieldNames = []) => {
+    const names = new Set(fieldNames.map(normalizeMetadataIdentity));
+    const field = (rowUdfDefinitions || []).find((definition) => {
+      const identities = [
+        definition.key,
+        definition.sapField,
+        definition.aliasId,
+        definition.label,
+        definition.description,
+        definition.Descr,
+      ].map(normalizeMetadataIdentity);
+      return identities.some((identity) => names.has(identity));
+    });
+    return (field?.options || []).map((option) => {
+      const value = String(option?.value ?? option ?? '').trim();
+      const description = String(option?.label ?? option?.description ?? option?.Descr ?? '').trim();
+      return value ? {
+        value,
+        description,
+        label: description ? `${value} - ${description}` : value,
+      } : null;
+    }).filter(Boolean);
+  }, [rowUdfDefinitions]);
 
   const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
   const FALLBACK_WAREHOUSES = [{ WhsCode: 'WH01', WhsName: 'Main Warehouse' }];
@@ -963,6 +1091,114 @@ function APInvoice() {
   const totalPaymentDueAfterWTax = roundTo(totals.total - wtaxAmount, numDec.totalPaymentDue);
   const derivedGstType = getDerivedGstType(header.vendorState, header.placeOfSupply);
   const inferredGstType = formatDerivedGstType(derivedGstType);
+
+  const openLineLookup = (column, lineIndex, udfField = null) => {
+    if (!isDocumentEditable) return;
+    const fieldName = typeof column === 'string' ? column : column?.key;
+    if (!fieldName) return;
+    const isAccount = fieldName === 'glAccount';
+    const isDistributionRule = fieldName === 'distRule';
+    const isPaymentTerms = fieldName === 'buyerPaymentTerms' || fieldName === 'sellerPaymentTerms';
+    const isSellerItem = fieldName === 'sellerItem';
+    const isStCode = fieldName === 'stcode';
+    const udfOptionsByField = {
+      costSheet: getUdfLookupOptions(['CostSheet', 'Cost Sheet', 'Cost-Sheet', 'U_Cost_Sheet']),
+      packingType: getUdfLookupOptions(['PackingType', 'Packing Type', 'Packing-Type', 'U_PackingType']),
+      containerType: getUdfLookupOptions(['ContainerType', 'Container Type', 'U_ContainerType']),
+      stcode: getUdfLookupOptions(['STCODE', 'StatisticalCode', 'Statistical Code', 'U_STCODE']),
+      blanketAgreementNo: getUdfLookupOptions(['BlanketAgreementNo', 'Blanket Agreement No']),
+    };
+    const options = isAccount
+      ? accountLookupOptions
+      : isDistributionRule
+        ? distributionRuleLookupOptions
+        : isPaymentTerms
+          ? paymentTermLookupOptions
+          : isSellerItem
+            ? itemLookupOptions
+            : udfOptionsByField[fieldName] || [];
+
+    setLineLookupModal({
+      open: true,
+      lineIndex,
+      field: fieldName,
+      udfKey: udfField?.key || '',
+      title: isAccount ? 'List of G/L Accounts'
+        : isDistributionRule ? 'List of Distribution Rules'
+        : isPaymentTerms ? 'List of Payment Terms'
+        : isSellerItem ? 'List of Items'
+        : isStCode ? 'List of Statistical Codes'
+        : `List of ${column?.label || fieldName}`,
+      options,
+      searchPlaceholder: isAccount ? 'Search G/L accounts'
+        : isDistributionRule ? 'Search distribution rules'
+        : isPaymentTerms ? 'Search payment terms'
+        : isSellerItem ? 'Search items'
+        : 'Search values',
+      emptyMessage: isAccount ? 'No G/L accounts found'
+        : isDistributionRule ? 'No distribution rules found'
+        : isPaymentTerms ? 'No payment terms found'
+        : isSellerItem ? 'No items found'
+        : 'No values found',
+      columns: isAccount
+        ? [
+            { key: 'accountNumber', label: 'Account Number', width: 150, primary: true },
+            { key: 'accountName', label: 'Account Name' },
+            { key: 'accountBalance', label: 'Account Balance', width: 130, align: 'right' },
+            { key: 'inactive', label: 'Inactive', width: 90 },
+          ]
+        : isDistributionRule
+          ? [
+              { key: 'factorCode', label: 'Distr. Rule', width: 140, primary: true },
+              { key: 'factorDescription', label: 'Description' },
+            ]
+          : isPaymentTerms
+            ? [
+                { key: 'paymentTermCode', label: 'Code', width: 120, primary: true },
+                { key: 'paymentTermName', label: 'Payment Terms' },
+              ]
+            : isSellerItem
+              ? [
+                  { key: 'itemCode', label: 'Item No.', width: 150, primary: true },
+                  { key: 'itemName', label: 'Item Description' },
+                  { key: 'purchaseUnit', label: 'UoM', width: 100 },
+                ]
+              : null,
+    });
+  };
+
+  const closeLineLookup = () => {
+    setLineLookupModal((prev) => ({ ...prev, open: false, lineIndex: -1, field: '', udfKey: '' }));
+  };
+
+  const handleLineLookupSelect = (option) => {
+    if (lineLookupModal.lineIndex < 0 || !lineLookupModal.field) return;
+    const selectedValue = option?.value || '';
+    setLines((prev) => prev.map((line, index) => {
+      if (index !== lineLookupModal.lineIndex) return line;
+      if (lineLookupModal.udfKey) {
+        return {
+          ...line,
+          [lineLookupModal.field]: selectedValue,
+          udf: {
+            ...(line.udf || {}),
+            [lineLookupModal.udfKey]: selectedValue,
+          },
+        };
+      }
+
+      const next = { ...line, [lineLookupModal.field]: selectedValue };
+      if (lineLookupModal.field === 'glAccount') {
+        next.glAccountName = option?.accountName || option?.description || '';
+      }
+      if (lineLookupModal.field === 'sellerItem') {
+        next.sellerItem = selectedValue;
+      }
+      return next;
+    }));
+    markDirty();
+    closeLineLookup();
+  };
 
   // ── GST Logic ─────────────────────────────────────────────────────────────
   const applyGstLogic = useCallback(async () => {
@@ -1227,6 +1463,9 @@ function APInvoice() {
           next.itemDescription = item.ItemName || next.itemDescription;
           next.hsnCode = item.HSNCode || next.hsnCode || '';
           next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
+          next.glAccount = next.glAccount || item.PurchaseAccount || item.PurchaseAcct || item.ExpenseAccount || item.ExpensesAccount || item.ExpensesAc || '';
+          const glAccount = accountLookupOptions.find((account) => String(account.value) === String(next.glAccount || ''));
+          next.glAccountName = next.glAccountName || glAccount?.accountName || '';
 
           // Auto-assign default warehouse
           if (item.DefaultWarehouse) {
@@ -1807,7 +2046,7 @@ function APInvoice() {
         udf: buildPurchaseOrderLineUdfPayload(line, rowUdfDefinitions, formSettings),
       }));
       const payload = {
-        company_id: PURCHASE_ORDER_COMPANY_ID,
+        company_id: activeCompanyId,
         header: prep,
         lines: payloadLines,
         freightCharges: freightModal.freightCharges,
@@ -2133,6 +2372,7 @@ function APInvoice() {
                 branches={refData.branches}
                 onOpenHSNModal={openHSNModal}
                 onOpenItemModal={openItemModal}
+                onOpenLineLookup={openLineLookup}
                 getBranchName={getBranchName}
                 matrixFields={BASE_MATRIX_COLUMNS}
                 formSettings={formSettings}
@@ -2409,6 +2649,18 @@ function APInvoice() {
         onClose={closeHSNModal}
         onSelect={handleHSNSelect}
         mode={hsnModal.fieldName === 'sac' ? 'sac' : 'hsn'}
+      />
+
+      <LineValueLookupModal
+        isOpen={lineLookupModal.open}
+        onClose={closeLineLookup}
+        onSelect={handleLineLookupSelect}
+        options={lineLookupModal.options}
+        title={lineLookupModal.title}
+        searchPlaceholder={lineLookupModal.searchPlaceholder}
+        emptyMessage={lineLookupModal.emptyMessage}
+        columns={lineLookupModal.columns}
+        allowCreate={false}
       />
 
       {/* Business Partner Modal */}

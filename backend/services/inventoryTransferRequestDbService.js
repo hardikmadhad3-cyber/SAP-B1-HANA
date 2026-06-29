@@ -30,6 +30,19 @@ const getTableColumns = async (tableName) => {
   return new Set(rows.map((row) => row.COLUMN_NAME));
 };
 
+const quoteSqlIdentifier = (identifier) => `[${String(identifier || '').replace(/]/g, ']]')}]`;
+
+const getColumnName = (columns, columnName) => (
+  [...columns].find((candidate) => String(candidate).toLowerCase() === String(columnName).toLowerCase())
+);
+
+const optionalColumn = (columns, tableAlias, columnName, alias, fallback = 'NULL') => {
+  const actualColumnName = getColumnName(columns, columnName);
+  return actualColumnName
+    ? `${tableAlias}.${quoteSqlIdentifier(actualColumnName)} AS ${quoteSqlIdentifier(alias)}`
+    : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
+};
+
 const getItems = async () => {
   const [itemRows, priceRows] = await Promise.all([
     safe(
@@ -87,7 +100,10 @@ const getItems = async () => {
 
 const getWarehouses = async () => {
   const warehouseColumns = await getTableColumns('OWHS');
-  const locationExpression = warehouseColumns.has('Location') ? '[Location]' : 'NULL';
+  const locationColumn = getColumnName(warehouseColumns, 'Location');
+  const branchColumn = getColumnName(warehouseColumns, 'BPLId') || getColumnName(warehouseColumns, 'BPLid');
+  const locationExpression = locationColumn ? quoteSqlIdentifier(locationColumn) : 'NULL';
+  const branchExpression = branchColumn ? quoteSqlIdentifier(branchColumn) : 'NULL';
 
   return safe(
     db.query(`
@@ -95,7 +111,7 @@ const getWarehouses = async () => {
         WhsCode,
         WhsName,
         City,
-        BPLId AS BranchId,
+        ${branchExpression} AS BranchId,
         ${locationExpression} AS LocationCode
       FROM OWHS
       WHERE ISNULL(Inactive, 'N') <> 'Y'
@@ -150,15 +166,22 @@ const getPriceLists = async () =>
     }))
   );
 
-const getBranches = async () =>
-  safe(
+const getBranches = async () => {
+  const branchColumns = await getTableColumns('OBPL');
+  const idColumn = getColumnName(branchColumns, 'BPLId') || getColumnName(branchColumns, 'BPLID');
+  const nameColumn = getColumnName(branchColumns, 'BPLName');
+  const disabledColumn = getColumnName(branchColumns, 'Disabled');
+
+  if (!idColumn || !nameColumn) return [];
+
+  return safe(
     db.query(`
       SELECT
-        BPLId,
-        BPLName
+        ${quoteSqlIdentifier(idColumn)} AS BPLId,
+        ${quoteSqlIdentifier(nameColumn)} AS BPLName
       FROM OBPL
-      WHERE ISNULL(Disabled, 'N') <> 'Y'
-      ORDER BY BPLName
+      ${disabledColumn ? `WHERE ISNULL(${quoteSqlIdentifier(disabledColumn)}, 'N') <> 'Y'` : ''}
+      ORDER BY ${quoteSqlIdentifier(nameColumn)}
     `)
   ).then((rows) =>
     rows.map((row) => ({
@@ -166,6 +189,7 @@ const getBranches = async () =>
       name: row.BPLName,
     }))
   );
+};
 
 const getBusinessPartners = async () =>
   safe(
@@ -299,6 +323,7 @@ const getInventoryTransferRequestList = async () =>
   );
 
 const getInventoryTransferRequest = async (docEntry) => {
+  const headerColumns = await getTableColumns('OWTQ');
   const headerRows = await safe(
     db.query(
       `
@@ -315,7 +340,7 @@ const getInventoryTransferRequest = async (docEntry) => {
           C1.Name AS ContactPersonName,
           T0.ShipToCode,
           T0.Address,
-          T0.BPLId AS BranchId,
+          ${optionalColumn(headerColumns, 'T0', 'BPLId', 'BranchId')},
           C2.ListNum AS PriceListNum,
           T0.Filler AS FromWarehouse,
           T0.ToWhsCode AS ToWarehouse,

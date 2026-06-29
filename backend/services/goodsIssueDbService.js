@@ -26,6 +26,17 @@ const getTableColumns = async (tableName) => {
   return new Set(rows.map((row) => row.COLUMN_NAME));
 };
 
+const getColumnName = (columns, columnName) => (
+  [...columns].find((candidate) => String(candidate).toLowerCase() === String(columnName).toLowerCase())
+);
+
+const optionalColumn = (columns, tableAlias, columnName, alias, fallback = 'NULL') => {
+  const actualColumnName = getColumnName(columns, columnName);
+  return actualColumnName
+    ? `${tableAlias}.${quoteSqlIdentifier(actualColumnName)} AS ${quoteSqlIdentifier(alias)}`
+    : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
+};
+
 const quoteSqlIdentifier = (identifier) => `[${String(identifier || '').replace(/]/g, ']]')}]`;
 
 const getItems = async () => {
@@ -117,14 +128,17 @@ const getBatchesByItem = async (itemCode, whsCode) => {
 
 const getWarehouses = async () => {
   const warehouseColumns = await getTableColumns('OWHS');
-  const locationExpression = warehouseColumns.has('Location') ? '[Location]' : 'NULL';
+  const locationColumn = getColumnName(warehouseColumns, 'Location');
+  const branchColumn = getColumnName(warehouseColumns, 'BPLId') || getColumnName(warehouseColumns, 'BPLid');
+  const locationExpression = locationColumn ? quoteSqlIdentifier(locationColumn) : 'NULL';
+  const branchExpression = branchColumn ? quoteSqlIdentifier(branchColumn) : 'NULL';
 
   return safe(
     db.query(`
       SELECT
         WhsCode,
         WhsName,
-        BPLId AS BranchId,
+        ${branchExpression} AS BranchId,
         ${locationExpression} AS LocationCode
       FROM OWHS
       WHERE ISNULL(Inactive, 'N') <> 'Y'
@@ -211,15 +225,22 @@ const getPriceLists = async () =>
     }))
   );
 
-const getBranches = async () =>
-  safe(
+const getBranches = async () => {
+  const branchColumns = await getTableColumns('OBPL');
+  const idColumn = getColumnName(branchColumns, 'BPLId') || getColumnName(branchColumns, 'BPLID');
+  const nameColumn = getColumnName(branchColumns, 'BPLName');
+  const disabledColumn = getColumnName(branchColumns, 'Disabled');
+
+  if (!idColumn || !nameColumn) return [];
+
+  return safe(
     db.query(`
       SELECT
-        BPLId,
-        BPLName
+        ${quoteSqlIdentifier(idColumn)} AS BPLId,
+        ${quoteSqlIdentifier(nameColumn)} AS BPLName
       FROM OBPL
-      WHERE ISNULL(Disabled, 'N') <> 'Y'
-      ORDER BY BPLName
+      ${disabledColumn ? `WHERE ISNULL(${quoteSqlIdentifier(disabledColumn)}, 'N') <> 'Y'` : ''}
+      ORDER BY ${quoteSqlIdentifier(nameColumn)}
     `)
   ).then((rows) =>
     rows.map((row) => ({
@@ -227,6 +248,7 @@ const getBranches = async () =>
       name: row.BPLName,
     }))
   );
+};
 
 const getGoodsIssueList = async () =>
   safe(
@@ -261,6 +283,7 @@ const getGoodsIssueList = async () =>
   );
 
 const getGoodsIssue = async (docEntry) => {
+  const headerColumns = await getTableColumns('OIGE');
   const headerRows = await safe(
     db.query(
       `
@@ -271,7 +294,7 @@ const getGoodsIssue = async (docEntry) => {
           T0.DocDate,
           T0.TaxDate,
           T0.Ref2,
-          T0.BPLId AS BranchId,
+          ${optionalColumn(headerColumns, 'T0', 'BPLId', 'BranchId')},
           T0.Comments,
           T0.JrnlMemo,
           CASE

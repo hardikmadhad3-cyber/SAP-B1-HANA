@@ -74,7 +74,7 @@ export default function GeneralTab({ form, onChange, onDefineManufacturer, mode 
             </div>
 
             {/* Manage Item By Section - Standalone */}
-            <ManageItemBySection form={form} onChange={onChange} mode={mode} />
+            <ManageItemBySection form={form} onChange={onChange} />
           </div>
 
           <div style={{ marginTop: "30px" }}>
@@ -126,6 +126,19 @@ export default function GeneralTab({ form, onChange, onDefineManufacturer, mode 
               <span>To</span>
               <input type="date" className="im-field__input" style={{ width: "120px" }} name="ValidTo" value={form.ValidTo || ""} onChange={onChange} />
             </div>
+          </div>
+
+          <div className="im-field" style={{ marginTop: "38px" }}>
+            <label className="im-field__label">Advanced Rule Type</label>
+            <select
+              className="im-field__select"
+              name="TypeOfAdvancedRules"
+              value={form.TypeOfAdvancedRules || "toarGeneral"}
+              onChange={onChange}
+            >
+              <option value="toarGeneral">General</option>
+              <option value="toarWarehouse">Warehouse</option>
+            </select>
           </div>
         </div>
 

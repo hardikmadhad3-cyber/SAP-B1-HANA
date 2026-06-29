@@ -29,12 +29,14 @@ const ENTITY_CONFIGS = [
       DbName: 'Company DB / Schema',
       DbEncrypt: 'Use Encryption / SSL',
       DbTrustCert: 'Trust Server Certificate',
+      ReportServiceDbInstance: 'Report Service DB Instance',
     },
     columnHelpText: {
       DbDialect: 'Choose SQL Server for existing companies or HANA for SAP HANA company databases.',
       DbServer: 'SQL Server host or SAP HANA host.',
       DbPort: 'Optional. HANA commonly uses 30015; SQL Server can usually leave this blank when using an instance name.',
       DbName: 'SQL Server database name or HANA schema/company database name.',
+      ReportServiceDbInstance: 'Optional. Required by some SAP HANA Report Service logins, for example HDB@host:30113.',
     },
     columnOptions: {
       DbDialect: [
@@ -61,6 +63,7 @@ const ENTITY_CONFIGS = [
           'ReportServiceUsername',
           'ReportServicePassword',
           'ReportServiceCompanyDb',
+          'ReportServiceDbInstance',
           'ReportServiceDefaultSchema',
           'ReportServiceRejectUnauthorized',
         ],

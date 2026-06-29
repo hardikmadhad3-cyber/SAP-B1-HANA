@@ -581,7 +581,7 @@ const decorateReportServiceConnectionError = (error, action, config) => {
   const detail = code ? ` (${code})` : '';
   const wrapped = new Error(
     `Could not connect to SAP Report Service at ${baseUrl} while trying to ${action}${detail}. ` +
-    `Check the selected company's SAP Report Service Base URL (${source}) and confirm port 60020 is reachable from this backend server.`,
+    `Check the selected company's SAP Report Service Base URL (${source}) and confirm the configured host and port are reachable from this backend server.`,
   );
 
   wrapped.statusCode = code === 'ETIMEDOUT' || code === 'ECONNABORTED' ? 504 : 502;
@@ -628,6 +628,7 @@ const getReportSessionKey = (config) => [
   config.username,
   hashSecret(config.password),
   config.companyDb,
+  config.dbInstance,
 ].map((value) => String(value || '').trim().toLowerCase()).join('|');
 
 const ensureReportLoginConfig = (config) => {
@@ -692,17 +693,23 @@ const decorateReportServiceAuthorizationError = (error, action, config) => {
 
 const loginToReportServiceWithConfig = async (reportConfig) => {
   const normalizedCompanyDb = String(reportConfig.companyDb || '').trim();
+  const normalizedDbInstance = String(reportConfig.dbInstance || '').trim();
   ensureReportLoginConfig(reportConfig);
 
   let response;
+  const loginPayload = {
+    CompanyDB: normalizedCompanyDb,
+    UserName: reportConfig.username,
+    Password: reportConfig.password,
+  };
+
+  if (normalizedDbInstance) {
+    loginPayload.DBInstance = normalizedDbInstance;
+  }
 
   try {
     await assertReportServiceReachable(reportConfig);
-    response = await getReportClient(reportConfig).post('/login', {
-      CompanyDB: normalizedCompanyDb,
-      UserName: reportConfig.username,
-      Password: reportConfig.password,
-    });
+    response = await getReportClient(reportConfig).post('/login', loginPayload);
   } catch (error) {
     throw decorateReportServiceConnectionError(
       decorateReportServiceAuthorizationError(error, 'log in', reportConfig),

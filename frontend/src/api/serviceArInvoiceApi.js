@@ -11,11 +11,12 @@ export const fetchServiceARInvoiceCustomerDetails = (customerCode) =>
 export const fetchServiceARInvoiceCustomerOptions = (params = {}) =>
   client.get(`${API_BASE}/customers/search`, { params });
 
-export const fetchServiceARInvoiceSeries = (date = '', transactionType = '') =>
+export const fetchServiceARInvoiceSeries = (date = '', transactionType = '', branch = '') =>
   client.get(`${API_BASE}/series`, {
     params: {
       ...(date ? { date } : {}),
       ...(transactionType ? { transactionType } : {}),
+      ...(branch ? { branch } : {}),
     },
   });
 
