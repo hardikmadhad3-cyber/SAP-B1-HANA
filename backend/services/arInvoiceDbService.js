@@ -735,6 +735,9 @@ ORDER BY
     DocSubType: s.DocSubType || '',
     BPLId: s.BPLId != null ? String(s.BPLId) : '',
     IsDefault: Number(s.IsDefault || 0) === 1,
+    FinancialYear: s.FinancialYear || '',
+    FromDate: s.FromDate || null,
+    ToDate: s.ToDate || null,
   }));
 
   return filterSeriesByTransactionType(series, transactionType);

@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS Companies (
   ReportServiceUsername TEXT NULL,
   ReportServicePassword TEXT NULL,
   ReportServiceCompanyDb TEXT NULL,
+  ReportServiceDbInstance TEXT NULL,
   ReportServiceDefaultSchema TEXT NULL,
   ReportServiceRejectUnauthorized INTEGER NULL,
   DbServer TEXT NULL,

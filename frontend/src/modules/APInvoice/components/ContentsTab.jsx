@@ -434,7 +434,7 @@ export default function ContentsTab({
         return renderUdfLookupCell(mergedField, line, rowIndex, 'sac', 'Select SAC');
       }
 
-      if (column.key === 'freight1TaxCode' || column.key === 'stcode') {
+      if (column.key === 'freight1TaxCode') {
         return renderUdfTaxCodeCell(mergedField, line, rowIndex);
       }
 
@@ -569,7 +569,7 @@ export default function ContentsTab({
       );
     }
 
-    if (column.key === 'taxCode' || column.key === 'freight1TaxCode' || column.key === 'stcode') {
+    if (column.key === 'taxCode' || column.key === 'freight1TaxCode') {
       return (
         <TaxCodeLookup
           className="po-grid__input"

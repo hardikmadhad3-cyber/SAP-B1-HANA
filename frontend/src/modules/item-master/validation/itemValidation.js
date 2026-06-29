@@ -107,34 +107,8 @@ export const validateItemBusinessRules = (form) => {
   return errors;
 };
 
-export const validateManageItemByRules = (form) => {
-  const errors = [];
-  const manageItemBy = form.ManageItemBy || "None";
-  
-  if (manageItemBy === "Serial") {
-    if (!form.SerialGenerationType || form.SerialGenerationType === "") {
-      errors.push("Serial Generation Type is required for serial items.");
-    }
-    if (form.SerialGenerationType === "Auto") {
-      if (!form.SerialNumberLength || isNaN(form.SerialNumberLength) || parseInt(form.SerialNumberLength) <= 0) {
-        errors.push("Serial Number Length is required and must be a positive number for auto-generated serials.");
-      }
-      if (!form.StartingSerialNumber || form.StartingSerialNumber.trim() === "") {
-        errors.push("Starting Serial Number is required for auto-generated serials.");
-      }
-    }
-  }
-  
-  if (manageItemBy === "Batch") {
-    if (!form.BatchGenerationType || form.BatchGenerationType === "") {
-      errors.push("Batch Generation Type is required for batch items.");
-    }
-    if (form.BatchGenerationType === "Auto" && (!form.BatchNumberPrefix || form.BatchNumberPrefix.trim() === "")) {
-      errors.push("Batch Number Prefix is required for auto-generated batches.");
-    }
-  }
-  
-  return errors;
+export const validateManageItemByRules = () => {
+  return [];
 };
 
 export const validateNumericFields = (form) => {
@@ -240,6 +214,14 @@ export const applySmartDefaults = (form, fieldName, value) => {
       if (!newForm.GLMethod) {
         newForm.GLMethod = 'glm_WH';
       }
+    }
+  }
+
+  if (fieldName === 'ManageItemBy') {
+    newForm.ManageSerialNumbers = value === 'Serial' ? 'tYES' : 'tNO';
+    newForm.ManageBatchNumbers = value === 'Batch' ? 'tYES' : 'tNO';
+    if (value === 'Serial' || value === 'Batch') {
+      newForm.CostAccountingMethod = 'bis_SNB';
     }
   }
   

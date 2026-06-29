@@ -49,6 +49,13 @@ const CUSTOM_UDF_COLUMN_KEYS = new Set([
   'commission',
   'sellerBrokeragePerQty',
 ]);
+const UDF_LOOKUP_COLUMN_KEYS = new Set([
+  'U_Cost_Sheet',
+  'U_PackingType',
+  'U_ContainerType',
+  'stcode',
+  'sellerPaymentTermsRepeat',
+]);
 const pickerButtonStyle = {
   padding: '0 6px',
   fontSize: 11,
@@ -274,6 +281,14 @@ export default function ContentsTab({
     return (parseNumber(lineTotals.total) - parseNumber(lineTotals.beforeTax)).toFixed(2);
   };
 
+  const getPriceAfterDiscountDisplay = (line) => {
+    if (String(line.priceAfterDiscount ?? '').trim()) return line.priceAfterDiscount;
+    const price = parseNumber(line.unitPrice);
+    if (!price) return '';
+    const discount = parseNumber(line.stdDiscount);
+    return (price * (1 - discount / 100)).toFixed(2);
+  };
+
   const renderLookupInput = (column, line, i, title) => {
     const errors = valErrors.lines[i] || {};
     return (
@@ -332,6 +347,32 @@ export default function ContentsTab({
               onClick={() => onOpenLineLookup && onOpenLineLookup('sItem', i, boundUdf)}
               style={pickerButtonStyle}
               title="Select S_Item"
+              disabled={disabled}
+            >
+              ...
+            </button>
+          </div>
+        </td>
+      );
+    }
+
+    if (boundUdf && UDF_LOOKUP_COLUMN_KEYS.has(column.key)) {
+      return (
+        <td key={column.key}>
+          <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+            <input
+              className={`del-grid__input${options.error ? ' del-field__input--error' : ''}`}
+              style={{ flex: 1, textAlign: 'left' }}
+              value={value}
+              onChange={handleChange}
+              disabled={disabled}
+              title={String(value || '')}
+            />
+            <button
+              type="button"
+              onClick={() => onOpenLineLookup && onOpenLineLookup(column.key, i, boundUdf)}
+              style={pickerButtonStyle}
+              title={`Select ${column.label || boundUdf.label || column.key}`}
               disabled={disabled}
             >
               ...
@@ -491,6 +532,11 @@ export default function ContentsTab({
         });
       case 'taxAmount':
         return renderGenericInput(column, line, i, { value: getTaxAmountDisplay(line, lineTotals) });
+      case 'priceAfterDiscount':
+        return renderGenericInput({ ...column, readOnly: true }, line, i, {
+          value: getPriceAfterDiscountDisplay(line),
+          style: { background: '#f5f8fc', cursor: 'not-allowed' },
+        });
       case 'assessableValue':
         return renderGenericInput(column, line, i, { value: getLineValue(line, column, column.boundUdf) || lineTotals.beforeTax });
       case 'whse':
@@ -518,6 +564,17 @@ export default function ContentsTab({
         );
       case 'glAccount':
         return renderLookupInput(column, line, i, 'Select G/L Account');
+      case 'blanketAgreementNo':
+        return renderLookupInput(column, line, i, 'Select Blanket Agreement');
+      case 'buyerPaymentTerms':
+        return renderLookupInput(column, line, i, 'Select Buyer Payment Terms');
+      case 'sellerPaymentTerms':
+      case 'sellerPaymentTermsRepeat':
+        return renderLookupInput(column, line, i, 'Select Seller Payment Terms');
+      case 'stcode':
+        return renderLookupInput(column, line, i, 'Select Statistical Code');
+      case 'sellerItem':
+        return renderLookupInput(column, line, i, 'Select S_Item');
       case 'distRule':
         return renderLookupInput(column, line, i, 'Select Distribution Rule');
       case 'cogsDistRule':

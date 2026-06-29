@@ -117,6 +117,9 @@ const buildCompanyConfig = (company = {}) => {
   const reportPassword = hasSelectedCompany
     ? firstText(company.ReportServicePassword)
     : firstText(company.ReportServicePassword, env.reportServicePassword);
+  const reportDbInstance = hasSelectedCompany
+    ? firstText(company.ReportServiceDbInstance)
+    : firstText(company.ReportServiceDbInstance, env.reportServiceDbInstance);
 
   return {
     companyId: company.CompanyId ?? null,
@@ -146,6 +149,7 @@ const buildCompanyConfig = (company = {}) => {
       username: reportUsername,
       password: reportPassword,
       companyDb: reportCompanyDb,
+      dbInstance: reportDbInstance,
       defaultSchema: reportDefaultSchema,
       rejectUnauthorized: boolFromConfig(
         company.ReportServiceRejectUnauthorized,
@@ -155,6 +159,7 @@ const buildCompanyConfig = (company = {}) => {
         baseUrl: sourceForText(company.ReportServiceBaseUrl, hasSelectedCompany ? '' : env.reportServiceBaseUrl),
         username: sourceForText(company.ReportServiceUsername, hasSelectedCompany ? '' : env.reportServiceUsername),
         password: sourceForText(company.ReportServicePassword, hasSelectedCompany ? '' : env.reportServicePassword),
+        dbInstance: sourceForText(company.ReportServiceDbInstance, hasSelectedCompany ? '' : env.reportServiceDbInstance),
         companyDb: reportCompanyDbSource(company, !hasSelectedCompany),
         defaultSchema: reportDefaultSchemaSource(company, !hasSelectedCompany),
       },

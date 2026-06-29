@@ -80,10 +80,16 @@ const INIT_HEADER = {
   owner: '',
   remarks: '',
   discount: '',
+  discountAmount: '',
+  totalBeforeDiscount: '',
   totalDownPayment: '',
   freight: '',
   rounding: false,
+  roundingAmount: '',
+  wtaxAmount: '',
   appliedAmount: '',
+  balanceDue: '',
+  totalPaymentDue: '',
   shipToCode: '',
   shipToAddress: '',
   billToCode: '',
@@ -118,13 +124,25 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   glAccount: '',
   distRule: '',
   glAccountName: '',
+  discountPercent: '',
+  priceAfterDisc: '',
   taxCode: '',
   wtaxLiable: 'Yes',
   totalLC: '',
   taxAmountLC: '',
   loc: '',
   locCode: '',
+  blanketAgreementNo: '',
+  costSheet: '',
+  packingType: '',
+  containerType: '',
+  grossWt: '',
+  totalPackage: '',
+  taxCodeRepeat: '',
+  price: '',
   saudaNodeRef: '',
+  specialRebate: '',
+  commision: '',
   brokPerQty: '',
   sItem: '',
   unitPrice: '',
@@ -146,6 +164,9 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   stcode: '',
   buyerTermsOfPayment: '',
   sellerTermsOfPayment: '',
+  sellerTermsOfPaymentRepeat: '',
+  fixBrokBuyer: '',
+  fixBrockSeller: '',
   freightPurchase: '',
   freightSales: '',
   freightProvider: '',
@@ -162,22 +183,27 @@ const CONTENT_COLUMNS = [
   { key: 'sac', label: 'SAC', width: 105, lookup: 'sac' },
   { key: 'description', label: 'Description', width: 220 },
   { key: 'glAccount', label: 'G/L Account', width: 140, lookup: 'account' },
-  { key: 'distRule', label: 'Distr. Rule', width: 120, lookup: 'distRule' },
   { key: 'glAccountName', label: 'G/L Account Name', width: 210, readOnly: true },
+  { key: 'discountPercent', label: 'Discount %', width: 105, numeric: true },
+  { key: 'priceAfterDisc', label: 'Price after Disc.', width: 145, numeric: true },
   { key: 'taxCode', label: 'Tax Code', width: 150, lookup: 'tax' },
   { key: 'wtaxLiable', label: 'WTax Liable', width: 95, lookup: 'yesNo' },
   { key: 'totalLC', label: 'Total (LC)', width: 115, numeric: true },
-  { key: 'taxAmountLC', label: 'Tax Amount (LC)', width: 125, readOnly: true },
   { key: 'loc', label: 'Loc.', width: 100, lookup: 'location' },
-  { key: 'saudaNodeRef', label: 'Sauda Node Ref', width: 135 },
-  { key: 'brokPerQty', label: 'BrokPerQty', width: 105, numeric: true },
-  { key: 'sItem', label: 'S_Item', width: 110, lookup: 'item' },
-  { key: 'unitPrice', label: 'Unit Price', width: 110, numeric: true },
-  { key: 'sQty', label: 'S_Qty', width: 90, numeric: true },
+  { key: 'blanketAgreementNo', label: 'Blanket Agreement No.', width: 170 },
+  { key: 'costSheet', label: 'Cost-Sheet', width: 125 },
+  { key: 'packingType', label: 'Packing-Type', width: 135 },
+  { key: 'containerType', label: 'Container Type', width: 135 },
+  { key: 'grossWt', label: 'GrossWt', width: 110, numeric: true },
+  { key: 'totalPackage', label: 'Total-Package', width: 130, numeric: true },
+  { key: 'taxCodeRepeat', label: 'TaxCode', width: 110, readOnly: true },
+  { key: 'price', label: 'Price', width: 95, numeric: true },
   { key: 'sellerBrokerage', label: 'Seller Brokerage', width: 145 },
   { key: 'buyerBrokerage', label: 'Buyer Brokerage', width: 140 },
   { key: 'buyerDelivery', label: 'Buyer - Delivery', width: 140 },
   { key: 'sellerDelivery', label: 'Seller - Delivery', width: 145 },
+  { key: 'buyerTermsOfPayment', label: 'Buyer - Terms of payment', width: 205 },
+  { key: 'sellerTermsOfPayment', label: 'Seller - Terms of Payment', width: 210 },
   { key: 'buyerQuality', label: 'Buyer - Quality', width: 135 },
   { key: 'sellerQuality', label: 'Seller - Quality', width: 140 },
   { key: 'buyerPrice', label: 'Buyer - Price', width: 125 },
@@ -186,18 +212,171 @@ const CONTENT_COLUMNS = [
   { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', width: 215 },
   { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', width: 205 },
   { key: 'sellerBrokeragePercentage', label: 'Seller Brokerage in Percentage', width: 230, numeric: true },
-  { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', width: 165, numeric: true },
-  { key: 'sellerBillDiscount', label: 'Seller Bill Discount', width: 170, numeric: true },
   { key: 'stcode', label: 'STCODE', width: 115 },
-  { key: 'buyerTermsOfPayment', label: 'Buyer - Terms of payment', width: 205 },
-  { key: 'sellerTermsOfPayment', label: 'Seller - Terms of Payment', width: 210 },
-  { key: 'freightPurchase', label: 'Freight Purchase', width: 150, numeric: true },
-  { key: 'freightSales', label: 'Freight Sales', width: 130, numeric: true },
-  { key: 'freightProvider', label: 'Freight Provider', width: 150 },
-  { key: 'freightProviderName', label: 'Freight Provider Name', width: 190 },
-  { key: 'documentCreated', label: 'Document Created', width: 150, type: 'date' },
-  { key: 'brokerageNumber', label: 'Brokerage Number', width: 155 },
+  { key: 'sItem', label: 'S_Item', width: 110, lookup: 'item' },
+  { key: 'sQty', label: 'S_Qty', width: 90, numeric: true },
+  { key: 'specialRebate', label: 'Special Rebate', width: 135, numeric: true },
+  { key: 'commision', label: 'Commision', width: 115, numeric: true },
+  { key: 'brokPerQty', label: 'BrokPerQty', width: 105, numeric: true },
+  { key: 'fixBrokBuyer', label: 'FIX Brok BUYER', width: 135, numeric: true },
+  { key: 'fixBrockSeller', label: 'Fix Brock Seller', width: 140, numeric: true },
+  { key: 'sellerTermsOfPaymentRepeat', label: 'Seller - Terms of Payment', width: 210 },
+  { key: 'distRule', label: 'Distr. Rule', width: 120, lookup: 'distRule', visible: false },
+  { key: 'taxAmountLC', label: 'Tax Amount (LC)', width: 125, readOnly: true, visible: false },
+  { key: 'saudaNodeRef', label: 'Sauda Node Ref', width: 135, visible: false },
+  { key: 'unitPrice', label: 'Unit Price', width: 110, numeric: true, visible: false },
+  { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', width: 165, numeric: true, visible: false },
+  { key: 'sellerBillDiscount', label: 'Seller Bill Discount', width: 170, numeric: true, visible: false },
+  { key: 'freightPurchase', label: 'Freight Purchase', width: 150, numeric: true, visible: false },
+  { key: 'freightSales', label: 'Freight Sales', width: 130, numeric: true, visible: false },
+  { key: 'freightProvider', label: 'Freight Provider', width: 150, visible: false },
+  { key: 'freightProviderName', label: 'Freight Provider Name', width: 190, visible: false },
+  { key: 'documentCreated', label: 'Document Created', width: 150, type: 'date', visible: false },
+  { key: 'brokerageNumber', label: 'Brokerage Number', width: 155, visible: false },
 ];
+
+const SERVICE_COLUMN_TOKEN_TO_KEY = {
+  SAC: 'sac',
+  SACCODE: 'sac',
+  SACENTRY: 'sac',
+  DESCRIPTION: 'description',
+  ITEMDESCRIPTION: 'description',
+  DSCRIPTION: 'description',
+  GLACCOUNT: 'glAccount',
+  ACCOUNT: 'glAccount',
+  ACCOUNTCODE: 'glAccount',
+  ACCTCODE: 'glAccount',
+  DISTRRULE: 'distRule',
+  DISTRIBUTIONRULE: 'distRule',
+  OCRCODE: 'distRule',
+  GLACCOUNTNAME: 'glAccountName',
+  ACCOUNTNAME: 'glAccountName',
+  ACCTNAME: 'glAccountName',
+  DISCOUNTPERCENT: 'discountPercent',
+  DISCOUNTPRCNT: 'discountPercent',
+  DISCOUNTPERCENTAGE: 'discountPercent',
+  PRICEAFTERDISC: 'priceAfterDisc',
+  PRICEAFTERDISCOUNT: 'priceAfterDisc',
+  TAXCODE: 'taxCode',
+  WTAXLIABLE: 'wtaxLiable',
+  WTLIABLE: 'wtaxLiable',
+  TOTALLC: 'totalLC',
+  TOTAL: 'totalLC',
+  LINETOTAL: 'totalLC',
+  TAXAMOUNTLC: 'taxAmountLC',
+  TAXAMOUNT: 'taxAmountLC',
+  VATSUM: 'taxAmountLC',
+  LOC: 'loc',
+  LOCATION: 'loc',
+  LOCATIONCODE: 'loc',
+  LOCCODE: 'loc',
+  BLANKETAGREEMENTNO: 'blanketAgreementNo',
+  AGRNO: 'blanketAgreementNo',
+  COSTSHEET: 'costSheet',
+  PACKINGTYPE: 'packingType',
+  CONTAINERTYPE: 'containerType',
+  GROSSWT: 'grossWt',
+  GROSSWEIGHT: 'grossWt',
+  TOTALPACKAGE: 'totalPackage',
+  TAXCODEREPEAT: 'taxCodeRepeat',
+  TAXCODEUDF: 'taxCodeRepeat',
+  SAUDANODEREF: 'saudaNodeRef',
+  SAUDANODHREF: 'saudaNodeRef',
+  BROKPERQTY: 'brokPerQty',
+  SITEM: 'sItem',
+  SITEMCODE: 'sItem',
+  UNITPRICE: 'unitPrice',
+  PRICE: 'price',
+  SQTY: 'sQty',
+  QUANTITY: 'sQty',
+  SPECIALREBATE: 'specialRebate',
+  COMMISION: 'commision',
+  COMMISSION: 'commision',
+  SELLERBROKERAGE: 'sellerBrokerage',
+  BUYERBROKERAGE: 'buyerBrokerage',
+  BUYERDELIVERY: 'buyerDelivery',
+  SELLERDELIVERY: 'sellerDelivery',
+  BUYERQUALITY: 'buyerQuality',
+  SELLERQUALITY: 'sellerQuality',
+  BUYERPRICE: 'buyerPrice',
+  SELLERPRICE: 'sellerPrice',
+  BUYERSPECIALINSTRUCTION: 'buyerSpecialInstruction',
+  SELLERSPECIALINSTRUCTION: 'sellerSpecialInstruction',
+  SELLERBROKERAGEAMTPER: 'sellerBrokerageAmtPer',
+  SELLERBROKERAGEINPERCENTAGE: 'sellerBrokeragePercentage',
+  BUYERBILLDISCOUNT: 'buyerBillDiscount',
+  SELLERBILLDISCOUNT: 'sellerBillDiscount',
+  STCODE: 'stcode',
+  BUYERTERMSOFPAYMENT: 'buyerTermsOfPayment',
+  SELLERTERMSOFPAYMENT: 'sellerTermsOfPayment',
+  SELLERTERMSOFPAYMENTREPEAT: 'sellerTermsOfPaymentRepeat',
+  FIXBROKBUYER: 'fixBrokBuyer',
+  FIXBROCKBUYER: 'fixBrokBuyer',
+  FIXBROKSELLER: 'fixBrockSeller',
+  FIXBROCKSELLER: 'fixBrockSeller',
+  FREIGHTPURCHASE: 'freightPurchase',
+  FREIGHTSALES: 'freightSales',
+  FREIGHTPROVIDER: 'freightProvider',
+  FREIGHTPROVIDERNAME: 'freightProviderName',
+  DOCUMENTCREATED: 'documentCreated',
+  BROKERAGENUMBER: 'brokerageNumber',
+};
+
+const normalizeServiceColumnToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]+/g, '');
+
+const getServiceColumnKey = (column = {}) => {
+  const candidates = [
+    column.key,
+    column.valueKey,
+    column.rendererKey,
+    column.sapField,
+    column.fieldName,
+    column.layoutFieldName,
+    column.columnUid,
+    column.columnTitle,
+    column.label,
+  ];
+
+  for (const candidate of candidates) {
+    const token = normalizeServiceColumnToken(candidate);
+    if (SERVICE_COLUMN_TOKEN_TO_KEY[token]) return SERVICE_COLUMN_TOKEN_TO_KEY[token];
+  }
+
+  return '';
+};
+
+const normalizeServiceMatrixColumns = (columns = []) => {
+  const liveByKey = new Map();
+  (Array.isArray(columns) ? columns : []).forEach((column) => {
+    const key = getServiceColumnKey(column);
+    if (key && !liveByKey.has(key)) liveByKey.set(key, column);
+  });
+
+  const orderedColumns = CONTENT_COLUMNS.map((baseColumn, index) => {
+    const liveColumn = liveByKey.get(baseColumn.key) || {};
+    const liveWidth = Number(liveColumn.width || liveColumn.minWidth);
+    return {
+      ...liveColumn,
+      ...baseColumn,
+      key: baseColumn.key,
+      label: baseColumn.label,
+      width: Number.isFinite(liveWidth) && liveWidth > 0 ? Math.max(liveWidth, baseColumn.width || 125) : baseColumn.width,
+      minWidth: Number.isFinite(liveWidth) && liveWidth > 0 ? Math.max(liveWidth, baseColumn.width || 125) : baseColumn.width,
+      order: index + 1,
+      columnOrder: index + 1,
+      visible: baseColumn.visible !== false,
+      active: liveColumn.active !== false,
+      readOnly: Boolean(baseColumn.readOnly || liveColumn.readOnly),
+    };
+  });
+
+  return orderedColumns;
+};
 
 const normalizeFieldName = (value) =>
   String(value || '')
@@ -291,6 +470,20 @@ const filterSeriesByTransactionType = (series = [], transactionType = '') => {
 
 const pickFirstSeries = (series = [], transactionType = '') => filterSeriesByTransactionType(series, transactionType)[0];
 
+const includeSelectedSeries = (series = [], selectedSeries = '', selectedSeriesName = '') => {
+  const selected = String(selectedSeries || '').trim();
+  if (!selected || selected === 'manual' || series.some((item) => String(item.Series || '') === selected)) {
+    return series;
+  }
+
+  return [{
+    Series: selected,
+    SeriesName: selectedSeriesName || selected,
+    NextNumber: '',
+    IsLoadedDocumentSeries: true,
+  }, ...series];
+};
+
 const LINE_LOOKUP_FIELDS = new Set([
   'buyerTermsOfPayment',
   'sellerTermsOfPayment',
@@ -326,6 +519,13 @@ const fmtAddr = (address) => {
 
 const getAddressState = (address) =>
   String(address?.State || address?.StateCode || address?.state || '').trim();
+
+const findAddressByCode = (addresses = [], addressCode = '') => {
+  const normalizedCode = String(addressCode || '').trim().toLowerCase();
+  return addresses.find((address) => (
+    String(address?.Address || address?.address || '').trim().toLowerCase() === normalizedCode
+  )) || addresses[0];
+};
 
 const mapAddressToModalForm = (address, existing = {}) => ({
   shipToCode: existing.shipToCode || '',
@@ -379,6 +579,7 @@ function ServiceARInvoicePage() {
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const requestedDocEntry = location.state?.serviceARInvoiceDocEntry;
   const handledCopyFromRef = useRef('');
+  const customerDetailsRequestRef = useRef(0);
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
@@ -511,8 +712,12 @@ function ServiceARInvoicePage() {
     [headerUdfDefinitions, refData.transaction_types, refData.transactionTypes],
   );
   const visibleSeries = useMemo(
-    () => filterSeriesByTransactionType(refData.series || [], header.transactionType),
-    [refData.series, header.transactionType],
+    () => includeSelectedSeries(
+      filterSeriesByTransactionType(refData.series || [], header.transactionType),
+      header.series,
+      header.seriesName
+    ),
+    [refData.series, header.transactionType, header.series, header.seriesName],
   );
 
   const accountLookupOptions = useMemo(() => accounts.map((account) => ({
@@ -687,16 +892,51 @@ function ServiceARInvoicePage() {
   }), [freightProviderLookupOptions, itemLookupOptions, locationLookupOptions, paymentTermLookupOptions, refData.price_options, refData.quality_options, serviceSacLookupOptions]);
 
   const totals = useMemo(() => {
+    if (currentDocEntry) {
+      const total = parseNum(header.totalPaymentDue);
+      const appliedAmount = parseNum(header.appliedAmount);
+      const lineSubtotal = lines.reduce((sum, line) => sum + parseNum(line.totalLC), 0);
+      const lineTax = lines.reduce((sum, line) => sum + parseNum(line.taxAmountLC), 0);
+      const tax = header.tax !== '' ? parseNum(header.tax) : lineTax;
+      const freight = parseNum(header.freight);
+      const downPayment = parseNum(header.totalDownPayment);
+      const wtaxAmount = parseNum(header.wtaxAmount);
+      const discountAmount = header.discountAmount !== ''
+        ? parseNum(header.discountAmount)
+        : lineSubtotal * parseNum(header.discount) / 100;
+      const explicitSubtotal = parseNum(header.totalBeforeDiscount);
+      const explicitRounding = parseNum(header.roundingAmount);
+      const subtotal = explicitSubtotal || lineSubtotal || Math.max(
+        0,
+        total + wtaxAmount + discountAmount + downPayment - freight - tax - explicitRounding
+      );
+      const derivedRounding = total + wtaxAmount + discountAmount + downPayment - subtotal - freight - tax;
+      const roundingAmount = explicitRounding || (Math.abs(derivedRounding) <= 1 ? derivedRounding : 0);
+      return {
+        subtotal,
+        tax,
+        discountAmount,
+        freight,
+        downPayment,
+        roundingAmount,
+        total,
+        appliedAmount,
+        balanceDue: header.balanceDue !== '' ? parseNum(header.balanceDue) : Math.max(0, total - appliedAmount),
+        wtaxAmount,
+      };
+    }
+
     const subtotal = lines.reduce((sum, line) => sum + parseNum(line.totalLC), 0);
     const tax = lines.reduce((sum, line) => sum + parseNum(line.taxAmountLC), 0);
     const discountAmount = subtotal * parseNum(header.discount) / 100;
     const freight = parseNum(header.freight);
     const downPayment = parseNum(header.totalDownPayment);
-    const total = Math.max(0, subtotal - discountAmount - downPayment) + freight + tax;
+    const roundingAmount = parseNum(header.roundingAmount);
+    const total = Math.max(0, subtotal - discountAmount - downPayment) + freight + tax + roundingAmount;
     const appliedAmount = parseNum(header.appliedAmount);
     const balanceDue = Math.max(0, total - appliedAmount);
-    return { subtotal, tax, discountAmount, freight, downPayment, total, appliedAmount, balanceDue, wtaxAmount: 0 };
-  }, [header.appliedAmount, header.discount, header.freight, header.totalDownPayment, lines]);
+    return { subtotal, tax, discountAmount, freight, downPayment, roundingAmount, total, appliedAmount, balanceDue, wtaxAmount: 0 };
+  }, [currentDocEntry, header.appliedAmount, header.balanceDue, header.discount, header.discountAmount, header.freight, header.roundingAmount, header.tax, header.totalBeforeDiscount, header.totalDownPayment, header.totalPaymentDue, header.wtaxAmount, lines]);
 
   useEffect(() => {
     const handler = (event) => {
@@ -727,6 +967,11 @@ function ServiceARInvoicePage() {
         ]);
         if (ignore) return;
 
+        const defaultBranch = String(
+          refRes.data?.default_branch ||
+          ((refRes.data?.branches || []).length === 1 ? refRes.data.branches[0]?.BPLId : '') ||
+          ''
+        );
         let nextRefData = {
           ...refRes.data,
           series: seriesRes.data?.series || refRes.data?.series || [],
@@ -734,9 +979,9 @@ function ServiceARInvoicePage() {
         const nextHeaderUdfs = nextRefData.udf_metadata?.header || [];
         const liveTransactionTypes = getTransactionTypeOptions(nextHeaderUdfs, nextRefData);
         const defaultTransactionType = liveTransactionTypes[0]?.value || '';
-        if (defaultTransactionType) {
+        if (defaultTransactionType || defaultBranch) {
           try {
-            const typedSeriesRes = await fetchServiceARInvoiceSeries(header.postingDate, defaultTransactionType);
+            const typedSeriesRes = await fetchServiceARInvoiceSeries(header.postingDate, defaultTransactionType, defaultBranch);
             if (ignore) return;
             nextRefData = {
               ...nextRefData,
@@ -747,11 +992,12 @@ function ServiceARInvoicePage() {
           }
         }
         const nextRowUdfs = applyServiceRowUdfDefaults(nextRefData.udf_metadata?.rows || []);
-        const nextMatrixColumns = buildMatrixColumnsFromSapLayout({
+        const layoutMatrixColumns = buildMatrixColumnsFromSapLayout({
           baseColumns: CONTENT_COLUMNS,
           layoutColumns: layoutRes?.data?.columns || [],
           fallbackColumns: CONTENT_COLUMNS,
         });
+        const nextMatrixColumns = normalizeServiceMatrixColumns(layoutMatrixColumns);
         const hasSapMatrixPreferences = Boolean((layoutRes?.data?.columns || []).length && layoutRes?.data?.source !== 'fallback');
         const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
         setHeaderUdfDefinitions(nextHeaderUdfs);
@@ -782,6 +1028,7 @@ function ServiceARInvoicePage() {
             ...prev,
             transactionType: prev.transactionType || defaultTransactionType,
             indicator: prev.indicator || defaultIndicator,
+            branch: prev.branch || defaultBranch || String(firstSeries?.BPLId || ''),
             series: firstSeries ? String(firstSeries.Series || '') : '',
             nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
           }));
@@ -811,8 +1058,47 @@ function ServiceARInvoicePage() {
         if (ignore) return;
         const doc = res.data?.service_ar_invoice;
         if (!doc) throw new Error('Service A/R Invoice was not returned.');
+        const loadedHeader = { ...doc.header };
+        if (loadedHeader.postingDate) {
+          try {
+            const seriesRes = await fetchServiceARInvoiceSeries(
+              loadedHeader.postingDate,
+              loadedHeader.transactionType || '',
+              loadedHeader.branch || ''
+            );
+            if (ignore) return;
+            const documentSeries = seriesRes.data?.series || [];
+            if (documentSeries.length) {
+              setRefData((prev) => ({ ...prev, series: documentSeries }));
+            }
+          } catch (_seriesError) {
+            // The selected document series is still injected into the disabled series control below.
+          }
+        }
+        if (loadedHeader.vendor) {
+          try {
+            const detailsRes = await fetchServiceARInvoiceCustomerDetails(loadedHeader.vendor);
+            if (ignore) return;
+            const shipToAddresses = detailsRes.data?.ship_to_addresses || detailsRes.data?.pay_to_addresses || [];
+            const billToAddresses = detailsRes.data?.bill_to_addresses || detailsRes.data?.pay_to_addresses || [];
+            const shipTo = findAddressByCode(shipToAddresses, loadedHeader.shipToCode);
+            const billTo = findAddressByCode(billToAddresses, loadedHeader.billToCode);
+            if (!String(loadedHeader.placeOfSupply || '').trim()) {
+              loadedHeader.placeOfSupply = getAddressState(shipTo) || getAddressState(billTo);
+            }
+            setRefData((prev) => ({
+              ...prev,
+              contacts: detailsRes.data?.contacts || [],
+              pay_to_addresses: detailsRes.data?.pay_to_addresses || [],
+              ship_to_addresses: detailsRes.data?.ship_to_addresses || [],
+              bill_to_addresses: detailsRes.data?.bill_to_addresses || [],
+            }));
+          } catch (_detailsError) {
+            // The invoice itself remains loadable when partner address lookup is unavailable.
+          }
+        }
         setCurrentDocEntry(doc.doc_entry);
-        setHeader((prev) => ({ ...prev, ...doc.header }));
+        setHeader((prev) => ({ ...prev, ...loadedHeader }));
         setHeaderUdfs(
           headerUdfDefinitions.length
             ? normalizeUdfState(headerUdfDefinitions, doc.header_udfs || {})
@@ -840,6 +1126,9 @@ function ServiceARInvoicePage() {
 
   const updateLineCalculatedValues = (line) => {
     const next = { ...line };
+    next.taxCodeRepeat = next.taxCode || '';
+    if (next.priceAfterDisc === '' && next.unitPrice !== '') next.priceAfterDisc = next.unitPrice;
+    if (next.price === '' && next.unitPrice !== '') next.price = next.unitPrice;
     const qty = parseNum(next.sQty);
     const price = parseNum(next.unitPrice);
     if (qty > 0 && price > 0) {
@@ -851,12 +1140,21 @@ function ServiceARInvoicePage() {
   };
 
   const loadCustomerDetails = async (customerCode) => {
-    if (!customerCode) return;
+    const normalizedCustomerCode = String(customerCode || '').trim();
+    const requestId = customerDetailsRequestRef.current + 1;
+    customerDetailsRequestRef.current = requestId;
+    if (!normalizedCustomerCode) {
+      setRefData((prev) => ({ ...prev, contacts: [] }));
+      setHeader((prev) => ({ ...prev, contactPerson: '' }));
+      return;
+    }
     try {
-      const res = await fetchServiceARInvoiceCustomerDetails(customerCode);
+      const res = await fetchServiceARInvoiceCustomerDetails(normalizedCustomerCode);
+      if (requestId !== customerDetailsRequestRef.current) return;
+      const contacts = res.data?.contacts || [];
       setRefData((prev) => ({
         ...prev,
-        contacts: res.data?.contacts || [],
+        contacts,
         pay_to_addresses: res.data?.pay_to_addresses || [],
         ship_to_addresses: res.data?.ship_to_addresses || [],
         bill_to_addresses: res.data?.bill_to_addresses || [],
@@ -872,6 +1170,9 @@ function ServiceARInvoicePage() {
           name: customer.CardName || prev.name,
           paymentTerms: customer.GroupNum != null ? String(customer.GroupNum) : prev.paymentTerms,
           currency: customer.Currency || prev.currency,
+          contactPerson: contacts.some((contact) => String(contact.CntctCode) === String(prev.contactPerson))
+            ? prev.contactPerson
+            : String(contacts[0]?.CntctCode ?? ''),
           placeOfSupply: prev.placeOfSupply || placeOfSupply,
           shipToCode: prev.shipToCode || shipTo?.Address || '',
           shipToAddress: prev.shipToAddress || fmtAddr(shipTo),
@@ -879,8 +1180,14 @@ function ServiceARInvoicePage() {
           billToAddress: prev.billToAddress || fmtAddr(billTo),
         }));
       }
-    } catch (_error) {
+    } catch (error) {
+      if (requestId !== customerDetailsRequestRef.current) return;
       setRefData((prev) => ({ ...prev, contacts: [] }));
+      setHeader((prev) => ({ ...prev, contactPerson: '' }));
+      setPageState((prev) => ({
+        ...prev,
+        error: error.response?.data?.message || error.message || 'Failed to load customer contacts.',
+      }));
     }
   };
 
@@ -892,6 +1199,7 @@ function ServiceARInvoicePage() {
       name: customer?.CardName || customer?.name || prev.name,
       currency: customer?.Currency || prev.currency,
       paymentTerms: customer?.GroupNum != null ? String(customer.GroupNum) : prev.paymentTerms,
+      contactPerson: '',
       placeOfSupply: '',
       shipToCode: '',
       shipToAddress: '',
@@ -962,6 +1270,7 @@ function ServiceARInvoicePage() {
         ...prev,
         vendor: value,
         name: customer?.CardName || customer?.name || prev.name,
+        contactPerson: '',
         placeOfSupply: '',
         shipToCode: '',
         shipToAddress: '',
@@ -986,7 +1295,7 @@ function ServiceARInvoicePage() {
       }));
       setPageState((prev) => ({ ...prev, seriesLoading: true }));
       try {
-        const res = await fetchServiceARInvoiceSeries(header.postingDate, value);
+        const res = await fetchServiceARInvoiceSeries(header.postingDate, value, header.branch);
         const nextSeries = res.data?.series || [];
         const firstSeries = pickFirstSeries(nextSeries, value);
         setRefData((prev) => ({ ...prev, series: nextSeries }));
@@ -994,6 +1303,7 @@ function ServiceARInvoicePage() {
           ...prev,
           transactionType: value,
           indicator: selectedOption?.indicator || prev.indicator,
+          branch: prev.branch || String(firstSeries?.BPLId || ''),
           series: firstSeries ? String(firstSeries.Series || '') : '',
           nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
         }));
@@ -1003,6 +1313,7 @@ function ServiceARInvoicePage() {
           ...prev,
           transactionType: value,
           indicator: selectedOption?.indicator || prev.indicator,
+          branch: prev.branch || String(firstSeries?.BPLId || ''),
           series: firstSeries ? String(firstSeries.Series || '') : '',
           nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
         }));
@@ -1016,7 +1327,7 @@ function ServiceARInvoicePage() {
       setHeader((prev) => ({ ...prev, postingDate: value }));
       setPageState((prev) => ({ ...prev, seriesLoading: true }));
       try {
-        const res = await fetchServiceARInvoiceSeries(value, header.transactionType);
+        const res = await fetchServiceARInvoiceSeries(value, header.transactionType, header.branch);
         const nextSeries = res.data?.series || [];
         setRefData((prev) => ({ ...prev, series: nextSeries }));
         setHeader((prev) => {
@@ -1031,6 +1342,7 @@ function ServiceARInvoicePage() {
           return {
             ...prev,
             postingDate: value,
+            branch: prev.branch || String(selectedSeries?.BPLId || ''),
             series: selectedSeries ? String(selectedSeries.Series || '') : '',
             nextNumber: selectedSeries ? String(selectedSeries.NextNumber || '') : '',
           };
@@ -1052,6 +1364,7 @@ function ServiceARInvoicePage() {
       const selectedSeries = visibleSeries.find((series) => String(series.Series || '') === String(value || ''));
       setHeader((prev) => ({
         ...prev,
+        branch: prev.branch || String(selectedSeries?.BPLId || ''),
         series: value,
         nextNumber: selectedSeries ? String(selectedSeries.NextNumber || '') : '...',
       }));
@@ -1107,6 +1420,9 @@ function ServiceARInvoicePage() {
       if (name === 'glAccount') {
         const account = accounts.find((item) => String(item.code) === String(value));
         next.glAccountName = account?.name || '';
+      }
+      if (name === 'taxCode') {
+        next.taxCodeRepeat = value;
       }
       if (name === 'loc') {
         next.locCode = '';
@@ -1257,6 +1573,9 @@ function ServiceARInvoicePage() {
       if (parseNum(line.totalLC) <= 0) lineErrors.totalLC = 'Total is required';
       if (Object.keys(lineErrors).length) errors.lines[index] = lineErrors;
     });
+    if (!String(header.series || '').trim()) {
+      errors.form = `No numbering series is available for posting date ${header.postingDate}. Check the financial year and branch.`;
+    }
     return errors;
   };
 
@@ -1348,9 +1667,6 @@ function ServiceARInvoicePage() {
       setHeader((prev) => ({ ...prev, docNo: docNum ? String(docNum) : prev.docNo, status: 'Open' }));
       setIsDirty(false);
       setPageState((prev) => ({ ...prev, posting: false, success: `${res.data?.message || 'Service A/R Invoice saved.'}${docNum ? ` Doc No: ${docNum}` : ''}` }));
-      if (docEntry) {
-        await previewJournalEntry({ persist: true, docEntry });
-      }
     } catch (error) {
       const message = error.response?.data?.detail?.error?.message?.value || error.response?.data?.message || error.message || 'Service A/R Invoice submission failed.';
       setPageState((prev) => ({ ...prev, posting: false, error: message }));
@@ -1366,6 +1682,7 @@ function ServiceARInvoicePage() {
       ...INIT_HEADER,
       transactionType: defaultTransactionType,
       indicator: transactionTypeOptions[0]?.indicator || '',
+      branch: String(firstSeries?.BPLId || ''),
       series: firstSeries ? String(firstSeries.Series || '') : '',
       nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
     });
@@ -1663,7 +1980,7 @@ function ServiceARInvoicePage() {
         className={`del-grid__input${error ? ' del-field__input--error' : ''}`}
         type={column.type === 'date' ? 'date' : 'text'}
         name={column.key}
-        value={line[column.key] || ''}
+        value={column.key === 'taxCodeRepeat' ? (line.taxCodeRepeat || line.taxCode || '') : (line[column.key] || '')}
         onChange={(event) => handleLineChange(index, event)}
         readOnly={column.readOnly}
         disabled={!isDocumentEditable || column.readOnly}
@@ -1677,7 +1994,9 @@ function ServiceARInvoicePage() {
   const visibleHeaderUdfs = headerUdfDefinitions.filter((field) => formSettings.headerUdfs?.[field.key]?.visible !== false);
   const configurableRowUdfs = rowUdfDefinitions.filter((field) => !isFixedServiceMatrixField(field));
   const visibleRowUdfs = configurableRowUdfs.filter((field) => formSettings.rowUdfs?.[field.key]?.visible !== false);
-  const visibleContentColumns = matrixColumnDefinitions.filter((column) => formSettings.matrixColumns?.[column.key]?.visible !== false);
+  const visibleContentColumns = matrixColumnDefinitions.filter((column) => (
+    column.visible !== false && formSettings.matrixColumns?.[column.key]?.visible !== false
+  ));
   const visibleLineColumns = [
     ...visibleContentColumns,
     ...visibleRowUdfs.map((field) => ({
@@ -1718,7 +2037,7 @@ function ServiceARInvoicePage() {
         <button
           type="button"
           className="del-btn sap-document-toolbar__journal-preview"
-          onClick={() => previewJournalEntry({ persist: Boolean(currentDocEntry) })}
+          onClick={() => previewJournalEntry({ persist: false })}
           disabled={pageState.posting || journalPreview.loading}
         >
           Preview Journal Entry
@@ -1778,7 +2097,7 @@ function ServiceARInvoicePage() {
               <div className="del-field">
                 <label className="del-field__label">Customer</label>
                 <div className="service-ar-header-lookup">
-                  <input className={`del-field__input${valErrors.header.vendor ? ' del-field__input--error' : ''}`} name="vendor" value={header.vendor} list="service-ar-invoice-customers" onChange={handleHeaderChange} disabled={!isDocumentEditable} />
+                  <input className={`del-field__input${valErrors.header.vendor ? ' del-field__input--error' : ''}`} name="vendor" value={header.vendor} list="service-ar-invoice-customers" onChange={handleHeaderChange} onBlur={() => loadCustomerDetails(header.vendor)} disabled={!isDocumentEditable} />
                   <button type="button" className="del-btn service-ar-lookup-btn" onClick={() => setBpModalOpen(true)} disabled={!isDocumentEditable} title="List of Business Partners">...</button>
                 </div>
               </div>
@@ -1791,7 +2110,9 @@ function ServiceARInvoicePage() {
                 <select className="del-field__select" name="contactPerson" value={header.contactPerson} onChange={handleHeaderChange} disabled={!isDocumentEditable}>
                   <option value=""></option>
                   {contactOptions.map((contact) => (
-                    <option key={contact.CntctCode || contact.Name} value={contact.CntctCode}>{contact.Name}</option>
+                    <option key={contact.CntctCode || contact.Name} value={contact.CntctCode}>
+                      {contact.Name || [contact.FirstName, contact.LastName].filter(Boolean).join(' ') || contact.CntctCode}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -1822,10 +2143,6 @@ function ServiceARInvoicePage() {
                   <input className="del-field__input" name="placeOfSupply" value={header.placeOfSupply} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
                   <button type="button" className="del-btn service-ar-lookup-btn" onClick={() => setStateModalOpen(true)} disabled={!isDocumentEditable} title="List of States">...</button>
                 </div>
-              </div>
-              <div className="del-field">
-                <label className="del-field__label">Indicator</label>
-                <input className="del-field__input" name="indicator" value={header.indicator} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
               </div>
             </div>
 
@@ -1864,14 +2181,6 @@ function ServiceARInvoicePage() {
               <div className="del-field">
                 <label className="del-field__label">Document Date</label>
                 <input type="date" className={`del-field__input${valErrors.header.documentDate ? ' del-field__input--error' : ''}`} name="documentDate" value={header.documentDate} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
-              </div>
-              <div className="del-field">
-                <label className="del-field__label">B_FromDate</label>
-                <input type="date" className="del-field__input" name="bFromDate" value={header.bFromDate} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
-              </div>
-              <div className="del-field">
-                <label className="del-field__label">B_ToDate</label>
-                <input type="date" className="del-field__input" name="bToDate" value={header.bToDate} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
               </div>
             </div>
           </div>
@@ -1997,7 +2306,7 @@ function ServiceARInvoicePage() {
                   <tr><td>Discount %</td><td><input className="del-grid__input" name="discount" value={header.discount} onChange={handleHeaderChange} disabled={!isDocumentEditable} /></td></tr>
                   <tr><td>Total Down Payment</td><td><input className="del-grid__input" name="totalDownPayment" value={header.totalDownPayment} onChange={handleHeaderChange} disabled={!isDocumentEditable} /></td></tr>
                   <tr><td>Freight</td><td><input className="del-grid__input" name="freight" value={header.freight} onChange={handleHeaderChange} disabled={!isDocumentEditable} /></td></tr>
-                  <tr><td><label className="service-ar-checkbox"><input type="checkbox" name="rounding" checked={header.rounding} onChange={handleHeaderChange} disabled={!isDocumentEditable} /> Rounding</label></td><td><input className="del-grid__input" value="INR 0.00" readOnly /></td></tr>
+                  <tr><td><label className="service-ar-checkbox"><input type="checkbox" name="rounding" checked={header.rounding || parseNum(header.roundingAmount) !== 0} onChange={handleHeaderChange} disabled={!isDocumentEditable} /> Rounding</label></td><td><input className="del-grid__input" value={`INR ${fmt(totals.roundingAmount)}`} readOnly /></td></tr>
                   <tr><td>Tax</td><td><input className="del-grid__input" value={fmt(totals.tax)} readOnly /></td></tr>
                   <tr><td>WTax Amount</td><td><input className="del-grid__input" value={fmt(totals.wtaxAmount)} readOnly /></td></tr>
                   <tr style={{ borderTop: '2px solid #a0aab4' }}><td style={{ fontWeight: 700 }}>Total</td><td><input className="del-grid__input" value={fmt(totals.total)} readOnly style={{ fontWeight: 700 }} /></td></tr>
@@ -2109,7 +2418,7 @@ function ServiceARInvoicePage() {
         journalEntry={journalPreview.data}
         onClose={() => setJournalPreview((prev) => ({ ...prev, open: false }))}
         onOpenLinkedMaster={openJournalLinkedMaster}
-        onRegenerate={() => previewJournalEntry({ persist: Boolean(currentDocEntry) })}
+        onRegenerate={() => previewJournalEntry({ persist: false })}
         onOpenSource={() => {
           setJournalPreview((prev) => ({ ...prev, open: false }));
           if (currentDocEntry) {

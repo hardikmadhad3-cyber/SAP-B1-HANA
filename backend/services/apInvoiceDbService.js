@@ -116,6 +116,7 @@ const getStates = () => safe(db.query(`
 const getTaxCodes = () => masterDataDbService.searchDocumentTaxCodes('', 'purchase', 500, 0);
 
 const getWithholdingTaxCodes = () => masterDataDbService.lookupWithholdingTaxCodes('');
+const getGLAccounts = () => masterDataDbService.lookupGLAccounts('', 5000);
 
 const getUomGroups = () => safe(db.query(`
   SELECT g.UgpEntry AS AbsEntry,
@@ -808,6 +809,9 @@ const getReferenceData = async () => {
     companyRows,
     udfMetadata,
     withholdingTaxCodes,
+    distributionRules,
+    glAccounts,
+    businessPartners,
   ] = await Promise.all([
     loadReferencePart('Vendors', getVendors, [], warnings),
     loadReferencePart('Items', getItems, [], warnings),
@@ -828,6 +832,9 @@ const getReferenceData = async () => {
       warnings
     ),
     loadReferencePart('Withholding tax codes', getWithholdingTaxCodes, [], warnings),
+    loadReferencePart('Distribution rules', () => masterDataDbService.lookupDistributionRules(), [], warnings),
+    loadReferencePart('GL accounts', getGLAccounts, [], warnings),
+    loadReferencePart('Business partners', () => masterDataDbService.searchBP('', '', 5000, 0), [], warnings),
   ]);
 
   const uomGroupMap = {};
@@ -870,6 +877,7 @@ const getReferenceData = async () => {
     company: companyInfo.name,
     company_state: companyInfo.state,
     company_currency: companyInfo.localCurrency,
+    default_branch: branches.length === 1 ? String(branches[0].BPLId || '') : '',
     vendors,
     contacts: [],
     pay_to_addresses: [],
@@ -881,6 +889,9 @@ const getReferenceData = async () => {
     company_address: { State: companyInfo.state },
     tax_codes: taxCodes,
     withholding_tax_codes: withholdingTaxCodes,
+    gl_accounts: glAccounts,
+    distribution_rules: distributionRules,
+    business_partners: businessPartners,
     payment_terms: paymentTerms,
     sales_employees: salesEmployees.map((e) => ({ SlpCode: e.SlpCode, SlpName: e.SlpName, Memo: e.Memo, Commission: e.Commission, Active: e.Active })),
     shipping_types: shippingTypes,

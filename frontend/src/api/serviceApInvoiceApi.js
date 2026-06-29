@@ -11,8 +11,13 @@ export const fetchServiceAPInvoiceVendorDetails = (vendorCode) =>
 export const fetchServiceAPInvoiceVendorOptions = (params = {}) =>
   client.get(`${API_BASE}/vendors/search`, { params });
 
-export const fetchServiceAPInvoiceSeries = (date = '') =>
-  client.get(`${API_BASE}/series`, { params: date ? { date } : {} });
+export const fetchServiceAPInvoiceSeries = (date = '', branch = '') =>
+  client.get(`${API_BASE}/series`, {
+    params: {
+      ...(date ? { date } : {}),
+      ...(branch ? { branch } : {}),
+    },
+  });
 
 export const fetchServiceAPInvoiceNextNumber = (series) =>
   client.get(`${API_BASE}/series/next`, { params: { series } });

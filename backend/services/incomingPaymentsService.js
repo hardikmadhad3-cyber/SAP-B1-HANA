@@ -50,18 +50,108 @@ const toSapDate = (value) => {
   return raw;
 };
 
-const searchBusinessPartners = async (query = "", bpType = "Customer") => {
-  const trimmed = String(query || "").trim();
-  const cardType = String(bpType || "").toLowerCase() === "vendor" ? "S" : "C";
-  const rows = await queryRows(`
+const cleanObject = (source = {}) => {
+  const target = { ...source };
+  Object.keys(target).forEach((key) => {
+    if (target[key] === undefined || target[key] === "" || target[key] == null || Number.isNaN(target[key])) {
+      delete target[key];
+    }
+  });
+  return target;
+};
+
+const toOptionalNumber = (value) => {
+  if (value === undefined || value === "" || value == null) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const getPaymentMeansAmount = (paymentMeans = {}) =>
+  parseAmount(paymentMeans.cash?.amount) +
+  parseAmount(paymentMeans.transfer?.amount) +
+  parseAmount(paymentMeans.cheque?.amount) +
+  parseAmount(paymentMeans.creditCard?.amount);
+
+const buildPaymentMeansPayload = async ({ paymentMeans = {}, dueAmount = 0, fallbackCashAccount = "" } = {}) => {
+  const totalDue = Number(dueAmount || 0);
+  const enteredAmount = getPaymentMeansAmount(paymentMeans);
+  const normalizedMeans = enteredAmount > 0
+    ? paymentMeans
+    : {
+        cash: {
+          account: fallbackCashAccount,
+          amount: totalDue,
+        },
+      };
+  const totalPaid = getPaymentMeansAmount(normalizedMeans);
+
+  if (Math.abs(totalPaid - totalDue) > 0.01) {
+    throw new Error("Payment Means paid amount must match Total Amount Due.");
+  }
+
+  const cashAmount = parseAmount(normalizedMeans.cash?.amount);
+  const transferAmount = parseAmount(normalizedMeans.transfer?.amount);
+  const chequeAmount = parseAmount(normalizedMeans.cheque?.amount);
+  const cardAmount = parseAmount(normalizedMeans.creditCard?.amount);
+  const result = {};
+
+  if (cashAmount > 0) {
+    const account = String(normalizedMeans.cash?.account || fallbackCashAccount || "").trim();
+    if (!account) throw new Error("Cash G/L Account is required in Payment Means.");
+    result.CashAccount = account;
+    result.CashSum = Number(cashAmount.toFixed(2));
+  }
+
+  if (transferAmount > 0) {
+    const account = String(normalizedMeans.transfer?.account || "").trim();
+    if (!account) throw new Error("Bank Transfer G/L Account is required in Payment Means.");
+    result.TransferAccount = account;
+    result.TransferSum = Number(transferAmount.toFixed(2));
+    result.TransferDate = toSapDate(normalizedMeans.transfer?.date) || toSapDate(new Date().toISOString().slice(0, 10));
+    if (normalizedMeans.transfer?.reference) result.TransferReference = String(normalizedMeans.transfer.reference).trim();
+  }
+
+  if (chequeAmount > 0) {
+    const cheque = normalizedMeans.cheque || {};
+    result.PaymentChecks = [cleanObject({
+      DueDate: toSapDate(cheque.dueDate) || toSapDate(new Date().toISOString().slice(0, 10)),
+      CheckNumber: toOptionalNumber(cheque.checkNumber),
+      CheckSum: Number(chequeAmount.toFixed(2)),
+      CheckAccount: String(cheque.account || fallbackCashAccount || "").trim() || undefined,
+      BankCode: String(cheque.bankCode || "").trim() || undefined,
+      CountryCode: String(cheque.country || "").trim() || undefined,
+    })];
+  }
+
+  if (cardAmount > 0) {
+    const card = normalizedMeans.creditCard || {};
+    result.PaymentCreditCards = [cleanObject({
+      CreditCard: toOptionalNumber(card.cardName),
+      CreditAcct: String(card.account || fallbackCashAccount || "").trim() || undefined,
+      CreditCardNumber: String(card.cardNumber || "").trim() || undefined,
+      CardValidUntil: toSapDate(card.validUntil) || undefined,
+      OwnerIdNum: String(card.idNumber || "").trim() || undefined,
+      OwnerPhone: String(card.telephone || "").trim() || undefined,
+      PaymentMethodCode: String(card.paymentMethod || "").trim() || undefined,
+      NumOfPayments: toOptionalNumber(card.noOfPayments) || 1,
+      VoucherNum: String(card.voucherNo || "").trim() || undefined,
+      CreditSum: Number(cardAmount.toFixed(2)),
+    })];
+  }
+
+  return result;
+};
+
+const queryBusinessPartnerRows = (cardType, trimmed, { validForColumn = "validFor", frozenForColumn = "frozenFor" } = {}) =>
+  queryRows(`
     SELECT
       T0.CardCode,
       T0.CardName,
       T0.Currency,
       T0.Balance,
       T0.CardType,
-      T0.validFor AS ValidFor,
-      T0.frozenFor AS FrozenFor,
+      T0.${validForColumn} AS ValidFor,
+      T0.${frozenForColumn} AS FrozenFor,
       T0.DebPayAcct,
       T0.BillToDef,
       T0.Address,
@@ -76,42 +166,70 @@ const searchBusinessPartners = async (query = "", bpType = "Customer") => {
       T1.Country AS AddressCountry,
       T1.GSTRegnNo AS GstRegistrationNumber
     FROM OCRD T0
-    LEFT JOIN (
-      SELECT
-        CardCode,
-        AdresType,
-        Address,
-        Building,
-        Street,
-        Block,
-        City,
-        ZipCode,
-        State,
-        Country,
-        GSTRegnNo,
-        ROW_NUMBER() OVER (
-          PARTITION BY CardCode
-          ORDER BY LineNum
-        ) AS AddressRank,
-        ROW_NUMBER() OVER (
-          PARTITION BY CardCode, Address
-          ORDER BY LineNum
-        ) AS AddressMatchRank
-      FROM CRD1
-      WHERE AdresType = 'B'
-    ) T1
+    LEFT JOIN CRD1 T1
       ON T1.CardCode = T0.CardCode
-     AND (
-       (ISNULL(T0.BillToDef, '') <> '' AND T1.Address = T0.BillToDef AND T1.AddressMatchRank = 1)
-       OR (ISNULL(T0.BillToDef, '') = '' AND T1.AddressRank = 1)
-     )
+      AND T1.AdresType = 'B'
+      AND T1.LineNum = (
+        SELECT MIN(TX.LineNum)
+        FROM CRD1 TX
+        WHERE TX.CardCode = T0.CardCode
+          AND TX.AdresType = 'B'
+          AND (COALESCE(T0.BillToDef, '') = '' OR TX.Address = T0.BillToDef)
+      )
     WHERE T0.CardType = @cardType
-      AND T0.frozenFor <> 'Y'
+      AND ISNULL(T0.${frozenForColumn}, 'N') <> 'Y'
       AND (@query = ''
         OR T0.CardCode LIKE @like
         OR T0.CardName LIKE @like)
     ORDER BY T0.CardName, T0.CardCode
   `, { cardType, query: trimmed, like: `%${trimmed}%` });
+
+const queryBasicBusinessPartnerRows = (cardType, trimmed) =>
+  queryRows(`
+    SELECT TOP 200
+      T0.CardCode,
+      T0.CardName,
+      T0.Currency,
+      T0.Balance,
+      T0.CardType,
+      '' AS ValidFor,
+      'N' AS FrozenFor,
+      T0.DebPayAcct,
+      T0.BillToDef,
+      T0.Address,
+      T0.CntctPrsn,
+      '' AS AddressCode,
+      '' AS AddressBuilding,
+      '' AS AddressStreet,
+      '' AS AddressBlock,
+      '' AS AddressCity,
+      '' AS AddressZipCode,
+      '' AS AddressState,
+      '' AS AddressCountry,
+      '' AS GstRegistrationNumber
+    FROM OCRD T0
+    WHERE T0.CardType = @cardType
+      AND (@query = ''
+        OR T0.CardCode LIKE @like
+        OR T0.CardName LIKE @like)
+    ORDER BY T0.CardName, T0.CardCode
+  `, { cardType, query: trimmed, like: `%${trimmed}%` });
+
+const searchBusinessPartners = async (query = "", bpType = "Customer") => {
+  const trimmed = String(query || "").trim();
+  const cardType = String(bpType || "").toLowerCase() === "vendor" ? "S" : "C";
+  let rows;
+  try {
+    rows = await queryBusinessPartnerRows(cardType, trimmed);
+  } catch (error) {
+    console.warn("[IncomingPaymentsService] BP lookup using validFor/frozenFor failed:", error.message);
+    try {
+      rows = await queryBusinessPartnerRows(cardType, trimmed, { validForColumn: "ValidFor", frozenForColumn: "FrozenFor" });
+    } catch (fallbackError) {
+      console.warn("[IncomingPaymentsService] BP lookup using ValidFor/FrozenFor failed:", fallbackError.message);
+      rows = await queryBasicBusinessPartnerRows(cardType, trimmed);
+    }
+  }
 
   return rows.map((row) => ({
     code: row.CardCode,
@@ -197,11 +315,6 @@ const lookupPaymentMeansAccounts = async (query = "") => {
       AND (@query = ''
         OR AcctCode LIKE @like
         OR AcctName LIKE @like)
-      AND (
-        AcctName LIKE '%cash%'
-        OR AcctName LIKE '%bank%'
-        OR AcctName LIKE '%current%'
-      )
     ORDER BY
       CASE
         WHEN AcctName LIKE '%cash%' THEN 0
@@ -242,7 +355,7 @@ const getPaymentSeries = async () => {
     FROM NNM1 T0
     LEFT JOIN OFPR T1
       ON T1.Indicator = T0.Indicator
-      AND CAST(CURRENT_TIMESTAMP AS DATE) BETWEEN T1.F_RefDate AND T1.T_RefDate
+      AND CONVERT(date, GETDATE()) BETWEEN T1.F_RefDate AND T1.T_RefDate
     WHERE T0.ObjectCode = '24'
       AND T0.Locked = 'N'
     ORDER BY
@@ -472,7 +585,7 @@ const getOpenInvoices = async (cardCode, branch = "") => {
       T0.JrnlMemo,
       T0.CtlAccount,
       T1.BPLName,
-      DATEDIFF(DAY, T0.DocDueDate, CURRENT_TIMESTAMP) AS OverdueDays
+      DATEDIFF(DAY, T0.DocDueDate, GETDATE()) AS OverdueDays
     FROM OINV T0
     LEFT JOIN OBPL T1 ON T1.BPLId = T0.BPLId
     WHERE T0.CardCode = @cardCode
@@ -513,12 +626,9 @@ const createIncomingPayment = async (payload = {}) => {
   const paymentOnAccount = payload.paymentOnAccount || {};
 
   const cardCode = String(header.businessPartnerCode || "").trim();
-  const cashAccount = String(header.cashAccount || await getDefaultCashAccount()).trim();
+  const defaultCashAccount = String(header.cashAccount || await getDefaultCashAccount()).trim();
   if (!cardCode) {
     throw new Error("Business Partner is required.");
-  }
-  if (!cashAccount) {
-    throw new Error("Cash Account is required for SAP Incoming Payments. Select a cash account or set INCOMING_PAYMENT_CASH_ACCOUNT in backend/.env.");
   }
 
   const selectedInvoices = invoices
@@ -541,10 +651,10 @@ const createIncomingPayment = async (payload = {}) => {
   const accountLocation = String(paymentOnAccount.location || paymentOnAccount.loc || paymentOnAccount.locCode || "").trim();
   const accountLocationCode = Number(accountLocation);
   const appliedTotal = selectedInvoices.reduce((sum, invoice) => sum + invoice.appliedAmount, 0);
-  const cashSum = appliedTotal + paymentOnAccountAmount;
+  const dueAmount = appliedTotal + paymentOnAccountAmount;
   const isAccountPayment = header.bpType === "Account";
 
-  if (cashSum <= 0) {
+  if (dueAmount <= 0) {
     throw new Error("Incoming payment amount must be greater than zero.");
   }
 
@@ -554,6 +664,12 @@ const createIncomingPayment = async (payload = {}) => {
   if (isAccountPayment) {
     await assertPostableAccount(cardCode);
   }
+
+  const paymentMeansPayload = await buildPaymentMeansPayload({
+    paymentMeans: payload.paymentMeans || {},
+    dueAmount,
+    fallbackCashAccount: defaultCashAccount,
+  });
 
   const sapPayload = {
     DocType: header.bpType === "Vendor" ? "rSupplier" : isAccountPayment ? "rAccount" : "rCustomer",
@@ -571,8 +687,7 @@ const createIncomingPayment = async (payload = {}) => {
     ControlAccount: !isAccountPayment ? header.controlAccount || undefined : undefined,
     Remarks: payload.remarks || undefined,
     JournalRemarks: payload.journalRemarks || undefined,
-    CashAccount: cashAccount,
-    CashSum: Number(cashSum.toFixed(2)),
+    ...paymentMeansPayload,
     PaymentInvoices: !isAccountPayment && selectedInvoices.length
       ? selectedInvoices.map((invoice) => ({
           DocEntry: Number(invoice.docEntry),

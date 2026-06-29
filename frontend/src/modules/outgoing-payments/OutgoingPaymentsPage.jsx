@@ -11,6 +11,10 @@ import {
   searchOutgoingPaymentControlAccounts,
   submitOutgoingPayment,
 } from "../../api/outgoingPaymentsApi";
+import PaymentMeansModal, {
+  createDefaultPaymentMeans,
+  paymentMeansTotal,
+} from "../payments/PaymentMeansModal";
 import "./outgoingPayments.css";
 
 const today = new Date().toISOString().slice(0, 10);
@@ -129,7 +133,10 @@ function SapLookupField({
           className="modal show d-block ip-lookup-modal-layer"
           tabIndex="-1"
           role="dialog"
-          onMouseDown={() => setOpen(false)}
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            setOpen(false);
+          }}
         >
           <div className="modal-dialog modal-xl ip-lookup-dialog" role="document" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-content ip-lookup-content">
@@ -325,6 +332,8 @@ export default function OutgoingPaymentsPage() {
   const [journalRemarks, setJournalRemarks] = useState("");
   const [bpLookupTrigger, setBpLookupTrigger] = useState(0);
   const [documentFindTrigger, setDocumentFindTrigger] = useState(0);
+  const [paymentMeansOpen, setPaymentMeansOpen] = useState(false);
+  const [paymentMeans, setPaymentMeans] = useState(() => createDefaultPaymentMeans());
   const routedDocumentRef = useRef(0);
 
   useEffect(() => {
@@ -353,9 +362,12 @@ export default function OutgoingPaymentsPage() {
             transactionNumber: data.nextTransactionNumber || current.transactionNumber,
             branch: selectedBranch,
             branchRegNo: getBranchRegNo(branchRows, selectedBranch),
-            cashAccount: data.defaultCashAccount || current.cashAccount,
           };
         });
+        setPaymentMeans((current) => ({
+          ...current,
+          currency: current.currency || "INR",
+        }));
       })
       .catch(() => {
         if (mounted) setLoadError("Reference data could not be loaded.");
@@ -432,6 +444,7 @@ export default function OutgoingPaymentsPage() {
     setAccountRows([]);
     setPaymentOnAccount(bpType === "Account");
     setPaymentOnAccountAmount("0.00");
+    setPaymentMeans(createDefaultPaymentMeans({ currency: header.docCurrency || "INR" }));
     setAccountDistributionRule("");
     setAccountLocation("");
     setHeader((current) => ({
@@ -785,6 +798,7 @@ export default function OutgoingPaymentsPage() {
     setCurrentDocEntry(null);
     setPaymentOnAccount(false);
     setPaymentOnAccountAmount("0.00");
+    setPaymentMeans(createDefaultPaymentMeans({ currency: header.docCurrency || "INR" }));
     setAccountDistributionRule("");
     setAccountLocation("");
     setWtTaxAmount("");
@@ -851,6 +865,40 @@ export default function OutgoingPaymentsPage() {
     return fallback;
   };
 
+  const openPaymentMeans = () => {
+    if (isFoundDocument) return;
+    setPaymentMeans((current) => {
+      const paid = paymentMeansTotal(current);
+      if (paid > 0) return current;
+      return createDefaultPaymentMeans({
+        currency: header.docCurrency || "INR",
+        amount: totalAmountDue,
+      });
+    });
+    setPaymentMeansOpen(true);
+  };
+
+  const getPostingPaymentMeans = (payableTotal) => {
+    const paid = paymentMeansTotal(paymentMeans);
+    const nextMeans = paid > 0
+      ? paymentMeans
+      : createDefaultPaymentMeans({
+          currency: header.docCurrency || "INR",
+          amount: payableTotal,
+        });
+    const nextPaid = paymentMeansTotal(nextMeans);
+
+    if (Math.abs(nextPaid - payableTotal) > 0.01) {
+      setLoadError("Payment Means paid amount must match Total Amount Due.");
+      setPaymentMeans(nextMeans);
+      setPaymentMeansOpen(true);
+      return null;
+    }
+
+    setPaymentMeans(nextMeans);
+    return nextMeans;
+  };
+
   const handleOk = async () => {
     setLoadError("");
     setSuccessMessage("");
@@ -884,11 +932,6 @@ export default function OutgoingPaymentsPage() {
         }
       : header;
 
-    if (!header.cashAccount) {
-      setLoadError("Select a Cash Account before posting the outgoing payment.");
-      return;
-    }
-
     const payableInvoiceTotal = isAccountPayment ? 0 : getPayableInvoiceTotal();
     const accountPaymentAmount = parseAmount(paymentOnAccountAmount);
     const payableTotal = payableInvoiceTotal + (isAccountPayment || paymentOnAccount ? accountPaymentAmount : 0);
@@ -897,6 +940,9 @@ export default function OutgoingPaymentsPage() {
       setLoadError(isAccountPayment ? "Enter an Amount in the account contents row before posting." : "Select at least one document or enter a Payment on Account amount.");
       return;
     }
+
+    const postingPaymentMeans = getPostingPaymentMeans(payableTotal);
+    if (!postingPaymentMeans) return;
 
     const invalidPayment = invoices.some(
       (invoice) => invoice.selected && clampPayment(invoice.totalPayment, invoice.balanceDue) <= 0,
@@ -939,6 +985,7 @@ export default function OutgoingPaymentsPage() {
         location: accountLocation,
       },
       wtTaxAmount,
+      paymentMeans: postingPaymentMeans,
       remarks,
       journalRemarks,
     };
@@ -1454,7 +1501,10 @@ export default function OutgoingPaymentsPage() {
               <input value={wtTaxAmount} onChange={(event) => setWtTaxAmount(event.target.value)} onBlur={() => setWtTaxAmount(money(parseAmount(wtTaxAmount)))} />
             </FieldRow>
             <FieldRow label="Total Amount Due">
-              <input value={`INR ${money(totalAmountDue)}`} readOnly />
+              <div className="sap-amount-with-button">
+                <input value={`INR ${money(totalAmountDue)}`} readOnly />
+                <button type="button" onClick={openPaymentMeans} disabled={isFoundDocument}>...</button>
+              </div>
             </FieldRow>
             <FieldRow label="Open Balance">
               <input value={openBalance ? `INR ${money(openBalance)}` : ""} readOnly />
@@ -1462,6 +1512,15 @@ export default function OutgoingPaymentsPage() {
           </div>
         </div>
       </fieldset>
+      <PaymentMeansModal
+        open={paymentMeansOpen}
+        value={paymentMeans}
+        totalAmountDue={totalAmountDue}
+        onChange={setPaymentMeans}
+        onClose={() => setPaymentMeansOpen(false)}
+        lookupAccounts={searchOutgoingPaymentControlAccounts}
+        AccountLookupField={SapLookupField}
+      />
     </div>
   );
 }
