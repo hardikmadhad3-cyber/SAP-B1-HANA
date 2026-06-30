@@ -1027,24 +1027,7 @@ const getItemValidation = async (itemCode) => {
   return rows[0] || null;
 };
 
-const getTaxCodeValidation = async (code) => {
-  const rows = await safe(db.query(`
-    SELECT TOP 1
-      T0.Code,
-      T0.Name,
-      SUM(T1.Rate) AS Rate,
-      CASE 
-        WHEN COUNT(DISTINCT T1.TaxType) = 2 THEN 'INTRASTATE'
-        WHEN MAX(T1.TaxType) = 'I' THEN 'INTERSTATE'
-        ELSE 'OTHER'
-      END AS GSTType
-    FROM OVTG T0
-    INNER JOIN VTG1 T1 ON T0.Code = T1.Code
-    WHERE T0.Code = @code
-    GROUP BY T0.Code, T0.Name
-  `, { code }));
-  return rows[0] || null;
-};
+const getTaxCodeValidation = async (code) => masterDataDbService.getTaxCode(code);
 
 const getGRPOOpenLineValidation = async (docEntry, lineNum) => {
   const rows = await safe(db.query(`

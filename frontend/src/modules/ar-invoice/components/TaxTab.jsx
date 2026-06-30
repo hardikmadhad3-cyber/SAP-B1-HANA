@@ -1,6 +1,14 @@
 import React from 'react';
 
-export default function TaxTab({ onOpenTaxInfoModal, isEditable = true }) {
+export default function TaxTab({
+  onOpenTaxInfoModal,
+  isEditable = true,
+  header = {},
+  onHeaderChange,
+  showTaxInvoiceReference = false,
+  taxInvoiceReferenceRequired = false,
+  errors = {},
+}) {
   return (
     <div className="del-tab-panel">
       <div className="del-field-grid">
@@ -13,6 +21,42 @@ export default function TaxTab({ onOpenTaxInfoModal, isEditable = true }) {
             </button>
           </div>
         </div>
+
+        {showTaxInvoiceReference && (
+          <>
+            <div className="del-field">
+              <label className="del-field__label" htmlFor="taxInvoiceNo">
+                Original Invoice No.{taxInvoiceReferenceRequired ? ' *' : ''}
+              </label>
+              <input
+                id="taxInvoiceNo"
+                className={`del-field__input${errors.taxInvoiceNo ? ' del-field__input--error' : ''}`}
+                name="taxInvoiceNo"
+                value={header.taxInvoiceNo || ''}
+                onChange={onHeaderChange}
+                disabled={!isEditable}
+                maxLength={100}
+                title={errors.taxInvoiceNo || 'Reference number of the original tax invoice'}
+              />
+            </div>
+
+            <div className="del-field">
+              <label className="del-field__label" htmlFor="taxInvoiceDate">
+                Original Invoice Date{taxInvoiceReferenceRequired ? ' *' : ''}
+              </label>
+              <input
+                id="taxInvoiceDate"
+                className={`del-field__input${errors.taxInvoiceDate ? ' del-field__input--error' : ''}`}
+                type="date"
+                name="taxInvoiceDate"
+                value={header.taxInvoiceDate || ''}
+                onChange={onHeaderChange}
+                disabled={!isEditable}
+                title={errors.taxInvoiceDate || 'Date of the original tax invoice'}
+              />
+            </div>
+          </>
+        )}
 
         {/* Transaction Category */}
         <div className="del-field">

@@ -240,3 +240,231 @@
   color: #6b7280;
 }
 
+/* SAP B1-like service A/P tab forms (Accounting, Tax, Electronic Documents). */
+.po-sapb1-tab-panel {
+  padding: 0;
+}
+
+.po-sapb1-tab-surface {
+  min-height: 372px;
+  border: 1px solid #c4cbd2;
+  border-top: 0;
+  background: #fff;
+  padding: 8px 10px;
+  box-sizing: border-box;
+}
+
+.po-sapb1-tab-surface .po-field {
+  min-height: 18px;
+  margin: 0;
+  gap: 4px;
+}
+
+.po-sapb1-tab-surface .po-field__label {
+  flex: 0 0 142px;
+  width: 142px;
+  min-width: 142px;
+  text-align: left;
+  padding-right: 3px;
+  font-size: 12px;
+  color: #000;
+}
+
+.po-sapb1-tab-surface .po-field__input,
+.po-sapb1-tab-surface .po-field__select {
+  flex: 0 0 170px;
+  width: 170px;
+  height: 18px;
+  min-height: 18px;
+  padding: 0 3px;
+  border-radius: 0;
+  font-size: 12px;
+}
+
+.po-sapb1-tab-surface .po-field__input[readonly],
+.po-sapb1-tab-surface .po-field__input:disabled,
+.po-sapb1-tab-surface .po-field__select:disabled {
+  background: #e7ecef;
+  color: #000;
+  opacity: 1;
+}
+
+.po-sapb1-accounting-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 440px) minmax(300px, 1fr);
+  column-gap: clamp(60px, 24vw, 520px);
+  align-items: start;
+}
+
+.po-sapb1-accounting-left,
+.po-sapb1-accounting-right,
+.po-sapb1-tax-left,
+.po-sapb1-edoc-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.po-sapb1-accounting-left {
+  min-height: 336px;
+}
+
+.po-sapb1-accounting-right {
+  gap: 52px;
+  padding-top: 0;
+}
+
+.po-sapb1-accounting-right .po-field {
+  justify-content: flex-end;
+}
+
+.po-sapb1-checkbox-field {
+  align-items: center;
+}
+
+.po-sapb1-checkbox-field .po-checkbox-label,
+.po-sapb1-checkbox-row .po-checkbox-label {
+  flex: 0 0 auto;
+  margin: 0;
+  color: #000;
+  font-size: 12px;
+}
+
+.po-sapb1-checkbox-field .po-field__label,
+.po-sapb1-checkbox-row .po-field__label {
+  flex-basis: 4px;
+  width: 4px;
+  min-width: 4px;
+}
+
+.po-sapb1-inline-input {
+  margin-left: 6px;
+}
+
+.po-sapb1-due-date-section {
+  margin-top: 18px;
+  margin-bottom: 2px;
+}
+
+.po-sapb1-section-label {
+  margin: 0 0 3px 0;
+  font-size: 12px;
+  color: #000;
+}
+
+.po-sapb1-due-date-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.po-sapb1-due-date-row .po-field__select {
+  flex: 0 0 132px;
+  width: 132px;
+}
+
+.po-sapb1-due-date-row .po-sapb1-number-input {
+  flex: 0 0 38px;
+  width: 38px;
+  text-align: right;
+}
+
+.po-sapb1-accounting-bottom {
+  margin-top: auto;
+}
+
+.po-sapb1-reference-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 170px;
+}
+
+.po-sapb1-reference-control .po-field__input {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.po-sapb1-ellipsis-btn,
+.po-sapb1-reference-control .po-lookup-btn {
+  width: 34px;
+  min-width: 34px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0 6px;
+  line-height: 16px;
+}
+
+.po-sapb1-tax-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 440px) minmax(180px, 1fr);
+  column-gap: clamp(80px, 28vw, 620px);
+}
+
+.po-sapb1-tax-spacer {
+  height: 38px;
+}
+
+.po-sapb1-tax-bottom {
+  margin-top: 78px;
+}
+
+.po-sapb1-tax-right {
+  padding-top: 40px;
+}
+
+.po-sapb1-tax-right .po-checkbox-label {
+  font-size: 12px;
+  color: #000;
+}
+
+.po-sapb1-tax-info-field .po-field__label {
+  flex-basis: 142px;
+}
+
+.po-sapb1-edoc-section {
+  width: min(600px, 100%);
+}
+
+.po-sapb1-edoc-generic {
+  margin-top: 24px;
+}
+
+.po-sapb1-section-heading {
+  margin: 8px 0 6px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #000;
+  text-decoration: underline;
+}
+
+.po-sapb1-edoc-section .po-field__label {
+  flex-basis: 292px;
+  width: 292px;
+  min-width: 292px;
+}
+
+.po-sapb1-edoc-section .po-field__input {
+  flex: 0 0 298px;
+  width: 298px;
+}
+
+@media (max-width: 1280px) {
+  .po-sapb1-accounting-layout,
+  .po-sapb1-tax-layout {
+    column-gap: 40px;
+  }
+
+  .po-sapb1-accounting-right .po-field {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 900px) {
+  .po-sapb1-accounting-layout,
+  .po-sapb1-tax-layout {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 16px;
+  }
+}
+

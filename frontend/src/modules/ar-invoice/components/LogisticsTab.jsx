@@ -1,16 +1,26 @@
 import React from 'react';
 
 export default function LogisticsTab({
-  header,
+  header = {},
   onHeaderChange,
-  effectiveWhseAddrs,
-  vendorPayToAddresses,
-  vendorShipToAddresses,
-  vendorBillToAddresses,
-  shipTypeOpts,
+  effectiveWhseAddrs = [],
+  vendorPayToAddresses = [],
+  vendorShipToAddresses = [],
+  vendorBillToAddresses = [],
+  shipTypeOpts = [],
+  shippingTypeOptions = [],
   onOpenAddressModal,
   isEditable = true,
 }) {
+  const payToAddresses = Array.isArray(vendorPayToAddresses) ? vendorPayToAddresses : [];
+  const shipToAddresses = Array.isArray(vendorShipToAddresses) ? vendorShipToAddresses : [];
+  const billToAddresses = Array.isArray(vendorBillToAddresses) ? vendorBillToAddresses : [];
+  const shippingOptions = Array.isArray(shipTypeOpts) && shipTypeOpts.length
+    ? shipTypeOpts
+    : (Array.isArray(shippingTypeOptions) ? shippingTypeOptions : []);
+  const shipToOptions = shipToAddresses.length ? shipToAddresses : payToAddresses;
+  const billToOptions = billToAddresses.length ? billToAddresses : payToAddresses;
+
   return (
     <div className="del-tab-panel">
       <div className="del-field-grid" style={{ gridTemplateColumns: '1fr 1fr', columnGap: '24px' }}>
@@ -32,13 +42,13 @@ export default function LogisticsTab({
                 disabled={!isEditable}
               >
                 <option value="">Select</option>
-                {(vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses).map(a => (
+                {shipToOptions.map(a => (
                   <option key={a.Address} value={a.Address}>
                     {a.Address}
                   </option>
                 ))}
                 {/* Show current value if not in list */}
-                {header.shipToCode && !(vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses).some(a => a.Address === header.shipToCode) && (
+                {header.shipToCode && !shipToOptions.some(a => a.Address === header.shipToCode) && (
                   <option value={header.shipToCode}>{header.shipToCode}</option>
                 )}
               </select>
@@ -81,13 +91,13 @@ export default function LogisticsTab({
                 disabled={!isEditable}
               >
                 <option value="">Select</option>
-                {(vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses).map(a => (
+                {billToOptions.map(a => (
                   <option key={a.Address} value={a.Address}>
                     {a.Address}
                   </option>
                 ))}
                 {/* Show current value if not in list */}
-                {header.billToCode && !(vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses).some(a => a.Address === header.billToCode) && (
+                {header.billToCode && !billToOptions.some(a => a.Address === header.billToCode) && (
                   <option value={header.billToCode}>{header.billToCode}</option>
                 )}
               </select>
@@ -149,7 +159,7 @@ export default function LogisticsTab({
               disabled={!isEditable}
             >
               <option value="">Select</option>
-              {shipTypeOpts.map(s => (
+              {shippingOptions.map(s => (
                 <option key={s.value} value={s.value}>
                   {s.label}
                 </option>

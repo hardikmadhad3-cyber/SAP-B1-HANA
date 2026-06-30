@@ -24,6 +24,8 @@ const APP_MENU_DEFINITIONS = [
   { key: 'services', menuName: 'Services', icon: 'invoice', sortOrder: 2 },
   { key: 'service-ar-invoice', parentKey: 'services', menuName: 'A/R Invoice', menuPath: '/services/ar-invoice', icon: 'invoice', sortOrder: 1, enforceSortOrder: true },
   { key: 'service-ap-invoice', parentKey: 'services', menuName: 'A/P Invoice', menuPath: '/services/ap-invoice', icon: 'invoice', sortOrder: 2, enforceSortOrder: true },
+  { key: 'service-ap-credit-memo', parentKey: 'services', menuName: 'A/P Credit Memo', menuPath: '/services/ap-credit-memo', icon: 'invoice', sortOrder: 3, enforceSortOrder: true },
+  { key: 'service-ar-credit-memo', parentKey: 'services', menuName: 'A/R Credit Memo', menuPath: '/services/ar-credit-memo', icon: 'invoice', sortOrder: 4, enforceSortOrder: true },
 
   { key: 'purchase', menuName: 'Purchase', aliases: ['Purchase - A/P', 'Purchase A/P', 'Purchasing', 'Purchasing - A/P', 'Purchasing A/P'], icon: 'purchase', sortOrder: 3 },
   { key: 'purchase-request', parentKey: 'purchase', menuName: 'Purchase Request', menuPath: '/purchase-request', icon: 'document', sortOrder: 1 },

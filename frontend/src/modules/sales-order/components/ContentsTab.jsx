@@ -315,6 +315,10 @@ export default function ContentsTab({
     loading: false,
     error: '',
   });
+  const [distributionRuleAssignment, setDistributionRuleAssignment] = React.useState({
+    open: false,
+    rowIndex: -1,
+  });
   const getTaxAmountDisplay = (line) => {
     if (String(line.taxAmount ?? '').trim()) return line.taxAmount;
     const totals = getLineTotalsForDisplay(line, effectiveTaxCodes);
@@ -924,20 +928,23 @@ export default function ContentsTab({
       ),
       distRule: () => (
         <td key="distRule">
-          <select
-            className="so-grid__input"
-            style={{ width: '100%', textAlign: 'left' }}
-            name="distRule"
-            value={line.distRule || ''}
-            onChange={(e) => onLineChange(i, e)}
-          >
-            <option value="">Select</option>
-            {distributionRules.map((rule) => (
-              <option key={rule.FactorCode} value={rule.FactorCode}>
-                {rule.FactorCode}{rule.FactorDescription ? ` - ${rule.FactorDescription}` : ''}
-              </option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <input
+              className="so-grid__input"
+              value={line.distRule || ''}
+              readOnly
+              style={{ flex: 1, minWidth: 0, textAlign: 'left' }}
+            />
+            <button
+              type="button"
+              title="Select distribution rules"
+              aria-label="Select distribution rules"
+              onClick={() => setDistributionRuleAssignment({ open: true, rowIndex: i })}
+              style={pickerButtonStyle}
+            >
+              ...
+            </button>
+          </div>
         </td>
       ),
       openQty: () => (
@@ -1286,6 +1293,19 @@ export default function ContentsTab({
       searchPlaceholder="Search values"
       emptyMessage={dynamicUdfLookup.loading ? 'Loading values...' : (dynamicUdfLookup.error || 'No values found')}
       allowCreate={false}
+    />
+    <DistributionRuleAssignmentModal
+      isOpen={distributionRuleAssignment.open}
+      line={lines[distributionRuleAssignment.rowIndex]}
+      rules={distributionRules}
+      dimensions={distributionDimensions}
+      onClose={() => setDistributionRuleAssignment({ open: false, rowIndex: -1 })}
+      onApply={(valuesByDimension) => {
+        if (distributionRuleAssignment.rowIndex >= 0) {
+          onDistributionRuleChange?.(distributionRuleAssignment.rowIndex, valuesByDimension);
+        }
+        setDistributionRuleAssignment({ open: false, rowIndex: -1 });
+      }}
     />
     </>
   );

@@ -290,6 +290,8 @@ export const normaliseDocumentHeader = (data) => {
     postingDate:      formatDateForInput(firstValue(h.postingDate, h.DocDate)),
     deliveryDate:     formatDateForInput(firstValue(h.deliveryDate, h.DocDueDate)),
     documentDate:     formatDateForInput(firstValue(h.documentDate, h.TaxDate)),
+    taxInvoiceNo:     firstString(h.taxInvoiceNo, h.TaxInvoiceNo, h.NumAtCard, h.salesContractNo, h.customerRefNo, h.DocNum, h.docNo),
+    taxInvoiceDate:   formatDateForInput(firstValue(h.taxInvoiceDate, h.TaxInvoiceDate, h.TaxDate, h.documentDate, h.DocDate)),
     customerRefNo:    documentRefNo,
     salesContractNo:  documentRefNo,
     salesEmployee:    firstString(h.salesEmployee, h.SlpCode),

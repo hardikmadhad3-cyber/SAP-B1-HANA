@@ -12,6 +12,8 @@ const DOCUMENT_OBJECT_TYPES = {
   GRPO: '20',
   SERVICE_AR_INVOICE: '13',
   SERVICE_AP_INVOICE: '18',
+  SERVICE_AP_CREDIT_MEMO: '19',
+  SERVICE_AR_CREDIT_MEMO: '14',
 };
 
 const getDocumentLayout = ({ companyDb, userCode, documentType, objectType }) => {

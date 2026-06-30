@@ -7,11 +7,10 @@ import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
-import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
-import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { createActiveCompanyScopedRouteState } from '../../utils/companyStorageScope';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
+import { consumeCopyToState } from '../../utils/copyToState';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
@@ -25,23 +24,19 @@ import ElectronicDocumentsTab from '../ar-invoice/components/ElectronicDocuments
 import AttachmentsTab from '../ar-invoice/components/AttachmentsTab';
 import AddressModal from '../ar-invoice/components/AddressModal';
 import TaxInfoModal from '../ar-invoice/components/TaxInfoModal';
-import JournalEntryPreviewModal from './JournalEntryPreviewModal';
+import JournalEntryPreviewModal from '../services-ar-invoice/JournalEntryPreviewModal';
 import {
-  fetchOpenServiceDeliveriesForARInvoice,
-  fetchOpenServiceSalesOrdersForARInvoice,
-  fetchOpenServiceSalesQuotationsForARInvoice,
-  fetchServiceARInvoiceByDocEntry,
-  fetchServiceARInvoiceCustomerDetails,
-  fetchServiceARInvoiceNextNumber,
-  fetchServiceARInvoiceReferenceData,
-  fetchServiceARInvoiceSeries,
-  fetchServiceDeliveryForARInvoiceCopy,
-  fetchServiceSalesOrderForARInvoiceCopy,
-  fetchServiceSalesQuotationForARInvoiceCopy,
-  generateServiceARInvoiceJournalEntry,
-  submitServiceARInvoice,
-  updateServiceARInvoice,
-} from '../../api/serviceArInvoiceApi';
+  fetchOpenServiceARInvoicesForARCreditMemo,
+  fetchServiceARInvoiceForARCreditMemoCopy,
+  fetchServiceARCreditMemoByDocEntry,
+  fetchServiceARCreditMemoNextNumber,
+  fetchServiceARCreditMemoReferenceData,
+  fetchServiceARCreditMemoSeries,
+  fetchServiceARCreditMemoCustomerDetails,
+  generateServiceARCreditMemoJournalEntry,
+  submitServiceARCreditMemo,
+  updateServiceARCreditMemo,
+} from '../../api/serviceArCreditMemoApi';
 import {
   FORM_SETTINGS_STORAGE_KEY,
   HEADER_UDF_DEFINITIONS,
@@ -49,9 +44,10 @@ import {
   createUdfState,
   normalizeUdfState,
   readSavedFormSettings,
-} from '../../config/serviceArInvoiceForm';
+} from '../../config/serviceArCreditMemoForm';
 import '../ar-invoice/styles/arInvoice.css';
-import './serviceArInvoice.css';
+import '../services-ar-invoice/serviceArInvoice.css';
+import './serviceArCreditMemo.css';
 
 const today = () => new Date().toISOString().split('T')[0];
 
@@ -60,8 +56,10 @@ const INIT_HEADER = {
   name: '',
   contactPerson: '',
   salesContractNo: '',
+  taxInvoiceNo: '',
+  taxInvoiceDate: '',
   currency: 'INR',
-  transactionType: '',
+  transactionType: 'GST Tax Invoice',
   placeOfSupply: '',
   indicator: '',
   series: '',
@@ -105,6 +103,11 @@ const INIT_HEADER = {
 };
 
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
+const DEFAULT_TRANSACTION_TYPES = [
+  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
+  { value: 'Bill of Supply', label: 'Bill of Supply' },
+  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
+];
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
   id: i + 1,
@@ -118,16 +121,97 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
   alert: '',
 }));
 
+const EMPTY_REF_DATA = {
+  vendors: [],
+  contacts: [],
+  states: [],
+  series: [],
+  branches: [],
+  payment_terms: [],
+  sales_employees: [],
+  tax_codes: [],
+  gl_accounts: [],
+  distribution_rules: [],
+  shipping_types: [],
+  pay_to_addresses: [],
+  ship_to_addresses: [],
+  bill_to_addresses: [],
+  sac_codes: [],
+  locations: [],
+  items: [],
+  business_partners: [],
+  transaction_types: [],
+  quality_options: { buyer: [], seller: [] },
+  price_options: { buyer: [], seller: [] },
+  udf_metadata: { header: [], rows: [] },
+};
+
+const toArray = (value, fallbackKeys = []) => {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return [];
+
+  for (const key of fallbackKeys) {
+    if (Array.isArray(value[key])) return value[key];
+  }
+
+  if (Array.isArray(value.value)) return value.value;
+  if (Array.isArray(value.data)) return value.data;
+  if (Array.isArray(value.rows)) return value.rows;
+  if (Array.isArray(value.items)) return value.items;
+  if (Array.isArray(value.documents)) return value.documents;
+
+  return [];
+};
+
+const normalizeReferenceData = (data = {}, seriesData = null) => {
+  const ref = data && typeof data === 'object' ? data : {};
+  const seriesSource = seriesData !== null && seriesData !== undefined ? seriesData : ref.series;
+
+  return {
+    ...EMPTY_REF_DATA,
+    ...ref,
+    vendors: toArray(ref.vendors || ref.customers, ['vendors', 'customers', 'business_partners']),
+    contacts: toArray(ref.contacts, ['contacts']),
+    states: toArray(ref.states, ['states']),
+    series: toArray(seriesSource, ['series']),
+    branches: toArray(ref.branches, ['branches']),
+    payment_terms: toArray(ref.payment_terms, ['payment_terms']),
+    sales_employees: toArray(ref.sales_employees, ['sales_employees']),
+    tax_codes: toArray(ref.tax_codes, ['tax_codes']),
+    gl_accounts: toArray(ref.gl_accounts, ['gl_accounts']),
+    distribution_rules: toArray(ref.distribution_rules, ['distribution_rules']),
+    shipping_types: toArray(ref.shipping_types, ['shipping_types']),
+    pay_to_addresses: toArray(ref.pay_to_addresses, ['pay_to_addresses']),
+    ship_to_addresses: toArray(ref.ship_to_addresses, ['ship_to_addresses']),
+    bill_to_addresses: toArray(ref.bill_to_addresses, ['bill_to_addresses']),
+    sac_codes: toArray(ref.sac_codes, ['sac_codes']),
+    locations: toArray(ref.locations, ['locations']),
+    items: toArray(ref.items, ['items']),
+    business_partners: toArray(ref.business_partners, ['business_partners']),
+    transaction_types: toArray(ref.transaction_types || ref.transactionTypes, ['transaction_types', 'transactionTypes', 'validValues', 'ValidValues']),
+    quality_options: {
+      buyer: toArray(ref.quality_options?.buyer, ['buyer']),
+      seller: toArray(ref.quality_options?.seller, ['seller']),
+    },
+    price_options: {
+      buyer: toArray(ref.price_options?.buyer, ['buyer']),
+      seller: toArray(ref.price_options?.seller, ['seller']),
+    },
+    udf_metadata: {
+      header: toArray(ref.udf_metadata?.header, ['header']),
+      rows: toArray(ref.udf_metadata?.rows, ['rows']),
+    },
+  };
+};
+
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   sac: '',
   description: '',
   glAccount: '',
   distRule: '',
   glAccountName: '',
-  discountPercent: '',
-  priceAfterDisc: '',
   taxCode: '',
-  wtaxLiable: 'Yes',
+  wtaxLiable: 'No',
   totalLC: '',
   taxAmountLC: '',
   loc: '',
@@ -141,6 +225,10 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   taxCodeRepeat: '',
   price: '',
   saudaNodeRef: '',
+  apInvDocKey: '',
+  apInvDocNum: '',
+  apInvLineNum: '',
+  rg23DNo: '',
   specialRebate: '',
   commision: '',
   brokPerQty: '',
@@ -183,9 +271,8 @@ const CONTENT_COLUMNS = [
   { key: 'sac', label: 'SAC', width: 105, lookup: 'sac' },
   { key: 'description', label: 'Description', width: 220 },
   { key: 'glAccount', label: 'G/L Account', width: 140, lookup: 'account' },
+  { key: 'distRule', label: 'Distr. Rule', width: 120, lookup: 'distRule' },
   { key: 'glAccountName', label: 'G/L Account Name', width: 210, readOnly: true },
-  { key: 'discountPercent', label: 'Discount %', width: 105, numeric: true },
-  { key: 'priceAfterDisc', label: 'Price after Disc.', width: 145, numeric: true },
   { key: 'taxCode', label: 'Tax Code', width: 150, lookup: 'tax' },
   { key: 'wtaxLiable', label: 'WTax Liable', width: 95, lookup: 'yesNo' },
   { key: 'totalLC', label: 'Total (LC)', width: 115, numeric: true },
@@ -220,10 +307,13 @@ const CONTENT_COLUMNS = [
   { key: 'brokPerQty', label: 'BrokPerQty', width: 105, numeric: true },
   { key: 'fixBrokBuyer', label: 'FIX Brok BUYER', width: 135, numeric: true },
   { key: 'fixBrockSeller', label: 'Fix Brock Seller', width: 140, numeric: true },
-  { key: 'sellerTermsOfPaymentRepeat', label: 'Seller - Terms of Payment', width: 210 },
-  { key: 'distRule', label: 'Distr. Rule', width: 120, lookup: 'distRule', visible: false },
+  { key: 'sellerTermsOfPaymentRepeat', label: 'Seller - Terms of Payment', width: 210, visible: false },
   { key: 'taxAmountLC', label: 'Tax Amount (LC)', width: 125, readOnly: true, visible: false },
   { key: 'saudaNodeRef', label: 'Sauda Node Ref', width: 135, visible: false },
+  { key: 'apInvDocKey', label: 'AP Inv DocKey', width: 130, visible: false },
+  { key: 'apInvDocNum', label: 'AP Inv DocNum', width: 135, visible: false },
+  { key: 'apInvLineNum', label: 'AP Inv LineNum', width: 135, visible: false },
+  { key: 'rg23DNo', label: 'RG23DNo', width: 115, visible: false },
   { key: 'unitPrice', label: 'Unit Price', width: 110, numeric: true, visible: false },
   { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', width: 165, numeric: true, visible: false },
   { key: 'sellerBillDiscount', label: 'Seller Bill Discount', width: 170, numeric: true, visible: false },
@@ -235,10 +325,7 @@ const CONTENT_COLUMNS = [
   { key: 'brokerageNumber', label: 'Brokerage Number', width: 155, visible: false },
 ];
 
-const SERVICE_COLUMN_TOKEN_TO_KEY = {
-  SAC: 'sac',
-  SACCODE: 'sac',
-  SACENTRY: 'sac',
+const SERVICE_AR_CREDIT_MEMO_COLUMN_TOKEN_TO_KEY = {
   DESCRIPTION: 'description',
   ITEMDESCRIPTION: 'description',
   DSCRIPTION: 'description',
@@ -252,11 +339,6 @@ const SERVICE_COLUMN_TOKEN_TO_KEY = {
   GLACCOUNTNAME: 'glAccountName',
   ACCOUNTNAME: 'glAccountName',
   ACCTNAME: 'glAccountName',
-  DISCOUNTPERCENT: 'discountPercent',
-  DISCOUNTPRCNT: 'discountPercent',
-  DISCOUNTPERCENTAGE: 'discountPercent',
-  PRICEAFTERDISC: 'priceAfterDisc',
-  PRICEAFTERDISCOUNT: 'priceAfterDisc',
   TAXCODE: 'taxCode',
   WTAXLIABLE: 'wtaxLiable',
   WTLIABLE: 'wtaxLiable',
@@ -266,6 +348,9 @@ const SERVICE_COLUMN_TOKEN_TO_KEY = {
   TAXAMOUNTLC: 'taxAmountLC',
   TAXAMOUNT: 'taxAmountLC',
   VATSUM: 'taxAmountLC',
+  SAC: 'sac',
+  SACCODE: 'sac',
+  SACENTRY: 'sac',
   LOC: 'loc',
   LOCATION: 'loc',
   LOCATIONCODE: 'loc',
@@ -273,27 +358,42 @@ const SERVICE_COLUMN_TOKEN_TO_KEY = {
   BLANKETAGREEMENTNO: 'blanketAgreementNo',
   AGRNO: 'blanketAgreementNo',
   COSTSHEET: 'costSheet',
+  COSTSHEETCODE: 'costSheet',
   PACKINGTYPE: 'packingType',
+  PACKING: 'packingType',
   CONTAINERTYPE: 'containerType',
   GROSSWT: 'grossWt',
   GROSSWEIGHT: 'grossWt',
   TOTALPACKAGE: 'totalPackage',
+  TOTALPACKAGES: 'totalPackage',
   TAXCODEREPEAT: 'taxCodeRepeat',
   TAXCODEUDF: 'taxCodeRepeat',
+  TAXCODE2: 'taxCodeRepeat',
+  PRICE: 'price',
+  PRICEUDF: 'price',
   SAUDANODEREF: 'saudaNodeRef',
   SAUDANODHREF: 'saudaNodeRef',
+  APINVDOCKEY: 'apInvDocKey',
+  APINVDOCENTRY: 'apInvDocKey',
+  APINVDOCNUM: 'apInvDocNum',
+  APINVLINENUM: 'apInvLineNum',
+  RG23DNO: 'rg23DNo',
+  SPECIALREBATE: 'specialRebate',
+  SPLRBT: 'specialRebate',
+  COMMISION: 'commision',
+  COMMISSION: 'commision',
+  COMPRC: 'commision',
   BROKPERQTY: 'brokPerQty',
+  SBROKPERQTY: 'brokPerQty',
   SITEM: 'sItem',
   SITEMCODE: 'sItem',
   UNITPRICE: 'unitPrice',
-  PRICE: 'price',
   SQTY: 'sQty',
   QUANTITY: 'sQty',
-  SPECIALREBATE: 'specialRebate',
-  COMMISION: 'commision',
-  COMMISSION: 'commision',
   SELLERBROKERAGE: 'sellerBrokerage',
+  BROKSELLER: 'sellerBrokerage',
   BUYERBROKERAGE: 'buyerBrokerage',
+  BROKBUYER: 'buyerBrokerage',
   BUYERDELIVERY: 'buyerDelivery',
   SELLERDELIVERY: 'sellerDelivery',
   BUYERQUALITY: 'buyerQuality',
@@ -301,19 +401,31 @@ const SERVICE_COLUMN_TOKEN_TO_KEY = {
   BUYERPRICE: 'buyerPrice',
   SELLERPRICE: 'sellerPrice',
   BUYERSPECIALINSTRUCTION: 'buyerSpecialInstruction',
+  BUYERSPINS: 'buyerSpecialInstruction',
   SELLERSPECIALINSTRUCTION: 'sellerSpecialInstruction',
+  SELLERSPINS: 'sellerSpecialInstruction',
   SELLERBROKERAGEAMTPER: 'sellerBrokerageAmtPer',
+  SELBROKAP: 'sellerBrokerageAmtPer',
   SELLERBROKERAGEINPERCENTAGE: 'sellerBrokeragePercentage',
+  SELLERBROKPER: 'sellerBrokeragePercentage',
   BUYERBILLDISCOUNT: 'buyerBillDiscount',
   SELLERBILLDISCOUNT: 'sellerBillDiscount',
   STCODE: 'stcode',
+  SELLTCODE: 'stcode',
   BUYERTERMSOFPAYMENT: 'buyerTermsOfPayment',
+  BUYERPAYMENTTERMS: 'buyerTermsOfPayment',
   SELLERTERMSOFPAYMENT: 'sellerTermsOfPayment',
+  SELLERPAYMENTTERM: 'sellerTermsOfPayment',
+  SELLERPAYMENTTERMS: 'sellerTermsOfPayment',
   SELLERTERMSOFPAYMENTREPEAT: 'sellerTermsOfPaymentRepeat',
   FIXBROKBUYER: 'fixBrokBuyer',
   FIXBROCKBUYER: 'fixBrokBuyer',
+  FIXBROKB: 'fixBrokBuyer',
+  FIXBROCKB: 'fixBrokBuyer',
   FIXBROKSELLER: 'fixBrockSeller',
   FIXBROCKSELLER: 'fixBrockSeller',
+  FIXBROKS: 'fixBrockSeller',
+  FIXBROCKS: 'fixBrockSeller',
   FREIGHTPURCHASE: 'freightPurchase',
   FREIGHTSALES: 'freightSales',
   FREIGHTPROVIDER: 'freightProvider',
@@ -322,14 +434,28 @@ const SERVICE_COLUMN_TOKEN_TO_KEY = {
   BROKERAGENUMBER: 'brokerageNumber',
 };
 
-const normalizeServiceColumnToken = (value) =>
+const includeSelectedSeries = (series = [], selectedSeries = '', selectedSeriesName = '') => {
+  const selected = String(selectedSeries || '').trim();
+  if (!selected || selected === 'manual' || series.some((item) => String(item.Series || '') === selected)) {
+    return series;
+  }
+
+  return [{
+    Series: selected,
+    SeriesName: selectedSeriesName || selected,
+    NextNumber: '',
+    IsLoadedDocumentSeries: true,
+  }, ...series];
+};
+
+const normalizeServiceArCreditMemoColumnToken = (value) =>
   String(value || '')
     .trim()
     .toUpperCase()
     .replace(/^U_/, '')
     .replace(/[^A-Z0-9]+/g, '');
 
-const getServiceColumnKey = (column = {}) => {
+const getServiceArCreditMemoColumnKey = (column = {}) => {
   const candidates = [
     column.key,
     column.valueKey,
@@ -343,17 +469,17 @@ const getServiceColumnKey = (column = {}) => {
   ];
 
   for (const candidate of candidates) {
-    const token = normalizeServiceColumnToken(candidate);
-    if (SERVICE_COLUMN_TOKEN_TO_KEY[token]) return SERVICE_COLUMN_TOKEN_TO_KEY[token];
+    const token = normalizeServiceArCreditMemoColumnToken(candidate);
+    if (SERVICE_AR_CREDIT_MEMO_COLUMN_TOKEN_TO_KEY[token]) return SERVICE_AR_CREDIT_MEMO_COLUMN_TOKEN_TO_KEY[token];
   }
 
   return '';
 };
 
-const normalizeServiceMatrixColumns = (columns = []) => {
+const normalizeServiceArCreditMemoMatrixColumns = (columns = []) => {
   const liveByKey = new Map();
   (Array.isArray(columns) ? columns : []).forEach((column) => {
-    const key = getServiceColumnKey(column);
+    const key = getServiceArCreditMemoColumnKey(column);
     if (key && !liveByKey.has(key)) liveByKey.set(key, column);
   });
 
@@ -386,6 +512,24 @@ const normalizeFieldName = (value) =>
 
 const FIXED_SERVICE_MATRIX_FIELD_NAMES = new Set([
   'saudanoderef',
+  'blanketagreementno',
+  'costsheet',
+  'packingtype',
+  'containertype',
+  'grosswt',
+  'grossweight',
+  'totalpackage',
+  'taxcoderepeat',
+  'taxcodeudf',
+  'price',
+  'apinvdockey',
+  'apinvdocentry',
+  'apinvdocnum',
+  'apinvlinenum',
+  'rg23dno',
+  'specialrebate',
+  'commision',
+  'commission',
   'brokperqty',
   'unitprice',
   'sellerbrokerage',
@@ -394,6 +538,11 @@ const FIXED_SERVICE_MATRIX_FIELD_NAMES = new Set([
   'sellerdelivery',
   'buyertermsofpayment',
   'sellertermsofpayment',
+  'sellertermsofpaymentrepeat',
+  'fixbrokbuyer',
+  'fixbrockbuyer',
+  'fixbrokseller',
+  'fixbrockseller',
   'buyerquality',
   'sellerquality',
   'buyerprice',
@@ -426,65 +575,9 @@ const isFixedServiceMatrixField = (field = {}) =>
 const applyServiceRowUdfDefaults = (definitions = []) =>
   definitions.map((field) => ({ ...field, visible: false }));
 
-const DEFAULT_TRANSACTION_TYPES = [
-  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
-  { value: 'Bill of Supply', label: 'Bill of Supply' },
-  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
-];
-
-const normalizeSeriesText = (value) =>
-  String(value || '')
-    .replace(/^U_/i, '')
-    .replace(/[^a-z0-9]+/gi, '')
-    .toLowerCase();
-
-const getTransactionTypeOptions = () => {
-  return DEFAULT_TRANSACTION_TYPES;
-};
-
-const filterSeriesByTransactionType = (series = [], transactionType = '') => {
-  const normalizedType = normalizeSeriesText(transactionType);
-  if (!normalizedType) return series;
-
-  const matches = series.filter((item) => {
-    const candidates = [
-      item.TransactionType,
-      item.transactionType,
-      item.DocType,
-      item.DocumentType,
-      item.Indicator,
-      item.SeriesName,
-    ];
-
-    return candidates.some((candidate) => {
-      const normalizedCandidate = normalizeSeriesText(candidate);
-      return normalizedCandidate && (
-        normalizedCandidate.includes(normalizedType) ||
-        normalizedType.includes(normalizedCandidate)
-      );
-    });
-  });
-
-  return matches.length ? matches : series;
-};
-
-const pickFirstSeries = (series = [], transactionType = '') => filterSeriesByTransactionType(series, transactionType)[0];
-
-const includeSelectedSeries = (series = [], selectedSeries = '', selectedSeriesName = '') => {
-  const selected = String(selectedSeries || '').trim();
-  if (!selected || selected === 'manual' || series.some((item) => String(item.Series || '') === selected)) {
-    return series;
-  }
-
-  return [{
-    Series: selected,
-    SeriesName: selectedSeriesName || selected,
-    NextNumber: '',
-    IsLoadedDocumentSeries: true,
-  }, ...series];
-};
-
 const LINE_LOOKUP_FIELDS = new Set([
+  'sellerBrokerage',
+  'buyerBrokerage',
   'buyerTermsOfPayment',
   'sellerTermsOfPayment',
   'buyerQuality',
@@ -552,9 +645,26 @@ const getTaxRate = (taxCodes, code) => {
   return parseNum(tax?.Rate);
 };
 
+const readLineAliasValue = (line = {}, aliases = []) => {
+  const aliasSet = new Set(aliases.map(normalizeFieldName));
+  const sources = [line, line.udf || {}];
+  for (const source of sources) {
+    for (const [key, value] of Object.entries(source || {})) {
+      if (!aliasSet.has(normalizeFieldName(key))) continue;
+      if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+    }
+  }
+  return '';
+};
+
 const normalizeCopyLine = (line, idx, docEntry, baseType, accounts) => {
   const glAccount = String(line.AccountCode || line.AcctCode || line.glAccount || '').trim();
   const account = accounts.find((item) => String(item.code) === glAccount);
+  const quantity = line.Quantity != null ? String(line.Quantity) : String(line.sQty || '');
+  const unitPrice = line.UnitPrice != null ? String(line.UnitPrice) : String(line.unitPrice || '');
+  const lineTotal = line.LineTotal != null
+    ? String(line.LineTotal)
+    : (parseNum(quantity) > 0 && parseNum(unitPrice) > 0 ? fmt(parseNum(quantity) * parseNum(unitPrice)) : String(line.totalLC || ''));
   return {
     ...createLine(),
     baseEntry: docEntry || line.BaseEntry || null,
@@ -566,20 +676,64 @@ const normalizeCopyLine = (line, idx, docEntry, baseType, accounts) => {
     glAccountName: line.AccountName || line.AcctName || account?.name || '',
     distRule: String(line.DistributionRule || line.OcrCode || line.distRule || ''),
     taxCode: String(line.TaxCode || line.taxCode || ''),
-    totalLC: line.LineTotal != null ? String(line.LineTotal) : String(line.totalLC || ''),
+    totalLC: lineTotal,
     taxAmountLC: line.TaxAmount != null ? String(line.TaxAmount) : String(line.taxAmountLC || ''),
-    unitPrice: line.UnitPrice != null ? String(line.UnitPrice) : String(line.unitPrice || ''),
-    sQty: line.Quantity != null ? String(line.Quantity) : String(line.sQty || ''),
+    loc: String(line.Location || line.LocationCode || line.loc || ''),
+    locCode: String(line.LocationCode || line.locCode || ''),
+    blanketAgreementNo: String(line.BlanketAgreementNo || line.AgrNo || line.AgreementNo || line.blanketAgreementNo || ''),
+    costSheet: String(readLineAliasValue(line, ['CostSheet', 'Cost_Sheet', 'costSheet'])),
+    packingType: String(readLineAliasValue(line, ['PackingType', 'Packing_Type', 'packingType'])),
+    containerType: String(readLineAliasValue(line, ['ContainerType', 'Container_Type', 'containerType'])),
+    grossWt: String(readLineAliasValue(line, ['GrossWt', 'GrossWeight', 'grossWt'])),
+    totalPackage: String(readLineAliasValue(line, ['TotalPackage', 'Total_Package', 'totalPackage'])),
+    taxCodeRepeat: String(readLineAliasValue(line, ['TaxCode', 'TaxCodeRepeat', 'taxCodeRepeat']) || line.TaxCode || line.taxCode || ''),
+    price: String(readLineAliasValue(line, ['Price', 'U_PRICE', 'price'])),
+    apInvDocKey: String(readLineAliasValue(line, ['APInvDocKey', 'APInvDocEntry', 'apInvDocKey'])),
+    apInvDocNum: String(readLineAliasValue(line, ['APInvDocNum', 'apInvDocNum'])),
+    apInvLineNum: String(readLineAliasValue(line, ['APInvLineNum', 'apInvLineNum'])),
+    rg23DNo: String(readLineAliasValue(line, ['RG23DNo', 'RG23DNO', 'rg23DNo'])),
+    specialRebate: String(readLineAliasValue(line, ['SpecialRebate', 'specialRebate'])),
+    commision: String(readLineAliasValue(line, ['Commision', 'Commission', 'commision'])),
+    unitPrice,
+    sQty: quantity,
+    saudaNodeRef: String(readLineAliasValue(line, ['SaudaNodeRef', 'SaudaNodhRef', 'SaudaNode', 'saudaNodeRef'])),
+    brokPerQty: String(readLineAliasValue(line, ['BrokPerQty', 'brokPerQty'])),
+    sItem: String(readLineAliasValue(line, ['S_Item', 'SItem', 'sItem'])),
+    sellerBrokerage: String(readLineAliasValue(line, ['SellerBrokerage', 'sellerBrokerage'])),
+    buyerBrokerage: String(readLineAliasValue(line, ['BuyerBrokerage', 'buyerBrokerage'])),
+    buyerDelivery: String(readLineAliasValue(line, ['BuyerDelivery', 'buyerDelivery'])),
+    sellerDelivery: String(readLineAliasValue(line, ['SellerDelivery', 'sellerDelivery'])),
+    buyerQuality: String(readLineAliasValue(line, ['BuyerQuality', 'buyerQuality'])),
+    sellerQuality: String(readLineAliasValue(line, ['SellerQuality', 'sellerQuality'])),
+    buyerPrice: String(readLineAliasValue(line, ['BuyerPrice', 'buyerPrice'])),
+    sellerPrice: String(readLineAliasValue(line, ['SellerPrice', 'sellerPrice'])),
+    buyerSpecialInstruction: String(readLineAliasValue(line, ['BuyerSpecialInstruction', 'BuyerSplInst', 'buyerSpecialInstruction'])),
+    sellerSpecialInstruction: String(readLineAliasValue(line, ['SellerSpecialInstruction', 'SellerSplInst', 'sellerSpecialInstruction'])),
+    sellerBrokerageAmtPer: String(readLineAliasValue(line, ['SellerBrokerageAmtPer', 'SellBrkAmtPer', 'sellerBrokerageAmtPer'])),
+    sellerBrokeragePercentage: String(readLineAliasValue(line, ['SellerBrokeragePercentage', 'SellerBrkPct', 'sellerBrokeragePercentage'])),
+    buyerBillDiscount: String(readLineAliasValue(line, ['BuyerBillDiscount', 'buyerBillDiscount'])),
+    sellerBillDiscount: String(readLineAliasValue(line, ['SellerBillDiscount', 'sellerBillDiscount'])),
+    stcode: String(readLineAliasValue(line, ['STCODE', 'STCode', 'stcode'])),
+    buyerTermsOfPayment: String(readLineAliasValue(line, ['BuyerTermsOfPayment', 'BuyerPayTerms', 'buyerTermsOfPayment'])),
+    sellerTermsOfPayment: String(readLineAliasValue(line, ['SellerTermsOfPayment', 'SellerPayTerms', 'sellerTermsOfPayment'])),
+    sellerTermsOfPaymentRepeat: String(readLineAliasValue(line, ['SellerTermsOfPayment', 'SellerPayTerms', 'sellerTermsOfPaymentRepeat', 'sellerTermsOfPayment'])),
+    fixBrokBuyer: String(readLineAliasValue(line, ['FixBrokBuyer', 'FixBrockBuyer', 'Fix_Brock_B', 'fixBrokBuyer'])),
+    fixBrockSeller: String(readLineAliasValue(line, ['FixBrokSeller', 'FixBrockSeller', 'Fix_Brock_S', 'fixBrockSeller'])),
+    freightPurchase: String(readLineAliasValue(line, ['FreightPurchase', 'freightPurchase'])),
+    freightSales: String(readLineAliasValue(line, ['FreightSales', 'freightSales'])),
+    freightProvider: String(readLineAliasValue(line, ['FreightProvider', 'freightProvider'])),
+    freightProviderName: String(readLineAliasValue(line, ['FreightProviderName', 'freightProviderName'])),
+    documentCreated: String(readLineAliasValue(line, ['DocumentCreated', 'documentCreated'])),
+    brokerageNumber: String(readLineAliasValue(line, ['BrokerageNumber', 'BrokerageNo', 'brokerageNumber'])),
   };
 };
 
-function ServiceARInvoicePage() {
+function ServiceARCreditMemoPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { removeTask, upsertTask } = useSapWindowTaskbarActions();
-  const requestedDocEntry = location.state?.serviceARInvoiceDocEntry;
+  const requestedDocEntry = location.state?.serviceArCreditMemoDocEntry;
   const handledCopyFromRef = useRef('');
-  const customerDetailsRequestRef = useRef(0);
+  const vendorDetailsRequestRef = useRef(0);
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
@@ -595,34 +749,14 @@ function ServiceARInvoicePage() {
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
-  const [refData, setRefData] = useState({
-    vendors: [],
-    contacts: [],
-    states: [],
-    series: [],
-    branches: [],
-    payment_terms: [],
-    sales_employees: [],
-    tax_codes: [],
-    gl_accounts: [],
-    distribution_rules: [],
-    shipping_types: [],
-    pay_to_addresses: [],
-    ship_to_addresses: [],
-    bill_to_addresses: [],
-    sac_codes: [],
-    transaction_types: [],
-    quality_options: { buyer: [], seller: [] },
-    price_options: { buyer: [], seller: [] },
-    udf_metadata: { header: [], rows: [] },
-  });
+  const [refData, setRefData] = useState(EMPTY_REF_DATA);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [pageState, setPageState] = useState({ loading: true, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
   const [isDirty, setIsDirty] = useState(false);
   const [copyFromModal, setCopyFromModal] = useState(false);
-  const [copyFromDocType, setCopyFromDocType] = useState('salesOrder');
+  const [copyFromDocType, setCopyFromDocType] = useState('arInvoice');
   const [bpModalOpen, setBpModalOpen] = useState(false);
   const [stateModalOpen, setStateModalOpen] = useState(false);
   const [addressModal, setAddressModal] = useState(null);
@@ -695,30 +829,29 @@ function ServiceARInvoicePage() {
   };
   const hasCustomerCode = Boolean(String(header.vendor || '').trim());
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
-  const taxCodes = refData.tax_codes || [];
-  const accounts = refData.gl_accounts || [];
-  const distributionRules = refData.distribution_rules || [];
-  const paymentTerms = refData.payment_terms || [];
-  const shippingTypes = refData.shipping_types || [];
-  const vendorPayToAddresses = (refData.pay_to_addresses || []).filter((address) => String(address.CardCode || '') === String(header.vendor || ''));
-  const vendorShipToAddresses = (refData.ship_to_addresses || []).filter((address) => String(address.CardCode || '') === String(header.vendor || ''));
-  const vendorBillToAddresses = (refData.bill_to_addresses || []).filter((address) => String(address.CardCode || '') === String(header.vendor || ''));
+  const taxCodes = toArray(refData.tax_codes, ['tax_codes']);
+  const accounts = toArray(refData.gl_accounts, ['gl_accounts']);
+  const distributionRules = toArray(refData.distribution_rules, ['distribution_rules']);
+  const paymentTerms = toArray(refData.payment_terms, ['payment_terms']);
+  const shippingTypes = toArray(refData.shipping_types, ['shipping_types']);
+  const seriesOptions = useMemo(() => includeSelectedSeries(
+    toArray(refData.series, ['series']),
+    header.series,
+    header.seriesName
+  ), [refData.series, header.series, header.seriesName]);
+  const salesEmployeeOptions = toArray(refData.sales_employees, ['sales_employees']);
+  const stateOptions = toArray(refData.states, ['states']);
+  const vendorPayToAddresses = toArray(refData.pay_to_addresses, ['pay_to_addresses']).filter((address) => String(address.CardCode || '') === String(header.vendor || ''));
+  const vendorShipToAddresses = toArray(refData.ship_to_addresses, ['ship_to_addresses']).filter((address) => String(address.CardCode || '') === String(header.vendor || ''));
+  const vendorBillToAddresses = toArray(refData.bill_to_addresses, ['bill_to_addresses']).filter((address) => String(address.CardCode || '') === String(header.vendor || ''));
   const vendorEffectiveShipToAddresses = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
   const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
   const payTermOpts = paymentTerms.map((term) => ({ value: String(term.GroupNum ?? term.code ?? ''), label: term.PymntGroup || term.name || String(term.GroupNum ?? '') }));
   const shipTypeOpts = shippingTypes.map((type) => ({ value: String(type.TrnspCode ?? type.code ?? ''), label: type.TrnspName || type.name || String(type.TrnspCode ?? '') }));
-  const transactionTypeOptions = useMemo(
-    () => getTransactionTypeOptions(headerUdfDefinitions, refData),
-    [headerUdfDefinitions, refData.transaction_types, refData.transactionTypes],
-  );
-  const visibleSeries = useMemo(
-    () => includeSelectedSeries(
-      filterSeriesByTransactionType(refData.series || [], header.transactionType),
-      header.series,
-      header.seriesName
-    ),
-    [refData.series, header.transactionType, header.series, header.seriesName],
-  );
+  const taxInvoiceReferenceRequired = String(header.transactionType || '').trim().toLowerCase() !== 'bill of supply';
+  const transactionTypeOptions = useMemo(() => {
+    return DEFAULT_TRANSACTION_TYPES;
+  }, []);
 
   const accountLookupOptions = useMemo(() => accounts.map((account) => ({
     value: account.code || '',
@@ -750,7 +883,7 @@ function ServiceARInvoicePage() {
     };
   }).filter((option) => option.value), [paymentTerms]);
 
-  const locationLookupOptions = useMemo(() => (refData.locations || []).map((locationItem) => {
+  const locationLookupOptions = useMemo(() => toArray(refData.locations, ['locations']).map((locationItem) => {
     const code = String(locationItem.code ?? locationItem.Code ?? '');
     const name = locationItem.name || locationItem.Location || locationItem.Name || code;
     return {
@@ -762,7 +895,7 @@ function ServiceARInvoicePage() {
     };
   }).filter((option) => option.value), [refData.locations]);
 
-  const itemLookupOptions = useMemo(() => (refData.items || []).map((item) => ({
+  const itemLookupOptions = useMemo(() => toArray(refData.items, ['items']).map((item) => ({
     value: item.ItemCode || item.code || '',
     description: item.ItemName || item.name || '',
     label: item.ItemName ? `${item.ItemCode} - ${item.ItemName}` : item.ItemCode,
@@ -772,7 +905,10 @@ function ServiceARInvoicePage() {
     wtaxLiable: item.WTaxLiable || item.WTLiable || '',
   })).filter((option) => option.value), [refData.items]);
 
-  const freightProviderLookupOptions = useMemo(() => (refData.business_partners || refData.vendors || []).map((bp) => {
+  const freightProviderLookupOptions = useMemo(() => {
+    const partners = toArray(refData.business_partners, ['business_partners']);
+    const fallbackCustomers = toArray(refData.vendors, ['vendors']);
+    return (partners.length ? partners : fallbackCustomers).map((bp) => {
     const code = bp.CardCode || bp.code || '';
     const name = bp.CardName || bp.name || '';
     return {
@@ -789,9 +925,10 @@ function ServiceARInvoicePage() {
       billToBuildingFloorRoom: bp.BillToBuildingFloorRoom || '',
       gtsRegistrationNumber: bp.GTSRegistrationNumber || '',
     };
-  }).filter((option) => option.value), [refData.business_partners, refData.vendors]);
+  }).filter((option) => option.value);
+  }, [refData.business_partners, refData.vendors]);
 
-  const serviceSacLookupOptions = useMemo(() => (refData.sac_codes || []).map((sac) => {
+  const serviceSacLookupOptions = useMemo(() => toArray(refData.sac_codes, ['sac_codes']).map((sac) => {
     const code = sac.serviceCode || sac.code || sac.ChapterID || '';
     const serviceName = sac.serviceName || sac.description || sac.name || sac.Dscription || '';
     return {
@@ -826,27 +963,51 @@ function ServiceARInvoicePage() {
       searchPlaceholder: 'Search payment terms',
       emptyMessage: 'No payment terms found',
     },
+    sellerBrokerage: {
+      title: 'List of Seller Brokerage Business Partners',
+      options: freightProviderLookupOptions,
+      searchPlaceholder: 'Search business partners',
+      emptyMessage: 'No business partners found',
+      columns: [
+        { key: 'bpName', label: 'BP Name', primary: true },
+        { key: 'bpCode', label: 'BP Code', width: 110 },
+        { key: 'bpBalance', label: 'BP Balance', width: 120, align: 'right' },
+        { key: 'bpType', label: 'BP Type', width: 90 },
+      ],
+    },
+    buyerBrokerage: {
+      title: 'List of Buyer Brokerage Business Partners',
+      options: freightProviderLookupOptions,
+      searchPlaceholder: 'Search business partners',
+      emptyMessage: 'No business partners found',
+      columns: [
+        { key: 'bpName', label: 'BP Name', primary: true },
+        { key: 'bpCode', label: 'BP Code', width: 110 },
+        { key: 'bpBalance', label: 'BP Balance', width: 120, align: 'right' },
+        { key: 'bpType', label: 'BP Type', width: 90 },
+      ],
+    },
     buyerQuality: {
       title: 'List of Buyer Quality Values',
-      options: refData.quality_options?.buyer || [],
+      options: toArray(refData.quality_options?.buyer, ['buyer']),
       searchPlaceholder: 'Search buyer quality',
       emptyMessage: 'No buyer quality values found',
     },
     sellerQuality: {
       title: 'List of Seller Quality Values',
-      options: refData.quality_options?.seller || [],
+      options: toArray(refData.quality_options?.seller, ['seller']),
       searchPlaceholder: 'Search seller quality',
       emptyMessage: 'No seller quality values found',
     },
     buyerPrice: {
       title: 'List of Buyer Price Values',
-      options: refData.price_options?.buyer || [],
+      options: toArray(refData.price_options?.buyer, ['buyer']),
       searchPlaceholder: 'Search buyer price',
       emptyMessage: 'No buyer price values found',
     },
     sellerPrice: {
       title: 'List of Seller Price Values',
-      options: refData.price_options?.seller || [],
+      options: toArray(refData.price_options?.seller, ['seller']),
       searchPlaceholder: 'Search seller price',
       emptyMessage: 'No seller price values found',
     },
@@ -955,9 +1116,9 @@ function ServiceARInvoicePage() {
       setPageState((prev) => ({ ...prev, loading: true, error: '' }));
       try {
         const [refRes, seriesRes, layoutRes] = await Promise.all([
-          fetchServiceARInvoiceReferenceData(),
-          fetchServiceARInvoiceSeries(header.postingDate),
-          getDocumentLayout({ documentType: 'SERVICE_AR_INVOICE' }).catch((error) => ({
+          fetchServiceARCreditMemoReferenceData(),
+          fetchServiceARCreditMemoSeries(header.postingDate),
+          getDocumentLayout({ documentType: 'SERVICE_AR_CREDIT_MEMO' }).catch((error) => ({
             data: {
               success: false,
               columns: [],
@@ -969,35 +1130,29 @@ function ServiceARInvoicePage() {
 
         const defaultBranch = String(
           refRes.data?.default_branch ||
-          ((refRes.data?.branches || []).length === 1 ? refRes.data.branches[0]?.BPLId : '') ||
+          (toArray(refRes.data?.branches, ['branches']).length === 1
+            ? toArray(refRes.data?.branches, ['branches'])[0]?.BPLId
+            : '') ||
           ''
         );
-        let nextRefData = {
-          ...refRes.data,
-          series: seriesRes.data?.series || refRes.data?.series || [],
-        };
-        const nextHeaderUdfs = nextRefData.udf_metadata?.header || [];
-        const liveTransactionTypes = getTransactionTypeOptions(nextHeaderUdfs, nextRefData);
-        const defaultTransactionType = liveTransactionTypes[0]?.value || '';
-        if (defaultTransactionType || defaultBranch) {
+        let nextRefData = normalizeReferenceData(refRes.data, seriesRes.data?.series || seriesRes.data);
+        if (defaultBranch) {
           try {
-            const typedSeriesRes = await fetchServiceARInvoiceSeries(header.postingDate, defaultTransactionType, defaultBranch);
+            const branchSeriesRes = await fetchServiceARCreditMemoSeries(header.postingDate, defaultBranch);
             if (ignore) return;
-            nextRefData = {
-              ...nextRefData,
-              series: typedSeriesRes.data?.series || nextRefData.series || [],
-            };
+            nextRefData = normalizeReferenceData(refRes.data, branchSeriesRes.data?.series || branchSeriesRes.data);
           } catch (_seriesError) {
-            // Keep the all-series response if the typed series lookup is unavailable.
+            // Keep the date-filtered response when branch-specific lookup is unavailable.
           }
         }
+        const nextHeaderUdfs = nextRefData.udf_metadata.header;
         const nextRowUdfs = applyServiceRowUdfDefaults(nextRefData.udf_metadata?.rows || []);
         const layoutMatrixColumns = buildMatrixColumnsFromSapLayout({
           baseColumns: CONTENT_COLUMNS,
           layoutColumns: layoutRes?.data?.columns || [],
           fallbackColumns: CONTENT_COLUMNS,
         });
-        const nextMatrixColumns = normalizeServiceMatrixColumns(layoutMatrixColumns);
+        const nextMatrixColumns = normalizeServiceArCreditMemoMatrixColumns(layoutMatrixColumns);
         const hasSapMatrixPreferences = Boolean((layoutRes?.data?.columns || []).length && layoutRes?.data?.source !== 'fallback');
         const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
         setHeaderUdfDefinitions(nextHeaderUdfs);
@@ -1021,22 +1176,19 @@ function ServiceARInvoicePage() {
             ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
           ],
         });
-        const defaultIndicator = liveTransactionTypes[0]?.indicator || '';
-        const firstSeries = pickFirstSeries(nextRefData.series || [], defaultTransactionType);
-        if (!requestedDocEntry) {
+        const firstSeries = nextRefData.series[0];
+        if (firstSeries && !requestedDocEntry) {
           setHeader((prev) => ({
             ...prev,
-            transactionType: prev.transactionType || defaultTransactionType,
-            indicator: prev.indicator || defaultIndicator,
             branch: prev.branch || defaultBranch || String(firstSeries?.BPLId || ''),
-            series: firstSeries ? String(firstSeries.Series || '') : '',
-            nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
+            series: String(firstSeries.Series || ''),
+            nextNumber: String(firstSeries.NextNumber || ''),
           }));
         }
         setPageState((prev) => ({ ...prev, loading: false }));
       } catch (error) {
         if (!ignore) {
-          setPageState((prev) => ({ ...prev, loading: false, error: error.response?.data?.message || error.message || 'Failed to load Service A/R Invoice.' }));
+          setPageState((prev) => ({ ...prev, loading: false, error: error.response?.data?.message || error.message || 'Failed to load Service A/R Credit Memo.' }));
         }
       }
     };
@@ -1048,26 +1200,78 @@ function ServiceARInvoicePage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (requestedDocEntry || currentDocEntry) return;
+
+    const routedCopyFrom = location.state?.copyFrom;
+    const persistedCopyState = routedCopyFrom ? null : consumeCopyToState(location.pathname, ['/services/ar-credit-memo']);
+    const copyFrom = routedCopyFrom || persistedCopyState?.copyFrom;
+    if (!copyFrom) return;
+
+    const normalizedHeader = normaliseDocumentHeader(copyFrom.header || {});
+    const sourceLines = Array.isArray(copyFrom.lines) ? copyFrom.lines : [];
+    const baseEntry = copyFrom.baseDocument?.baseEntry ?? copyFrom.docEntry;
+    const baseType = copyFrom.baseDocument?.baseType ?? 13;
+
+    setHeader((prev) => ({
+      ...prev,
+      ...normalizedHeader,
+      docNo: prev.docNo,
+      nextNumber: prev.nextNumber,
+      series: prev.series,
+      status: 'Open',
+      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice',
+    }));
+    if (copyFrom.headerUdfs) {
+      setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, copyFrom.headerUdfs));
+    }
+    setLines(sourceLines.length
+      ? sourceLines.map((line, index) => ({
+        ...normalizeCopyLine(
+          line,
+          index,
+          line.baseEntry ?? baseEntry,
+          line.baseType ?? baseType,
+          accounts
+        ),
+        udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
+      }))
+      : [createLine(rowUdfDefinitions)]);
+    setValErrors({ header: {}, lines: {}, form: '' });
+    setPageState((prev) => ({ ...prev, error: '', success: 'Copied from Service A/R Invoice. Please review and save.' }));
+
+    if (normalizedHeader.vendor) {
+      loadCustomerDetails(normalizedHeader.vendor);
+    }
+    navigate(location.pathname, { replace: true, state: null });
+  }, [
+    accounts,
+    currentDocEntry,
+    headerUdfDefinitions,
+    location.pathname,
+    location.state,
+    navigate,
+    requestedDocEntry,
+    rowUdfDefinitions,
+    transactionTypeOptions,
+  ]);
+
+  useEffect(() => {
     if (!requestedDocEntry) return;
     let ignore = false;
 
     const loadDocument = async () => {
       setPageState((prev) => ({ ...prev, loading: true, error: '', success: '' }));
       try {
-        const res = await fetchServiceARInvoiceByDocEntry(requestedDocEntry);
+        const res = await fetchServiceARCreditMemoByDocEntry(requestedDocEntry);
         if (ignore) return;
-        const doc = res.data?.service_ar_invoice;
-        if (!doc) throw new Error('Service A/R Invoice was not returned.');
+        const doc = res.data?.service_ar_credit_memo;
+        if (!doc) throw new Error('Service A/R Credit Memo was not returned.');
         const loadedHeader = { ...doc.header };
         if (loadedHeader.postingDate) {
           try {
-            const seriesRes = await fetchServiceARInvoiceSeries(
-              loadedHeader.postingDate,
-              loadedHeader.transactionType || '',
-              loadedHeader.branch || ''
-            );
+            const seriesRes = await fetchServiceARCreditMemoSeries(loadedHeader.postingDate, loadedHeader.branch || '');
             if (ignore) return;
-            const documentSeries = seriesRes.data?.series || [];
+            const documentSeries = toArray(seriesRes.data?.series || seriesRes.data, ['series']);
             if (documentSeries.length) {
               setRefData((prev) => ({ ...prev, series: documentSeries }));
             }
@@ -1077,24 +1281,31 @@ function ServiceARInvoicePage() {
         }
         if (loadedHeader.vendor) {
           try {
-            const detailsRes = await fetchServiceARInvoiceCustomerDetails(loadedHeader.vendor);
+            const detailsRes = await fetchServiceARCreditMemoCustomerDetails(loadedHeader.vendor);
             if (ignore) return;
-            const shipToAddresses = detailsRes.data?.ship_to_addresses || detailsRes.data?.pay_to_addresses || [];
-            const billToAddresses = detailsRes.data?.bill_to_addresses || detailsRes.data?.pay_to_addresses || [];
-            const shipTo = findAddressByCode(shipToAddresses, loadedHeader.shipToCode);
-            const billTo = findAddressByCode(billToAddresses, loadedHeader.billToCode);
+            const payToAddresses = toArray(detailsRes.data?.pay_to_addresses, ['pay_to_addresses']);
+            const billToAddresses = toArray(detailsRes.data?.bill_to_addresses, ['bill_to_addresses']);
+            const shipToAddresses = toArray(detailsRes.data?.ship_to_addresses, ['ship_to_addresses']);
+            const billTo = findAddressByCode(
+              billToAddresses.length ? billToAddresses : payToAddresses,
+              loadedHeader.billToCode
+            );
+            const shipTo = findAddressByCode(
+              shipToAddresses.length ? shipToAddresses : payToAddresses,
+              loadedHeader.shipToCode
+            );
             if (!String(loadedHeader.placeOfSupply || '').trim()) {
-              loadedHeader.placeOfSupply = getAddressState(shipTo) || getAddressState(billTo);
+              loadedHeader.placeOfSupply = getAddressState(billTo) || getAddressState(shipTo);
             }
             setRefData((prev) => ({
               ...prev,
-              contacts: detailsRes.data?.contacts || [],
-              pay_to_addresses: detailsRes.data?.pay_to_addresses || [],
-              ship_to_addresses: detailsRes.data?.ship_to_addresses || [],
-              bill_to_addresses: detailsRes.data?.bill_to_addresses || [],
+              contacts: toArray(detailsRes.data?.contacts, ['contacts']),
+              pay_to_addresses: payToAddresses,
+              ship_to_addresses: shipToAddresses,
+              bill_to_addresses: billToAddresses,
             }));
           } catch (_detailsError) {
-            // The invoice itself remains loadable when partner address lookup is unavailable.
+            // The credit memo remains loadable when partner address lookup is unavailable.
           }
         }
         setCurrentDocEntry(doc.doc_entry);
@@ -1104,17 +1315,18 @@ function ServiceARInvoicePage() {
             ? normalizeUdfState(headerUdfDefinitions, doc.header_udfs || {})
             : (doc.header_udfs || {})
         );
-        setLines(doc.lines?.length
-          ? doc.lines.map((line) => ({
+        const loadedLines = toArray(doc.lines, ['lines', 'DocumentLines']);
+        setLines(loadedLines.length
+          ? loadedLines.map((line) => ({
             ...createLine(rowUdfDefinitions),
             ...line,
             udf: rowUdfDefinitions.length ? normalizeUdfState(rowUdfDefinitions, line.udf || {}) : (line.udf || {}),
           }))
           : [createLine(rowUdfDefinitions)]);
         setIsDirty(false);
-        setPageState((prev) => ({ ...prev, loading: false, success: `Service A/R Invoice ${doc.doc_num || requestedDocEntry} loaded.` }));
+        setPageState((prev) => ({ ...prev, loading: false, success: `Service A/R Credit Memo ${doc.doc_num || requestedDocEntry} loaded.` }));
       } catch (error) {
-        if (!ignore) setPageState((prev) => ({ ...prev, loading: false, error: error.response?.data?.message || error.message || 'Failed to load Service A/R Invoice.' }));
+        if (!ignore) setPageState((prev) => ({ ...prev, loading: false, error: error.response?.data?.message || error.message || 'Failed to load Service A/R Credit Memo.' }));
       }
     };
 
@@ -1127,8 +1339,6 @@ function ServiceARInvoicePage() {
   const updateLineCalculatedValues = (line) => {
     const next = { ...line };
     next.taxCodeRepeat = next.taxCode || '';
-    if (next.priceAfterDisc === '' && next.unitPrice !== '') next.priceAfterDisc = next.unitPrice;
-    if (next.price === '' && next.unitPrice !== '') next.price = next.unitPrice;
     const qty = parseNum(next.sQty);
     const price = parseNum(next.unitPrice);
     if (qty > 0 && price > 0) {
@@ -1139,31 +1349,34 @@ function ServiceARInvoicePage() {
     return next;
   };
 
-  const loadCustomerDetails = async (customerCode) => {
-    const normalizedCustomerCode = String(customerCode || '').trim();
-    const requestId = customerDetailsRequestRef.current + 1;
-    customerDetailsRequestRef.current = requestId;
+  const loadCustomerDetails = async (vendorCode) => {
+    const normalizedCustomerCode = String(vendorCode || '').trim();
+    const requestId = vendorDetailsRequestRef.current + 1;
+    vendorDetailsRequestRef.current = requestId;
     if (!normalizedCustomerCode) {
       setRefData((prev) => ({ ...prev, contacts: [] }));
       setHeader((prev) => ({ ...prev, contactPerson: '' }));
       return;
     }
     try {
-      const res = await fetchServiceARInvoiceCustomerDetails(normalizedCustomerCode);
-      if (requestId !== customerDetailsRequestRef.current) return;
-      const contacts = res.data?.contacts || [];
+      const res = await fetchServiceARCreditMemoCustomerDetails(normalizedCustomerCode);
+      if (requestId !== vendorDetailsRequestRef.current) return;
+      const contacts = toArray(res.data?.contacts, ['contacts']);
       setRefData((prev) => ({
         ...prev,
         contacts,
-        pay_to_addresses: res.data?.pay_to_addresses || [],
-        ship_to_addresses: res.data?.ship_to_addresses || [],
-        bill_to_addresses: res.data?.bill_to_addresses || [],
+        pay_to_addresses: toArray(res.data?.pay_to_addresses, ['pay_to_addresses']),
+        ship_to_addresses: toArray(res.data?.ship_to_addresses, ['ship_to_addresses']),
+        bill_to_addresses: toArray(res.data?.bill_to_addresses, ['bill_to_addresses']),
       }));
-      const customer = res.data?.customer;
+      const customer = res.data?.customer || res.data?.vendor;
       if (customer) {
-        const shipTo = (res.data?.ship_to_addresses || res.data?.pay_to_addresses || [])[0];
-        const billTo = (res.data?.bill_to_addresses || res.data?.pay_to_addresses || [])[0];
-        const placeOfSupply = getAddressState(shipTo) || getAddressState(billTo);
+        const shipToAddresses = toArray(res.data?.ship_to_addresses, ['ship_to_addresses']);
+        const payToAddresses = toArray(res.data?.pay_to_addresses, ['pay_to_addresses']);
+        const billToAddresses = toArray(res.data?.bill_to_addresses, ['bill_to_addresses']);
+        const shipTo = (shipToAddresses.length ? shipToAddresses : payToAddresses)[0];
+        const billTo = (billToAddresses.length ? billToAddresses : payToAddresses)[0];
+        const placeOfSupply = getAddressState(billTo) || getAddressState(shipTo);
         setHeader((prev) => ({
           ...prev,
           vendor: customer.CardCode || prev.vendor,
@@ -1181,7 +1394,7 @@ function ServiceARInvoicePage() {
         }));
       }
     } catch (error) {
-      if (requestId !== customerDetailsRequestRef.current) return;
+      if (requestId !== vendorDetailsRequestRef.current) return;
       setRefData((prev) => ({ ...prev, contacts: [] }));
       setHeader((prev) => ({ ...prev, contactPerson: '' }));
       setPageState((prev) => ({
@@ -1191,25 +1404,21 @@ function ServiceARInvoicePage() {
     }
   };
 
-  const selectCustomer = async (customer) => {
-    const cardCode = customer?.CardCode || customer?.code || '';
+  const selectCustomer = async (vendor) => {
+    const cardCode = vendor?.CardCode || vendor?.code || '';
     setHeader((prev) => ({
       ...prev,
       vendor: cardCode,
-      name: customer?.CardName || customer?.name || prev.name,
-      currency: customer?.Currency || prev.currency,
-      paymentTerms: customer?.GroupNum != null ? String(customer.GroupNum) : prev.paymentTerms,
+      name: vendor?.CardName || vendor?.name || prev.name,
+      currency: vendor?.Currency || prev.currency,
+      paymentTerms: vendor?.GroupNum != null ? String(vendor.GroupNum) : prev.paymentTerms,
       contactPerson: '',
-      placeOfSupply: '',
       shipToCode: '',
       shipToAddress: '',
       billToCode: '',
       billToAddress: '',
     }));
-    if (cardCode) {
-      setActiveTab('Accounting');
-      await loadCustomerDetails(cardCode);
-    }
+    if (cardCode) await loadCustomerDetails(cardCode);
   };
 
   const openLineLookup = (field, lineIndex, override = {}) => {
@@ -1248,6 +1457,9 @@ function ServiceARInvoicePage() {
       if (lineLookupModal.field === 'sItem' && !String(next.description || '').trim()) {
         next.description = option?.description || next.description;
       }
+      if (lineLookupModal.field === 'sItem' && option?.wtaxLiable) {
+        next.wtaxLiable = option.wtaxLiable;
+      }
       if (lineLookupModal.field === 'sac' && !String(next.description || '').trim()) {
         next.description = option?.description || next.description;
       }
@@ -1262,64 +1474,20 @@ function ServiceARInvoicePage() {
     if (!isDocumentEditable) return;
     const { name, value, type, checked } = event.target;
     const nextValue = type === 'checkbox' ? checked : value;
-    setValErrors((prev) => ({ ...prev, header: { ...prev.header, [name]: '' }, form: '' }));
 
     if (name === 'vendor') {
-      const customer = refData.vendors.find((item) => String(item.CardCode || item.code || '') === String(value));
+      const vendor = toArray(refData.vendors, ['vendors']).find((item) => String(item.CardCode || item.code || '') === String(value));
       setHeader((prev) => ({
         ...prev,
         vendor: value,
-        name: customer?.CardName || customer?.name || prev.name,
+        name: vendor?.CardName || vendor?.name || prev.name,
         contactPerson: '',
-        placeOfSupply: '',
         shipToCode: '',
         shipToAddress: '',
         billToCode: '',
         billToAddress: '',
       }));
-      if (customer) {
-        setActiveTab('Accounting');
-        await loadCustomerDetails(value);
-      }
-      return;
-    }
-
-    if (name === 'transactionType') {
-      const selectedOption = transactionTypeOptions.find((option) => String(option.value) === String(value));
-      setHeader((prev) => ({
-        ...prev,
-        transactionType: value,
-        indicator: selectedOption?.indicator || prev.indicator,
-        series: '',
-        nextNumber: '',
-      }));
-      setPageState((prev) => ({ ...prev, seriesLoading: true }));
-      try {
-        const res = await fetchServiceARInvoiceSeries(header.postingDate, value, header.branch);
-        const nextSeries = res.data?.series || [];
-        const firstSeries = pickFirstSeries(nextSeries, value);
-        setRefData((prev) => ({ ...prev, series: nextSeries }));
-        setHeader((prev) => ({
-          ...prev,
-          transactionType: value,
-          indicator: selectedOption?.indicator || prev.indicator,
-          branch: prev.branch || String(firstSeries?.BPLId || ''),
-          series: firstSeries ? String(firstSeries.Series || '') : '',
-          nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
-        }));
-      } catch (_error) {
-        const firstSeries = pickFirstSeries(refData.series || [], value);
-        setHeader((prev) => ({
-          ...prev,
-          transactionType: value,
-          indicator: selectedOption?.indicator || prev.indicator,
-          branch: prev.branch || String(firstSeries?.BPLId || ''),
-          series: firstSeries ? String(firstSeries.Series || '') : '',
-          nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
-        }));
-      } finally {
-        setPageState((prev) => ({ ...prev, seriesLoading: false }));
-      }
+      if (vendor) await loadCustomerDetails(value);
       return;
     }
 
@@ -1327,8 +1495,8 @@ function ServiceARInvoicePage() {
       setHeader((prev) => ({ ...prev, postingDate: value }));
       setPageState((prev) => ({ ...prev, seriesLoading: true }));
       try {
-        const res = await fetchServiceARInvoiceSeries(value, header.transactionType, header.branch);
-        const nextSeries = res.data?.series || [];
+        const res = await fetchServiceARCreditMemoSeries(value, header.branch);
+        const nextSeries = toArray(res.data?.series || res.data, ['series']);
         setRefData((prev) => ({ ...prev, series: nextSeries }));
         setHeader((prev) => {
           if (prev.series === 'manual') {
@@ -1336,8 +1504,8 @@ function ServiceARInvoicePage() {
           }
 
           const selectedSeries =
-            filterSeriesByTransactionType(nextSeries, prev.transactionType).find((series) => String(series.Series || '') === String(prev.series || '')) ||
-            pickFirstSeries(nextSeries, prev.transactionType);
+            nextSeries.find((series) => String(series.Series || '') === String(prev.series || '')) ||
+            nextSeries[0];
 
           return {
             ...prev,
@@ -1361,7 +1529,7 @@ function ServiceARInvoicePage() {
         return;
       }
 
-      const selectedSeries = visibleSeries.find((series) => String(series.Series || '') === String(value || ''));
+      const selectedSeries = seriesOptions.find((series) => String(series.Series || '') === String(value || ''));
       setHeader((prev) => ({
         ...prev,
         branch: prev.branch || String(selectedSeries?.BPLId || ''),
@@ -1370,7 +1538,7 @@ function ServiceARInvoicePage() {
       }));
       setPageState((prev) => ({ ...prev, seriesLoading: true }));
       try {
-        const res = await fetchServiceARInvoiceNextNumber(value);
+        const res = await fetchServiceARCreditMemoNextNumber(value);
         setHeader((prev) => ({ ...prev, nextNumber: String(res.data?.nextNumber || '') }));
       } catch (_error) {
         setHeader((prev) => ({ ...prev, nextNumber: '' }));
@@ -1386,18 +1554,29 @@ function ServiceARInvoicePage() {
         ...prev,
         shipToCode: value,
         shipToAddress: selected ? fmtAddr(selected) : prev.shipToAddress,
-        placeOfSupply: getAddressState(selected) || prev.placeOfSupply,
+        placeOfSupply: selected?.State || prev.placeOfSupply,
       }));
       return;
     }
 
-    if (name === 'billToCode') {
+    if (name === 'billToCode' || name === 'payToCode') {
       const selected = vendorEffectiveBillToAddresses.find((address) => String(address.Address || '') === String(value));
       setHeader((prev) => ({
         ...prev,
         billToCode: value,
+        payToCode: value,
         billToAddress: selected ? fmtAddr(selected) : prev.billToAddress,
-        placeOfSupply: prev.useBillToForTax && getAddressState(selected) ? getAddressState(selected) : prev.placeOfSupply,
+        placeOfSupply: (prev.useBillToForTax || prev.usePayToForTax) && selected?.State ? selected.State : prev.placeOfSupply,
+      }));
+      return;
+    }
+
+    if (name === 'transactionType') {
+      const selectedOption = transactionTypeOptions.find((option) => String(option.value) === String(value));
+      setHeader((prev) => ({
+        ...prev,
+        transactionType: value,
+        indicator: selectedOption?.indicator || prev.indicator,
       }));
       return;
     }
@@ -1475,8 +1654,9 @@ function ServiceARInvoicePage() {
 
   const openAddressModal = (type) => {
     if (!isDocumentEditable) return;
-    const addressPool = type === 'billTo' ? vendorEffectiveBillToAddresses : vendorEffectiveShipToAddresses;
-    const selectedCode = type === 'billTo' ? header.billToCode : header.shipToCode;
+    const normalizedType = type === 'payTo' ? 'billTo' : type;
+    const addressPool = normalizedType === 'billTo' ? vendorEffectiveBillToAddresses : vendorEffectiveShipToAddresses;
+    const selectedCode = normalizedType === 'billTo' ? header.billToCode : header.shipToCode;
     const selectedAddress = addressPool.find((address) => String(address.Address || '') === String(selectedCode || ''));
 
     setAddressForm(mapAddressToModalForm(selectedAddress, {
@@ -1485,7 +1665,7 @@ function ServiceARInvoicePage() {
       billToCode: header.billToCode || '',
       billToAddress: header.billToAddress || '',
     }));
-    setAddressModal({ type });
+    setAddressModal({ type: normalizedType });
   };
 
   const closeAddressModal = () => {
@@ -1516,7 +1696,7 @@ function ServiceARInvoicePage() {
       billToCode: addressForm.billToCode || prev.billToCode,
       billToAddress: addressModal.type === 'billTo' ? (formatted || addressForm.billToAddress) : (addressForm.billToAddress || prev.billToAddress),
       placeOfSupply:
-        addressForm.state && (addressModal.type === 'shipTo' || prev.useBillToForTax)
+        addressForm.state && (addressModal.type === 'shipTo' || prev.useBillToForTax || prev.usePayToForTax)
           ? addressForm.state
           : prev.placeOfSupply,
     }));
@@ -1561,6 +1741,12 @@ function ServiceARInvoicePage() {
     if (!String(header.postingDate || '').trim()) errors.header.postingDate = 'Posting Date is required';
     if (!String(header.documentDate || '').trim()) errors.header.documentDate = 'Document Date is required';
     if (header.series === 'manual' && parseNum(header.docNo) <= 0) errors.header.docNo = 'Document No. is required for Manual series';
+    if (taxInvoiceReferenceRequired && !String(header.taxInvoiceNo || '').trim()) {
+      errors.header.taxInvoiceNo = 'Original Invoice No. is required for a GST credit memo';
+    }
+    if (taxInvoiceReferenceRequired && !String(header.taxInvoiceDate || '').trim()) {
+      errors.header.taxInvoiceDate = 'Original Invoice Date is required for a GST credit memo';
+    }
 
     const populated = lines.filter((line) => String(line.description || line.glAccount || line.totalLC || '').trim());
     if (!populated.length) errors.form = 'At least one service line is required.';
@@ -1575,6 +1761,9 @@ function ServiceARInvoicePage() {
     });
     if (!String(header.series || '').trim()) {
       errors.form = `No numbering series is available for posting date ${header.postingDate}. Check the financial year and branch.`;
+    }
+    if (!errors.form && (errors.header.taxInvoiceNo || errors.header.taxInvoiceDate)) {
+      errors.form = 'Enter the original invoice number and date on the Tax tab.';
     }
     return errors;
   };
@@ -1619,13 +1808,14 @@ function ServiceARInvoicePage() {
     const errors = validate({ requireDescription: false });
     if (errors.form || Object.keys(errors.header).length || Object.keys(errors.lines).length) {
       setValErrors(errors);
+      if (errors.header.taxInvoiceNo || errors.header.taxInvoiceDate) setActiveTab('Tax');
       setPageState((prev) => ({ ...prev, success: '', error: errors.form || 'Please correct the highlighted fields before previewing Journal Entry.' }));
       return null;
     }
 
     setJournalPreview((prev) => ({ ...prev, open: true, loading: true }));
     try {
-      const res = await generateServiceARInvoiceJournalEntry({
+      const res = await generateServiceARCreditMemoJournalEntry({
         docEntry,
         payload: docEntry ? null : buildPayload(),
         persist,
@@ -1644,7 +1834,7 @@ function ServiceARInvoicePage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (!isDocumentEditable) {
-      setPageState((prev) => ({ ...prev, success: '', error: 'Closed Service A/R Invoices cannot be edited.' }));
+      setPageState((prev) => ({ ...prev, success: '', error: 'Closed Service A/R Credit Memos cannot be edited.' }));
       return;
     }
     if (currentDocEntry && !hasUnsavedChanges) return;
@@ -1652,6 +1842,7 @@ function ServiceARInvoicePage() {
     const errors = validate();
     if (errors.form || Object.keys(errors.header).length || Object.keys(errors.lines).length) {
       setValErrors(errors);
+      if (errors.header.taxInvoiceNo || errors.header.taxInvoiceDate) setActiveTab('Tax');
       setPageState((prev) => ({ ...prev, success: '', error: errors.form || 'Please correct the highlighted fields.' }));
       return;
     }
@@ -1659,29 +1850,26 @@ function ServiceARInvoicePage() {
     setPageState((prev) => ({ ...prev, posting: true, error: '', success: '' }));
     try {
       const res = currentDocEntry
-        ? await updateServiceARInvoice(currentDocEntry, buildPayload())
-        : await submitServiceARInvoice(buildPayload());
+        ? await updateServiceARCreditMemo(currentDocEntry, buildPayload())
+        : await submitServiceARCreditMemo(buildPayload());
       const docEntry = res.data?.doc_entry || res.data?.DocEntry || currentDocEntry;
       const docNum = res.data?.doc_num || res.data?.DocNum || header.docNo;
       setCurrentDocEntry(docEntry);
       setHeader((prev) => ({ ...prev, docNo: docNum ? String(docNum) : prev.docNo, status: 'Open' }));
       setIsDirty(false);
-      setPageState((prev) => ({ ...prev, posting: false, success: `${res.data?.message || 'Service A/R Invoice saved.'}${docNum ? ` Doc No: ${docNum}` : ''}` }));
+      setPageState((prev) => ({ ...prev, posting: false, success: `${res.data?.message || 'Service A/R Credit Memo saved.'}${docNum ? ` Doc No: ${docNum}` : ''}` }));
     } catch (error) {
-      const message = error.response?.data?.detail?.error?.message?.value || error.response?.data?.message || error.message || 'Service A/R Invoice submission failed.';
+      const message = error.response?.data?.detail?.error?.message?.value || error.response?.data?.message || error.message || 'Service A/R Credit Memo submission failed.';
       setPageState((prev) => ({ ...prev, posting: false, error: message }));
     }
   };
 
   const resetForm = () => {
-    const defaultTransactionType = transactionTypeOptions[0]?.value || '';
-    const firstSeries = pickFirstSeries(refData.series || [], defaultTransactionType);
+    const firstSeries = seriesOptions[0];
     setIsDirty(false);
     setCurrentDocEntry(null);
     setHeader({
       ...INIT_HEADER,
-      transactionType: defaultTransactionType,
-      indicator: transactionTypeOptions[0]?.indicator || '',
       branch: String(firstSeries?.BPLId || ''),
       series: firstSeries ? String(firstSeries.Series || '') : '',
       nextNumber: firstSeries ? String(firstSeries.NextNumber || '') : '',
@@ -1705,33 +1893,17 @@ function ServiceARInvoicePage() {
   };
 
   const fetchCopyFromDocuments = async (docType) => {
-    const customerCode = String(header.vendor || '').trim();
-    if (docType === 'salesQuotation') {
-      const res = await fetchOpenServiceSalesQuotationsForARInvoice(customerCode);
-      return res.data?.documents || [];
-    }
-    if (docType === 'salesOrder') {
-      const res = await fetchOpenServiceSalesOrdersForARInvoice(customerCode);
-      return res.data?.documents || [];
-    }
-    if (docType === 'delivery') {
-      const res = await fetchOpenServiceDeliveriesForARInvoice(customerCode);
+    const vendorCode = String(header.vendor || '').trim();
+    if (docType === 'arInvoice') {
+      const res = await fetchOpenServiceARInvoicesForARCreditMemo(vendorCode);
       return res.data?.documents || [];
     }
     return [];
   };
 
   const fetchCopyFromDocumentDetails = async (docType, docEntry) => {
-    if (docType === 'salesQuotation') {
-      const res = await fetchServiceSalesQuotationForARInvoiceCopy(docEntry);
-      return res.data;
-    }
-    if (docType === 'salesOrder') {
-      const res = await fetchServiceSalesOrderForARInvoiceCopy(docEntry);
-      return res.data;
-    }
-    if (docType === 'delivery') {
-      const res = await fetchServiceDeliveryForARInvoiceCopy(docEntry);
+    if (docType === 'arInvoice') {
+      const res = await fetchServiceARInvoiceForARCreditMemoCopy(docEntry);
       return res.data;
     }
     return null;
@@ -1739,7 +1911,8 @@ function ServiceARInvoicePage() {
 
   const handleCopyFrom = (data, sourceType) => {
     const copySource = unwrapCopyFromDocument(data);
-    const copyKey = `${sourceType}-${copySource.docEntry}-${copySource.lines.length}`;
+    const sourceLines = toArray(copySource.lines, ['lines', 'DocumentLines']);
+    const copyKey = `${sourceType}-${copySource.docEntry}-${sourceLines.length}`;
     if (handledCopyFromRef.current === copyKey) return;
     handledCopyFromRef.current = copyKey;
 
@@ -1747,38 +1920,18 @@ function ServiceARInvoicePage() {
     setHeader((prev) => ({
       ...prev,
       ...normalizedHeader,
-      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || '',
+      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice',
     }));
-    const baseType = BASE_TYPE[sourceType] || 17;
-    setLines(copySource.lines.length
-      ? copySource.lines.map((line, index) => ({
+    const baseType = sourceType === 'arInvoice' ? 13 : BASE_TYPE[sourceType] || 13;
+    const copyLines = sourceLines;
+    setLines(copyLines.length
+      ? copyLines.map((line, index) => ({
         ...normalizeCopyLine(line, index, copySource.docEntry, baseType, accounts),
         udf: createUdfState(rowUdfDefinitions),
       }))
       : [createLine(rowUdfDefinitions)]);
     setActiveTab('Contents');
-    setPageState((prev) => ({ ...prev, success: 'Copied service document lines.', error: '' }));
-  };
-
-  const handleCopyTo = async () => {
-    await copyToDocument({
-      sourceDocType: 'serviceArInvoice',
-      targetType: 'arCreditMemo',
-      sourceDocEntry: currentDocEntry,
-      sourceDocNo: header.docNo,
-      sourcePath: location.pathname,
-      sourceSnapshot: {
-        header,
-        lines: lines.map((line) => ({ ...line, udf: normalizeUdfState(rowUdfDefinitions, line.udf || {}) })),
-        headerUdfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
-      },
-      restoreState: { serviceARInvoiceDocEntry: currentDocEntry },
-      navigate,
-      upsertTask,
-      removeTask,
-      setError: (message) => setPageState((prev) => ({ ...prev, success: '', error: message })),
-      errorMessage: 'Please save the Service A/R Invoice first before copying.',
-    });
+    setPageState((prev) => ({ ...prev, success: 'Copied service A/R invoice lines.', error: '' }));
   };
 
   const handleDuplicate = () => {
@@ -1797,13 +1950,13 @@ function ServiceARInvoicePage() {
       setPageState,
       navigate,
       location,
-      successMessage: 'Service A/R invoice duplicated. Review and add it as a new entry.',
+      successMessage: 'Service A/R credit memo duplicated. Review and add it as a new entry.',
     });
 
     if (duplicated) {
       const selectedSeries =
-        visibleSeries.find((series) => String(series.Series || '') === String(header.series || '')) ||
-        pickFirstSeries(refData.series || [], header.transactionType);
+        (refData.series || []).find((series) => String(series.Series || '') === String(header.series || '')) ||
+        (refData.series || [])[0];
       if (selectedSeries) {
         setHeader((prev) => ({
           ...prev,
@@ -1845,7 +1998,7 @@ function ServiceARInvoicePage() {
             onChange={(event) => handleRowUdfChange(index, column.udfKey, event.target.value)}
           >
             <option value=""></option>
-            {column.options.map((option) => {
+            {toArray(column.options, ['options']).map((option) => {
               const normalized = typeof option === 'object' ? option : { value: option, label: option };
               return (
                 <option key={normalized.value} value={normalized.value}>
@@ -1989,8 +2142,8 @@ function ServiceARInvoicePage() {
     );
   };
 
-  const customerOptions = refData.vendors || [];
-  const contactOptions = refData.contacts || [];
+  const vendorOptions = toArray(refData.vendors, ['vendors']);
+  const contactOptions = toArray(refData.contacts, ['contacts']);
   const visibleHeaderUdfs = headerUdfDefinitions.filter((field) => formSettings.headerUdfs?.[field.key]?.visible !== false);
   const configurableRowUdfs = rowUdfDefinitions.filter((field) => !isFixedServiceMatrixField(field));
   const visibleRowUdfs = configurableRowUdfs.filter((field) => formSettings.rowUdfs?.[field.key]?.visible !== false);
@@ -2007,15 +2160,15 @@ function ServiceARInvoicePage() {
       type: field.type,
       readOnly: field.readOnly,
       isUdf: true,
-      options: field.options || [],
+      options: toArray(field.options, ['options']),
     })),
   ];
   const tableMinWidth = 42 + 48 + visibleLineColumns.reduce((sum, column) => sum + column.width, 0);
 
   return (
-    <form className={`ar-invoice-page del-page sap-document-page service-ar-invoice-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form className={`ar-invoice-page del-page sap-document-page service-ar-credit-memo-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
       <div className="del-toolbar sap-document-toolbar">
-        <span className="del-toolbar__title sap-document-toolbar__title">Service A/R Invoice{currentDocEntry ? ` - #${header.docNo || currentDocEntry}` : ''}</span>
+        <span className="del-toolbar__title sap-document-toolbar__title">Service A/R Credit Memo{currentDocEntry ? ` - #${header.docNo || currentDocEntry}` : ''}</span>
         <button type="submit" className="del-btn del-btn--primary sap-document-toolbar__primary" disabled={pageState.posting || !isDocumentEditable} title={primaryActionLabel}>
           {primaryActionLabel}
         </button>
@@ -2025,8 +2178,8 @@ function ServiceARInvoicePage() {
         </button>
         <button type="button" className="del-btn sap-document-toolbar__settings" onClick={toggleFormSettings}>Form Settings</button>
         <PrintLayoutToolbar
-          documentType="serviceArInvoice"
-          documentLabel="Service A/R Invoice"
+          documentType="serviceArCreditMemo"
+          documentLabel="Service A/R Credit Memo"
           docEntry={currentDocEntry}
           docNumber={header.docNo}
           disabled={pageState.posting}
@@ -2042,7 +2195,7 @@ function ServiceARInvoicePage() {
         >
           Preview Journal Entry
         </button>
-        <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/services/ar-invoice/find')}>Find</button>
+        <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/services/ar-credit-memo/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
           <button type="button" className="del-btn" disabled={!isDocumentEditable || !!currentDocEntry} onClick={(event) => {
@@ -2057,9 +2210,7 @@ function ServiceARInvoicePage() {
           </button>
           <div className="del-dropdown-menu">
             {[
-              { key: 'salesQuotation', label: 'Sales Quotations' },
-              { key: 'salesOrder', label: 'Sales Orders' },
-              { key: 'delivery', label: 'Deliveries' },
+              { key: 'arInvoice', label: 'A/R Invoices' },
             ].map((option) => (
               <button
                 key={option.key}
@@ -2076,7 +2227,6 @@ function ServiceARInvoicePage() {
             ))}
           </div>
         </div>
-        <button type="button" className="del-btn sap-document-toolbar__copy" onClick={handleCopyTo} disabled={!currentDocEntry}>Copy To</button>
         {currentDocEntry && (
           <button type="button" className="del-btn sap-document-toolbar__duplicate" onClick={handleDuplicate}>
             Duplicate
@@ -2088,7 +2238,7 @@ function ServiceARInvoicePage() {
       {pageState.error && <div className="alert alert-danger py-2">{pageState.error}</div>}
       {pageState.success && <div className="alert alert-success py-2">{pageState.success}</div>}
 
-      <fieldset disabled={pageState.loading || pageState.posting} style={{ border: 0, padding: 0, margin: 0 }}>
+      <fieldset disabled={pageState.posting} style={{ border: 0, padding: 0, margin: 0 }}>
         <div className={`so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`}>
           <div className="so-layout__main">
         <div className="del-header-card service-ar-header-card">
@@ -2097,7 +2247,7 @@ function ServiceARInvoicePage() {
               <div className="del-field">
                 <label className="del-field__label">Customer</label>
                 <div className="service-ar-header-lookup">
-                  <input className={`del-field__input${valErrors.header.vendor ? ' del-field__input--error' : ''}`} name="vendor" value={header.vendor} list="service-ar-invoice-customers" onChange={handleHeaderChange} onBlur={() => loadCustomerDetails(header.vendor)} disabled={!isDocumentEditable} />
+                  <input className={`del-field__input${valErrors.header.vendor ? ' del-field__input--error' : ''}`} name="vendor" value={header.vendor} list="service-ar-credit-memo-vendors" onChange={handleHeaderChange} onBlur={() => loadCustomerDetails(header.vendor)} disabled={!isDocumentEditable} />
                   <button type="button" className="del-btn service-ar-lookup-btn" onClick={() => setBpModalOpen(true)} disabled={!isDocumentEditable} title="List of Business Partners">...</button>
                 </div>
               </div>
@@ -2117,7 +2267,7 @@ function ServiceARInvoicePage() {
                 </select>
               </div>
               <div className="del-field">
-                <label className="del-field__label">Buyer PO No</label>
+                <label className="del-field__label">Customer Ref. No</label>
                 <input className="del-field__input" name="salesContractNo" value={header.salesContractNo} onChange={handleHeaderChange} disabled={!isDocumentEditable} />
               </div>
 
@@ -2131,7 +2281,7 @@ function ServiceARInvoicePage() {
 
               <div className="del-field">
                 <label className="del-field__label">Transaction Type</label>
-                <select className="del-field__select" name="transactionType" value={header.transactionType} onChange={handleHeaderChange} disabled={!isDocumentEditable || !transactionTypeOptions.length}>
+                <select className="del-field__select" name="transactionType" value={header.transactionType} onChange={handleHeaderChange} disabled={!isDocumentEditable}>
                   {transactionTypeOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
@@ -2152,7 +2302,7 @@ function ServiceARInvoicePage() {
                 <div className="service-ar-docnum">
                   <select className="del-field__select" name="series" value={header.series} onChange={handleHeaderChange} disabled={!isDocumentEditable || currentDocEntry || pageState.seriesLoading}>
                     <option value="manual">Manual</option>
-                    {visibleSeries.map((series) => (
+                    {seriesOptions.map((series) => (
                       <option key={series.Series} value={series.Series}>{series.SeriesName}</option>
                     ))}
                   </select>
@@ -2247,7 +2397,7 @@ function ServiceARInvoicePage() {
             vendorPayToAddresses={vendorPayToAddresses}
             vendorShipToAddresses={vendorEffectiveShipToAddresses}
             vendorBillToAddresses={vendorEffectiveBillToAddresses}
-            shipTypeOpts={shipTypeOpts}
+            shippingTypeOptions={shipTypeOpts}
             onOpenAddressModal={openAddressModal}
             isEditable={isDocumentEditable}
           />
@@ -2257,13 +2407,21 @@ function ServiceARInvoicePage() {
           <AccountingTab
             header={header}
             onHeaderChange={handleHeaderChange}
-            payTermOpts={payTermOpts}
+            paymentTermOptions={payTermOpts}
             isEditable={isDocumentEditable}
           />
         )}
 
         {activeTab === 'Tax' && (
-          <TaxTab onOpenTaxInfoModal={openTaxInfoModal} isEditable={isDocumentEditable} />
+          <TaxTab
+            onOpenTaxInfoModal={openTaxInfoModal}
+            isEditable={isDocumentEditable}
+            header={header}
+            onHeaderChange={handleHeaderChange}
+            showTaxInvoiceReference
+            taxInvoiceReferenceRequired={taxInvoiceReferenceRequired}
+            errors={valErrors.header}
+          />
         )}
 
         {activeTab === 'Electronic Documents' && (
@@ -2284,8 +2442,8 @@ function ServiceARInvoicePage() {
               <div className="del-field">
                 <label className="del-field__label">Sales Employee</label>
                 <select className="del-field__select" name="salesEmployee" value={header.salesEmployee} onChange={handleHeaderChange} disabled={!isDocumentEditable}>
-                  <option value="">No Sales Employee / Buyer</option>
-                  {(refData.sales_employees || []).map((employee) => (
+                  <option value="">No Sales Employee</option>
+                  {salesEmployeeOptions.map((employee) => (
                     <option key={employee.SlpCode} value={employee.SlpCode}>{employee.SlpName}</option>
                   ))}
                 </select>
@@ -2309,7 +2467,7 @@ function ServiceARInvoicePage() {
                   <tr><td><label className="service-ar-checkbox"><input type="checkbox" name="rounding" checked={header.rounding || parseNum(header.roundingAmount) !== 0} onChange={handleHeaderChange} disabled={!isDocumentEditable} /> Rounding</label></td><td><input className="del-grid__input" value={`INR ${fmt(totals.roundingAmount)}`} readOnly /></td></tr>
                   <tr><td>Tax</td><td><input className="del-grid__input" value={fmt(totals.tax)} readOnly /></td></tr>
                   <tr><td>WTax Amount</td><td><input className="del-grid__input" value={fmt(totals.wtaxAmount)} readOnly /></td></tr>
-                  <tr style={{ borderTop: '2px solid #a0aab4' }}><td style={{ fontWeight: 700 }}>Total</td><td><input className="del-grid__input" value={fmt(totals.total)} readOnly style={{ fontWeight: 700 }} /></td></tr>
+                  <tr style={{ borderTop: '2px solid #a0aab4' }}><td style={{ fontWeight: 700 }}>Total Credit</td><td><input className="del-grid__input" value={fmt(totals.total)} readOnly style={{ fontWeight: 700 }} /></td></tr>
                   <tr><td>Applied Amount</td><td><input className="del-grid__input" name="appliedAmount" value={header.appliedAmount} onChange={handleHeaderChange} disabled={!isDocumentEditable} /></td></tr>
                   <tr><td>Balance Due</td><td><input className="del-grid__input" value={fmt(totals.balanceDue)} readOnly /></td></tr>
                 </tbody>
@@ -2343,14 +2501,14 @@ function ServiceARInvoicePage() {
         </div>
       </fieldset>
 
-      <datalist id="service-ar-invoice-customers">
-        {customerOptions.map((customer) => (
-          <option key={customer.CardCode || customer.code} value={customer.CardCode || customer.code}>
-            {customer.CardName || customer.name}
+      <datalist id="service-ar-credit-memo-vendors">
+        {vendorOptions.map((vendor) => (
+          <option key={vendor.CardCode || vendor.code} value={vendor.CardCode || vendor.code}>
+            {vendor.CardName || vendor.name}
           </option>
         ))}
       </datalist>
-      <datalist id="service-ar-invoice-accounts">
+      <datalist id="service-ar-credit-memo-accounts">
         {accounts.map((account) => (
           <option key={account.code} value={account.code}>{account.name}</option>
         ))}
@@ -2369,7 +2527,7 @@ function ServiceARInvoicePage() {
         isOpen={bpModalOpen}
         onClose={() => setBpModalOpen(false)}
         onSelect={selectCustomer}
-        businessPartners={customerOptions}
+        businessPartners={vendorOptions}
         title="List of Customers"
       />
 
@@ -2380,7 +2538,7 @@ function ServiceARInvoicePage() {
           setHeader((prev) => ({ ...prev, placeOfSupply: state.Code || state.code || '' }));
           setStateModalOpen(false);
         }}
-        states={refData.states || []}
+        states={stateOptions}
       />
 
       <LineValueLookupModal
@@ -2401,7 +2559,7 @@ function ServiceARInvoicePage() {
         onSave={saveAddressModal}
         addressForm={addressForm}
         onFormChange={handleAddressFormChange}
-        states={refData.states || []}
+        states={stateOptions}
       />
 
       <TaxInfoModal
@@ -2422,7 +2580,7 @@ function ServiceARInvoicePage() {
         onOpenSource={() => {
           setJournalPreview((prev) => ({ ...prev, open: false }));
           if (currentDocEntry) {
-            navigate('/services/ar-invoice', { state: { serviceARInvoiceDocEntry: currentDocEntry } });
+            navigate('/services/ar-credit-memo', { state: { serviceArCreditMemoDocEntry: currentDocEntry } });
           }
         }}
       />
@@ -2431,4 +2589,5 @@ function ServiceARInvoicePage() {
   );
 }
 
-export default ServiceARInvoicePage;
+export default ServiceARCreditMemoPage;
+

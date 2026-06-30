@@ -1,6 +1,16 @@
 import React from 'react';
 
-export default function AccountingTab({ header, onHeaderChange, payTermOpts, isEditable = true }) {
+export default function AccountingTab({
+  header = {},
+  onHeaderChange,
+  payTermOpts = [],
+  paymentTermOptions = [],
+  isEditable = true,
+}) {
+  const terms = Array.isArray(payTermOpts) && payTermOpts.length
+    ? payTermOpts
+    : (Array.isArray(paymentTermOptions) ? paymentTermOptions : []);
+
   return (
     <div className="del-tab-panel">
       <div className="del-field-grid">
@@ -10,7 +20,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts, isE
           <input
             className="del-field__input"
             name="journalRemark"
-            value={header.journalRemark}
+            value={header.journalRemark || ''}
             onChange={onHeaderChange}
             disabled={!isEditable}
           />
@@ -22,12 +32,12 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts, isE
           <select
             className="del-field__select"
             name="paymentTerms"
-            value={header.paymentTerms}
+            value={header.paymentTerms || ''}
             onChange={onHeaderChange}
             disabled={!isEditable}
           >
             <option value="">— Select —</option>
-            {payTermOpts.map(t => (
+            {terms.map(t => (
               <option key={t.value} value={t.value}>
                 {t.label}
               </option>
@@ -41,7 +51,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts, isE
           <select
             className="del-field__select"
             name="paymentMethod"
-            value={header.paymentMethod}
+            value={header.paymentMethod || ''}
             onChange={onHeaderChange}
             disabled={!isEditable}
           >
@@ -110,7 +120,7 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts, isE
             style={{ flex: 1, minHeight: '80px' }}
             rows={4}
             name="otherInstruction"
-            value={header.otherInstruction}
+            value={header.otherInstruction || ''}
             onChange={onHeaderChange}
             disabled={!isEditable}
           />

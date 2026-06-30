@@ -80,6 +80,10 @@ const ServiceARInvoice = lazyWithRetry(() => import("./pages/ServiceARInvoice"))
 const ServiceARInvoiceList = lazyWithRetry(() => import("./pages/ServiceARInvoiceList"));
 const ServiceAPInvoice = lazyWithRetry(() => import("./pages/ServiceAPInvoice"));
 const ServiceAPInvoiceList = lazyWithRetry(() => import("./pages/ServiceAPInvoiceList"));
+const ServiceAPCreditMemo = lazyWithRetry(() => import("./pages/ServiceAPCreditMemo"));
+const ServiceAPCreditMemoList = lazyWithRetry(() => import("./pages/ServiceAPCreditMemoList"));
+const ServiceARCreditMemo = lazyWithRetry(() => import("./pages/ServiceARCreditMemo"));
+const ServiceARCreditMemoList = lazyWithRetry(() => import("./pages/ServiceARCreditMemoList"));
 const APCreditMemo = lazyWithRetry(() => import("./pages/APCreditMemo"));
 const APCreditMemoList = lazyWithRetry(() => import("./pages/APCreditMemoList"));
 const ARCreditMemo = lazyWithRetry(() => import("./pages/ARCreditMemo"));
@@ -262,6 +266,10 @@ function App() {
                   <Route path="/services/ar-invoice/find" element={<ServiceARInvoiceList />} />
                   <Route path="/services/ap-invoice" element={<ServiceAPInvoice />} />
                   <Route path="/services/ap-invoice/find" element={<ServiceAPInvoiceList />} />
+                  <Route path="/services/ap-credit-memo" element={<ServiceAPCreditMemo />} />
+                  <Route path="/services/ap-credit-memo/find" element={<ServiceAPCreditMemoList />} />
+                  <Route path="/services/ar-credit-memo" element={<ServiceARCreditMemo />} />
+                  <Route path="/services/ar-credit-memo/find" element={<ServiceARCreditMemoList />} />
                   <Route path="/ar-credit-memo" element={<ARCreditMemo />} />
                   <Route path="/ar-credit-memo/find" element={<ARCreditMemoList />} />
                   <Route path="/ap-credit-memo" element={<APCreditMemo />} />
