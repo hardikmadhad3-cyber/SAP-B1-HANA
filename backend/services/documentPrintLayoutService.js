@@ -46,6 +46,22 @@ const DOCUMENT_PRINT_CONFIG = {
     filePrefix: 'service-ap-invoice',
     layoutFilter: 'service-ap-invoice',
   },
+  serviceApCreditMemo: {
+    aliases: ['service-ap-credit-memo', 'serviceapcreditmemo', 'services-ap-credit-memo', 'service-purchase-credit-memo', 'servicerpc'],
+    label: 'Service A/P Credit Memo',
+    objectType: '19',
+    typeCode: 'RPC2',
+    tableName: 'ORPC',
+    filePrefix: 'service-ap-credit-memo',
+  },
+  serviceArCreditMemo: {
+    aliases: ['service-ar-credit-memo', 'servicearcreditmemo', 'services-ar-credit-memo', 'service-sales-credit-memo', 'servicerin'],
+    label: 'Service A/R Credit Memo',
+    objectType: '14',
+    typeCode: 'RIN2',
+    tableName: 'ORIN',
+    filePrefix: 'service-ar-credit-memo',
+  },
   arCreditMemo: {
     aliases: ['ar-credit-memo', 'arcreditmemo', 'a/r-credit-memo', 'credit-memo', 'rin', '14'],
     label: 'A/R Credit Memo',

@@ -51,6 +51,7 @@ import {
   readSavedFormSettings,
 } from '../../config/serviceApInvoiceForm';
 import '../ar-invoice/styles/arInvoice.css';
+import '../APInvoice/styles/APInvoice.css';
 import '../services-ar-invoice/serviceArInvoice.css';
 import './serviceApInvoice.css';
 
@@ -738,7 +739,7 @@ function ServiceAPInvoicePage() {
     readSavedFormSettings,
     [headerUdfDefinitions, rowUdfDefinitions, matrixColumnDefinitions],
   );
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
   const [refData, setRefData] = useState(EMPTY_REF_DATA);
   const [attachments] = useState(INIT_ATTACH);

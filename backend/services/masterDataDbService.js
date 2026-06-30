@@ -799,8 +799,11 @@ const searchDocumentTaxCodes = async (query = "", documentType = "", top = 500, 
 };
 
 const getTaxCode = async (code) => {
-  const rows = await searchDocumentTaxCodes(code, "", 1, 0);
-  const row = rows.find((tax) => String(tax.Code || "") === String(code || "")) || null;
+  const normalizedCode = String(code || "").trim().toLowerCase();
+  if (!normalizedCode) return null;
+
+  const rows = await searchDocumentTaxCodes(String(code).trim(), "", 20, 0);
+  const row = rows.find((tax) => String(tax.Code || "").trim().toLowerCase() === normalizedCode) || null;
 
   return row || null;
 };

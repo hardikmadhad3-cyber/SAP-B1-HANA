@@ -11,6 +11,8 @@ const purchaseQuotationDbService = require('./purchaseQuotationDbService');
 const grpoDbService = require('./grpoDbService');
 const serviceArInvoiceDbService = require('./serviceArInvoiceDbService');
 const serviceApInvoiceDbService = require('./serviceApInvoiceDbService');
+const serviceApCreditMemoDbService = require('./serviceApCreditMemoDbService');
+const serviceArCreditMemoDbService = require('./serviceArCreditMemoDbService');
 
 const createCommonFallbackColumns = () => [
   { columnUid: 'LineNum', fieldName: 'LineNum', columnTitle: '#', columnOrder: 1, width: 42, dataType: 'number', isUdf: false },
@@ -180,6 +182,28 @@ const DOCUMENT_TYPES = {
     serviceLineMode: true,
     fallbackColumns: createServiceFallbackColumns(),
     getReferenceData: () => serviceApInvoiceDbService.getReferenceData(),
+  },
+  SERVICE_AP_CREDIT_MEMO: {
+    documentType: 'SERVICE_AP_CREDIT_MEMO',
+    objectType: '19',
+    formType: '181',
+    matrixId: '38',
+    headerTable: 'ORPC',
+    tableName: 'RPC1',
+    serviceLineMode: true,
+    fallbackColumns: createServiceFallbackColumns(),
+    getReferenceData: () => serviceApCreditMemoDbService.getReferenceData(),
+  },
+  SERVICE_AR_CREDIT_MEMO: {
+    documentType: 'SERVICE_AR_CREDIT_MEMO',
+    objectType: '14',
+    formType: '179',
+    matrixId: '38',
+    headerTable: 'ORIN',
+    tableName: 'RIN1',
+    serviceLineMode: true,
+    fallbackColumns: createServiceFallbackColumns(),
+    getReferenceData: () => serviceArCreditMemoDbService.getReferenceData(),
   },
 };
 

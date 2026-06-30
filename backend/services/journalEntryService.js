@@ -581,6 +581,26 @@ const buildAPJournal = async ({ header = {}, lines = [], origin = 'Service A/P I
   return journal;
 };
 
+const reverseJournalAmounts = (journal, origin = journal.origin) => {
+  const reversed = {
+    ...journal,
+    origin,
+    remarks: String(journal.remarks || '').replace('Service A/P Invoice', origin),
+    lines: (journal.lines || []).map((line, index) => ({
+      ...line,
+      lineId: index + 1,
+      debit: round2(line.credit),
+      credit: round2(line.debit),
+    })),
+  };
+
+  reversed.totalDebit = round2(reversed.lines.reduce((sum, line) => sum + line.debit, 0));
+  reversed.totalCredit = round2(reversed.lines.reduce((sum, line) => sum + line.credit, 0));
+  reversed.difference = round2(reversed.totalDebit - reversed.totalCredit);
+  reversed.isBalanced = Math.abs(reversed.difference) < 0.005;
+  return reversed;
+};
+
 const getSavedInvoicePayload = async (docEntry) => {
   const headerRows = await queryRows(`
     SELECT
@@ -680,6 +700,138 @@ const getSavedAPInvoicePayload = async (docEntry) => {
       T1.LineTotal,
       T1.VatSum
     FROM PCH1 T1
+    LEFT JOIN OACT ON OACT.AcctCode = T1.AcctCode
+    WHERE T1.DocEntry = @docEntry
+    ORDER BY T1.LineNum
+  `, { docEntry });
+
+  const header = headerRows[0];
+  return {
+    header: {
+      vendor: header.CardCode,
+      vendorCode: header.CardCode,
+      name: header.CardName,
+      postingDate: formatDate(header.DocDate),
+      deliveryDate: formatDate(header.DocDueDate),
+      documentDate: formatDate(header.TaxDate),
+      remarks: header.Comments || '',
+      journalRemark: header.JrnlMemo || '',
+      salesContractNo: header.NumAtCard || '',
+      discount: header.DiscPrcnt || 0,
+    },
+    lines: lineRows.map((line) => ({
+      description: line.Dscription || '',
+      glAccount: line.AcctCode || '',
+      glAccountName: line.AcctName || '',
+      distRule: line.OcrCode || '',
+      taxCode: line.TaxCode || '',
+      totalLC: line.LineTotal || 0,
+      taxAmountLC: line.VatSum || 0,
+    })),
+    originNo: header.DocNum || docEntry,
+    transId: header.TransId || null,
+  };
+};
+
+const getSavedARCreditMemoPayload = async (docEntry) => {
+  const headerRows = await queryRows(`
+    SELECT
+      T0.DocEntry,
+      T0.DocNum,
+      T0.CardCode,
+      T0.CardName,
+      T0.DocDate,
+      T0.DocDueDate,
+      T0.TaxDate,
+      T0.Comments,
+      T0.JrnlMemo,
+      T0.NumAtCard,
+      T0.DiscPrcnt,
+      T0.TransId
+    FROM ORIN T0
+    WHERE T0.DocEntry = @docEntry
+      AND T0.DocType = 'S'
+  `, { docEntry });
+
+  if (!headerRows.length) throw new Error('Service A/R Credit Memo was not found.');
+
+  const lineRows = await queryRows(`
+    SELECT
+      T1.LineNum,
+      T1.AcctCode,
+      OACT.AcctName,
+      T1.Dscription,
+      T1.OcrCode,
+      T1.TaxCode,
+      T1.LineTotal,
+      T1.VatSum
+    FROM RIN1 T1
+    LEFT JOIN OACT ON OACT.AcctCode = T1.AcctCode
+    WHERE T1.DocEntry = @docEntry
+    ORDER BY T1.LineNum
+  `, { docEntry });
+
+  const header = headerRows[0];
+  return {
+    header: {
+      vendor: header.CardCode,
+      customerCode: header.CardCode,
+      name: header.CardName,
+      postingDate: formatDate(header.DocDate),
+      deliveryDate: formatDate(header.DocDueDate),
+      documentDate: formatDate(header.TaxDate),
+      remarks: header.Comments || '',
+      journalRemark: header.JrnlMemo || '',
+      salesContractNo: header.NumAtCard || '',
+      discount: header.DiscPrcnt || 0,
+    },
+    lines: lineRows.map((line) => ({
+      description: line.Dscription || '',
+      glAccount: line.AcctCode || '',
+      glAccountName: line.AcctName || '',
+      distRule: line.OcrCode || '',
+      taxCode: line.TaxCode || '',
+      totalLC: line.LineTotal || 0,
+      taxAmountLC: line.VatSum || 0,
+    })),
+    originNo: header.DocNum || docEntry,
+    transId: header.TransId || null,
+  };
+};
+
+const getSavedAPCreditMemoPayload = async (docEntry) => {
+  const headerRows = await queryRows(`
+    SELECT
+      T0.DocEntry,
+      T0.DocNum,
+      T0.CardCode,
+      T0.CardName,
+      T0.DocDate,
+      T0.DocDueDate,
+      T0.TaxDate,
+      T0.Comments,
+      T0.JrnlMemo,
+      T0.NumAtCard,
+      T0.DiscPrcnt,
+      T0.TransId
+    FROM ORPC T0
+    WHERE T0.DocEntry = @docEntry
+      AND T0.DocType = 'S'
+  `, { docEntry });
+
+  if (!headerRows.length) throw new Error('Service A/P Credit Memo was not found.');
+
+  const lineRows = await queryRows(`
+    SELECT
+      T1.LineNum,
+      T1.AcctCode,
+      OACT.AcctName,
+      T1.Dscription,
+      T1.OcrCode,
+      T1.TaxCode,
+      T1.LineTotal,
+      T1.VatSum
+    FROM RPC1 T1
     LEFT JOIN OACT ON OACT.AcctCode = T1.AcctCode
     WHERE T1.DocEntry = @docEntry
     ORDER BY T1.LineNum
@@ -887,6 +1039,72 @@ const generateFromServiceAPInvoice = async ({ docEntry, payload, persist = false
   return { ...journal, persisted: false };
 };
 
+const generateFromServiceAPCreditMemo = async ({ docEntry, payload, persist = false }) => {
+  const origin = 'Service A/P Credit Memo';
+
+  if (docEntry) {
+    const saved = await getSavedAPCreditMemoPayload(docEntry);
+    const posted = await getPostedJournal({
+      transId: saved.transId,
+      origin,
+      originNo: saved.originNo,
+      reference2: saved.header.vendorCode,
+    });
+    if (posted) return posted;
+    const existing = persist ? await getExistingShadowJournal(saved.originNo, origin) : null;
+    if (existing) return existing;
+    const journal = reverseJournalAmounts(await buildAPJournal({
+      ...saved,
+      origin,
+      originNo: saved.originNo,
+      transId: saved.transId,
+    }), origin);
+    return persist ? persistShadowJournal(journal) : journal;
+  }
+
+  const source = payload || {};
+  const journal = reverseJournalAmounts(await buildAPJournal({
+    header: source.header || {},
+    lines: source.lines || [],
+    origin,
+    originNo: source.header?.docNo || null,
+  }), origin);
+  return { ...journal, persisted: false };
+};
+
+const generateFromServiceARCreditMemo = async ({ docEntry, payload, persist = false }) => {
+  const origin = 'Service A/R Credit Memo';
+
+  if (docEntry) {
+    const saved = await getSavedARCreditMemoPayload(docEntry);
+    const posted = await getPostedJournal({
+      transId: saved.transId,
+      origin,
+      originNo: saved.originNo,
+      reference2: saved.header.customerCode,
+    });
+    if (posted) return posted;
+    const existing = persist ? await getExistingShadowJournal(saved.originNo, origin) : null;
+    if (existing) return existing;
+    const journal = reverseJournalAmounts(await buildJournal({
+      ...saved,
+      origin,
+      originNo: saved.originNo,
+      transId: saved.transId,
+    }), origin);
+    return persist ? persistShadowJournal(journal) : journal;
+  }
+
+  const source = payload || {};
+  const journal = reverseJournalAmounts(await buildJournal({
+    header: source.header || {},
+    lines: source.lines || [],
+    origin,
+    originNo: source.header?.docNo || null,
+  }), origin);
+  return { ...journal, persisted: false };
+};
+
 const normalizeManualLine = (line = {}) => ({
   accountCode: String(line.accountCode || line.account || line.glAccount || '').trim(),
   accountName: String(line.accountName || line.name || '').trim(),
@@ -984,6 +1202,8 @@ const getJournalEntryByTransId = async (transId) => {
 module.exports = {
   generateFromServiceARInvoice,
   generateFromServiceAPInvoice,
+  generateFromServiceAPCreditMemo,
+  generateFromServiceARCreditMemo,
   createManualJournalEntry,
   getJournalEntryByTransId,
 };

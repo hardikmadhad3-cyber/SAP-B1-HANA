@@ -23,15 +23,19 @@ export const formatPurchaseLogisticsAddress = (address) => {
 };
 
 export default function PurchaseLogisticsTab({
-  header,
+  header = {},
   onHeaderChange,
   vendorPayToAddresses = [],
   vendorBillToAddresses = [],
   shippingTypeOptions = [],
   onPayToCodeChange,
   onOpenAddressModal,
+  isEditable = true,
 }) {
-  const payToOptions = vendorPayToAddresses.length ? vendorPayToAddresses : vendorBillToAddresses;
+  const safePayToAddresses = Array.isArray(vendorPayToAddresses) ? vendorPayToAddresses : [];
+  const safeBillToAddresses = Array.isArray(vendorBillToAddresses) ? vendorBillToAddresses : [];
+  const safeShippingTypeOptions = Array.isArray(shippingTypeOptions) ? shippingTypeOptions : [];
+  const payToOptions = safePayToAddresses.length ? safePayToAddresses : safeBillToAddresses;
   const hasCurrentLanguageOption = PURCHASE_LOGISTICS_LANGUAGE_OPTIONS.some((option) => String(option.value) === String(header.language || ''));
 
   const emitHeaderChange = (name, value, type = 'text', checked = false) => {
@@ -66,12 +70,14 @@ export default function PurchaseLogisticsTab({
                 name="billTo"
                 value={header.billToAddress || header.billTo || ''}
                 onChange={onHeaderChange}
+                disabled={!isEditable}
               />
               <button
                 type="button"
                 className="po-lookup-btn"
                 onClick={() => onOpenAddressModal('billTo')}
                 title="Select Address"
+                disabled={!isEditable}
               >
                 ...
               </button>
@@ -86,6 +92,7 @@ export default function PurchaseLogisticsTab({
                 name="payToCode"
                 value={header.payToCode || ''}
                 onChange={handlePayToChange}
+                disabled={!isEditable}
               >
                 <option value={PURCHASE_LOGISTICS_SELECT_OPTION.value}>{PURCHASE_LOGISTICS_SELECT_OPTION.label}</option>
                 {payToOptions.map((addr) => (
@@ -106,12 +113,14 @@ export default function PurchaseLogisticsTab({
                 name="payTo"
                 value={header.payToAddress || header.payTo || ''}
                 onChange={onHeaderChange}
+                disabled={!isEditable}
               />
               <button
                 type="button"
                 className="po-lookup-btn"
                 onClick={() => onOpenAddressModal('payTo')}
                 title="Select Address"
+                disabled={!isEditable}
               >
                 ...
               </button>
@@ -125,9 +134,10 @@ export default function PurchaseLogisticsTab({
               name="shippingType"
               value={header.shippingType || ''}
               onChange={onHeaderChange}
+              disabled={!isEditable}
             >
               <option value={PURCHASE_LOGISTICS_SELECT_OPTION.value}>{PURCHASE_LOGISTICS_SELECT_OPTION.label}</option>
-              {shippingTypeOptions.map((option) => (
+              {safeShippingTypeOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -143,6 +153,7 @@ export default function PurchaseLogisticsTab({
                 name="usePayToForTax"
                 checked={header.usePayToForTax || false}
                 onChange={onHeaderChange}
+                disabled={!isEditable}
               />
               <span>Use Pay to Address to Determine Tax</span>
             </label>
@@ -157,6 +168,7 @@ export default function PurchaseLogisticsTab({
               name="language"
               value={header.language || ''}
               onChange={onHeaderChange}
+              disabled={!isEditable}
             >
               <option value={PURCHASE_LOGISTICS_SELECT_OPTION.value}>{PURCHASE_LOGISTICS_SELECT_OPTION.label}</option>
               {PURCHASE_LOGISTICS_LANGUAGE_OPTIONS.map((option) => (
@@ -171,7 +183,7 @@ export default function PurchaseLogisticsTab({
           <div className="po-field">
             <label className="po-field__label" />
             <label className="po-checkbox-label">
-              <input type="checkbox" name="splitPurchaseOrder" checked={header.splitPurchaseOrder || false} onChange={onHeaderChange} />
+              <input type="checkbox" name="splitPurchaseOrder" checked={header.splitPurchaseOrder || false} onChange={onHeaderChange} disabled={!isEditable} />
               <span>Split Purchase Order</span>
             </label>
           </div>
@@ -179,7 +191,7 @@ export default function PurchaseLogisticsTab({
           <div className="po-field">
             <label className="po-field__label" />
             <label className="po-checkbox-label">
-              <input type="checkbox" name="confirmed" checked={header.confirmed || false} onChange={onHeaderChange} />
+              <input type="checkbox" name="confirmed" checked={header.confirmed || false} onChange={onHeaderChange} disabled={!isEditable} />
               <span>Approved</span>
             </label>
           </div>
