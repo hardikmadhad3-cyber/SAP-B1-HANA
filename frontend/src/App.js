@@ -282,6 +282,7 @@ function App() {
 
               <Route element={<RequireAdminAuth />}>
                 <Route element={<Layout />}>
+                  <Route path="/adminpanel" element={<Navigate to="/admin" replace />} />
                   <Route path="/admin" element={<AdminPanelHome />} />
                   <Route path="/admin/general-settings" element={<GeneralSettings />} />
                   <Route path="/admin/:entityKey" element={<AdminPanelEntity />} />

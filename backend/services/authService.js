@@ -127,6 +127,38 @@ const buildMenuTree = (menus, rightsByMenuId) => {
 const isAdminRoleName = (roleName) =>
   ['admin', 'superadmin'].includes(String(roleName || '').trim().toLowerCase());
 
+const isSetupAdminLogin = (username, password) =>
+  String(username || '') === env.setupAdminUsername &&
+  String(password || '') === env.setupAdminPassword;
+
+const createSetupAdminLoginResult = () => {
+  const username = env.setupAdminUsername || 'manager';
+  const adminToken = createToken(
+    {
+      tokenType: 'admin',
+      userId: 0,
+      username,
+      roleId: 0,
+      roleName: 'SuperAdmin',
+      isSetupAdmin: true,
+    },
+    env.jwtExpiresIn,
+  );
+
+  return {
+    token: adminToken,
+    user: {
+      userId: 0,
+      username,
+      fullName: 'Setup Administrator',
+      email: '',
+      isActive: true,
+    },
+    roleId: 0,
+    roleName: 'SuperAdmin',
+  };
+};
+
 const REPORT_MENU_PATH_PATTERN = /^\/reportlayoutmanager\/menu\/(\d+)\/?$/i;
 
 const extractReportMenuIdFromPath = (menuPath = '') => {
@@ -281,6 +313,10 @@ const adminLogin = async (username, password) => {
 
   if (!normalizedUsername || !normalizedPassword) {
     throw createHttpError(400, 'Username and password are required.');
+  }
+
+  if (isSetupAdminLogin(normalizedUsername, normalizedPassword)) {
+    return createSetupAdminLoginResult();
   }
 
   const user = await authDbService.findUserByUsername(normalizedUsername);

@@ -13,6 +13,8 @@ module.exports = {
   jwtSecret: process.env.JWT_SECRET || 'sap-b1-auth-dev-secret',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
   pendingJwtExpiresIn: process.env.PENDING_JWT_EXPIRES_IN || '15m',
+  setupAdminUsername: process.env.SETUP_ADMIN_USERNAME || 'manager',
+  setupAdminPassword: process.env.SETUP_ADMIN_PASSWORD || 'Admin@123',
   verboseRequestLogs: parseBoolean(process.env.VERBOSE_REQUEST_LOGS, false),
   verboseSapLogs: parseBoolean(process.env.VERBOSE_SAP_LOGS, false),
   authDbProvider: process.env.AUTH_DB_PROVIDER || 'sqlite',

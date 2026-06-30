@@ -6,7 +6,7 @@ const AdminLoginPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { adminLogin, isAdminAuthenticated } = useAuth();
-  const [form, setForm] = useState({ username: '', password: '' });
+  const [form, setForm] = useState({ username: 'manager', password: 'Admin@123' });
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [error, setError] = useState('');
 
