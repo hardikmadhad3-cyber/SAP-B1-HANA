@@ -1,4 +1,4 @@
-const db = require('../db/odbc');
+const db = require('./dbService');
 
 const getBusinessPartnerGroups = async (query = '', options = {}) => {
   const trimmed = String(query || '').trim();
@@ -40,6 +40,24 @@ const getBusinessPartnerGroups = async (query = '', options = {}) => {
   return rows;
 };
 
+const getBusinessPartnerProperties = async (options = {}) => {
+  const result = await db.query(
+    `
+      SELECT GroupCode AS number, ISNULL(GroupName, '') AS name
+      FROM OCQG
+      ORDER BY GroupCode
+    `,
+    {},
+    options,
+  );
+
+  return (result.recordset || []).map((row, index) => ({
+    number: Number(row.number || index + 1),
+    name: String(row.name || `Business Partners Property ${index + 1}`).trim(),
+  }));
+};
+
 module.exports = {
   getBusinessPartnerGroups,
+  getBusinessPartnerProperties,
 };

@@ -2,7 +2,7 @@ const express = require("express");
 const router  = express.Router();
 const {
   createBP, getBP, updateBP, searchBP,
-  lookupBPGroups, lookupPaymentTerms, lookupSalesPersons, lookupPriceLists, lookupCurrencies, lookupCountries,
+  lookupBPGroups, lookupBPProperties, lookupPaymentTerms, lookupSalesPersons, lookupPriceLists, lookupCurrencies, lookupCountries,
   lookupCompanyTypes,
   lookupCreditCards, createCreditCard, lookupBanks, lookupHouseBankAccounts,
   lookupWithholdingTaxCodes,
@@ -11,6 +11,7 @@ const {
 
 // Lookups (before /:cardCode)
 router.get("/lookup/groups",        lookupBPGroups);
+router.get("/lookup/properties",    lookupBPProperties);
 router.get("/lookup/payment-terms", lookupPaymentTerms);
 router.get("/lookup/sales-persons", lookupSalesPersons);
 router.get("/lookup/price-lists",   lookupPriceLists);

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import { getAccount, searchAccounts } from "../../api/chartOfAccountsApi";
 import { addJournalEntry, fetchJournalEntryByTransId } from "../../api/journalEntryApi";
+import { useRelationshipMapRegistration } from "../../components/relationship-map/RelationshipMapHost";
 import "./journalEntry.css";
 
 const today = new Date().toISOString().slice(0, 10);
@@ -297,6 +298,13 @@ export default function JournalEntryPage() {
       difference: totalDebit - totalCredit,
     };
   }, [lines]);
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentTransId),
+    objectType: 30,
+    docEntry: currentTransId,
+    header,
+    total: totals.debit,
+  });
 
   const setHeaderValue = (field, value) => {
     setHeader((prev) => ({ ...prev, [field]: value }));
@@ -426,7 +434,7 @@ export default function JournalEntryPage() {
   );
 
   return (
-    <div className="je-page">
+    <div className="je-page sap-document-page">
       <div className="je-titlebar">
         <span>Journal Entry</span>
       </div>
