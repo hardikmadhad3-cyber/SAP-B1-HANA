@@ -1,0 +1,236 @@
+.scf-page {
+  background: #f3f3f3;
+}
+
+.scf-window--criteria {
+  width: min(730px, calc(100vw - 230px));
+  max-width: 730px;
+}
+
+.scf-window--report {
+  width: min(1500px, calc(100vw - 38px));
+  max-width: none;
+  height: calc(100vh - 120px);
+}
+
+.scf-criteria {
+  min-height: 205px;
+  padding: 14px 18px 8px;
+  color: #132d45;
+  font-size: 12px;
+}
+
+.scf-period-title {
+  width: max-content;
+  margin: 0 0 6px;
+  color: #17344f;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.scf-date-row {
+  display: grid;
+  grid-template-columns: 128px 34px 104px 24px 104px 20px 72px 124px;
+  gap: 6px;
+  align-items: center;
+}
+
+.scf-date-row--previous {
+  grid-template-columns: 18px 128px 34px 104px 24px 104px 20px 1fr;
+}
+
+.scf-date-row select,
+.scf-date-row input,
+.scf-report-head input,
+.scf-result-footer select {
+  height: 22px;
+  min-width: 0;
+  border: 1px solid #a9a9a9;
+  background: #fff;
+  color: #102a43;
+  font: inherit;
+}
+
+.scf-date-row select,
+.scf-template,
+.scf-result-footer select {
+  background: #fff0a6;
+}
+
+.scf-date-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #7c8fa1;
+}
+
+.scf-picker {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #c6ced6;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #f9fbfd 0%, #dce5ee 100%);
+  color: #78899a;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.scf-divider {
+  margin: 7px 0 9px;
+  border-top: 1px solid #b7b7b7;
+}
+
+.scf-message {
+  margin-top: 16px;
+  padding: 7px 9px;
+  border: 1px solid #c7b36d;
+  background: #fff7d6;
+  color: #5e4b00;
+}
+
+.scf-footer {
+  display: flex;
+  gap: 18px;
+  padding: 11px 18px 18px;
+  border-top: 1px solid #8e8e8e;
+}
+
+.scf-footer .sales-analysis__sap-btn {
+  width: 106px;
+  height: 24px;
+  min-width: 106px;
+}
+
+.scf-report-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px 18px 10px;
+  background: #efefef;
+}
+
+.scf-report-head {
+  display: grid;
+  grid-template-columns: 88px 150px 1fr;
+  gap: 10px;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-bottom: 38px;
+  font-size: 12px;
+}
+
+.scf-period-head {
+  display: grid;
+  grid-template-columns: 100px 36px 132px 24px 132px;
+  gap: 7px;
+  align-items: center;
+  justify-content: end;
+}
+
+.scf-grid-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #c6c6c6;
+  background: #e7e7e7;
+}
+
+.scf-grid {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: #000;
+  font-size: 12px;
+}
+
+.scf-grid th,
+.scf-grid td {
+  height: 20px;
+  padding: 2px 5px;
+  border-right: 1px solid #c9c9c9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scf-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #dedede;
+  color: #34475c;
+  font-weight: 400;
+  text-align: left;
+}
+
+.scf-grid th:nth-child(1),
+.scf-grid td:nth-child(1) {
+  width: 66%;
+}
+
+.scf-grid th:nth-child(2),
+.scf-grid td:nth-child(2) {
+  width: 12%;
+}
+
+.scf-grid th:nth-child(3),
+.scf-grid td:nth-child(3),
+.scf-grid th:nth-child(4),
+.scf-grid td:nth-child(4) {
+  width: 14%;
+}
+
+.scf-grid .is-number {
+  text-align: right;
+}
+
+.scf-row--section-red td:first-child {
+  color: #ff2020;
+  font-weight: 600;
+}
+
+.scf-row--summary-blue td:first-child,
+.scf-row--summary-blue td:nth-child(2) {
+  color: #376dff;
+}
+
+.scf-result-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding-top: 18px;
+}
+
+.scf-result-footer label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.scf-result-footer select {
+  width: 96px;
+}
+
+@media (max-width: 900px) {
+  .scf-window--criteria,
+  .scf-window--report {
+    width: calc(100vw - 20px);
+    max-width: none;
+  }
+
+  .scf-date-row,
+  .scf-date-row--previous,
+  .scf-report-head,
+  .scf-period-head {
+    grid-template-columns: 1fr;
+  }
+
+  .scf-report-head {
+    margin-bottom: 18px;
+  }
+}

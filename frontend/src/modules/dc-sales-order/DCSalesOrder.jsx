@@ -42,6 +42,7 @@ import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { getBP } from '../../api/businessPartnerApi';
 import {
     fetchSalesOrderByDocEntry,
@@ -1450,6 +1451,13 @@ function DCSalesOrder() {
     };
 
     const totals = calcTotals();
+    useRelationshipMapRegistration({
+        enabled: Boolean(currentDocEntry),
+        objectType: 17,
+        docEntry: currentDocEntry,
+        header,
+        total: totals.total,
+    });
 
     // ── GST determination logic ───────────────────────────────────────────────
     const determineGSTType = (gstState) => {

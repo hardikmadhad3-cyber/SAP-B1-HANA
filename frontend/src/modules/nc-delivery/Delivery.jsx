@@ -20,6 +20,7 @@ import QualitySelectionModal from '../sales-order/components/QualitySelectionMod
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
@@ -1544,6 +1545,13 @@ function NCDelivery() {
   };
 
   const totals = calcTotals();
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 15,
+    docEntry: currentDocEntry,
+    header,
+    total: totals.total,
+  });
 
   // Continue in next part...
 

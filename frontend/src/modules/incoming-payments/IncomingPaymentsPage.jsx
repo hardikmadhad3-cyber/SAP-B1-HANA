@@ -10,6 +10,7 @@ import {
   searchIncomingPaymentControlAccounts,
   submitIncomingPayment,
 } from "../../api/incomingPaymentsApi";
+import { useRelationshipMapRegistration } from "../../components/relationship-map/RelationshipMapHost";
 import PaymentMeansModal, {
   createDefaultPaymentMeans,
   paymentMeansTotal,
@@ -391,6 +392,13 @@ export default function IncomingPaymentsPage() {
     ? accountRowsTotal
     : selectedTotal + paymentOnAccountDue;
   const openBalance = Math.max(0, paymentOnAccountDue);
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 24,
+    docEntry: currentDocEntry,
+    header,
+    total: totalAmountDue,
+  });
 
   const getPayableInvoiceTotal = (rows = invoices) =>
     rows.reduce((sum, invoice) => {
@@ -1031,7 +1039,7 @@ export default function IncomingPaymentsPage() {
   const partnerAddressLabel = isVendor ? "Pay To" : "Bill To";
 
   return (
-    <div className="po-page ip-payments-page">
+    <div className="po-page sap-document-page ip-payments-page">
       <div className="po-toolbar">
         <span className="po-toolbar__title">Incoming Payments{isFoundDocument ? ` - #${header.documentNumber}` : ""}</span>
         <button type="button" className="po-btn" onClick={openFind}>Find</button>
