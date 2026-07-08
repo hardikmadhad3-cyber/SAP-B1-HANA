@@ -928,7 +928,7 @@ export default function FinancialStatementReportPage() {
   return (
     <div className="fac-report-page sales-analysis-page sap-report-page">
       <section
-        className={`fac-report-window fac-report-window--criteria${reportKey === "balance-sheet" ? " fac-report-window--balance-sheet" : ""}${reportKey === "profit-and-loss-statement" ? " fac-report-window--profit-loss" : ""}${reportKey === "cash-flow" ? " fac-report-window--cash-flow" : ""}${reportKey === "cash-flow-reference-report" ? " fac-report-window--cash-flow-reference" : ""} sales-analysis-window sap-report-window${criteriaWindow.isMinimized ? " is-minimized" : ""}${criteriaWindow.isMaximized ? " is-maximized" : ""}`}
+        className={`fac-report-window fac-report-window--criteria${reportKey === "balance-sheet" ? " fac-report-window--balance-sheet" : ""}${reportKey === "trial-balance" ? " fac-report-window--trial-balance" : ""}${reportKey === "profit-and-loss-statement" ? " fac-report-window--profit-loss" : ""}${reportKey === "cash-flow" ? " fac-report-window--cash-flow" : ""}${reportKey === "cash-flow-reference-report" ? " fac-report-window--cash-flow-reference" : ""} sales-analysis-window sap-report-window${criteriaWindow.isMinimized ? " is-minimized" : ""}${criteriaWindow.isMaximized ? " is-maximized" : ""}`}
         {...criteriaWindow.windowProps}
       >
         <header className="sales-analysis-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}>
@@ -944,7 +944,7 @@ export default function FinancialStatementReportPage() {
             ) : reportKey === "cash-flow" ? (
               <CashFlowCriteria criteria={criteria} lookups={lookups} setField={setField} setNestedField={setNestedField} openModal={setActiveModal} message={message} />
             ) : reportKey === "trial-balance" ? (
-              <div className="fac-criteria sales-analysis-window__body">
+              <div className="fac-criteria fac-tb-criteria sales-analysis-window__body">
                 <TrialBalanceCriteria criteria={criteria} lookups={lookups} setField={setField} openModal={setActiveModal} />
                 {message ? <div className="fac-report-message">{message}</div> : null}
               </div>
