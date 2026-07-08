@@ -1,8 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { fetchSalesQuotations } from '../../../api/salesQuotationApi';
-import { fetchSalesOrders } from '../../../api/salesOrderApi';
-import { fetchDeliveries } from '../../../api/deliveryApi';
-import { fetchARInvoiceList } from '../../../api/arInvoiceApi';
+import { fetchSalesOrderReferenceDocumentLookup } from '../../../api/salesOrderApi';
 import { fetchGoodsIssueList } from '../../../api/goodsIssueApi';
 import { fetchGoodsReceipts } from '../../../api/goodsReceiptApi';
 import { fetchInventoryTransferRequestList } from '../../../api/inventoryTransferRequestApi';
@@ -67,6 +64,7 @@ const DEFAULT_TRANSACTION_TYPE_GROUPS = [
 
 const createReferencedToRow = (seed = {}) => ({
   transactionType: seed.transactionType || '',
+  docEntry: seed.docEntry || '',
   docNumber: seed.docNumber || '',
   extDocNumber: seed.extDocNumber || '',
   date: seed.date || '',
@@ -75,6 +73,7 @@ const createReferencedToRow = (seed = {}) => ({
 
 const isReferenceRowEmpty = (row) =>
   !row.transactionType &&
+  !row.docEntry &&
   !row.docNumber &&
   !row.extDocNumber &&
   !row.date &&
@@ -116,6 +115,19 @@ const buildTransactionTypeGroups = (customGroups = [], referencedDocument) => {
 const pickFirst = (...values) =>
   values.find((value) => value !== null && value !== undefined && value !== '');
 
+const pickDocumentCollection = (payload) => {
+  if (Array.isArray(payload)) return payload;
+
+  return [
+    payload?.options,
+    payload?.documents,
+    payload?.orders,
+    payload?.items,
+    payload?.data,
+    payload?.results,
+  ].find(Array.isArray) || [];
+};
+
 const formatDateForDisplay = (value) => {
   if (!value) return '';
   const parsed = new Date(value);
@@ -135,23 +147,33 @@ const formatDateForInput = (value) => {
 };
 
 const normalizeReferenceDocuments = (documents = []) =>
-  (Array.isArray(documents) ? documents : []).map((document, index) => ({
+  pickDocumentCollection(documents).map((document, index) => ({
     id:
       pickFirst(
         document.docEntry,
         document.DocEntry,
         document.doc_entry,
+        document.docNumber,
+        document.DocNum,
+        document.docNum,
         document.id,
         document.ID
       ) ?? index,
     docEntry: pickFirst(document.docEntry, document.DocEntry, document.doc_entry, ''),
     docNum: String(
-      pickFirst(document.docNum, document.DocNum, document.doc_num, document.number, '')
+      pickFirst(
+        document.docNumber,
+        document.docNum,
+        document.DocNum,
+        document.doc_num,
+        document.number,
+        ''
+      )
     ),
     date: pickFirst(
+      document.docDate,
       document.postingDate,
       document.documentDate,
-      document.docDate,
       document.DocDate,
       document.posting_date,
       document.document_date,
@@ -169,6 +191,8 @@ const normalizeReferenceDocuments = (documents = []) =>
       document.CardName,
       document.customerName,
       document.customer_name,
+      document.vendorName,
+      document.vendor_name,
       document.businessPartnerName,
       document.details,
       ''
@@ -182,40 +206,153 @@ const normalizeReferenceDocuments = (documents = []) =>
       ''
     ),
     extDocNumber: String(
-      pickFirst(document.extDocNumber, document.ExtDocNumber, document.ref2, document.Ref2, '')
+      pickFirst(
+        document.extDocNumber,
+        document.ExtDocNumber,
+        document.NumAtCard,
+        document.customerRefNo,
+        document.vendorRefNo,
+        document.ref2,
+        document.Ref2,
+        ''
+      )
     ),
     raw: document,
   }));
 
+const compactReferencedToRows = (rows = []) =>
+  rows
+    .map((row) => ({
+      direction: 'to',
+      transactionType: String(row.transactionType || '').trim(),
+      docEntry: String(row.docEntry || '').trim(),
+      docNumber: String(row.docNumber || '').trim(),
+      extDocNumber: String(row.extDocNumber || '').trim(),
+      issueDate: row.date || '',
+      remark: row.remarks || '',
+    }))
+    .filter((row) =>
+      String(row.transactionType || row.docEntry || row.docNumber || row.extDocNumber || '').trim()
+    );
+
+const normalizeSavedReferenceRows = (rows = []) =>
+  (Array.isArray(rows) ? rows : []).map((row) =>
+    createReferencedToRow({
+      transactionType: getInventoryReferenceDocumentTypeLabel(
+        row.transactionType || row.referencedObjectType || row.RefObjType || ''
+      ),
+      docEntry: row.docEntry || row.referencedDocEntry || row.RefDocEntr || '',
+      docNumber: row.docNumber || row.referencedDocNumber || row.RefDocNum || '',
+      extDocNumber: row.extDocNumber || row.externalDocNumber || row.ExtDocNum || '',
+      date: row.issueDate || row.IssueDate || '',
+      remarks: row.remark || row.Remark || '',
+    })
+  );
+
+const REFERENCE_DOCUMENT_TYPE_CODES = {
+  'Purchase Order': '22',
+  'Sales Order': '17',
+  'Delivery Notes': '15',
+  Delivery: '15',
+  'A/R Invoice': '13',
+  'A/R Credit Memo': '14',
+  'Sales Quotation': '23',
+  'Goods Receipt PO': '20',
+  'A/P Invoice': '18',
+  'A/P Credit Memo': '19',
+  'Purchase Request': '1470000113',
+  'Purchase Quotation': '540000006',
+};
+
+const REFERENCE_DOCUMENT_TYPE_LABELS = {
+  '22': 'Purchase Order',
+  rot_PurchaseOrder: 'Purchase Order',
+  '17': 'Sales Order',
+  rot_SalesOrder: 'Sales Order',
+  '15': 'Delivery Notes',
+  rot_DeliveryNotes: 'Delivery Notes',
+  '13': 'A/R Invoice',
+  rot_SalesInvoice: 'A/R Invoice',
+  '14': 'A/R Credit Memo',
+  rot_SalesCreditNote: 'A/R Credit Memo',
+  '23': 'Sales Quotation',
+  rot_SalesQuotation: 'Sales Quotation',
+  '20': 'Goods Receipt PO',
+  rot_PurchaseDeliveryNotes: 'Goods Receipt PO',
+  '18': 'A/P Invoice',
+  rot_PurchaseInvoice: 'A/P Invoice',
+  '19': 'A/P Credit Memo',
+  rot_PurchaseCreditNote: 'A/P Credit Memo',
+  '1470000113': 'Purchase Request',
+  rot_PurchaseRequest: 'Purchase Request',
+  '540000006': 'Purchase Quotation',
+  rot_PurchaseQuotation: 'Purchase Quotation',
+};
+
+export const getInventoryReferenceDocumentTypeLabel = (value) => {
+  const normalized = String(value || '').trim();
+  return REFERENCE_DOCUMENT_TYPE_LABELS[normalized] || normalized;
+};
+
+const createMarketingReferenceSource = (label) => ({
+  title: `List of ${label}${label.endsWith('s') ? '' : 's'}`,
+  load: async () => {
+    const response = await fetchSalesOrderReferenceDocumentLookup({
+      transactionType: REFERENCE_DOCUMENT_TYPE_CODES[label],
+      top: 100,
+    });
+    return normalizeReferenceDocuments(response.data?.options || response.data || []);
+  },
+});
+
 const REFERENCE_DOCUMENT_SOURCES = {
+  'Purchase Order': createMarketingReferenceSource('Purchase Order'),
+  'Purchase Request': createMarketingReferenceSource('Purchase Request'),
+  'Purchase Quotation': createMarketingReferenceSource('Purchase Quotation'),
+  'Goods Receipt PO': createMarketingReferenceSource('Goods Receipt PO'),
+  'A/P Invoice': createMarketingReferenceSource('A/P Invoice'),
+  'A/P Credit Memo': createMarketingReferenceSource('A/P Credit Memo'),
   'Sales Quotation': {
     title: 'List of Sales Quotations',
     load: async () => {
-      const response = await fetchSalesQuotations();
-      return normalizeReferenceDocuments(response.data?.quotations || response.data || []);
+      const response = await fetchSalesOrderReferenceDocumentLookup({
+        transactionType: REFERENCE_DOCUMENT_TYPE_CODES['Sales Quotation'],
+        top: 100,
+      });
+      return normalizeReferenceDocuments(response.data?.options || response.data || []);
     },
   },
   'Sales Order': {
     title: 'List of Sales Orders',
     load: async () => {
-      const response = await fetchSalesOrders();
-      return normalizeReferenceDocuments(response.data || []);
+      const response = await fetchSalesOrderReferenceDocumentLookup({
+        transactionType: REFERENCE_DOCUMENT_TYPE_CODES['Sales Order'],
+        top: 100,
+      });
+      return normalizeReferenceDocuments(response.data?.options || response.data || []);
     },
   },
   'Delivery Notes': {
     title: 'List of Delivery Notes',
     load: async () => {
-      const response = await fetchDeliveries();
-      return normalizeReferenceDocuments(response.data || []);
+      const response = await fetchSalesOrderReferenceDocumentLookup({
+        transactionType: REFERENCE_DOCUMENT_TYPE_CODES['Delivery Notes'],
+        top: 100,
+      });
+      return normalizeReferenceDocuments(response.data?.options || response.data || []);
     },
   },
   'A/R Invoice': {
     title: 'List of A/R Invoices',
     load: async () => {
-      const response = await fetchARInvoiceList();
-      return normalizeReferenceDocuments(response.data?.ar_invoices || response.data || []);
+      const response = await fetchSalesOrderReferenceDocumentLookup({
+        transactionType: REFERENCE_DOCUMENT_TYPE_CODES['A/R Invoice'],
+        top: 100,
+      });
+      return normalizeReferenceDocuments(response.data?.options || response.data || []);
     },
   },
+  'A/R Credit Memo': createMarketingReferenceSource('A/R Credit Memo'),
   'Goods Issue': {
     title: 'List of Goods Issues',
     load: async () => {
@@ -249,6 +386,8 @@ const REFERENCE_DOCUMENT_SOURCES = {
 function ReferenceInformationModal({
   isOpen,
   onClose,
+  onSave,
+  referenceDocuments = [],
   referencedDocument,
   documentDate,
   remarks,
@@ -308,23 +447,28 @@ function ReferenceInformationModal({
 
     setActiveTab('to');
     setRestrictToBusinessPartner(false);
+    const savedRows = normalizeSavedReferenceRows(referenceDocuments);
     setReferencedToRows(
-      ensureMinimumRows([
-        createReferencedToRow(
-          referencedDocument
-            ? {
-                transactionType: referencedDocument.sourceLabel || '',
-                docNumber:
-                  referencedDocument.docNum != null ? String(referencedDocument.docNum) : '',
-                extDocNumber: '',
-                date: documentDate || '',
-                remarks: remarks || '',
-              }
-            : {}
-        ),
-      ])
+      ensureMinimumRows(
+        savedRows.length
+          ? savedRows
+          : [
+              createReferencedToRow(
+                referencedDocument
+                  ? {
+                      transactionType: referencedDocument.sourceLabel || '',
+                      docNumber:
+                        referencedDocument.docNum != null ? String(referencedDocument.docNum) : '',
+                      extDocNumber: '',
+                      date: documentDate || '',
+                      remarks: remarks || '',
+                    }
+                  : {}
+              ),
+            ]
+      )
     );
-  }, [documentDate, isOpen, referencedDocument, remarks]);
+  }, [documentDate, isOpen, referenceDocuments, referencedDocument, remarks]);
 
   if (!isOpen) return null;
 
@@ -336,6 +480,7 @@ function ReferenceInformationModal({
             ? {
                 ...row,
                 transactionType: value,
+                docEntry: '',
                 docNumber: '',
                 extDocNumber: '',
                 date: '',
@@ -413,6 +558,7 @@ function ReferenceInformationModal({
           index === pickerState.rowIndex
             ? {
                 ...row,
+                docEntry: document.docEntry != null ? String(document.docEntry) : row.docEntry || '',
                 docNumber: document.docNum || '',
                 extDocNumber: document.extDocNumber || row.extDocNumber || '',
                 date: formatDateForInput(document.date),
@@ -425,8 +571,13 @@ function ReferenceInformationModal({
     closePicker();
   };
 
+  const saveReferences = () => {
+    onSave?.(compactReferencedToRows(referencedToRows));
+    onClose();
+  };
+
   return (
-    <div className="po-modal-overlay" onClick={onClose}>
+    <div className="po-modal-overlay gr-reference-modal__overlay" onClick={onClose}>
       <div
         className="po-modal gr-reference-modal"
         onClick={(event) => event.stopPropagation()}
@@ -617,7 +768,7 @@ function ReferenceInformationModal({
         </div>
 
         <div className="po-modal__footer">
-          <button type="button" className="po-btn po-btn--primary" onClick={onClose}>
+          <button type="button" className="po-btn po-btn--primary" onClick={saveReferences}>
             OK
           </button>
           <button type="button" className="po-btn" onClick={onClose}>
@@ -627,7 +778,7 @@ function ReferenceInformationModal({
       </div>
 
       {pickerState.open && (
-        <div className="po-modal-overlay gr-reference-modal__picker-overlay">
+        <div className="po-modal-overlay gr-reference-modal__overlay gr-reference-modal__picker-overlay">
           <div
             className="po-modal gr-reference-picker"
             onClick={(event) => event.stopPropagation()}
@@ -731,7 +882,7 @@ function ReferenceInformationModal({
               <button
                 type="button"
                 className="po-btn po-btn--primary"
-                disabled={!pickerState.selectedId || pickerState.loading}
+                disabled={pickerState.selectedId == null || pickerState.loading}
                 onClick={() =>
                   chooseReferenceDocument(
                     filteredPickerDocuments.find(

@@ -8,7 +8,9 @@ import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import CopyFromModal from './components/CopyFromModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
-import ReferenceInformationModal from './components/ReferenceInformationModal';
+import ReferenceInformationModal, {
+  getInventoryReferenceDocumentTypeLabel,
+} from './components/ReferenceInformationModal';
 import BatchAllocationModal from '../../components/BatchAllocationModal';
 import DistributionRuleAssignmentModal from '../../components/DistributionRuleAssignmentModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
@@ -25,6 +27,7 @@ import {
   fetchGoodsReceiptGoodsIssues,
   fetchGoodsReceiptItems,
   fetchGoodsReceiptMetadata,
+  fetchGoodsReceiptNextBatchNumber,
   fetchGoodsReceiptSeries,
   fetchGoodsReceiptWarehouses,
   submitGoodsReceipt,
@@ -32,6 +35,10 @@ import {
 } from '../../api/goodsReceiptApi';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
+import {
+  getDefaultInventoryPriceList,
+  getInventoryItemPrice,
+} from '../../utils/inventoryPriceLists';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   GOODS_RECEIPT_FORM_SETTINGS_STORAGE_KEY,
@@ -179,6 +186,8 @@ function GoodsReceipt() {
     error: '',
   });
   const [referenceModalOpen, setReferenceModalOpen] = useState(false);
+  const [referenceDocuments, setReferenceDocuments] = useState([]);
+  const [referenceDocumentsChanged, setReferenceDocumentsChanged] = useState(false);
   const [itemModal, setItemModal] = useState({
     open: false,
     lineIndex: -1,
@@ -211,7 +220,7 @@ function GoodsReceipt() {
     if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
     if (currentDocEntry) setIsDirty(true);
   };
-  const defaultPriceList = priceLists[0] || null;
+  const defaultPriceList = getDefaultInventoryPriceList(priceLists);
   const defaultBranch = branches[0] || null;
   const getBranchName = useCallback(
     (branchValue) => {
@@ -262,11 +271,7 @@ function GoodsReceipt() {
   };
 
   const getItemPrice = (item, priceList) => {
-    if (!item) return 0;
-    if (priceList && item.prices && item.prices[String(priceList)] != null) {
-      return Number(item.prices[String(priceList)] || 0);
-    }
-    return Number(item.lastPurchasePrice || 0);
+    return getInventoryItemPrice(item, priceList);
   };
 
   const normalizeLine = (line) => {
@@ -393,8 +398,9 @@ function GoodsReceipt() {
           return warehouse?.locationCode != null ? String(warehouse.locationCode) : '';
         };
         const loadedSeries = seriesResponse.data || [];
-        const defaultSeries = loadedSeries[0] || null;
-        const nextDefaultPriceList = metadata.priceLists?.[0] || null;
+        const defaultSeries =
+          loadedSeries.find((series) => series.isDefault) || loadedSeries[0] || null;
+        const nextDefaultPriceList = getDefaultInventoryPriceList(metadata.priceLists);
         const nextDefaultBranch = metadata.branches?.[0] || null;
 
         setItems(loadedItems);
@@ -513,6 +519,8 @@ function GoodsReceipt() {
           ...createHeader(),
           ...document.header,
         }));
+        setReferenceDocuments(document.reference_documents || document.referenceDocuments || []);
+        setReferenceDocumentsChanged(false);
         setHeaderUdfs(document.headerUdfs || {});
         setLines(
           Array.isArray(document.lines) && document.lines.length
@@ -842,6 +850,28 @@ function GoodsReceipt() {
     });
   };
 
+  const applyBatchValidation = (line, rowErrors) => {
+    if (line.serialManaged) {
+      rowErrors.batches = 'Serial-managed items are not yet supported.';
+    }
+    if (line.batchManaged) {
+      if (!Array.isArray(line.batches) || line.batches.length === 0) {
+        rowErrors.batches = 'Batch allocation is required.';
+      } else {
+        const requiredBatchQty = getRequiredBatchQty(line);
+        const assignedBatchQty = sumBatchQty(line.batches);
+        const inventoryUOM = line.inventoryUOM || line.uomName || line.uomCode || 'Base UoM';
+        if (Math.abs(assignedBatchQty - requiredBatchQty) > BATCH_QTY_TOLERANCE) {
+          rowErrors.quantity = `Batch quantity (${assignedBatchQty.toFixed(
+            2
+          )} ${inventoryUOM}) must match line quantity (${requiredBatchQty.toFixed(
+            2
+          )} ${inventoryUOM})`;
+        }
+      }
+    }
+  };
+
   const validateDocument = () => {
     const nextErrors = { lines: {}, form: '' };
     const activeLines = lines.filter((line) => line.itemCode || line.baseEntry != null);
@@ -852,32 +882,21 @@ function GoodsReceipt() {
 
     lines.forEach((line, index) => {
       if (!line.itemCode && line.baseEntry == null) return;
-      if (line.baseEntry != null) return;
 
       const rowErrors = {};
+      if (line.baseEntry != null) {
+        applyBatchValidation(line, rowErrors);
+        if (Object.keys(rowErrors).length) {
+          nextErrors.lines[index] = rowErrors;
+        }
+        return;
+      }
+
       if (!line.itemCode) rowErrors.itemCode = 'Item required';
       if (line.itemCode && !getItem(line.itemCode)) rowErrors.itemCode = 'Invalid item';
       if (Number(line.quantity || 0) <= 0) rowErrors.quantity = 'Qty > 0';
       if (line.itemCode && !line.warehouse) rowErrors.warehouse = 'Warehouse required';
-      if (line.serialManaged) {
-        rowErrors.batches = 'Serial-managed items are not yet supported.';
-      }
-      if (line.batchManaged) {
-        if (!Array.isArray(line.batches) || line.batches.length === 0) {
-          rowErrors.batches = 'Batch allocation is required.';
-        } else {
-          const requiredBatchQty = getRequiredBatchQty(line);
-          const assignedBatchQty = sumBatchQty(line.batches);
-          const inventoryUOM = line.inventoryUOM || line.uomName || line.uomCode || 'Base UoM';
-          if (Math.abs(assignedBatchQty - requiredBatchQty) > BATCH_QTY_TOLERANCE) {
-            rowErrors.quantity = `Batch quantity (${assignedBatchQty.toFixed(
-              2
-            )} ${inventoryUOM}) must match line quantity (${requiredBatchQty.toFixed(
-              2
-            )} ${inventoryUOM})`;
-          }
-        }
-      }
+      applyBatchValidation(line, rowErrors);
 
       if (Object.keys(rowErrors).length) {
         nextErrors.lines[index] = rowErrors;
@@ -903,6 +922,8 @@ function GoodsReceipt() {
       branch: nextBranch,
     }));
     setHeaderUdfs(normalizeUdfState(headerUdfFields));
+    setReferenceDocuments([]);
+    setReferenceDocumentsChanged(false);
     setLines([{ ...createLine(rowUdfFields), location: '', branch: nextBranch }]);
     attachmentsRef.current.forEach((attachment) => {
       if (attachment.previewUrl) {
@@ -1103,6 +1124,26 @@ function GoodsReceipt() {
     closeBatchModal();
   };
 
+  const saveReferenceDocuments = (rows) => {
+    setReferenceDocuments(rows);
+    setReferenceDocumentsChanged(true);
+    if (currentDocEntry) setIsDirty(true);
+  };
+
+  const openFirstBatchErrorModal = () => {
+    const lineIndex = lines.findIndex((line) => {
+      if (!line.itemCode || !line.batchManaged || line.serialManaged) return false;
+      if (!Array.isArray(line.batches) || line.batches.length === 0) return true;
+      const requiredBatchQty = getRequiredBatchQty(line);
+      const assignedBatchQty = sumBatchQty(line.batches);
+      return Math.abs(assignedBatchQty - requiredBatchQty) > BATCH_QTY_TOLERANCE;
+    });
+
+    if (lineIndex < 0) return;
+    setActiveTab('Contents');
+    window.setTimeout(() => openBatchModal(lineIndex), 0);
+  };
+
   const openCopyFromModal = () => {
     setSelectedCopyDocEntry(null);
     setCopyFromModal(true);
@@ -1186,6 +1227,7 @@ function GoodsReceipt() {
         error: 'Fix the highlighted line errors before saving.',
         success: '',
       }));
+      openFirstBatchErrorModal();
       return;
     }
 
@@ -1195,6 +1237,9 @@ function GoodsReceipt() {
       const payload = {
         header,
         header_udfs: normalizeUdfState(headerUdfFields, headerUdfs),
+        reference_documents: referenceDocuments,
+        reference_documents_changed:
+          referenceDocumentsChanged || (!currentDocEntry && referenceDocuments.length > 0),
         lines: lines
           .filter((line) => line.itemCode || line.baseEntry != null)
           .map((line) => ({
@@ -1254,6 +1299,7 @@ function GoodsReceipt() {
         setCurrentDocEntry(Number(result.docEntry));
       }
       setIsDirty(false);
+      setReferenceDocumentsChanged(false);
       setHeader((current) => ({
         ...current,
         number: result.docNum != null ? String(result.docNum) : current.number,
@@ -1288,6 +1334,16 @@ function GoodsReceipt() {
     (field) => formSettings.headerUdfs?.[field.key]?.visible !== false
   );
   const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
+  const primaryReferenceDocument = referenceDocuments.find(
+    (row) => String(row.transactionType || row.docNumber || row.docEntry || '').trim()
+  );
+  const referencedDocumentDisplay = header.referencedDocument
+    ? `${header.referencedDocument.sourceLabel} ${header.referencedDocument.docNum}`
+    : primaryReferenceDocument
+      ? `${getInventoryReferenceDocumentTypeLabel(primaryReferenceDocument.transactionType)} ${
+          primaryReferenceDocument.docNumber || primaryReferenceDocument.docEntry
+        }`
+      : '';
 
   return (
     <form className={`po-page sap-document-page gr-goods-receipt__page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
@@ -1303,7 +1359,7 @@ function GoodsReceipt() {
         </button>
         <button
           type="button"
-          className="po-btn po-btn--danger sap-document-toolbar__cancel"
+          className="po-btn sap-document-toolbar__cancel"
           onClick={resetForm}
           disabled={pageState.posting}
         >
@@ -1355,7 +1411,7 @@ function GoodsReceipt() {
               if (!isActive) dropdown.classList.add('active');
             }}
           >
-            Copy From v
+            Copy From
           </button>
           <div className="po-dropdown-menu">
             <button
@@ -1474,11 +1530,7 @@ function GoodsReceipt() {
                 <input
                   className="po-field__input"
                   readOnly
-                  value={
-                    header.referencedDocument
-                      ? `${header.referencedDocument.sourceLabel} ${header.referencedDocument.docNum}`
-                      : ''
-                  }
+                  value={referencedDocumentDisplay}
                 />
                 <button
                   type="button"
@@ -1620,6 +1672,8 @@ function GoodsReceipt() {
       <ReferenceInformationModal
         isOpen={referenceModalOpen}
         onClose={() => setReferenceModalOpen(false)}
+        onSave={saveReferenceDocuments}
+        referenceDocuments={referenceDocuments}
         referencedDocument={header.referencedDocument}
         documentDate={header.documentDate}
         remarks={header.remarks}
@@ -1660,6 +1714,7 @@ function GoodsReceipt() {
         availableBatches={batchModal.availableBatches}
         loading={batchModal.loading}
         error={batchModal.error}
+        onGenerateBatchNumber={() => fetchGoodsReceiptNextBatchNumber('JKL')}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />

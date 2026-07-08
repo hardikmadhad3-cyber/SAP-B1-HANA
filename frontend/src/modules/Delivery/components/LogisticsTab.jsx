@@ -7,6 +7,7 @@ export default function LogisticsTab({
   vendorBillToAddresses,
   shipTypeOpts,
   onOpenAddressModal,
+  isEditable = true,
 }) {
   return (
     <div className="del-tab-panel">
@@ -141,43 +142,45 @@ export default function LogisticsTab({
           {/* Language */}
           <div className="del-field">
             <label className="del-field__label">Language</label>
-            <select className="del-field__select">
+            <select className="del-field__select" name="languageCode" value={header.languageCode || ''} onChange={onHeaderChange} disabled={!isEditable}>
               <option value="">Select</option>
-              <option>English</option>
-              <option>Hindi</option>
-              <option>Gujarati</option>
+              <option value="3">English</option>
+              <option value="8">Hindi</option>
+              <option value="12">Gujarati</option>
+              {header.languageCode && !['3', '8', '12'].includes(String(header.languageCode)) ? <option value={header.languageCode}>{header.languageCode}</option> : null}
             </select>
           </div>
 
           {/* Tracking No. */}
           <div className="del-field">
             <label className="del-field__label">Tracking No.</label>
-            <input className="del-field__input" />
+            <input className="del-field__input" name="trackingNo" value={header.trackingNo || ''} onChange={onHeaderChange} disabled={!isEditable} />
           </div>
 
           {/* Stamp No. */}
           <div className="del-field">
             <label className="del-field__label">Stamp No.</label>
-            <input className="del-field__input" />
+            <input className="del-field__input" name="stampNo" value={header.stampNo || ''} onChange={onHeaderChange} disabled={!isEditable} />
           </div>
 
           {/* Pick and Pack Remarks */}
           <div className="del-field">
             <label className="del-field__label">Pick and Pack Remarks</label>
-            <input className="del-field__input" />
+            <input className="del-field__input" name="pickAndPackRemarks" value={header.pickAndPackRemarks || ''} onChange={onHeaderChange} disabled={!isEditable} />
           </div>
 
           {/* BP Channel Name */}
           <div className="del-field">
             <label className="del-field__label">BP Channel Name</label>
-            <input className="del-field__input" />
+            <input className="del-field__input" name="bpChannelCode" value={header.bpChannelCode || ''} onChange={onHeaderChange} disabled={!isEditable} />
           </div>
 
           {/* BP Channel Contact */}
           <div className="del-field">
             <label className="del-field__label">BP Channel Contact</label>
-            <select className="del-field__select">
+            <select className="del-field__select" name="bpChannelContact" value={header.bpChannelContact || ''} onChange={onHeaderChange} disabled={!isEditable}>
               <option value="">Select</option>
+              {header.bpChannelContact ? <option value={header.bpChannelContact}>{header.bpChannelContact}</option> : null}
             </select>
           </div>
 

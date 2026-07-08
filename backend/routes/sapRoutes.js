@@ -1,5 +1,6 @@
 const express = require('express');
 const sapService = require('../services/sapService');
+const documentPrintLayoutService = require('../services/documentPrintLayoutService');
 
 const router = express.Router();
 
@@ -42,6 +43,27 @@ router.get('/items', async (_req, res) => {
     const detail = getSapErrorDetail(err);
     console.log(err.response?.data || err.code || err.message);
     res.status(500).json({ detail });
+  }
+});
+
+router.get('/sap/reports/:documentType/:docEntry/metadata', async (req, res) => {
+  try {
+    const data = await documentPrintLayoutService.getDocumentReportMetadata({
+      documentType: req.params.documentType,
+      docEntry: req.params.docEntry,
+      docNum: req.query?.docNum,
+      series: req.query?.series,
+      schema: req.query?.schema,
+      docCode: req.query?.docCode || req.query?.layoutCode,
+      cardCode: req.query?.cardCode,
+      auth: req.auth,
+    });
+    res.json(data);
+  } catch (err) {
+    const detail = getSapErrorDetail(err);
+    const statusCode = err.statusCode || err.response?.status || 500;
+    console.log(err.response?.data || err.code || err.message);
+    res.status(statusCode).json({ detail, message: detail });
   }
 });
 

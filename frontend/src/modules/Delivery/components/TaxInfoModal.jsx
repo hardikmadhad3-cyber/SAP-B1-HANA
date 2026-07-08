@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onFormChange }) {
+export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onFormChange, disabled = false }) {
   if (!isOpen) return null;
 
   return (
@@ -29,6 +29,7 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
           </button>
         </div>
         <div className="del-modal__body">
+          <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <div className="del-field-grid">
             <div className="del-field">
               <label className="del-field__label">P.A.N. No.</label>
@@ -166,6 +167,7 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
                 onChange={onFormChange}
               >
                 <option value="">— Select —</option>
+                <option>Regular/TDS/ISD</option>
                 <option>Regular</option>
                 <option>Composition</option>
                 <option>Unregistered</option>
@@ -181,14 +183,11 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
               />
             </div>
           </div>
+          </fieldset>
         </div>
         <div className="del-modal__footer">
-          <button type="button" className="del-btn del-btn--primary" onClick={onSave}>
-            OK
-          </button>
-          <button type="button" className="del-btn" onClick={onClose}>
-            Cancel
-          </button>
+          {!disabled ? <button type="button" className="del-btn del-btn--primary" onClick={onSave}>OK</button> : null}
+          <button type="button" className="del-btn" onClick={onClose}>{disabled ? 'Close' : 'Cancel'}</button>
         </div>
       </div>
     </div>

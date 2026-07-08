@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import './styles/SalesQuotation.css';
 import '../../modules/item-master/styles/itemMaster.css';
+import './styles/SalesQuotation.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
@@ -1710,26 +1710,38 @@ function SalesQuotation() {
   // ── Item Selection Modal handlers ─────────────────────────────────────────
   const openItemModal = async (lineIndex) => {
     console.log('🔍 Opening item modal for line:', lineIndex);
-    setItemModal({ open: true, lineIndex, items: [], loading: true });
+    const fallbackItems = Array.isArray(refData.items) ? refData.items : [];
+    setItemModal({
+      open: true,
+      lineIndex,
+      items: fallbackItems,
+      loading: fallbackItems.length === 0,
+    });
     
     try {
       console.log('📡 Fetching items from API...');
       const response = await fetchItemsForModal();
-      console.log('✅ Items received:', response.data);
-      console.log('📊 Items count:', response.data.items?.length || 0);
+      const payload = response?.data;
+      const normalizedItems = Array.isArray(payload?.items)
+        ? payload.items
+        : Array.isArray(payload)
+          ? payload
+          : [];
+      console.log('✅ Items received:', payload);
+      console.log('📊 Items count:', normalizedItems.length);
       
-      setItemModal(prev => ({
+      setItemModal((prev) => ({
         ...prev,
-        items: response.data.items || [],
-        loading: false
+        items: normalizedItems.length > 0 ? normalizedItems : fallbackItems,
+        loading: false,
       }));
     } catch (error) {
       console.error('❌ Failed to load items:', error);
       console.error('Error details:', error.response?.data || error.message);
-      setItemModal(prev => ({
+      setItemModal((prev) => ({
         ...prev,
-        items: [],
-        loading: false
+        items: prev.items.length > 0 ? prev.items : fallbackItems,
+        loading: false,
       }));
     }
   };
@@ -1768,7 +1780,7 @@ function SalesQuotation() {
         
         if (!next.taxCodeManuallyOverridden && gstState && companyState) {
           const determinedTaxCode = determineTaxCode(
-            item,
+            mergedItem,
             gstState,
             gstState,
             false,

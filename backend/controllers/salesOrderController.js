@@ -107,8 +107,25 @@ const getSalesOrderFilterOptions = async (req, res) => {
   }
 };
 
+const getReferenceDocumentLookup = async (req, res) => {
+  try {
+    const data = await salesOrderService.getReferenceDocumentLookup({
+      transactionType: req.query.transactionType,
+      query: req.query.query || req.query.q || '',
+      cardCode: req.query.cardCode || '',
+      top: parseTopParam(req.query.top),
+    });
+    res.json(data);
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error, 'Failed to load reference documents.'));
+  }
+};
+
 const getSalesOrder = async (req, res) => {
   try {
+    if (String(req.params.docEntry || '').trim() === 'reference-documents') {
+      return getReferenceDocumentLookup(req, res);
+    }
     const data = await salesOrderService.getSalesOrder(req.params.docEntry);
     res.json(data);
   } catch (error) {
@@ -217,6 +234,7 @@ module.exports = {
   getCustomerFilterOptions,
   getSalesOrderList,
   getSalesOrderFilterOptions,
+  getReferenceDocumentLookup,
   getSalesOrder,
   submitSalesOrder,
   updateSalesOrder,

@@ -3,6 +3,7 @@ const goodsIssueDb = require('./goodsIssueDbService');
 const masterDataDbService = require('./masterDataDbService');
 const { getMarketingDocumentUdfs, getUdfDefinitions } = require('./udfMetadataService');
 const { applyUdfValues } = require('./udfPayloadUtils');
+const { buildDocumentReferencesPayload } = require('./documentReferencesPayloadUtils');
 
 const toIsoDate = (value) => {
   if (!value) return null;
@@ -193,6 +194,11 @@ const createGoodsIssue = async (payload) => {
     sapPayload.Reference2 = header.ref2;
   }
 
+  const documentReferences = buildDocumentReferencesPayload(payload.reference_documents);
+  if (documentReferences.length) {
+    sapPayload.DocumentReferences = documentReferences;
+  }
+
   if (header.branch) {
     sapPayload.BPL_IDAssignedToInvoice = Number(header.branch);
   }
@@ -233,6 +239,10 @@ const updateGoodsIssue = async (docEntry, payload) => {
 
   if (header.ref2) {
     sapPayload.Reference2 = header.ref2;
+  }
+
+  if (payload.reference_documents_changed) {
+    sapPayload.DocumentReferences = buildDocumentReferencesPayload(payload.reference_documents);
   }
   applyUdfValues(sapPayload, payload.header_udfs || payload.headerUdfs, allowedHeaderUdfs);
 

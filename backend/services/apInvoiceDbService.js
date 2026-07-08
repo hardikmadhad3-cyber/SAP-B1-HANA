@@ -27,6 +27,134 @@ const optionalColumn = (columns, tableAlias, columnName, alias, fallback = 'NULL
     : `${fallback} AS ${alias}`
 );
 
+const parseSeriesDate = (value) => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  const text = String(value || '').trim();
+  if (!text) return new Date();
+
+  const ymd = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymd) return new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
+
+  const dmy = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (dmy) return new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
+const normalizeSeriesText = (value) =>
+  String(value || '').toUpperCase().replace(/FY/g, '').replace(/[-/\s]/g, '');
+
+const getFinancialYearTokens = (docDate) => {
+  const year = docDate.getFullYear();
+  const fyStartYear = docDate.getMonth() + 1 >= 4 ? year : year - 1;
+  const fyEndYear = fyStartYear + 1;
+  const fyStartShort = String(fyStartYear).slice(-2);
+  const fyEndShort = String(fyEndYear).slice(-2);
+  return [
+    `${fyStartShort}${fyEndShort}`,
+    `${fyStartYear}${fyEndShort}`,
+    `${fyStartYear}${fyEndYear}`,
+  ];
+};
+
+const isDateBetween = (date, fromDate, toDate) => {
+  const from = fromDate instanceof Date ? fromDate : new Date(fromDate);
+  const to = toDate instanceof Date ? toDate : new Date(toDate);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return false;
+  return date >= from && date <= to;
+};
+
+const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = '' } = {}) => {
+  const docDate = parseSeriesDate(date);
+  const branchId = String(branch || '').trim() === '' ? null : Number.parseInt(branch, 10);
+  const normalizedBranchId = Number.isInteger(branchId) ? branchId : null;
+  const fyTokens = getFinancialYearTokens(docDate);
+  const nnm1Columns = await getTableColumns('NNM1');
+  const hasBranchColumn = nnm1Columns.has('BPLId');
+  const branchSelect = hasBranchColumn ? 'T0.BPLId,' : 'NULL AS BPLId,';
+  const branchFilter = hasBranchColumn && normalizedBranchId != null
+    ? 'AND (T0.BPLId IS NULL OR T0.BPLId IN (-1, 0, @branchId))'
+    : '';
+
+  const rows = await safe(db.query(`
+    SELECT
+      T0.Series,
+      T0.SeriesName,
+      T0.Indicator,
+      T0.NextNumber,
+      ${branchSelect}
+      FY.FinancialYear,
+      FY.FromDate,
+      FY.ToDate,
+      CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault
+    FROM NNM1 T0
+    LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
+    LEFT JOIN (
+      SELECT
+        Indicator,
+        MAX(Name) AS FinancialYear,
+        MIN(F_RefDate) AS FromDate,
+        MAX(T_RefDate) AS ToDate
+      FROM OFPR
+      GROUP BY Indicator
+    ) FY ON FY.Indicator = T0.Indicator
+    WHERE T0.ObjectCode = @objectCode
+      AND COALESCE(T0.Locked, 'N') <> 'Y'
+      ${branchFilter}
+  `, {
+    objectCode,
+    branchId: normalizedBranchId,
+  }));
+
+  const ranked = rows.map((row) => {
+    const rowText = normalizeSeriesText(`${row.SeriesName || ''} ${row.Indicator || ''}`);
+    return {
+      ...row,
+      IsManual: Number(row.Series) === -1 || String(row.SeriesName || '').trim().toUpperCase() === 'MANUAL' ? 1 : 0,
+      IsDateMatch: isDateBetween(docDate, row.FromDate, row.ToDate) ? 1 : 0,
+      IsYearNameMatch: fyTokens.some((token) => rowText.includes(token)) ? 1 : 0,
+      BranchPreference: hasBranchColumn && normalizedBranchId != null && Number(row.BPLId) === normalizedBranchId ? 0 : 1,
+    };
+  });
+
+  const hasYearMatchedRows = ranked.some((row) => row.IsYearNameMatch === 1);
+  const hasExactBranchRows = hasBranchColumn && normalizedBranchId != null
+    ? ranked.some((row) => Number(row.BPLId) === normalizedBranchId)
+    : false;
+  const bySeriesNameAndIndicator = new Map();
+
+  [...ranked]
+    .sort((left, right) =>
+      left.BranchPreference - right.BranchPreference ||
+      Number(right.IsDefault || 0) - Number(left.IsDefault || 0) ||
+      Number(left.Series || 0) - Number(right.Series || 0))
+    .forEach((row) => {
+      const key = `${String(row.SeriesName || '').trim().toUpperCase()}|${String(row.Indicator || '').trim().toUpperCase()}`;
+      if (!bySeriesNameAndIndicator.has(key)) bySeriesNameAndIndicator.set(key, row);
+    });
+
+  const series = [...bySeriesNameAndIndicator.values()]
+    .filter((row) => (
+      row.IsManual === 1 ||
+      (hasYearMatchedRows && row.IsYearNameMatch === 1) ||
+      (!hasYearMatchedRows && row.IsDateMatch === 1)
+    ))
+    .filter((row) => (
+      !hasBranchColumn ||
+      normalizedBranchId == null ||
+      !hasExactBranchRows ||
+      Number(row.BPLId) === normalizedBranchId ||
+      row.IsManual === 1
+    ))
+    .sort((left, right) =>
+      left.IsManual - right.IsManual ||
+      Number(right.IsDefault || 0) - Number(left.IsDefault || 0) ||
+      String(left.SeriesName || '').localeCompare(String(right.SeriesName || '')));
+
+  return { series };
+};
+
 const getVendors = () => safe(db.query(`
   SELECT CardCode, CardName, CardType, Currency,
          VatGroup, GroupNum AS PayTermsGrpCode
@@ -649,117 +777,7 @@ const getAPInvoice = async (docEntry) => {
 };
 
 const getDocumentSeries = async ({ date = null, branch = '' } = {}) => {
-  const nnm1Columns = await getTableColumns('NNM1');
-  const hasBranchColumn = nnm1Columns.has('BPLId');
-  const branchSelect = hasBranchColumn ? 'T0.BPLId,' : 'NULL AS BPLId,';
-  const branchPreference = hasBranchColumn
-    ? 'CASE WHEN @branchId IS NOT NULL AND T0.BPLId = @branchId THEN 0 ELSE 1 END,'
-    : '';
-  const branchFilter = hasBranchColumn
-    ? 'AND (@branchId IS NULL OR T0.BPLId IS NULL OR T0.BPLId IN (-1, 0, @branchId))'
-    : '';
-  const exactBranchMatch = hasBranchColumn
-    ? 'CASE WHEN @branchId IS NOT NULL AND BPLId = @branchId THEN 1 ELSE 0 END'
-    : '0';
-  const branchScopeFilter = hasBranchColumn
-    ? 'AND (@branchId IS NULL OR HasExactBranchRows = 0 OR BPLId = @branchId OR IsManual = 1)'
-    : '';
-
-  const result = await safe(db.query(`
-    DECLARE @docDate date = COALESCE(
-      TRY_CONVERT(date, @date, 23),
-      TRY_CONVERT(date, @date, 105),
-      TRY_CONVERT(date, @date, 103),
-      TRY_CONVERT(date, @date)
-    );
-    IF @docDate IS NULL SET @docDate = CAST(CURRENT_TIMESTAMP AS date);
-
-    DECLARE @branchId int = TRY_CONVERT(int, NULLIF(@branch, ''));
-    DECLARE @fyStartYear int = CASE WHEN MONTH(@docDate) >= 4 THEN YEAR(@docDate) ELSE YEAR(@docDate) - 1 END;
-    DECLARE @fyEndYear int = @fyStartYear + 1;
-    DECLARE @fyStartShort varchar(2) = RIGHT(CONVERT(varchar(4), @fyStartYear), 2);
-    DECLARE @fyEndShort varchar(2) = RIGHT(CONVERT(varchar(4), @fyEndYear), 2);
-    DECLARE @fyCompact varchar(8) = CONCAT(@fyStartShort, @fyEndShort);
-    DECLARE @fyFullCompact varchar(12) = CONCAT(CONVERT(varchar(4), @fyStartYear), @fyEndShort);
-    DECLARE @fyFullRangeCompact varchar(12) = CONCAT(CONVERT(varchar(4), @fyStartYear), CONVERT(varchar(4), @fyEndYear));
-
-    ;WITH MatchingIndicators AS (
-      SELECT DISTINCT Indicator
-      FROM OFPR
-      WHERE @docDate BETWEEN F_RefDate AND T_RefDate
-    ),
-    SeriesRows AS (
-      SELECT
-        T0.Series,
-        T0.SeriesName,
-        T0.Indicator,
-        T0.NextNumber,
-        ${branchSelect}
-        FY.FinancialYear,
-        FY.FromDate,
-        FY.ToDate,
-        CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault,
-        CASE WHEN MI.Indicator IS NOT NULL THEN 1 ELSE 0 END AS IsDateMatch,
-        CASE
-          WHEN UPPER(REPLACE(REPLACE(REPLACE(REPLACE(CONCAT(ISNULL(T0.SeriesName, ''), ' ', ISNULL(T0.Indicator, '')), 'FY', ''), '-', ''), '/', ''), ' ', '')) LIKE '%' + @fyCompact + '%'
-            OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(CONCAT(ISNULL(T0.SeriesName, ''), ' ', ISNULL(T0.Indicator, '')), 'FY', ''), '-', ''), '/', ''), ' ', '')) LIKE '%' + @fyFullCompact + '%'
-            OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(CONCAT(ISNULL(T0.SeriesName, ''), ' ', ISNULL(T0.Indicator, '')), 'FY', ''), '-', ''), '/', ''), ' ', '')) LIKE '%' + @fyFullRangeCompact + '%'
-          THEN 1
-          ELSE 0
-        END AS IsYearNameMatch,
-        CASE
-          WHEN T0.Series = -1 OR UPPER(LTRIM(RTRIM(ISNULL(T0.SeriesName, '')))) = 'MANUAL' THEN 1
-          ELSE 0
-        END AS IsManual,
-        ROW_NUMBER() OVER (
-          PARTITION BY UPPER(LTRIM(RTRIM(ISNULL(T0.SeriesName, '')))), UPPER(LTRIM(RTRIM(ISNULL(T0.Indicator, ''))))
-          ORDER BY ${branchPreference} CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.Series
-        ) AS RowRank
-      FROM NNM1 T0
-      LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
-      LEFT JOIN MatchingIndicators MI ON MI.Indicator = T0.Indicator
-      LEFT JOIN (
-        SELECT
-          Indicator,
-          MAX(Name) AS FinancialYear,
-          MIN(F_RefDate) AS FromDate,
-          MAX(T_RefDate) AS ToDate
-        FROM OFPR
-        GROUP BY Indicator
-      ) FY ON FY.Indicator = T0.Indicator
-      WHERE T0.ObjectCode = '18'
-        AND ISNULL(T0.Locked, 'N') <> 'Y'
-        ${branchFilter}
-    ),
-    ScopedRows AS (
-      SELECT
-        *,
-        MAX(IsYearNameMatch) OVER () AS HasYearMatchedRows,
-        MAX(${exactBranchMatch}) OVER () AS HasExactBranchRows
-      FROM SeriesRows
-    )
-    SELECT
-      Series,
-      SeriesName,
-      Indicator,
-      NextNumber,
-      BPLId,
-      FinancialYear,
-      FromDate,
-      ToDate,
-      IsDefault
-    FROM ScopedRows
-    WHERE RowRank = 1
-      AND (
-        IsManual = 1
-        OR (HasYearMatchedRows = 1 AND IsYearNameMatch = 1)
-        OR (HasYearMatchedRows = 0 AND IsDateMatch = 1)
-      )
-      ${branchScopeFilter}
-    ORDER BY IsManual ASC, IsDefault DESC, SeriesName
-  `, { date, branch }));
-
-  return { series: result };
+  return getMarketingDocumentSeries({ objectCode: '18', date, branch });
 };
 
 const getNextNumber = async (series) => {

@@ -27,7 +27,6 @@ const isCacheableGet = (url = '') => {
     normalized.includes('/sap/layout/document') ||
     pathOnly.endsWith('/hsn-codes') ||
     normalized.includes('/lookup/') ||
-    pathOnly.endsWith('/series') ||
     normalized.includes('/items-modal') ||
     normalized.includes('/freight-charges') ||
     normalized.includes('/print-layouts') ||

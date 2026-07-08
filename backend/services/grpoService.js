@@ -285,10 +285,15 @@ const submitGRPO = async (payload) => {
           }
 
           if (l.batchManaged && l.batches && l.batches.length > 0) {
-            docLine.BatchNumbers = l.batches.map(b => ({
-              BatchNumber: b.batchNumber,
-              Quantity: parseFloat(b.quantity) || 0,
-            }));
+            docLine.BatchNumbers = l.batches.map(b => {
+              const batch = {
+                BatchNumber: b.batchNumber,
+                Quantity: parseFloat(b.quantity) || 0,
+              };
+              const supplierLotNo = String(b.supplierLotNo || '').trim();
+              if (supplierLotNo) batch.ManufacturerSerialNumber = supplierLotNo;
+              return batch;
+            });
           }
 
           applyUdfValues(docLine, l.udf, null, lineUdfDefinitionsByKey);

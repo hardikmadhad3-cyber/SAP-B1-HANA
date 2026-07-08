@@ -2497,6 +2497,175 @@ const resolveSalesOrderDocEntry = async (identifier) => {
   return rows[0] || null;
 };
 
+const pickFirstValue = (row = {}, candidates = []) => {
+  for (const candidate of candidates) {
+    if (Object.prototype.hasOwnProperty.call(row, candidate) && row[candidate] != null && row[candidate] !== '') {
+      return row[candidate];
+    }
+  }
+  return '';
+};
+
+const getSalesOrderReferenceDocuments = async (docEntry) => {
+  const fieldMetadata = await getTableFieldMetadata('RDR21');
+  if (!fieldMetadata?.DocEntry) return [];
+
+  const orderBy = fieldMetadata.LineNum ? 'ORDER BY [LineNum]' : '';
+  const rows = await safe(db.query(`
+    SELECT TOP 200 *
+    FROM [RDR21]
+    WHERE [DocEntry] = @DocEntry
+    ${orderBy}
+  `, { DocEntry: docEntry }));
+
+  return rows.map((row, index) => {
+    const transactionType = pickFirstValue(row, [
+      'RefObjType',
+      'RefType',
+      'ObjType',
+      'ObjectType',
+      'RefObjCode',
+      'RefObj',
+    ]);
+    const docEntryValue = pickFirstValue(row, [
+      'RefDocEntr',
+      'RefDocEntry',
+      'RefDocEnt',
+      'RefDocEn',
+      'LinkedDocEntry',
+    ]);
+    const docNumber = pickFirstValue(row, [
+      'RefDocNum',
+      'RefDocNo',
+      'RefDocNumber',
+      'DocNum',
+      'RefDoc',
+    ]);
+    const extDocNumber = pickFirstValue(row, [
+      'ExtDocNum',
+      'ExtDocNo',
+      'ExtDocNumber',
+      'ExternalRefNo',
+      'ExternalReferencedDocNumber',
+    ]);
+
+    return {
+      lineNum: row.LineNum != null ? Number(row.LineNum) : index,
+      direction: 'to',
+      transactionType: transactionType != null ? String(transactionType) : '',
+      docEntry: docEntryValue != null ? String(docEntryValue) : '',
+      docNumber: docNumber != null ? String(docNumber) : '',
+      extDocNumber: extDocNumber != null ? String(extDocNumber) : '',
+      issueDate: formatSapDate(pickFirstValue(row, ['IssueDate', 'RefDate', 'DocDate'])),
+      remark: String(pickFirstValue(row, ['Remark', 'Remarks', 'Comments']) || ''),
+    };
+  }).filter((row) => (
+    String(row.transactionType || row.docEntry || row.docNumber || row.extDocNumber || '').trim()
+  ));
+};
+
+const REFERENCE_DOCUMENT_LOOKUP_CONFIG = {
+  '22': { table: 'OPOR', label: 'Purchase Order' },
+  'rot_PurchaseOrder': { table: 'OPOR', label: 'Purchase Order' },
+  '17': { table: 'ORDR', label: 'Sales Order' },
+  'rot_SalesOrder': { table: 'ORDR', label: 'Sales Order' },
+  '15': { table: 'ODLN', label: 'Delivery' },
+  'rot_DeliveryNotes': { table: 'ODLN', label: 'Delivery' },
+  '13': { table: 'OINV', label: 'A/R Invoice' },
+  'rot_SalesInvoice': { table: 'OINV', label: 'A/R Invoice' },
+  '14': { table: 'ORIN', label: 'A/R Credit Memo' },
+  'rot_SalesCreditNote': { table: 'ORIN', label: 'A/R Credit Memo' },
+  '23': { table: 'OQUT', label: 'Sales Quotation' },
+  'rot_SalesQuotation': { table: 'OQUT', label: 'Sales Quotation' },
+  '20': { table: 'OPDN', label: 'Goods Receipt PO' },
+  'rot_PurchaseDeliveryNotes': { table: 'OPDN', label: 'Goods Receipt PO' },
+  '18': { table: 'OPCH', label: 'A/P Invoice' },
+  'rot_PurchaseInvoice': { table: 'OPCH', label: 'A/P Invoice' },
+  '19': { table: 'ORPC', label: 'A/P Credit Memo' },
+  'rot_PurchaseCreditNote': { table: 'ORPC', label: 'A/P Credit Memo' },
+  '1470000113': { table: 'OPRQ', label: 'Purchase Request' },
+  'rot_PurchaseRequest': { table: 'OPRQ', label: 'Purchase Request' },
+  '540000006': { table: 'OPQT', label: 'Purchase Quotation' },
+  'rot_PurchaseQuotation': { table: 'OPQT', label: 'Purchase Quotation' },
+};
+
+const getReferenceDocumentLookup = async ({
+  transactionType = '',
+  query = '',
+  cardCode = '',
+  top = 50,
+} = {}) => {
+  const normalizedType = String(transactionType || '').trim();
+  const config = REFERENCE_DOCUMENT_LOOKUP_CONFIG[normalizedType];
+  if (!config?.table) return { label: '', options: [] };
+
+  const fieldMetadata = await getTableFieldMetadata(config.table);
+  if (!fieldMetadata?.DocEntry || !fieldMetadata?.DocNum) {
+    return { label: config.label, options: [] };
+  }
+
+  const normalizedTop = Math.min(200, Math.max(1, Number(top) || 50));
+  const normalizedQuery = String(query || '').trim();
+  const normalizedCardCode = String(cardCode || '').trim();
+  const selectParts = [
+    'T0.[DocEntry]',
+    'T0.[DocNum]',
+    fieldMetadata.DocDate ? 'T0.[DocDate]' : 'NULL AS [DocDate]',
+    fieldMetadata.CardCode ? 'T0.[CardCode]' : "'' AS [CardCode]",
+    fieldMetadata.CardName ? 'T0.[CardName]' : "'' AS [CardName]",
+    fieldMetadata.NumAtCard ? 'T0.[NumAtCard]' : "'' AS [NumAtCard]",
+    fieldMetadata.DocTotal ? 'T0.[DocTotal]' : 'NULL AS [DocTotal]',
+    fieldMetadata.DocStatus ? 'T0.[DocStatus]' : "'' AS [DocStatus]",
+  ];
+  const whereClauses = ['1 = 1'];
+  const params = { top: normalizedTop };
+
+  if (fieldMetadata.CANCELED) {
+    whereClauses.push("(T0.[CANCELED] IS NULL OR T0.[CANCELED] <> 'Y')");
+  }
+
+  if (normalizedQuery) {
+    const queryParts = ['CAST(T0.[DocNum] AS NVARCHAR(50)) LIKE @query'];
+    if (fieldMetadata.CardCode) queryParts.push('T0.[CardCode] LIKE @query');
+    if (fieldMetadata.CardName) queryParts.push('T0.[CardName] LIKE @query');
+    if (fieldMetadata.NumAtCard) queryParts.push('T0.[NumAtCard] LIKE @query');
+    whereClauses.push(`(${queryParts.join(' OR ')})`);
+    params.query = `%${escapeLike(normalizedQuery)}%`;
+  }
+
+  if (normalizedCardCode && fieldMetadata.CardCode) {
+    whereClauses.push('T0.[CardCode] = @cardCode');
+    params.cardCode = normalizedCardCode;
+  }
+
+  const orderBy = [
+    fieldMetadata.DocDate ? 'T0.[DocDate] DESC' : '',
+    'T0.[DocNum] DESC',
+  ].filter(Boolean).join(', ');
+
+  const rows = await safe(db.query(`
+    SELECT TOP (@top)
+      ${selectParts.join(',\n      ')}
+    FROM ${quoteSqlIdentifier(config.table)} T0
+    WHERE ${whereClauses.join('\n      AND ')}
+    ORDER BY ${orderBy}
+  `, params));
+
+  return {
+    label: config.label,
+    options: rows.map((row) => ({
+      docEntry: row.DocEntry != null ? String(row.DocEntry) : '',
+      docNumber: row.DocNum != null ? String(row.DocNum) : '',
+      extDocNumber: row.NumAtCard || '',
+      cardCode: row.CardCode || '',
+      cardName: row.CardName || '',
+      docDate: formatSapDate(row.DocDate),
+      docTotal: row.DocTotal != null ? String(row.DocTotal) : '',
+      status: row.DocStatus === 'O' ? 'Open' : row.DocStatus === 'C' ? 'Closed' : (row.DocStatus || ''),
+    })).filter((row) => row.docNumber),
+  };
+};
+
 const getSalesOrder = async (docEntry) => {
   const resolvedDocument = await resolveSalesOrderDocEntry(docEntry);
   if (!resolvedDocument) {
@@ -2696,6 +2865,7 @@ ORDER BY T1.LineNum
     getPhysicalUdfValues({ tableName: 'ORDR', keyValue: resolvedDocEntry }),
     getPhysicalUdfValues({ tableName: 'RDR1', keyValue: resolvedDocEntry, includeLineNum: true }),
   ]);
+  const referenceDocuments = await getSalesOrderReferenceDocuments(resolvedDocEntry);
 
   // ✅ Try to get header UDFs if they exist
   let headerUdfs = {
@@ -2952,6 +3122,7 @@ ORDER BY T1.LineNum
         currency: header.DocCur || 'INR',
       },
       header_udfs: headerUdfs,
+      reference_documents: referenceDocuments,
       lines: lineRows.map(line => {
         const lineUdf = lineUdfs[line.LineNum] || {};
         const savedUnitPriceUdf = lineUdf.U_Unit_Price != null && lineUdf.U_Unit_Price !== ''
@@ -3279,6 +3450,7 @@ module.exports = {
   createLookupValue,
   getSalesOrderList,
   getSalesOrderFilterOptions,
+  getReferenceDocumentLookup,
   getSalesOrder,
   getDocumentSeries,
   getNextNumber,

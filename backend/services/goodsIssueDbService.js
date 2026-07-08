@@ -1,5 +1,6 @@
 const db = require('../db/odbc');
 const { getHeaderUdfValues, getLineUdfValues } = require('./udfMetadataService');
+const { mapInventoryPriceLists } = require('./inventoryPriceListUtils');
 
 const safe = async (promise) => {
   try {
@@ -39,6 +40,82 @@ const optionalColumn = (columns, tableAlias, columnName, alias, fallback = 'NULL
 
 const quoteSqlIdentifier = (identifier) => `[${String(identifier || '').replace(/]/g, ']]')}]`;
 
+const pickFirstValue = (row = {}, candidates = []) => {
+  for (const candidate of candidates) {
+    if (Object.prototype.hasOwnProperty.call(row, candidate) && row[candidate] != null && row[candidate] !== '') {
+      return row[candidate];
+    }
+  }
+  return '';
+};
+
+const formatSqlDate = (value) => {
+  if (!value) return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().split('T')[0];
+  }
+  return String(value).split('T')[0];
+};
+
+const getInventoryReferenceDocuments = async (tableName, docEntry) => {
+  const columns = await getTableColumns(tableName);
+  if (!columns.has('DocEntry')) return [];
+
+  const orderBy = columns.has('LineNum') ? 'ORDER BY [LineNum]' : '';
+  const rows = await safe(
+    db.query(
+      `
+        SELECT TOP 200 *
+        FROM ${quoteSqlIdentifier(tableName)}
+        WHERE [DocEntry] = @docEntry
+        ${orderBy}
+      `,
+      { docEntry }
+    )
+  );
+
+  return rows.map((row, index) => ({
+    lineNum: row.LineNum != null ? Number(row.LineNum) : index,
+    direction: 'to',
+    transactionType: String(
+      pickFirstValue(row, ['RefObjType', 'RefType', 'ObjType', 'ObjectType', 'RefObjCode', 'RefObj']) || ''
+    ),
+    docEntry: String(
+      pickFirstValue(row, ['RefDocEntr', 'RefDocEntry', 'RefDocEnt', 'RefDocEn', 'LinkedDocEntry']) || ''
+    ),
+    docNumber: String(
+      pickFirstValue(row, ['RefDocNum', 'RefDocNo', 'RefDocNumber', 'DocNum', 'RefDoc']) || ''
+    ),
+    extDocNumber: String(
+      pickFirstValue(row, ['ExtDocNum', 'ExtDocNo', 'ExtDocNumber', 'ExternalRefNo', 'ExternalReferencedDocNumber']) || ''
+    ),
+    issueDate: formatSqlDate(pickFirstValue(row, ['IssueDate', 'RefDate', 'DocDate'])),
+    remark: String(pickFirstValue(row, ['Remark', 'Remarks', 'Comments']) || ''),
+  })).filter((row) =>
+    String(row.transactionType || row.docEntry || row.docNumber || row.extDocNumber || '').trim()
+  );
+};
+
+const getDefaultSeriesSql = async () => {
+  const numberingColumns = await getTableColumns('ONNM');
+  const defaultSeriesColumn = getColumnName(numberingColumns, 'DfltSeries');
+
+  if (!defaultSeriesColumn) {
+    return {
+      join: '',
+      select: '0',
+      order: 'T0.SeriesName',
+    };
+  }
+
+  const quotedDefaultSeriesColumn = quoteSqlIdentifier(defaultSeriesColumn);
+  return {
+    join: `LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode AND DEF.${quotedDefaultSeriesColumn} = T0.Series`,
+    select: `CASE WHEN DEF.${quotedDefaultSeriesColumn} IS NOT NULL THEN 1 ELSE 0 END`,
+    order: 'IsDefault DESC, T0.SeriesName',
+  };
+};
+
 const getItems = async () => {
   const [itemRows, priceRows] = await Promise.all([
     safe(
@@ -51,6 +128,7 @@ const getItems = async () => {
           T0.DfltWH AS DefaultWarehouse,
           CAST(ISNULL(T0.OnHand, 0) AS DECIMAL(19, 2)) AS InStock,
           CAST(ISNULL(T0.LastPurPrc, 0) AS DECIMAL(19, 6)) AS LastPurchasePrice,
+          CAST(COALESCE(T0.LstEvlPric, T0.AvgPrice, 0) AS DECIMAL(19, 6)) AS LastEvaluatedPrice,
           CAST(ISNULL(T0.AvgPrice, 0) AS DECIMAL(19, 6)) AS ItemCost,
           T0.ExpensAcct AS AccountCode,
           T0.ManBtchNum AS BatchManaged,
@@ -95,6 +173,7 @@ const getItems = async () => {
     inStock: Number(row.InStock || 0),
     InStock: Number(row.InStock || 0),
     lastPurchasePrice: Number(row.LastPurchasePrice || 0),
+    lastEvaluatedPrice: Number(row.LastEvaluatedPrice || 0),
     itemCost: Number(row.ItemCost || 0),
     accountCode: row.AccountCode || '',
     batchManaged: String(row.BatchManaged || '').toUpperCase() === 'Y',
@@ -187,18 +266,22 @@ const getDistributionRules = async () => {
   );
 };
 
-const getSeries = async () =>
-  safe(
+const getSeries = async () => {
+  const defaultSeriesSql = await getDefaultSeriesSql();
+
+  return safe(
     db.query(`
       SELECT
         T0.Series,
         T0.SeriesName,
         T0.Indicator,
-        T0.NextNumber
+        T0.NextNumber,
+        ${defaultSeriesSql.select} AS IsDefault
       FROM NNM1 T0
+      ${defaultSeriesSql.join}
       WHERE T0.ObjectCode = '60'
         AND T0.Locked = 'N'
-      ORDER BY T0.SeriesName
+      ORDER BY ${defaultSeriesSql.order}
     `)
   ).then((rows) =>
     rows.map((row) => ({
@@ -206,8 +289,10 @@ const getSeries = async () =>
       seriesName: row.SeriesName,
       indicator: row.Indicator || '',
       nextNumber: row.NextNumber != null ? String(row.NextNumber) : '',
+      isDefault: Number(row.IsDefault) === 1,
     }))
   );
+};
 
 const getPriceLists = async () =>
   safe(
@@ -218,12 +303,7 @@ const getPriceLists = async () =>
       FROM OPLN
       ORDER BY ListNum
     `)
-  ).then((rows) =>
-    rows.map((row) => ({
-      id: String(row.ListNum),
-      name: row.ListName,
-    }))
-  );
+  ).then(mapInventoryPriceLists);
 
 const getBranches = async () => {
   const branchColumns = await getTableColumns('OBPL');
@@ -312,7 +392,7 @@ const getGoodsIssue = async (docEntry) => {
     throw new Error(`Goods Issue ${docEntry} not found.`);
   }
 
-  const [lineRows, headerUdfs, lineUdfsByLineNum, batchRows] = await Promise.all([
+  const [lineRows, headerUdfs, lineUdfsByLineNum, batchRows, referenceDocuments] = await Promise.all([
     safe(
       db.query(
         `
@@ -358,6 +438,7 @@ const getGoodsIssue = async (docEntry) => {
         { docEntry }
       )
     ),
+    getInventoryReferenceDocuments('IGE21', docEntry),
   ]);
 
   const itemCodes = [...new Set(lineRows.map((row) => row.ItemCode).filter(Boolean))];
@@ -415,6 +496,7 @@ const getGoodsIssue = async (docEntry) => {
   return {
     docEntry: header.DocEntry,
     docNum: header.DocNum,
+    reference_documents: referenceDocuments,
     headerUdfs: headerUdfs || {},
     header: {
       number: header.DocNum != null ? String(header.DocNum) : 'Auto',

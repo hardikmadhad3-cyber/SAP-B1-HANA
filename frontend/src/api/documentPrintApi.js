@@ -6,6 +6,39 @@ const buildDocumentPrintUrl = (documentType, action) =>
 export const fetchDocumentLayouts = (documentType) =>
   apiClient.get(buildDocumentPrintUrl(documentType, 'layouts'));
 
+export const fetchDocumentReportMetadata = ({
+  documentType,
+  docEntry,
+  docNum,
+  series,
+  schema,
+  docCode,
+  layoutCode,
+  cardCode,
+}) =>
+  apiClient.get(`/sap/reports/${encodeURIComponent(documentType)}/${encodeURIComponent(docEntry)}/metadata`, {
+    params: {
+      docNum,
+      series,
+      schema,
+      docCode: docCode || layoutCode,
+      cardCode,
+    },
+  });
+
+export const fetchDocumentLayoutParameters = ({
+  documentType,
+  docCode,
+  layoutCode,
+  schema,
+}) =>
+  apiClient.get(buildDocumentPrintUrl(documentType, 'parameters'), {
+    params: {
+      docCode: docCode || layoutCode,
+      schema,
+    },
+  });
+
 export const printDocumentLayout = ({
   documentType,
   docEntry,
@@ -16,6 +49,7 @@ export const printDocumentLayout = ({
   docCode,
   layoutCode,
   layoutName,
+  reportParameters,
 }) =>
   apiClient.post(buildDocumentPrintUrl(documentType, 'print'), {
     docEntry,
@@ -25,6 +59,7 @@ export const printDocumentLayout = ({
     cardCode,
     docCode: docCode || layoutCode,
     layoutName,
+    reportParameters,
   });
 
 export const downloadDocumentLayoutPdf = ({
@@ -37,6 +72,7 @@ export const downloadDocumentLayoutPdf = ({
   docCode,
   layoutCode,
   layoutName,
+  reportParameters,
 }) =>
   apiClient.post(buildDocumentPrintUrl(documentType, 'download-pdf'), {
     docEntry,
@@ -46,6 +82,7 @@ export const downloadDocumentLayoutPdf = ({
     cardCode,
     docCode: docCode || layoutCode,
     layoutName,
+    reportParameters,
   });
 
 export const downloadAllDocumentLayouts = ({

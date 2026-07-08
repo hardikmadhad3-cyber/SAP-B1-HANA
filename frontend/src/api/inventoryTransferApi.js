@@ -1,14 +1,17 @@
 import apiClient from './client';
 
-export const fetchInventoryTransferMetadata = () => apiClient.get('/inventory-transfer/metadata');
-export const fetchInventoryTransferItems = () => apiClient.get('/inventory-transfer/items');
+export const fetchInventoryTransferMetadata = () =>
+  apiClient.get('/inventory-transfer/metadata', { params: { _: Date.now() } });
+export const fetchInventoryTransferItems = () =>
+  apiClient.get('/inventory-transfer/items', { params: { _: Date.now() } });
 export const fetchInventoryTransferWarehouses = () =>
   apiClient.get('/inventory-transfer/warehouses');
 export const fetchInventoryTransferDistributionRules = () =>
   apiClient.get('/inventory-transfer/distribution-rules', {
     params: { _: Date.now() },
   });
-export const fetchInventoryTransferSeries = () => apiClient.get('/inventory-transfer/series');
+export const fetchInventoryTransferSeries = () =>
+  apiClient.get('/inventory-transfer/series', { params: { _: Date.now() } });
 export const fetchInventoryTransferBusinessPartnerDetails = (cardCode) =>
   apiClient.get(`/inventory-transfer/business-partners/${encodeURIComponent(cardCode)}`);
 export const fetchInventoryTransferList = () => apiClient.get('/inventory-transfer/list');

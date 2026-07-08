@@ -1,4 +1,15 @@
-export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
+export default function AccountingTab({
+  header,
+  onHeaderChange,
+  payTermOpts,
+  referenceDocuments = [],
+  onOpenReferenceDocuments,
+  isEditable = true,
+}) {
+  const referenceCount = (referenceDocuments || [])
+    .filter((row) => String(row.transactionType || row.docNumber || row.docEntry || row.extDocNumber || '').trim())
+    .length;
+
   return (
     <div className="so-tab-panel">
       <div className="so-field-grid">
@@ -96,8 +107,19 @@ export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
         <div className="so-field">
           <label className="so-field__label">Referenced Document</label>
           <div style={{ display: 'flex', gap: '6px' }}>
-            <input className="so-field__input" readOnly style={{ flex: 1 }} />
-            <button type="button" className="so-btn so-btn--secondary" style={{ padding: '2px 8px', fontSize: '12px' }}>
+            <input
+              className="so-field__input"
+              readOnly
+              value={referenceCount ? `(${referenceCount})` : ''}
+              style={{ flex: 1 }}
+            />
+            <button
+              type="button"
+              className="so-btn so-btn--secondary"
+              style={{ padding: '2px 8px', fontSize: '12px' }}
+              onClick={onOpenReferenceDocuments}
+              disabled={!isEditable && !referenceCount}
+            >
               ...
             </button>
           </div>

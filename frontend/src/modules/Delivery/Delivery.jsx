@@ -8,6 +8,7 @@ import LogisticsTab from './components/LogisticsTab';
 import AccountingTab from './components/AccountingTab';
 import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
+import EWayBillModal from './components/EWayBillModal';
 import AttachmentsTab from './components/AttachmentsTab';
 import AddressModal from './components/AddressModal';
 import TaxInfoModal from './components/TaxInfoModal';
@@ -366,6 +367,44 @@ const FALLBACK_SHIPPING = [
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 
+const DELIVERY_LINE_UPDATE_FIELDS = [
+  'lineNum', 'baseEntry', 'baseType', 'baseLine', 'itemNo', 'quantity', 'unitPrice',
+  'whse', 'uomEntry', 'uomCode', 'taxCode', 'distRule', 'freeText', 'sacCode',
+  'countryOfOrigin', 'specialRebate', 'commission', 'sellerBrokeragePerQty',
+  'unitPriceUdf', 'discountAmount', 'sellerBrokerage', 'buyerBrokerage',
+  'buyerDelivery', 'sellerDelivery', 'buyerPaymentTerms', 'sellerPaymentTerms',
+  'buyerQuality', 'sellerQuality', 'buyerPrice', 'sellerPrice',
+  'buyerSpecialInstruction', 'sellerSpecialInstruction', 'sellerBrokerageAmtPer',
+  'sellerBrokeragePercent', 'buyerBillDiscount', 'sellerBillDiscount', 'stcode',
+  'sellerItem', 'sellerQty', 'freightPurchase', 'freightSales', 'freightProvider',
+  'freightProviderName', 'brokerageNumber', 'packingType', 'grossWt', 'totalPackage',
+];
+
+const stableSignatureObject = (value) => {
+  if (Array.isArray(value)) return value.map(stableSignatureObject);
+  if (!value || typeof value !== 'object') return value ?? '';
+  return Object.keys(value).sort().reduce((result, key) => {
+    result[key] = stableSignatureObject(value[key]);
+    return result;
+  }, {});
+};
+
+const getDeliveryLinesUpdateSignature = (documentLines = []) => JSON.stringify(
+  (documentLines || [])
+    .filter((line) => String(line?.itemNo || '').trim())
+    .map((line) => ({
+      ...DELIVERY_LINE_UPDATE_FIELDS.reduce((result, key) => {
+        result[key] = line?.[key] ?? '';
+        return result;
+      }, {}),
+      batches: (line?.batches || []).map((batch) => ({
+        batchNumber: String(batch?.batchNumber || '').trim(),
+        quantity: String(batch?.quantity ?? ''),
+      })),
+      udf: stableSignatureObject(line?.udf || {}),
+    }))
+);
+
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS, headerUdfsParam = {}) => ({
   itemNo: '', itemDescription: '',
   sellerQuality: '', buyerQuality: '',
@@ -423,6 +462,12 @@ const INIT_HEADER = {
   totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
   billToAddress: '', billToCode: '', shipToAddress: '',
+  edocGenerationType: 'edocGenerateLater', edocExportFormat: '', edocStatus: '',
+  languageCode: '', trackingNo: '', stampNo: '', pickAndPackRemarks: '', bpChannelCode: '', bpChannelContact: '',
+  centralBankIndicator: '', projectCode: '', qrCodeSource: '', indicator: '', orderNumber: '',
+  consolidationType: '', consolidatingBP: '', useShippedGoodsAccount: false,
+  transactionCategory: '', taxFormNo: '', dutyStatus: '', exportFlag: false,
+  differentialTaxRate: '100', supplyCovered: false,
 };
 
 const createInitialHeader = (settings = readGeneralSettings()) => ({
@@ -567,6 +612,12 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
   freeText: '', copyToTargetDocument: '', documentType: '', atchDocDate: '', alert: '',
 }));
 
+const getBpGstTypeLabel = (value) => ({
+  1: 'Regular/TDS/ISD', 2: 'Composition', 3: 'Casual Taxable Person',
+  4: 'Government Department', 5: 'Non-Resident Taxable Person',
+  6: 'OIDAR', 7: 'TDS', 8: 'TCS', 9: 'UN Embassy/Body',
+})[String(value || '')] || String(value || '');
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 function Delivery() {
   const location = useLocation();
@@ -577,6 +628,7 @@ function Delivery() {
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const formRef = useRef(null);
   const isHydratingDocumentRef = useRef(false);
+  const loadedLinesSignatureRef = useRef('');
   const handledCopyFromRef = useRef('');
   const copiedLinesNeedBatchOpenRef = useRef(false);
   const generalSettingsRef = useRef(readGeneralSettings());
@@ -598,7 +650,7 @@ function Delivery() {
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
   const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(BASE_MATRIX_COLUMNS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
-  const [attachments] = useState(INIT_ATTACH);
+  const [attachments, setAttachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
@@ -615,6 +667,9 @@ function Delivery() {
     payment_terms: [], shipping_types: [], branches: [], uom_groups: [],
     distribution_rules: [], sales_employees: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
     decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
+    eway_bill_formats: [],
+    eway_bill_transporters: [],
+    eway_bill_options: {},
     line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
@@ -642,6 +697,8 @@ function Delivery() {
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
   const [salesEmployeeSetup, setSalesEmployeeSetup] = useState({ open: false, rows: [], saving: false });
   const [copyFromModal, setCopyFromModal] = useState(false);
+  const [eWayBillModalOpen, setEWayBillModalOpen] = useState(false);
+  const [eWayBillDetails, setEWayBillDetails] = useState({});
   const [copyFromDocType, setCopyFromDocType] = useState('salesOrder');
   const [addressForm, setAddressForm] = useState({
     shipToCode: '', shipToAddress: '', billToCode: '', billToAddress: '',
@@ -723,6 +780,7 @@ function Delivery() {
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
+    loadedLinesSignatureRef.current = getDeliveryLinesUpdateSignature(lines);
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
   const markDirty = useCallback((event) => {
@@ -960,6 +1018,9 @@ function Delivery() {
             items: [], warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [],
             payment_terms: [], shipping_types: [], branches: [], states: [], uom_groups: [],
             distribution_rules: [], sales_employees: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
+            eway_bill_formats: [],
+            eway_bill_transporters: [],
+            eway_bill_options: {},
             udf_metadata: { header: [], rows: [] },
             line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
           }));
@@ -1029,6 +1090,9 @@ function Delivery() {
             distribution_rules: refDataRes.data.distribution_rules || [],
             quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
             price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
+            eway_bill_formats: refDataRes.data.eway_bill_formats || [],
+            eway_bill_transporters: refDataRes.data.eway_bill_transporters || [],
+            eway_bill_options: refDataRes.data.eway_bill_options || {},
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             warnings: [
               ...(refDataRes.data.warnings || []),
@@ -1052,6 +1116,15 @@ function Delivery() {
     load();
     return () => { ignore = true; };
   }, [activeCompanyDb, activeCompanyId, formSettingsStorageKey]);
+
+  useEffect(() => {
+    if (currentDocEntry || requestedEditDocEntry || isHydratingDocumentRef.current) return;
+
+    const eWayBillFormats = refData.eway_bill_formats || [];
+    if (!header.edocExportFormat && eWayBillFormats.length) {
+      setHeader((current) => ({ ...current, edocExportFormat: String(eWayBillFormats[0].AbsEntry) }));
+    }
+  }, [currentDocEntry, header.edocExportFormat, refData.eway_bill_formats, requestedEditDocEntry]);
 
   useEffect(() => {
     if (currentDocEntry || requestedEditDocEntry || isHydratingDocumentRef.current) return;
@@ -1145,6 +1218,8 @@ function Delivery() {
         
         if (ignore || !so) return;
         setCurrentDocEntry(so.doc_entry || Number(docEntry));
+        setEWayBillDetails(so.eway_bill_details || {});
+        setAttachments(so.attachments?.length ? so.attachments : INIT_ATTACH);
         setActiveTab('Contents');
         const savedSeriesValue = String(so.header?.series || '');
         const savedSeriesOption = savedSeriesValue
@@ -1189,11 +1264,11 @@ function Delivery() {
           nextNumber: so.header?.docNo || so.header?.docNum || '',
         }));
         
-        setLines(
-          loadedLines.length
-            ? loadedLines.map(l => hydrateLoadedLine(l))
-            : [createLine(rowUdfDefinitions)]
-        );
+        const hydratedLoadedLines = loadedLines.length
+          ? loadedLines.map(l => hydrateLoadedLine(l))
+          : [createLine(rowUdfDefinitions)];
+        loadedLinesSignatureRef.current = getDeliveryLinesUpdateSignature(hydratedLoadedLines);
+        setLines(hydratedLoadedLines);
         
         console.log('📦 [Delivery] Lines after mapping:', lines);
         
@@ -1201,7 +1276,10 @@ function Delivery() {
         setSnapshotPending(true);
         setIsDirty(false);
         if (so.header?.customerCode || so.header?.customer) {
-          loadVendorDetails(so.header?.customerCode || so.header?.customer, { preserveExisting: true });
+          loadVendorDetails(so.header?.customerCode || so.header?.customer, {
+            preserveExisting: true,
+            selectedBillToCode: so.header?.billToCode || so.header?.payToCode || '',
+          });
         }
         
         setPageState(p => ({ ...p, success: so.doc_num ? `Delivery ${so.doc_num} loaded.` : 'Delivery loaded.' }));
@@ -1329,6 +1407,8 @@ function Delivery() {
     });
 
     setCurrentDocEntry(null);
+    setEWayBillDetails({});
+    setAttachments(INIT_ATTACH);
     setActiveTab('Contents');
     setSnapshotPending(false);
     setIsDirty(false);
@@ -1535,6 +1615,81 @@ function Delivery() {
     return null;
   }, []);
 
+  const eWayBillLiveData = useMemo(() => {
+    const billTo = resolveDeliveryAddress(
+      header.billToCode || header.payToCode,
+      vendorEffectiveBillToAddresses,
+      header.billToAddress || header.payTo,
+    ) || vendorEffectiveBillToAddresses[0] || {};
+    const shipTo = resolveDeliveryAddress(
+      header.shipToCode,
+      vendorEffectiveShipToAddresses,
+      header.shipToAddress || header.shipTo,
+    ) || vendorEffectiveShipToAddresses[0] || {};
+    const dispatchFrom = selectedWhseAddr || refData.company_address || {};
+    const stateName = (value) => getStateDisplayName(value, refData.states || []);
+
+    return {
+      mainHSN: lines.find((line) => String(line.hsnCode || '').trim())?.hsnCode || '',
+      billFromName: selectedBranch?.BPLName || refData.company || '',
+      billFromGSTIN: selectedBranch?.TaxIdNum || selectedBranch?.GSTRegnNo || refData.company_address?.GSTIN || '',
+      billFromState: stateName(selectedBranch?.State || refData.company_address?.State),
+      dispatchFromAddress: fmtAddr(dispatchFrom),
+      dispatchFromPlace: dispatchFrom.City || dispatchFrom.County || '',
+      dispatchFromZipCode: dispatchFrom.ZipCode || '',
+      dispatchFromState: stateName(dispatchFrom.State),
+      billToName: header.name || '',
+      billToGSTIN: billTo.GSTIN || billTo.GSTRegnNo || '',
+      billToState: stateName(billTo.State),
+      shipToAddress: fmtAddr(shipTo) || header.shipToAddress || header.shipTo || '',
+      shipToPlace: shipTo.City || shipTo.County || '',
+      shipToZipCode: shipTo.ZipCode || '',
+      shipToState: stateName(shipTo.State),
+    };
+  }, [
+    header.billToAddress,
+    header.billToCode,
+    header.name,
+    header.payTo,
+    header.payToCode,
+    header.shipTo,
+    header.shipToAddress,
+    header.shipToCode,
+    lines,
+    refData.company,
+    refData.company_address,
+    refData.states,
+    resolveDeliveryAddress,
+    selectedBranch,
+    selectedWhseAddr,
+    vendorEffectiveBillToAddresses,
+    vendorEffectiveShipToAddresses,
+  ]);
+
+  const effectiveEWayBillLiveData = useMemo(() => {
+    const stateName = (value) => getStateDisplayName(value, refData.states || []);
+    const transporter = (refData.eway_bill_transporters || []).find((entry) =>
+      String(entry.AbsEntry ?? entry.TspEntry ?? '') === String(eWayBillDetails.transporterEntry ?? ''));
+    const savedDetails = { ...eWayBillDetails };
+    ['billFromState', 'dispatchFromState', 'billToState', 'shipToState'].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(savedDetails, field)) {
+        savedDetails[field] = stateName(savedDetails[field]);
+      }
+    });
+    if (transporter || savedDetails.transporterEntry || savedDetails.transporterCode) {
+      savedDetails.transporterCode = savedDetails.transporterCode || transporter?.TransCode || '';
+      savedDetails.transporterName = savedDetails.transporterName || transporter?.TransName || '';
+      savedDetails.transporterId = savedDetails.transporterId || transporter?.TransID || transporter?.GSTIN || '';
+    }
+    return { ...eWayBillLiveData, ...savedDetails };
+  }, [eWayBillDetails, eWayBillLiveData, refData.eway_bill_transporters, refData.states]);
+
+  const saveEWayBillDetails = useCallback(({ udfUpdates = {}, details = {} }) => {
+    markDirty();
+    setHeaderUdfs((current) => ({ ...current, ...udfUpdates }));
+    setEWayBillDetails(details);
+  }, [markDirty]);
+
   const getUomOptions = useCallback((line) => {
     const item = refData.items.find(i => String(i.ItemCode || '') === String(line.itemNo || ''));
     if (item) {
@@ -1722,7 +1877,7 @@ function Delivery() {
 
   // ── vendor details ────────────────────────────────────────────────────────
   const loadVendorDetails = async (code, options = {}) => {
-    const { preserveExisting = false } = options;
+    const { preserveExisting = false, selectedBillToCode = '' } = options;
     if (!code) {
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setHeader(prev => ({ ...prev, placeOfSupply: '' }));
@@ -1748,6 +1903,17 @@ function Delivery() {
 
       const defaultShipToAddress = shipToAddresses[0] || payToAddresses[0] || null;
       const defaultBillToAddress = billToAddresses[0] || payToAddresses[0] || null;
+      const selectedTaxAddress = billToAddresses.find((address) => String(address.Address || '') === String(selectedBillToCode || header.billToCode || header.payToCode || '')) || defaultBillToAddress;
+
+      if (selectedTaxAddress) {
+        const gstin = String(selectedTaxAddress.GSTIN || '').trim();
+        setTaxInfoForm((current) => ({
+          ...current,
+          panNo: gstin.length >= 12 ? gstin.slice(2, 12) : current.panNo,
+          gstType: getBpGstTypeLabel(selectedTaxAddress.GSTType) || current.gstType,
+          gstin: gstin || current.gstin,
+        }));
+      }
 
       setHeader(prev => {
         const nextHeader = { ...prev };
@@ -3188,7 +3354,7 @@ function Delivery() {
   // Continue in next part...
 
   // ── validation ────────────────────────────────────────────────────────────
-  const validate = async () => {
+  const validate = async ({ validateDocumentLines = true } = {}) => {
     const isUpdate = !!currentDocEntry;
     const e = { header: {}, lines: {}, form: '' };
     
@@ -3211,9 +3377,9 @@ function Delivery() {
     }
 
     const pop = lines.filter(l => String(l.itemNo || '').trim());
-    if (!pop.length) { e.form = 'Add at least one item line.'; return e; }
+    if (validateDocumentLines && !pop.length) { e.form = 'Add at least one item line.'; return e; }
     
-    for (let i = 0; i < lines.length; i++) {
+    for (let i = 0; validateDocumentLines && i < lines.length; i++) {
       const l = lines[i];
       if (!String(l.itemNo || '').trim()) continue;
       for (const field of rowUdfDefinitions.filter(field => field.required)) {
@@ -3268,7 +3434,7 @@ function Delivery() {
       }
 
       // Enhanced batch validation with UoM conversion
-      if (l.batchManaged && l.hasBatchesAvailable !== false) {
+      if (!isUpdate && l.batchManaged && l.hasBatchesAvailable !== false) {
         if (!Array.isArray(l.batches) || l.batches.length === 0) {
           e.lines[i] = { ...(e.lines[i] || {}), batches: 'Batch selection is mandatory for batch-managed item' };
           e.form = 'Please correct the highlighted fields.';
@@ -3303,6 +3469,8 @@ function Delivery() {
         effectiveWarehouses
       );
       const validationPayload = {
+        _isUpdate: isUpdate,
+        validateDocumentLines,
         header: {
           customerCode: header.vendor,
           postingDate: header.postingDate,
@@ -3718,9 +3886,14 @@ function Delivery() {
       return;
     }
     if (currentDocEntry && !hasUnsavedChanges) return;
-    if (openRequiredBatchAllocationOnAdd()) return;
+    const isUpdate = Boolean(currentDocEntry);
+    const documentLinesChanged = isUpdate && (
+      !loadedLinesSignatureRef.current ||
+      getDeliveryLinesUpdateSignature(lines) !== loadedLinesSignatureRef.current
+    );
+    if (!isUpdate && openRequiredBatchAllocationOnAdd()) return;
 
-    const e = await validate(); // Make validate async
+    const e = await validate({ validateDocumentLines: !isUpdate || documentLinesChanged });
     if (e.form || Object.values(e.header).some(Boolean) || Object.values(e.lines).some(le => Object.values(le || {}).some(Boolean))) {
       setValErrors(e);
       setPageState(p => ({ ...p, error: e.form || 'Please correct the highlighted fields.', success: '' }));
@@ -3765,6 +3938,8 @@ function Delivery() {
           udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
         })),
         freightCharges: freightModal.freightCharges,
+        eway_bill_details: eWayBillDetails,
+        include_document_lines: !isUpdate || documentLinesChanged,
         header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
       };
       const r = currentDocEntry ? await updateDelivery(currentDocEntry, payload) : await submitDelivery(payload);
@@ -3774,6 +3949,8 @@ function Delivery() {
       defaultWarehouseAppliedRef.current = false;
       const resetHeader = createInitialHeader(generalSettingsRef.current);
       setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
+      setEWayBillDetails({});
+      setAttachments(INIT_ATTACH);
       setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setValErrors({ header: {}, lines: {}, form: '' });
@@ -3841,6 +4018,8 @@ function Delivery() {
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
+    setEWayBillDetails({});
+    setAttachments(INIT_ATTACH);
     setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
@@ -4235,16 +4414,24 @@ function Delivery() {
 
             {/* ══ TABS ══════════════════════════════════════════════════════ */}
             <fieldset disabled={!hasBuyerCode} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-            <div className="del-tabs">
+            <div className="del-tabs" role="tablist" aria-label="Delivery details">
               {TAB_NAMES.map(t => (
-                <button 
+                <div
                   key={t}
-                  type="button" 
+                  role="tab"
+                  tabIndex={0}
+                  aria-selected={activeTab === t}
                   className={`del-tab${activeTab === t ? ' del-tab--active' : ''}`}
                   onClick={() => setActiveTab(t)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setActiveTab(t);
+                    }
+                  }}
                 >
                   {t}
-                </button>
+                </div>
               ))}
             </div>
 
@@ -4284,6 +4471,7 @@ function Delivery() {
                 vendorBillToAddresses={vendorEffectiveBillToAddresses}
                 shipTypeOpts={shipTypeOpts}
                 onOpenAddressModal={openAddressModal}
+                isEditable={isDocumentEditable}
               />
             )}
 
@@ -4297,11 +4485,22 @@ function Delivery() {
             )}
 
             {activeTab === 'Tax' && (
-              <TaxTab onOpenTaxInfoModal={openTaxInfoModal} />
+              <TaxTab
+                header={header}
+                onHeaderChange={handleHeaderChange}
+                onOpenTaxInfoModal={openTaxInfoModal}
+                isEditable={isDocumentEditable}
+              />
             )}
 
             {activeTab === 'Electronic Documents' && (
-              <ElectronicDocumentsTab />
+              <ElectronicDocumentsTab
+                header={header}
+                onHeaderChange={handleHeaderChange}
+                formats={refData.eway_bill_formats || []}
+                onOpenEWayBill={() => setEWayBillModalOpen(true)}
+                disabled={!isDocumentEditable}
+              />
             )}
 
             {activeTab === 'Attachments' && (
@@ -4538,6 +4737,19 @@ function Delivery() {
         </div>
       </fieldset>
 
+      <EWayBillModal
+        isOpen={eWayBillModalOpen}
+        onClose={() => setEWayBillModalOpen(false)}
+        onSave={saveEWayBillDetails}
+        udfValues={headerUdfs}
+        udfDefinitions={headerUdfDefinitions}
+        liveData={effectiveEWayBillLiveData}
+        transporters={refData.eway_bill_transporters || []}
+        dropdownOptions={refData.eway_bill_options || {}}
+        workspaceRef={formRef}
+        disabled={!isDocumentEditable}
+      />
+
       {/* Address Component Modal */}
       <AddressModal
         isOpen={!!addressModal}
@@ -4555,6 +4767,7 @@ function Delivery() {
         onSave={saveTaxInfoModal}
         taxInfoForm={taxInfoForm}
         onFormChange={handleTaxInfoFormChange}
+        disabled={!isDocumentEditable}
       />
 
       <BatchAllocationModal

@@ -109,6 +109,7 @@ const stripSqlServerSyntax = (queryText) =>
     .replace(/\bdbo\./gi, '')
     .replace(/\bSYSUTCDATETIME\s*\(\s*\)/gi, 'CURRENT_TIMESTAMP')
     .replace(/\bGETDATE\s*\(\s*\)/gi, 'CURRENT_TIMESTAMP')
+    .replace(/\bISNULL\s*\(/gi, 'IFNULL(')
     .replace(/\bCONCAT\s*\(\s*'([^']*)'\s*,\s*([^)]+?)\s*\)/gi, "('$1' || $2)")
     .replace(/\bWITH\s*\(\s*HOLDLOCK\s*\)/gi, '');
 

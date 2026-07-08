@@ -1,4 +1,3 @@
-const env = require('../config/env');
 const dbService = require('./dbService');
 const reportService = require('./reportService');
 const { getActiveCompanyConfig } = require('./companyConfigService');
@@ -35,7 +34,6 @@ const DOCUMENT_PRINT_CONFIG = {
     typeCode: 'INV2',
     tableName: 'OINV',
     filePrefix: 'service-ar-invoice',
-    layoutFilter: 'service-ar-invoice',
   },
   serviceApInvoice: {
     aliases: ['service-ap-invoice', 'serviceapinvoice', 'services-ap-invoice', 'service-purchase-invoice', 'servicepch'],
@@ -44,7 +42,6 @@ const DOCUMENT_PRINT_CONFIG = {
     typeCode: 'PCH2',
     tableName: 'OPCH',
     filePrefix: 'service-ap-invoice',
-    layoutFilter: 'service-ap-invoice',
   },
   serviceApCreditMemo: {
     aliases: ['service-ap-credit-memo', 'serviceapcreditmemo', 'services-ap-credit-memo', 'service-purchase-credit-memo', 'servicerpc'],
@@ -77,7 +74,6 @@ const DOCUMENT_PRINT_CONFIG = {
     typeCode: 'RDR2',
     tableName: 'ORDR',
     filePrefix: 'sales-order',
-    defaultDocCode: env.reportServiceDefaultDocCode,
   },
   purchaseQuotation: {
     aliases: ['purchase-quotation', 'purchasequotation', 'purchase-quote', 'pqt', '540000006'],
@@ -237,14 +233,6 @@ const requirePrintPermission = (auth) => {
   }
 };
 
-const getLayoutText = (layout = {}) =>
-  `${layout.layout_id || layout.DocCode || ''} ${layout.layout_name || layout.DocName || ''}`.trim();
-
-const isServiceArInvoiceLayout = (layout = {}) => {
-  const text = getLayoutText(layout).toLowerCase();
-  return text.includes('service') || text.includes('in_vat_invoice') || text.includes('in_vat invoice');
-};
-
 const isActiveLayout = (layout = {}) => {
   const status = String(layout.status_code || layout.Status || '').trim().toUpperCase();
   return !status || status === 'A';
@@ -258,145 +246,195 @@ const isCrystalLayout = (layout = {}) => {
   return type.includes('crystal');
 };
 
-const getLayoutPriority = (layout = {}) => {
-  const text = getLayoutText(layout).toLowerCase();
-  if (text.includes('service')) return 0;
-  if (text.includes('in_vat_invoice') || text.includes('in_vat invoice')) return 1;
-  return 2;
+const filterDocumentLayouts = (_config, layouts = []) =>
+  layouts.filter((layout) => isActiveLayout(layout) && isCrystalLayout(layout));
+
+const SAP_DEFAULT_LAYOUT_FLAG_COLUMNS = [
+  'IsDefault',
+  'IsDflt',
+  'Dflt',
+  'DfltLayout',
+  'DfltReport',
+  'PrintDefault',
+  'DefaultLayout',
+];
+
+const isTruthySapFlag = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['1', 'Y', 'YES', 'T', 'TRUE'].includes(normalized);
 };
 
-const filterDocumentLayouts = (config, layouts = []) => {
-  const activeLayouts = layouts.filter((layout) => isActiveLayout(layout) && isCrystalLayout(layout));
+const getSapLayoutRows = async (config, schema) => {
+  const defaultFlagColumnSet = await getExistingTableColumns('RDOC', SAP_DEFAULT_LAYOUT_FLAG_COLUMNS, schema);
+  const defaultFlagColumns = [...defaultFlagColumnSet];
+  const defaultFlagSelect = defaultFlagColumns.length
+    ? `,\n      ${defaultFlagColumns.map((columnName) => `T0.${columnName} AS ${columnName}`).join(',\n      ')}`
+    : '';
 
-  if (config.layoutFilter !== 'service-ar-invoice') return activeLayouts;
-
-  return activeLayouts
-    .filter(isServiceArInvoiceLayout)
-    .sort((left, right) => {
-      const priorityDelta = getLayoutPriority(left) - getLayoutPriority(right);
-      if (priorityDelta !== 0) return priorityDelta;
-      return String(left.layout_id || left.DocCode || '').localeCompare(String(right.layout_id || right.DocCode || ''));
-    });
-};
-
-const getLayoutsQuery = (config) => {
-  if (config.layoutFilter !== 'service-ar-invoice') {
-    return {
-      sql: `
+  const result = await dbService.query(`
     SELECT
-      DocCode AS layout_id,
-      DocName AS layout_name,
+      T0.DocCode AS layout_id,
+      T0.DocName AS layout_name,
       CASE
-        WHEN Category = 'P' THEN 'PLD'
-        WHEN Category = 'C' THEN 'Crystal Reports'
-        ELSE Category
+        WHEN T0.Category = 'P' THEN 'PLD'
+        WHEN T0.Category = 'C' THEN 'Crystal Reports'
+        ELSE T0.Category
       END AS layout_type,
-      CASE Language
+      CASE T0.Language
         WHEN 8 THEN 'English (UK)'
         WHEN 3 THEN 'English'
         WHEN 1 THEN 'Default'
         ELSE ''
       END AS language_name,
-      TypeCode AS type_code,
-      Category AS category_code,
-      Language AS language_code,
-      Status AS status_code,
+      T0.TypeCode AS type_code,
+      T0.Category AS category_code,
+      T0.Language AS language_code,
+      T0.Status AS status_code,
       CASE
-        WHEN Category = 'C' THEN 1
+        WHEN T0.Category = 'C' THEN 1
         ELSE 0
-      END AS is_export_supported
-    FROM RDOC
-    WHERE TypeCode = @typeCode
-      AND Status = 'A'
-    ORDER BY DocCode
-  `,
-      params: { typeCode: config.typeCode },
+      END AS is_export_supported,
+      T0.DocCode,
+      T0.DocName,
+      T0.TypeCode,
+      T0.Category,
+      T0.Language,
+      T0.Status
+      ${defaultFlagSelect}
+    FROM RDOC T0
+    WHERE T0.TypeCode = @typeCode
+      AND T0.Status = 'A'
+    ORDER BY T0.DocCode
+  `, { typeCode: config.typeCode }, { databaseName: schema });
+
+  return {
+    layouts: result.recordset || [],
+    defaultFlagColumns,
+  };
+};
+
+const selectSapAssignedLayout = ({ config, layouts, defaultFlagColumns, docCode = '' }) => {
+  const crystalLayouts = filterDocumentLayouts(config, layouts);
+  const normalizedDocCode = String(docCode || '').trim();
+
+  if (!crystalLayouts.length) {
+    throw createHttpError(404, `SAP B1 has no active Crystal Report layout assigned for ${config.label} (${config.typeCode}).`);
+  }
+
+  if (normalizedDocCode) {
+    const selectedLayout = crystalLayouts.find((layout) =>
+      String(layout.DocCode || layout.layout_id || '').trim().toLowerCase() === normalizedDocCode.toLowerCase(),
+    );
+
+    if (!selectedLayout) {
+      throw createHttpError(404, `Layout ${normalizedDocCode} is not an active SAP B1 Crystal layout for ${config.label}.`);
+    }
+
+    return {
+      layout: selectedLayout,
+      layoutCandidates: crystalLayouts,
+      requiresLayoutSelection: false,
+      selectionSource: 'SAP B1 Choose Layout selection',
+      warnings: [],
+    };
+  }
+
+  const defaultLayouts = defaultFlagColumns.length
+    ? crystalLayouts.filter((layout) => defaultFlagColumns.some((columnName) => isTruthySapFlag(layout[columnName])))
+    : [];
+
+  if (defaultLayouts.length === 1) {
+    return {
+      layout: defaultLayouts[0],
+      layoutCandidates: crystalLayouts,
+      requiresLayoutSelection: false,
+      selectionSource: `RDOC default flag (${defaultFlagColumns.join(', ')})`,
+      warnings: [],
+    };
+  }
+
+  if (defaultLayouts.length > 1) {
+    return {
+      layout: null,
+      layoutCandidates: crystalLayouts,
+      requiresLayoutSelection: true,
+      selectionSource: 'SAP B1 Choose Layout list',
+      warnings: [`SAP B1 exposes multiple default Crystal Report layouts for ${config.label}; choose the required layout.`],
+    };
+  }
+
+  if (crystalLayouts.length === 1) {
+    return {
+      layout: crystalLayouts[0],
+      layoutCandidates: crystalLayouts,
+      requiresLayoutSelection: false,
+      selectionSource: 'Single active SAP B1 Crystal layout',
+      warnings: defaultFlagColumns.length
+        ? []
+        : ['SAP RDOC default flag columns were not exposed; the only active Crystal layout was used.'],
     };
   }
 
   return {
-    sql: `
-    SELECT
-      DocCode AS layout_id,
-      DocName AS layout_name,
-      CASE
-        WHEN Category = 'P' THEN 'PLD'
-        WHEN Category = 'C' THEN 'Crystal Reports'
-        ELSE Category
-      END AS layout_type,
-      CASE Language
-        WHEN 8 THEN 'English (UK)'
-        WHEN 3 THEN 'English'
-        WHEN 1 THEN 'Default'
-        ELSE ''
-      END AS language_name,
-      TypeCode AS type_code,
-      Category AS category_code,
-      Language AS language_code,
-      Status AS status_code,
-      CASE
-        WHEN Category = 'C' THEN 1
-        ELSE 0
-      END AS is_export_supported
-    FROM RDOC
-    WHERE Status = 'A'
-      AND (
-        TypeCode = @typeCode
-        OR DocCode LIKE 'INV%'
-        OR DocName LIKE '%Invoice%Service%'
-        OR DocName LIKE '%Service%Invoice%'
-      )
-    ORDER BY DocCode
-  `,
-    params: { typeCode: config.typeCode },
+    layout: null,
+    layoutCandidates: crystalLayouts,
+    requiresLayoutSelection: true,
+    selectionSource: 'SAP B1 Choose Layout list',
+    warnings: [],
   };
 };
 
 const getLayouts = async (documentType) => {
   const config = getDocumentPrintConfig(documentType);
-  const fallbackPayload = (defaultSchema = '', warning = '') => ({
+  const defaultSchema = await resolvePrintSchema();
+  const { layouts } = await getSapLayoutRows(config, defaultSchema);
+
+  return {
     documentType: config.key,
     documentLabel: config.label,
     objectType: config.objectType,
     typeCode: config.typeCode,
-    defaultDocCode: config.defaultDocCode || '',
+    defaultDocCode: '',
     defaultSchema,
     companyDatabase: defaultSchema,
-    layouts: [],
-    warnings: warning ? [warning] : [],
+    layouts: filterDocumentLayouts(config, layouts),
+    warnings: [],
+  };
+};
+
+const getLayoutParameters = async ({
+  documentType,
+  docCode,
+  schema,
+  auth,
+} = {}) => {
+  requirePrintPermission(auth);
+
+  const config = getDocumentPrintConfig(documentType);
+  const normalizedDocCode = toRequiredString(docCode, 'Layout DocCode');
+  const normalizedSchema = await resolvePrintSchema(schema);
+  const layout = await getLayoutForDocument(config, normalizedDocCode, normalizedSchema);
+  const parameters = await reportService.loadReportParameters(normalizedDocCode, {
+    reportCompanyDb: normalizedSchema,
   });
+  const promptParameters = (parameters || [])
+    .filter((parameter) => !reportService.isDocumentPrintSystemParameter(parameter.paramName))
+    .map((parameter) => ({
+      ...parameter,
+      layoutDocCode: normalizedDocCode,
+      layoutName: String(layout.DocName || '').trim(),
+    }));
 
-  try {
-    const query = getLayoutsQuery(config);
-    const defaultSchema = await resolvePrintSchema();
-    const result = await dbService.query(query.sql, query.params, { databaseName: defaultSchema });
-    const layouts = filterDocumentLayouts(config, result.recordset || []);
-
-    return {
-      documentType: config.key,
-      documentLabel: config.label,
-      objectType: config.objectType,
-      typeCode: config.typeCode,
-      defaultDocCode: config.defaultDocCode || '',
-      defaultSchema,
-      companyDatabase: defaultSchema,
-      layouts,
-      warnings: [],
-    };
-  } catch (error) {
-    const message =
-      error.response?.data?.error?.message?.value ||
-      error.response?.data?.error?.message ||
-      error.response?.data?.message ||
-      error.response?.data?.detail ||
-      error.message ||
-      'Failed to load document print layouts.';
-    console.warn('[DocumentPrint] Layout discovery failed; continuing without layouts', {
-      documentType: config.key,
-      message,
-    });
-    return fallbackPayload('', message);
-  }
+  return {
+    documentType: config.key,
+    documentLabel: config.label,
+    objectType: config.objectType,
+    typeCode: config.typeCode,
+    docCode: normalizedDocCode,
+    layoutName: String(layout.DocName || '').trim(),
+    schema: normalizedSchema,
+    parameters: promptParameters,
+  };
 };
 
 const normalizeOptionalText = (value) => String(value ?? '').trim();
@@ -512,16 +550,146 @@ const getDocumentSummary = async (config, docEntry, {
   );
 };
 
+const normalizeReportParameter = (parameter = {}, layout, resolvedSystemParameters = []) => {
+  const paramName = String(parameter.paramName || parameter.name || '').trim();
+  const resolvedSystemParameter = resolvedSystemParameters.find(
+    (entry) => String(entry.name || '').trim().toUpperCase() === paramName.toUpperCase(),
+  );
+
+  return {
+    ...parameter,
+    paramName,
+    name: paramName,
+    type: parameter.paramType || parameter.type || resolvedSystemParameter?.type || 'string',
+    value: resolvedSystemParameter?.value ?? parameter.value ?? parameter.defaultValue ?? '',
+    layoutDocCode: String(layout.DocCode || layout.layout_id || '').trim(),
+    layoutName: String(layout.DocName || layout.layout_name || '').trim(),
+  };
+};
+
+const buildLayoutMetadata = (layout = {}, { selectionSource = '' } = {}) => ({
+  docCode: String(layout.DocCode || layout.layout_id || '').trim(),
+  layoutId: String(layout.DocCode || layout.layout_id || '').trim(),
+  docName: String(layout.DocName || layout.layout_name || '').trim(),
+  reportName: String(layout.DocName || layout.layout_name || '').trim(),
+  typeCode: String(layout.TypeCode || layout.type_code || '').trim(),
+  category: String(layout.Category || layout.category_code || '').trim(),
+  status: String(layout.Status || layout.status_code || '').trim(),
+  language: layout.Language ?? layout.language_code ?? '',
+  languageName: String(layout.language_name || '').trim(),
+  isCrystal: isCrystalLayout(layout),
+  isExportSupported: Boolean(Number(layout.is_export_supported ?? 0)) || isCrystalLayout(layout),
+  selectionSource,
+});
+
+const getDocumentReportMetadata = async ({
+  documentType,
+  docEntry,
+  docNum,
+  series,
+  schema,
+  docCode,
+  cardCode,
+  auth,
+} = {}) => {
+  requirePrintPermission(auth);
+
+  const config = getDocumentPrintConfig(documentType);
+  const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
+  const normalizedSchema = await resolvePrintSchema(schema);
+  const document = await getDocumentSummary(config, normalizedDocEntry, {
+    schema: normalizedSchema,
+    docNum,
+    series,
+    cardCode,
+  });
+  const resolvedDocEntry = toRequiredPositiveIntegerString(document.DocEntry || normalizedDocEntry, 'Resolved DocEntry');
+  const resolvedDocNum = String(document.DocNum || docNum || '').trim();
+  const resolvedCardCode = String(document.CardCode || cardCode || '').trim();
+  const { layouts, defaultFlagColumns } = await getSapLayoutRows(config, normalizedSchema);
+  const {
+    layout,
+    layoutCandidates,
+    requiresLayoutSelection,
+    selectionSource,
+    warnings,
+  } = selectSapAssignedLayout({
+    config,
+    layouts,
+    defaultFlagColumns,
+    docCode,
+  });
+  const layoutCandidateMetadata = (layoutCandidates || []).map((candidate) =>
+    buildLayoutMetadata(candidate, { selectionSource: 'SAP B1 active Crystal layout' }));
+  const baseMetadata = {
+    documentType: config.key,
+    documentLabel: config.label,
+    objectType: config.objectType,
+    typeCode: config.typeCode,
+    schema: normalizedSchema,
+    companyDatabase: normalizedSchema,
+    tableName: config.tableName,
+    document: {
+      docEntry: resolvedDocEntry,
+      docNum: resolvedDocNum,
+      series: String(document.Series || series || '').trim(),
+      cardCode: resolvedCardCode,
+      cardName: String(document.CardName || '').trim(),
+    },
+    layoutCandidates: layoutCandidateMetadata,
+    requiresLayoutSelection: Boolean(requiresLayoutSelection),
+    warnings,
+    diagnostics: {
+      layoutSource: selectionSource,
+      activeCrystalLayoutCount: filterDocumentLayouts(config, layouts).length,
+      defaultFlagColumns,
+      reportService: 'SAP Business One Report Service / Crystal Reports',
+    },
+  };
+
+  if (!layout) {
+    return {
+      ...baseMetadata,
+      layout: null,
+      systemParameters: [],
+      promptParameters: [],
+      parameters: [],
+    };
+  }
+
+  const normalizedDocCode = String(layout.DocCode || layout.layout_id || '').trim();
+  const parameters = await reportService.loadReportParameters(normalizedDocCode, {
+    reportCompanyDb: normalizedSchema,
+  });
+  const systemParameters = await reportService.buildDocumentPrintParameters({
+    docCode: normalizedDocCode,
+    docEntry: resolvedDocEntry,
+    docKeyValue: resolvedDocEntry,
+    docNum: resolvedDocNum,
+    schema: normalizedSchema,
+    cardCode: resolvedCardCode,
+    objectType: config.objectType,
+  });
+  const promptParameters = (parameters || [])
+    .filter((parameter) => !reportService.isDocumentPrintSystemParameter(parameter.paramName || parameter.name))
+    .map((parameter) => normalizeReportParameter(parameter, layout));
+
+  return {
+    ...baseMetadata,
+    layout: buildLayoutMetadata(layout, { selectionSource }),
+    systemParameters: systemParameters.map((parameter) => normalizeReportParameter(parameter, layout, systemParameters)),
+    promptParameters,
+    parameters: promptParameters,
+  };
+};
+
 const getLayoutForDocument = async (config, docCode, schema = '') => {
   const normalizedDocCode = toRequiredString(docCode, 'Layout DocCode');
-  const typeFilter = config.layoutFilter === 'service-ar-invoice'
-    ? ''
-    : 'AND TypeCode = @typeCode';
   const result = await dbService.query(`
     SELECT TOP 1 DocCode, DocName, TypeCode, Category, Status
     FROM RDOC
     WHERE DocCode = @docCode
-      ${typeFilter}
+      AND TypeCode = @typeCode
       AND Status = 'A'
   `, {
     docCode: normalizedDocCode,
@@ -532,10 +700,6 @@ const getLayoutForDocument = async (config, docCode, schema = '') => {
 
   if (!layout) {
     throw createHttpError(404, `Layout ${normalizedDocCode} was not found for ${config.label}.`);
-  }
-
-  if (!filterDocumentLayouts(config, [layout]).length) {
-    throw createHttpError(404, `Layout ${normalizedDocCode} is not assigned to ${config.label}.`);
   }
 
   if (String(layout.Category || '').trim().toUpperCase() !== 'C') {
@@ -614,26 +778,36 @@ const printDocument = async ({
   schema,
   docCode,
   cardCode,
+  reportParameters,
   auth,
 } = {}) => {
   requirePrintPermission(auth);
 
-  const config = getDocumentPrintConfig(documentType);
-  const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
-  const normalizedDocCode = toRequiredString(docCode, 'Layout DocCode');
-  const normalizedSchema = await resolvePrintSchema(schema);
-  const document = await getDocumentSummary(config, normalizedDocEntry, {
-    schema: normalizedSchema,
+  const metadata = await getDocumentReportMetadata({
+    documentType,
+    docEntry,
     docNum,
     series,
+    schema,
+    docCode,
     cardCode,
+    auth,
   });
 
-  const layout = await getLayoutForDocument(config, normalizedDocCode, normalizedSchema);
+  const config = getDocumentPrintConfig(documentType);
+  if (metadata.requiresLayoutSelection || !metadata.layout?.docCode) {
+    throw createHttpError(
+      400,
+      `Choose a SAP B1 layout before printing ${metadata.documentLabel}.`,
+    );
+  }
 
-  const resolvedDocEntry = toRequiredPositiveIntegerString(document.DocEntry || normalizedDocEntry, 'Resolved DocEntry');
-  const resolvedDocNum = String(document.DocNum || docNum || '').trim();
-  const resolvedCardCode = String(document.CardCode || cardCode || '').trim();
+  const normalizedDocCode = metadata.layout.docCode;
+
+  const normalizedSchema = metadata.schema;
+  const resolvedDocEntry = metadata.document.docEntry;
+  const resolvedDocNum = metadata.document.docNum;
+  const resolvedCardCode = metadata.document.cardCode;
 
   await hydrateSalesOrderPrintFields(config, resolvedDocEntry, normalizedSchema);
 
@@ -643,10 +817,11 @@ const printDocument = async ({
     tableName: config.tableName,
     docEntry: resolvedDocEntry,
     docCode: normalizedDocCode,
-    series: String(document.Series || series || '').trim(),
+    series: metadata.document.series,
     schema: normalizedSchema,
     query: `SELECT TOP 1 DocEntry, DocNum, CardCode, CardName FROM ${config.tableName} WHERE DocEntry = @docEntry`,
     queryParameters: { docEntry: resolvedDocEntry },
+    layoutSource: metadata.diagnostics.layoutSource,
   });
 
   const genericResponse = await reportService.exportDocumentPdf({
@@ -656,6 +831,7 @@ const printDocument = async ({
     cardCode: resolvedCardCode,
     docNum: resolvedDocNum,
     objectType: config.objectType,
+    reportParameters,
     documentLabel: config.label,
     fileName: buildFileName({
       config,
@@ -676,63 +852,34 @@ const printDocument = async ({
     typeCode: config.typeCode,
     docEntry: resolvedDocEntry,
     docNum: resolvedDocNum,
-    series: String(document.Series || series || '').trim(),
+    series: metadata.document.series,
     cardCode: resolvedCardCode,
-    cardName: String(document.CardName || '').trim(),
+    cardName: metadata.document.cardName,
     docKeyValue: genericResponse.docKeyValue,
     docCode: normalizedDocCode,
-    layoutName: String(layout.DocName || '').trim(),
+    layoutName: metadata.layout.docName,
     schema: normalizedSchema,
+    reportMetadata: metadata,
   };
 };
 
 const downloadAllLayouts = async ({
   documentType,
-  docEntry,
-  docNum,
-  series,
-  schema,
-  cardCode,
   auth,
 } = {}) => {
-  const layoutPayload = await getLayouts(documentType);
-  const printableLayouts = layoutPayload.layouts.filter(
-    (layout) => String(layout.layout_id || '').trim() && layout.is_export_supported,
+  requirePrintPermission(auth);
+  const config = getDocumentPrintConfig(documentType);
+  throw createHttpError(
+    410,
+    `Bulk export of every ${config.label} layout is disabled. Document printing must use the single active SAP B1 Crystal layout.`,
   );
-
-  if (!printableLayouts.length) {
-    throw createHttpError(404, `No Crystal Report layouts are available for ${layoutPayload.documentLabel}.`);
-  }
-
-  const documents = [];
-
-  for (const layout of printableLayouts) {
-    documents.push(await printDocument({
-      documentType,
-      docEntry,
-      docNum,
-      series,
-      schema,
-      cardCode,
-      docCode: layout.layout_id,
-      auth,
-    }));
-  }
-
-  return {
-    documentType: layoutPayload.documentType,
-    documentLabel: layoutPayload.documentLabel,
-    objectType: layoutPayload.objectType,
-    typeCode: layoutPayload.typeCode,
-    count: documents.length,
-    skippedCount: layoutPayload.layouts.length - printableLayouts.length,
-    documents,
-  };
 };
 
 module.exports = {
   getDocumentPrintConfig,
   getLayouts,
+  getLayoutParameters,
+  getDocumentReportMetadata,
   printDocument,
   downloadAllLayouts,
 };

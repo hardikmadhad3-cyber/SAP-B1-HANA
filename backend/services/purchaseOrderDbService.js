@@ -916,7 +916,7 @@ const getPurchaseOrder = async (docEntry) => {
 // ── DOCUMENT SERIES ───────────────────────────────────────────────────────────
 
 const getDocumentSeries = async () => {
-  const result = await safe(db.query(`
+  const result = await db.query(`
     SELECT 
       T0.Series,
       T0.SeriesName,
@@ -940,9 +940,9 @@ const getDocumentSeries = async () => {
     WHERE T0.ObjectCode = '22'
       AND T0.Locked = 'N'
     ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName
-  `));
+  `);
 
-  return { series: result };
+  return { series: result.recordset || [] };
 };
 
 const getNextNumber = async (series) => {

@@ -29,7 +29,9 @@ const updatePurchaseOrder = (docEntry, payload) =>
   apiClient.patch(`/purchase-order/${docEntry}`, payload);
 
 const fetchDocumentSeries = () =>
-  apiClient.get('/purchase-order/series');
+  apiClient.get('/purchase-order/series', {
+    params: { _: Date.now() },
+  });
 
 const fetchNextNumber = (series) =>
   apiClient.get(`/purchase-order/series/${series}/next-number`);

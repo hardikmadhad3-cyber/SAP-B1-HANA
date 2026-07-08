@@ -1,5 +1,6 @@
 const db = require('../db/odbc');
 const { getHeaderUdfValues, getLineUdfValues } = require('./udfMetadataService');
+const { mapInventoryPriceLists } = require('./inventoryPriceListUtils');
 
 const safe = async (promise) => {
   try {
@@ -43,6 +44,26 @@ const optionalColumn = (columns, tableAlias, columnName, alias, fallback = 'NULL
     : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
 };
 
+const getDefaultSeriesSql = async () => {
+  const numberingColumns = await getTableColumns('ONNM');
+  const defaultSeriesColumn = getColumnName(numberingColumns, 'DfltSeries');
+
+  if (!defaultSeriesColumn) {
+    return {
+      join: '',
+      select: '0',
+      order: 'T0.SeriesName',
+    };
+  }
+
+  const quotedDefaultSeriesColumn = quoteSqlIdentifier(defaultSeriesColumn);
+  return {
+    join: `LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode AND DEF.${quotedDefaultSeriesColumn} = T0.Series`,
+    select: `CASE WHEN DEF.${quotedDefaultSeriesColumn} IS NOT NULL THEN 1 ELSE 0 END`,
+    order: 'IsDefault DESC, T0.SeriesName',
+  };
+};
+
 const getItems = async () => {
   const [itemRows, priceRows] = await Promise.all([
     safe(
@@ -55,6 +76,7 @@ const getItems = async () => {
           T0.DfltWH AS DefaultWarehouse,
           CAST(ISNULL(T0.OnHand, 0) AS DECIMAL(19, 2)) AS InStock,
           CAST(ISNULL(T0.LastPurPrc, 0) AS DECIMAL(19, 6)) AS LastPurchasePrice,
+          CAST(COALESCE(T0.LstEvlPric, T0.AvgPrice, 0) AS DECIMAL(19, 6)) AS LastEvaluatedPrice,
           CAST(ISNULL(T0.AvgPrice, 0) AS DECIMAL(19, 6)) AS ItemCost
         FROM OITM T0
         WHERE T0.InvntItem = 'Y'
@@ -93,6 +115,7 @@ const getItems = async () => {
     inStock: Number(row.InStock || 0),
     InStock: Number(row.InStock || 0),
     lastPurchasePrice: Number(row.LastPurchasePrice || 0),
+    lastEvaluatedPrice: Number(row.LastEvaluatedPrice || 0),
     itemCost: Number(row.ItemCost || 0),
     prices: priceMap[row.ItemCode] || {},
   }));
@@ -128,18 +151,22 @@ const getWarehouses = async () => {
   );
 };
 
-const getSeries = async () =>
-  safe(
+const getSeries = async () => {
+  const defaultSeriesSql = await getDefaultSeriesSql();
+
+  return safe(
     db.query(`
       SELECT
         T0.Series,
         T0.SeriesName,
         T0.Indicator,
-        T0.NextNumber
+        T0.NextNumber,
+        ${defaultSeriesSql.select} AS IsDefault
       FROM NNM1 T0
+      ${defaultSeriesSql.join}
       WHERE T0.ObjectCode IN ('1250000001', '67')
         AND T0.Locked = 'N'
-      ORDER BY T0.SeriesName
+      ORDER BY ${defaultSeriesSql.order}
     `)
   ).then((rows) =>
     rows.map((row) => ({
@@ -147,8 +174,10 @@ const getSeries = async () =>
       seriesName: row.SeriesName,
       indicator: row.Indicator || '',
       nextNumber: row.NextNumber != null ? String(row.NextNumber) : '',
+      isDefault: Number(row.IsDefault) === 1,
     }))
   );
+};
 
 const getPriceLists = async () =>
   safe(
@@ -159,12 +188,7 @@ const getPriceLists = async () =>
       FROM OPLN
       ORDER BY ListNum
     `)
-  ).then((rows) =>
-    rows.map((row) => ({
-      id: String(row.ListNum),
-      name: row.ListName,
-    }))
-  );
+  ).then(mapInventoryPriceLists);
 
 const getBranches = async () => {
   const branchColumns = await getTableColumns('OBPL');

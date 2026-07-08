@@ -72,8 +72,9 @@ const loadBusinessPartnerPayload = async (header = {}) => {
     partnerPayload.Address = shipToAddress;
   }
 
-  if (header.priceList) {
-    partnerPayload.PriceList = Number(header.priceList);
+  const selectedPriceList = Number(header.priceList);
+  if (Number.isFinite(selectedPriceList) && selectedPriceList > 0) {
+    partnerPayload.PriceList = selectedPriceList;
   } else if (businessPartner.PriceListNum != null) {
     partnerPayload.PriceList = Number(businessPartner.PriceListNum);
   }

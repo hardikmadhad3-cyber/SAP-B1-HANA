@@ -11,6 +11,7 @@ import AccountingTab from './components/AccountingTab';
 import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
+import ReferenceDocumentsModal from './components/ReferenceDocumentsModal';
 import AddressModal from './components/AddressModal';
 import EWayBillModal from './components/EWayBillModal';
 import TaxInfoModal from './components/TaxInfoModal';
@@ -128,6 +129,22 @@ const normalizeAddressText = (value) =>
         .replace(/[^a-z0-9]+/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
+
+const normalizeSalesOrderReferenceDocuments = (rows = []) => (
+    Array.isArray(rows)
+        ? rows.map((row) => ({
+            direction: row.direction || row.Direction || 'to',
+            transactionType: String(row.transactionType ?? row.referencedObjectType ?? row.RefObjType ?? row.RefType ?? ''),
+            docEntry: String(row.docEntry ?? row.referencedDocEntry ?? row.RefDocEntr ?? row.RefDocEntry ?? ''),
+            docNumber: String(row.docNumber ?? row.referencedDocNumber ?? row.RefDocNum ?? row.RefDocNo ?? ''),
+            extDocNumber: String(row.extDocNumber ?? row.externalDocNumber ?? row.ExtDocNum ?? row.ExtDocNo ?? ''),
+            issueDate: row.issueDate || row.IssueDate || '',
+            remark: row.remark || row.Remark || '',
+        })).filter((row) => (
+            String(row.transactionType || row.docEntry || row.docNumber || row.extDocNumber || '').trim()
+        ))
+        : []
+);
 
 // ─── static fallbacks ────────────────────────────────────────────────────────
 const FALLBACK_PAYMENT_TERMS = [
@@ -276,6 +293,9 @@ function SalesOrder() {
     const [addressModal, setAddressModal] = useState(null);
     const [eWayBillModal, setEWayBillModal] = useState(false);
     const [eWayBillData, setEWayBillData] = useState({});
+    const [referenceDocumentsModal, setReferenceDocumentsModal] = useState(false);
+    const [referenceDocuments, setReferenceDocuments] = useState([]);
+    const [referenceDocumentsChanged, setReferenceDocumentsChanged] = useState(false);
     const [taxInfoModal, setTaxInfoModal] = useState(false);
     const [stateModal, setStateModal] = useState(false);
     const [bpModal, setBpModal] = useState(false);
@@ -702,6 +722,9 @@ function SalesOrder() {
 
                 // Get warehouse from first line if available
                 const firstLineWarehouse = so.lines && so.lines.length > 0 ? so.lines[0].whse : '';
+                const loadedReferenceDocuments = normalizeSalesOrderReferenceDocuments(
+                    so.reference_documents || so.referenceDocuments || []
+                );
 
                 console.log('📥 EDIT DATA - Sales Employee:', so.header?.salesEmployee, 'Code:', so.header?.salesEmployee);
                 console.log('📥 EDIT DATA - Purchaser:', so.header?.purchaser);
@@ -762,6 +785,8 @@ function SalesOrder() {
 
                 console.log('📥 Final header state:', newHeader);
                 setHeader(newHeader);
+                setReferenceDocuments(loadedReferenceDocuments);
+                setReferenceDocumentsChanged(false);
                 setFreightModal({ open: false, freightCharges: [], loading: false });
 
                 setLines(
@@ -1770,6 +1795,21 @@ function SalesOrder() {
     };
 
     // ── Tax Info Modal handlers ───────────────────────────────────────────────
+    const openReferenceDocumentsModal = () => {
+        setReferenceDocumentsModal(true);
+    };
+
+    const closeReferenceDocumentsModal = () => {
+        setReferenceDocumentsModal(false);
+    };
+
+    const saveReferenceDocumentsModal = (rows) => {
+        setReferenceDocuments(normalizeSalesOrderReferenceDocuments(rows));
+        setReferenceDocumentsChanged(true);
+        if (currentDocEntry) setIsDirty(true);
+        setReferenceDocumentsModal(false);
+    };
+
     const openTaxInfoModal = () => {
         setTaxInfoModal(true);
     };
@@ -2441,6 +2481,8 @@ function SalesOrder() {
                 lines: cleanedLines,
                 freightCharges: freightModal.freightCharges,
                 header_udfs: buildVisibleHeaderUdfPayload(headerUdfDefinitions, headerUdfs, formSettings),
+                reference_documents: referenceDocuments,
+                reference_documents_changed: referenceDocumentsChanged || (!currentDocEntry && referenceDocuments.length > 0),
             };
 
             // ═══ LOGGING: Payload Before Submit ═══
@@ -2458,6 +2500,8 @@ function SalesOrder() {
             setSnapshotPending(false);
             setIsDirty(false);
             setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
+            setReferenceDocuments([]);
+            setReferenceDocumentsChanged(false);
             setFreightModal({ open: false, freightCharges: [], loading: false });
             setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
             setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [] }));
@@ -2484,6 +2528,8 @@ function SalesOrder() {
         setSnapshotPending(false);
         setIsDirty(false);
         setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
+        setReferenceDocuments([]);
+        setReferenceDocumentsChanged(false);
         setFreightModal({ open: false, freightCharges: [], loading: false });
         setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
         setValErrors({ header: {}, lines: {}, form: '' });
@@ -3014,6 +3060,9 @@ function SalesOrder() {
                                 header={header}
                                 onHeaderChange={handleHeaderChange}
                                 payTermOpts={payTermOpts}
+                                referenceDocuments={referenceDocuments}
+                                onOpenReferenceDocuments={openReferenceDocumentsModal}
+                                isEditable={isDocumentEditable}
                             />
                         )}
 
@@ -3385,6 +3434,15 @@ function SalesOrder() {
                 onClose={closeSalesEmployeeSetup}
                 onSave={saveSalesEmployeeSetup}
                 onUpdateRow={updateSalesEmployeeSetupRow}
+            />
+
+            <ReferenceDocumentsModal
+                isOpen={referenceDocumentsModal}
+                referenceDocuments={referenceDocuments}
+                onClose={closeReferenceDocumentsModal}
+                onSave={saveReferenceDocumentsModal}
+                isEditable={isDocumentEditable}
+                cardCode={header.vendor}
             />
 
             {/* Freight Charges Modal */}

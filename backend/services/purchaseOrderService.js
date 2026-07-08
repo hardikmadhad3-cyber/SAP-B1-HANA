@@ -190,7 +190,8 @@ const getDocumentSeries = async () => {
     const result = await purchaseOrderDb.getDocumentSeries();
     return result;
   } catch (error) {
-    return { series: [] };
+    console.error('[PurchaseOrderService] Failed to load live SAP B1 purchase order series:', error.message);
+    throw error;
   }
 };
 

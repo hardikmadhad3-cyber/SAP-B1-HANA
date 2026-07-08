@@ -116,7 +116,21 @@
 
 .gr-reference-modal {
   width: 1040px;
-  max-width: 96vw;
+  max-width: min(96vw, calc(100vw - 340px));
+}
+
+.gr-reference-modal__overlay {
+  left: 300px;
+  width: auto;
+}
+
+body.sap-route-window-maximized .gr-reference-modal__overlay,
+body.sap-floating-window-maximized .gr-reference-modal__overlay {
+  left: 0;
+}
+
+body:has(.sidebar-shell.is-collapsed) .gr-reference-modal__overlay {
+  left: 70px;
 }
 
 .gr-reference-modal__body {
@@ -165,7 +179,7 @@
 
 .gr-reference-picker {
   width: 920px;
-  max-width: 94vw;
+  max-width: min(94vw, calc(100vw - 340px));
 }
 
 .gr-reference-picker__search {
@@ -179,6 +193,17 @@
 .gr-reference-picker__search .po-field__label {
   width: auto;
   text-align: left;
+}
+
+@media (max-width: 991px) {
+  .gr-reference-modal__overlay {
+    left: 70px;
+  }
+
+  .gr-reference-modal,
+  .gr-reference-picker {
+    max-width: calc(100vw - 94px);
+  }
 }
 
 .gr-reference-picker__grid-wrap {

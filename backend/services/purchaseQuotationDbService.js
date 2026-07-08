@@ -26,6 +26,16 @@ const formatDateForInput = (value) => {
   return String(value).split('T')[0].split(' ')[0];
 };
 
+const getTableColumns = async (tableName) => {
+  const rows = await safe(db.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+  `, { tableName }));
+
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '').trim()));
+};
+
 // ── REFERENCE DATA QUERIES ────────────────────────────────────────────────────
 
 const getVendors = () => safe(db.query(`
@@ -332,18 +342,9 @@ const getPurchaseQuotation = async (docEntry) => {
     getLineUdfValues({ tableId: 'PQT1', keyValue: docEntry }),
   ]);
 
-  const [lineShape = {}] = await safe(db.query(`
-    SELECT
-      COL_LENGTH('PQT1', 'ReqDate') AS ReqDateCol,
-      COL_LENGTH('PQT1', 'RequiredDate') AS RequiredDateCol,
-      COL_LENGTH('PQT1', 'ShipDate') AS ShipDateCol,
-      COL_LENGTH('PQT1', 'OcrCode') AS OcrCodeCol,
-      COL_LENGTH('PQT1', 'CountryOrg') AS CountryOrgCol,
-      COL_LENGTH('PQT1', 'LocCode') AS LocCodeCol,
-      COL_LENGTH('PQT1', 'AgrNo') AS AgrNoCol
-  `));
+  const lineColumns = await getTableColumns('PQT1');
   const firstExistingLineColumn = (...columns) =>
-    columns.find((column) => lineShape[`${column}Col`] !== null && lineShape[`${column}Col`] !== undefined);
+    columns.find((column) => lineColumns.has(column));
   const optionalLineColumn = (columns, alias, fallback = "''") => {
     const column = firstExistingLineColumn(...(Array.isArray(columns) ? columns : [columns]));
     return column ? `T0.${column} AS ${alias}` : `${fallback} AS ${alias}`;

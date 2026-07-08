@@ -292,7 +292,7 @@ const getPurchaseInvoices = async () =>
 const getGoodsIssues = async () =>
   safe(
     db.query(`
-      SELECT TOP 100
+      SELECT
         T0.DocEntry,
         T0.DocNum,
         T0.DocDate,

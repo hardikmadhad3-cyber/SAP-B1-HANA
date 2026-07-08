@@ -870,6 +870,352 @@ select.so-grid__input {
 }
 
 /* ── Textarea ── */
+/* SAP B1 style Reference Information modal */
+.so-reference-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 1300;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 95px 16px 24px 360px;
+  box-sizing: border-box;
+}
+
+.so-reference-modal {
+  position: relative;
+  width: 790px;
+  max-width: 100%;
+  background: #fff;
+  border: 1px solid #2b5375;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  color: #111;
+}
+
+.so-reference-modal__titlebar {
+  height: 43px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 16px;
+  background: #285170;
+  border-top: 3px solid #e0a318;
+  color: #fff;
+  font-size: 18px;
+}
+
+.so-reference-modal__titlebar span {
+  flex: 1;
+}
+
+.so-reference-modal__window-btn,
+.so-reference-modal__close {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.so-reference-modal__body {
+  margin: 20px 20px 0;
+  border: 1px solid #d4d4d4;
+  padding: 12px 16px 12px;
+}
+
+.so-reference-modal__tabs {
+  display: flex;
+  margin: 0 8px 16px;
+}
+
+.so-reference-modal__tab {
+  min-width: 292px;
+  height: 21px;
+  border: 1px solid #c3c3c3;
+  border-bottom: 0;
+  background: #e7ecef;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.so-reference-modal__tab.is-active {
+  background: #fff;
+  position: relative;
+  z-index: 1;
+}
+
+.so-reference-modal__grid-wrap {
+  height: 225px;
+  overflow: auto;
+  border: 1px solid #c7c7c7;
+}
+
+.so-reference-modal__grid {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.so-reference-modal__grid th {
+  background: #e2e6e9;
+  border: 1px solid #c7c7c7;
+  padding: 3px 6px;
+  text-align: left;
+  font-weight: 400;
+}
+
+.so-reference-modal__grid td {
+  height: 18px;
+  border: 1px solid #d5d5d5;
+  padding: 0;
+  overflow: visible;
+}
+
+.so-reference-modal__grid select,
+.so-reference-modal__grid input {
+  width: 100%;
+  height: 21px;
+  border: 0;
+  background: #fff;
+  font-size: 12px;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+
+.so-reference-modal__grid select:disabled,
+.so-reference-modal__grid input:disabled {
+  color: #111;
+  background: #edf1f4;
+}
+
+.so-reference-modal__type-cell {
+  position: relative;
+  z-index: 1;
+}
+
+.so-reference-modal__type-cell:focus-within {
+  z-index: 30;
+}
+
+.so-reference-modal__type-combo {
+  width: 100%;
+  height: 21px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  border: 0;
+  background: #fff;
+  padding: 0 0 0 4px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.so-reference-modal__type-combo span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.so-reference-modal__type-arrow {
+  text-align: center;
+  font-size: 13px;
+}
+
+.so-reference-modal__type-combo:disabled {
+  color: #111;
+  background: #edf1f4;
+  cursor: not-allowed;
+}
+
+.so-reference-modal__type-menu {
+  position: absolute;
+  top: 21px;
+  left: 0;
+  width: 100%;
+  max-height: 150px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #aeb7c0;
+  box-shadow: 2px 4px 10px rgba(0, 0, 0, 0.18);
+  z-index: 40;
+}
+
+.so-reference-modal__type-option {
+  display: block;
+  width: 100%;
+  height: 24px;
+  border: 0;
+  background: #fff;
+  padding: 2px 10px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.so-reference-modal__type-option:hover {
+  background: #d7e8ff;
+}
+
+.so-reference-modal__rowno {
+  text-align: center;
+  background: #f3f3f3;
+}
+
+.so-reference-modal__checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 36px;
+  font-size: 12px;
+}
+
+.so-reference-modal__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px 16px;
+}
+
+.so-reference-modal__lookup-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: stretch;
+  height: 21px;
+}
+
+.so-reference-modal__lookup-cell input {
+  min-width: 0;
+}
+
+.so-reference-modal__lookup-btn {
+  height: 21px;
+  border: 0;
+  border-left: 1px solid #c7c7c7;
+  background: #eef3f8;
+  color: #003366;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.so-reference-modal__lookup-btn:disabled {
+  cursor: not-allowed;
+  color: #888;
+}
+
+.so-reference-lookup {
+  position: absolute;
+  left: 44px;
+  top: 118px;
+  width: 700px;
+  max-width: calc(100% - 88px);
+  background: #fff;
+  border: 1px solid #2b5375;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+  z-index: 2;
+}
+
+.so-reference-lookup__titlebar {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 12px;
+  background: #285170;
+  color: #fff;
+}
+
+.so-reference-lookup__titlebar span {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.so-reference-lookup__body {
+  padding: 10px 12px 12px;
+}
+
+.so-reference-lookup__search {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.so-reference-lookup__search input {
+  height: 24px;
+  border: 1px solid #9fb0c0;
+  padding: 0 6px;
+}
+
+.so-reference-lookup__table-wrap {
+  max-height: 250px;
+  overflow: auto;
+  border: 1px solid #c7c7c7;
+}
+
+.so-reference-lookup__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.so-reference-lookup__table th {
+  background: #e2e6e9;
+  border: 1px solid #c7c7c7;
+  padding: 4px 6px;
+  text-align: left;
+  font-weight: 700;
+  color: #003366;
+}
+
+.so-reference-lookup__table td {
+  border: 1px solid #d5d5d5;
+  padding: 3px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.so-reference-lookup__table tr:hover td {
+  background: #eaf3ff;
+}
+
+.so-reference-lookup__link {
+  border: 0;
+  background: transparent;
+  color: #005a9e;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+.so-reference-lookup__message {
+  padding: 16px;
+  color: #8a4d00;
+  background: #fff8e6;
+  border: 1px solid #e0c078;
+}
+
+.so-reference-lookup__footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+@media (max-width: 1100px) {
+  .so-reference-modal-overlay {
+    padding-left: 16px;
+  }
+}
+
 .so-textarea {
   width: 100%;
   padding: 6px 8px;

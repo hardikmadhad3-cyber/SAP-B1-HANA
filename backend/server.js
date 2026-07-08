@@ -140,8 +140,6 @@ const isReusableLookupRequest = (req) => {
     path.startsWith('/api/hsn-codes') ||
     path.includes('/lookup/') ||
     path.endsWith('/metadata') ||
-    path.endsWith('/series') ||
-    path.includes('/series/') ||
     path.endsWith('/items-modal') ||
     path.endsWith('/freight-charges') ||
     path.endsWith('/print-layouts') ||

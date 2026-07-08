@@ -26,6 +26,10 @@ import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
+  getDefaultInventoryPriceList,
+  getInventoryItemPrice,
+} from '../../utils/inventoryPriceLists';
+import {
   INVENTORY_TRANSFER_FORM_SETTINGS_STORAGE_KEY,
   INVENTORY_TRANSFER_MATRIX_COLUMNS,
   createUdfState,
@@ -294,7 +298,7 @@ function InventoryTransfer() {
     if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
     if (currentDocEntry) setIsDirty(true);
   };
-  const defaultPriceList = priceLists[0] || null;
+  const defaultPriceList = getDefaultInventoryPriceList(priceLists);
   const defaultBranch = branches[0] || null;
   const selectedBusinessPartner = useMemo(
     () =>
@@ -382,8 +386,9 @@ function InventoryTransfer() {
 
         const metadata = metadataResponse.data || {};
         const loadedSeries = seriesResponse.data || [];
-        const initialSeries = loadedSeries[0] || null;
-        const initialPriceList = metadata.priceLists?.[0] || null;
+        const initialSeries =
+          loadedSeries.find((series) => series.isDefault) || loadedSeries[0] || null;
+        const initialPriceList = getDefaultInventoryPriceList(metadata.priceLists);
         const initialBranch = metadata.branches?.[0] || null;
 
         setItems(itemsResponse.data || []);
@@ -619,11 +624,7 @@ function InventoryTransfer() {
   const getItem = (itemCode) => items.find((item) => item.itemCode === itemCode);
 
   const getItemPrice = (item, priceList) => {
-    if (!item) return 0;
-    if (priceList && item.prices && item.prices[String(priceList)] != null) {
-      return Number(item.prices[String(priceList)] || 0);
-    }
-    return Number(item.lastPurchasePrice || item.itemCost || 0);
+    return getInventoryItemPrice(item, priceList);
   };
 
   const normalizeLine = (line) => {
@@ -1316,9 +1317,10 @@ function InventoryTransfer() {
   const visibleHeaderUdfFields = headerUdfFields.filter(
     (field) => formSettings.headerUdfs?.[field.key]?.visible !== false
   );
+  const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
 
   return (
-    <form className={`po-page itr-transfer-request__page inventory-document-page${sidebarOpen || formSettingsOpen ? ' inventory-document-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form className={`po-page sap-document-page itr-transfer-request__page inventory-document-page${isRightSidebarOpen ? ' po-page--sidebar-open inventory-document-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
       <div className="po-toolbar">
         <div className="po-toolbar__title">
           Inventory Transfer
@@ -1332,7 +1334,7 @@ function InventoryTransfer() {
         </button>
         <button
           type="button"
-          className="po-btn po-btn--danger"
+          className="po-btn"
           onClick={resetForm}
           disabled={pageState.posting}
         >
@@ -1382,6 +1384,8 @@ function InventoryTransfer() {
       {pageState.error && <div className="po-alert po-alert--error">{pageState.error}</div>}
       {pageState.success && <div className="po-alert po-alert--success">{pageState.success}</div>}
 
+      <div className={`po-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`}>
+        <div className="po-layout__main">
       <div className="po-header-card">
         <div className="itr-transfer-request__header-grid">
           <div className="itr-transfer-request__header-column">
@@ -1671,6 +1675,31 @@ function InventoryTransfer() {
           </div>
         </div>
       </div>
+        </div>
+
+        <HeaderUdfSidebar
+          className="po-layout__sidebar"
+          isOpen={sidebarOpen}
+          fields={visibleHeaderUdfFields}
+          formSettings={formSettings}
+          values={headerUdfs}
+          disabled={pageState.posting}
+          onFieldChange={handleHeaderUdfChange}
+          onClose={() => setSidebarOpen(false)}
+        />
+
+        <FormSettingsPanel
+          variant="sidebar"
+          className="po-layout__sidebar"
+          isOpen={formSettingsOpen}
+          onClose={() => setFormSettingsOpen(false)}
+          matrixFields={INVENTORY_TRANSFER_MATRIX_COLUMNS}
+          headerUdfFields={headerUdfFields}
+          rowUdfFields={rowUdfFields}
+          formSettings={formSettings}
+          onSettingChange={updateFormSetting}
+        />
+      </div>
 
       <ItemSelectionModal
         isOpen={itemModal.open}
@@ -1704,29 +1733,6 @@ function InventoryTransfer() {
         onClose={closeBpModal}
         onSelect={handleBpSelect}
         businessPartners={businessPartnerModalItems}
-      />
-
-      <HeaderUdfSidebar
-        className="inventory-document-sidebar"
-        isOpen={sidebarOpen}
-        fields={visibleHeaderUdfFields}
-        formSettings={formSettings}
-        values={headerUdfs}
-        disabled={pageState.posting}
-        onFieldChange={handleHeaderUdfChange}
-        onClose={() => setSidebarOpen(false)}
-      />
-
-      <FormSettingsPanel
-        variant="sidebar"
-        className="inventory-document-sidebar"
-        isOpen={formSettingsOpen}
-        onClose={() => setFormSettingsOpen(false)}
-        matrixFields={INVENTORY_TRANSFER_MATRIX_COLUMNS}
-        headerUdfFields={headerUdfFields}
-        rowUdfFields={rowUdfFields}
-        formSettings={formSettings}
-        onSettingChange={updateFormSetting}
       />
 
       <input

@@ -152,8 +152,77 @@ const getShippingTypes = () => safe(db.query(`
   ORDER  BY TrnspName
 `));
 
+const getEWayBillFormats = () => safe(db.query(`
+  SELECT AbsEntry, Name, Descr
+  FROM OLLF
+  WHERE Type = 'EWBD'
+    AND Assigned <> 'D'
+  ORDER BY Name
+`));
+
+// SAP B1's E-Way Bill transporter master. Selecting the live row shape keeps
+// this compatible with SAP patch levels that expose additional transporter fields.
+const getEWayBillTransporters = () => safe(db.query(`
+  SELECT *
+  FROM OTSP
+  ORDER BY TransCode
+`));
+
+const getEWayBillDropdownOptions = async () => {
+  const [subSupplyType, documentType, mode, vehicleType] = await Promise.all([
+    safe(db.query('SELECT * FROM OEST')),
+    safe(db.query('SELECT * FROM OEDT')),
+    safe(db.query('SELECT * FROM OETM')),
+    safe(db.query('SELECT * FROM OEVT')),
+  ]);
+  const normalize = (rows, valueKeys, labelKeys) => (rows || []).map((row) => {
+    const entries = Object.entries(row || {}).filter(([, value]) => value !== null && value !== undefined);
+    const read = (keys) => {
+      const wanted = new Set(keys.map((key) => key.toLowerCase()));
+      return entries.find(([key]) => wanted.has(key.toLowerCase()))?.[1];
+    };
+    const value = read(valueKeys) ?? entries[0]?.[1] ?? '';
+    const label = read([
+      ...labelKeys,
+      'Name', 'Descr', 'Description', 'Dscription',
+      'SubName', 'TypeName', 'ModeName', 'VehicleName',
+    ]) ?? [...entries].reverse().find(([, item]) => String(item) !== String(value))?.[1] ?? value;
+    return { value: String(value), label: String(label) };
+  }).filter((option) => option.value !== '').sort((a, b) => a.label.localeCompare(b.label));
+  return {
+    subSupplyType: normalize(subSupplyType, ['AbsEntry'], ['SubName', 'SubTypeName']),
+    documentType: normalize(documentType, ['TypeCode', 'Code', 'AbsEntry'], ['TypeName', 'DocTypeName']),
+    mode: normalize(mode, ['AbsEntry'], ['ModeName', 'TransModeName']),
+    vehicleType: normalize(vehicleType, ['TypeCode', 'Code', 'AbsEntry'], ['TypeName', 'VehicleName']),
+  };
+};
+
+const resolveEWayBillHSNEntry = async (chapterId) => {
+  const normalized = String(chapterId || '').trim();
+  if (!normalized) return null;
+  const rows = await safe(db.query(`
+    SELECT TOP 1 AbsEntry
+    FROM OCHP
+    WHERE ChapterID = @chapterId
+  `, { chapterId: normalized }));
+  return rows[0]?.AbsEntry ?? null;
+};
+
+const resolveEWayBillStateCode = async (state) => {
+  const normalized = String(state || '').trim();
+  if (!normalized) return '';
+  const rows = await safe(db.query(`
+    SELECT TOP 1 Code
+    FROM OCST
+    WHERE Country = 'IN' AND (Code = @state OR Name = @state)
+    ORDER BY CASE WHEN Code = @state THEN 0 ELSE 1 END
+  `, { state: normalized }));
+  return rows[0]?.Code || normalized;
+};
+
 const getBranches = () => safe(db.query(`
-  SELECT BPLId, BPLName, State
+  SELECT BPLId, BPLName, TaxIdNum, Address, Street, StreetNo, Building,
+         Block, City, County, State, ZipCode, Country
   FROM   OBPL where Disabled='N'
   ORDER  BY BPLName
 `));
@@ -712,7 +781,8 @@ const getAddressesByCustomer = async (cardCode) => {
       T0.State,
       T0.ZipCode,
       T0.Country,
-      T0.GSTRegnNo AS GSTIN
+      T0.GSTRegnNo AS GSTIN,
+      T0.GSTType
     FROM CRD1 T0
     WHERE T0.CardCode = @cardCode
     ORDER BY T0.Address
@@ -1145,6 +1215,13 @@ const getDelivery = async (docEntry) => {
   }
 
   const resolvedDocEntry = resolvedDocument.DocEntry;
+  const odlnFieldMetadata = await getTableFieldMetadata('ODLN');
+  const optionalHeaderColumn = (candidates, alias, fallback = "''") => {
+    const columnName = candidates.map((candidate) => resolveColumnName(odlnFieldMetadata, candidate)).find(Boolean);
+    return columnName
+      ? `T0.${quoteSqlIdentifier(columnName)} AS ${quoteSqlIdentifier(alias)}`
+      : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
+  };
   const headerRows = await safe(db.query(`
     SELECT 
       T0.DocEntry,
@@ -1172,6 +1249,42 @@ const getDelivery = async (docEntry) => {
       T0.VatSum AS Tax,
       T0.RoundDif AS RoundingAmount,
       T0.DocTotal AS TotalPaymentDue,
+      T0.ShipToCode,
+      T0.PayToCode,
+      T0.Address,
+      T0.Address2,
+      T0.EDocGenTyp AS EDocGenerationType,
+      T0.EDocExpFrm AS EDocExportFormat,
+      T0.EDocStatus,
+      ${optionalHeaderColumn(['TrnspCode'], 'ShippingType', 'NULL')},
+      ${optionalHeaderColumn(['Confirmed'], 'Confirmed')},
+      ${optionalHeaderColumn(['LangCode'], 'LanguageCode', 'NULL')},
+      ${optionalHeaderColumn(['TrackNo'], 'TrackingNo')},
+      ${optionalHeaderColumn(['StampNum'], 'StampNo')},
+      ${optionalHeaderColumn(['PickRmrk'], 'PickAndPackRemarks')},
+      ${optionalHeaderColumn(['BPChCode'], 'BPChannelCode')},
+      ${optionalHeaderColumn(['BPChCntc'], 'BPChannelContact', 'NULL')},
+      ${optionalHeaderColumn(['PeyMethod'], 'PaymentMethod')},
+      ${optionalHeaderColumn(['CentralBankInd', 'CntrlBnk'], 'CentralBankIndicator')},
+      ${optionalHeaderColumn(['Project'], 'ProjectCode')},
+      ${optionalHeaderColumn(['QRCodeSrc', 'QRCodeSource'], 'QRCodeSource')},
+      ${optionalHeaderColumn(['Indicator'], 'Indicator')},
+      ${optionalHeaderColumn(['ImportEnt'], 'OrderNumber')},
+      ${optionalHeaderColumn(['OwnerCode'], 'OwnerCode', 'NULL')},
+      CASE WHEN EMP.empID IS NOT NULL
+        THEN LTRIM(RTRIM(CONCAT(CONCAT(COALESCE(EMP.firstName, ''), ' '), COALESCE(EMP.lastName, ''))))
+        ELSE ''
+      END AS OwnerName,
+      ${optionalHeaderColumn(['FatherType'], 'ConsolidationType')},
+      ${optionalHeaderColumn(['FatherCard'], 'ConsolidatingBP')},
+      ${optionalHeaderColumn(['UseShpdGd', 'UseShippedGoods'], 'UseShippedGoods')},
+      ${optionalHeaderColumn(['AtcEntry'], 'AttachmentEntry', 'NULL')},
+      ${optionalHeaderColumn(['TransCat', 'TransactionCategory'], 'TransactionCategory')},
+      ${optionalHeaderColumn(['FormNo', 'TaxFormNo'], 'TaxFormNo')},
+      ${optionalHeaderColumn(['DutyStatus'], 'DutyStatus')},
+      ${optionalHeaderColumn(['Export', 'IsExport', 'Exported'], 'ExportFlag')},
+      ${optionalHeaderColumn(['DiffPercent', 'DifferentialTaxRate', 'DiffTaxRate'], 'DifferentialTaxRate', '100')},
+      ${optionalHeaderColumn(['SupplySec7', 'SupplUnSec', 'SupplyCovered'], 'SupplyCovered')},
       CASE T0.DocStatus
         WHEN 'O' THEN 'Open'
         WHEN 'C' THEN 'Closed'
@@ -1180,6 +1293,7 @@ const getDelivery = async (docEntry) => {
     FROM ODLN T0
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '15' AND NNM.Series = T0.Series
+    LEFT JOIN OHEM EMP ON EMP.empID = ${hasTableField(odlnFieldMetadata, 'OwnerCode') ? 'T0.OwnerCode' : 'NULL'}
     WHERE T0.DocEntry = @docEntry
   `, { docEntry: resolvedDocEntry }));
 
@@ -1188,6 +1302,15 @@ const getDelivery = async (docEntry) => {
   }
 
   const header = headerRows[0];
+
+  const attachmentRows = header.AttachmentEntry == null || Number(header.AttachmentEntry) < 0
+    ? []
+    : await safe(db.query(`
+      SELECT Line, TrgtPath, FileName, FileExt, Date, FreeText, CopyToTrgt, Override, SrcPath
+      FROM ATC1
+      WHERE AbsEntry = @attachmentEntry
+      ORDER BY Line
+    `, { attachmentEntry: header.AttachmentEntry }));
 
   const dln1FieldMetadata = await getDeliveryLineFieldMetadata();
   const hasDln1Column = (columnName) => hasTableField(dln1FieldMetadata, columnName);
@@ -1370,8 +1493,8 @@ const getDelivery = async (docEntry) => {
   }
 
   // Fetch batch allocations for this delivery
-  const batchRows = await safe(db.query(`
-    SELECT BaseLinNum AS BaseLineNum, BatchNum, Quantity
+  let batchRows = await safe(db.query(`
+    SELECT BaseLinNum AS BaseLineNum, BatchNum, ABS(Quantity) AS Quantity
     FROM   IBT1
     WHERE  BaseEntry = @docEntry
       AND  BaseType = 15
@@ -1386,9 +1509,97 @@ const getDelivery = async (docEntry) => {
     batchesByLine[b.BaseLineNum].push({
       batchNumber: b.BatchNum || '',
       quantity: String(b.Quantity || 0),
-      expiryDate: '',
+      expiryDate: b.ExpiryDate instanceof Date
+        ? b.ExpiryDate.toISOString().slice(0, 10)
+        : (b.ExpiryDate || ''),
     });
   });
+
+  // Keep the saved E-Way Bill read limited to DLN26. Optional master-data
+  // joins vary between SAP B1 patch levels; a failed join must not hide the
+  // document's entered E-Way Bill values in Find mode.
+  const eWayBillRows = await safe(db.query(`
+    SELECT TOP 1 T0.*
+    FROM DLN26 T0
+    WHERE T0.DocEntry = @docEntry
+  `, { docEntry: resolvedDocEntry }));
+
+  const savedEWayBill = eWayBillRows[0];
+  if (savedEWayBill) {
+    savedEWayBill.MainHSNEntry = savedEWayBill.MainHSNEntry ?? savedEWayBill.MainHsnEnt;
+    const masterLabel = (row, preferredKeys, rawValue) => {
+      const entries = Object.entries(row || {}).filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== '');
+      const preferred = entries.find(([key]) => preferredKeys.some((candidate) => candidate.toLowerCase() === key.toLowerCase()));
+      return String(preferred?.[1] ?? [...entries].reverse().find(([, value]) => String(value) !== String(rawValue))?.[1] ?? '');
+    };
+    const hsnRows = savedEWayBill.MainHSNEntry == null ? [] : await safe(db.query(`
+      SELECT TOP 1 ChapterID AS MainHSN
+      FROM OCHP
+      WHERE AbsEntry = @entry
+    `, { entry: savedEWayBill.MainHSNEntry }));
+
+    const transporterRows = savedEWayBill.TspEntry == null ? [] : await safe(db.query(`
+      SELECT TOP 1 TransCode AS TransporterCode
+      FROM OTSP
+      WHERE AbsEntry = @entry
+    `, { entry: savedEWayBill.TspEntry }));
+
+    const subTypeRows = savedEWayBill.SubSplyTyp == null ? [] : await safe(db.query(`
+      SELECT TOP 1 * FROM OEST WHERE AbsEntry = @entry
+    `, { entry: savedEWayBill.SubSplyTyp }));
+    const documentTypeRows = !savedEWayBill.DocType ? [] : await safe(db.query(`
+      SELECT TOP 1 * FROM OEDT WHERE TypeCode = @code
+    `, { code: savedEWayBill.DocType }));
+    const modeRows = savedEWayBill.TransMode == null ? [] : await safe(db.query(`
+      SELECT TOP 1 * FROM OETM WHERE AbsEntry = @entry
+    `, { entry: savedEWayBill.TransMode }));
+    const vehicleTypeRows = !savedEWayBill.VehicleTyp ? [] : await safe(db.query(`
+      SELECT TOP 1 * FROM OEVT WHERE TypeCode = @code
+    `, { code: savedEWayBill.VehicleTyp }));
+
+    const resolveStateName = async (code) => {
+      if (!code) return '';
+      const rows = await safe(db.query(`
+        SELECT TOP 1 Name
+        FROM OCST
+        WHERE Country = 'IN' AND Code = @code
+      `, { code }));
+      return rows[0]?.Name || '';
+    };
+
+    savedEWayBill.MainHSN = hsnRows[0]?.MainHSN || '';
+    savedEWayBill.TransporterCode = transporterRows[0]?.TransporterCode || '';
+    savedEWayBill.SubSupplyTypeLabel = masterLabel(subTypeRows[0], ['SubName', 'SubTypeName', 'Name', 'Descr'], savedEWayBill.SubSplyTyp);
+    savedEWayBill.DocumentTypeLabel = masterLabel(documentTypeRows[0], ['TypeName', 'DocTypeName', 'Name', 'Descr'], savedEWayBill.DocType);
+    savedEWayBill.ModeLabel = masterLabel(modeRows[0], ['ModeName', 'TransModeName', 'Name', 'Descr'], savedEWayBill.TransMode);
+    savedEWayBill.VehicleTypeLabel = masterLabel(vehicleTypeRows[0], ['TypeName', 'VehicleName', 'Name', 'Descr'], savedEWayBill.VehicleTyp);
+    savedEWayBill.FrmStateName = await resolveStateName(savedEWayBill.FrmState);
+    savedEWayBill.ToStateName = await resolveStateName(savedEWayBill.ToState);
+    savedEWayBill.ActFrmStateName = await resolveStateName(savedEWayBill.ActFrmStat);
+    savedEWayBill.ActToStateName = await resolveStateName(savedEWayBill.ActToState);
+  }
+
+  // Newer SAP B1 patch levels may expose the allocation through OITL/ITL1
+  // while the legacy IBT1 compatibility view returns no rows.
+  if (!batchRows.length) {
+    batchRows = await safe(db.query(`
+      SELECT
+        T0.DocLine AS BaseLineNum,
+        T2.DistNumber AS BatchNum,
+        ABS(T1.Quantity) AS Quantity,
+        T2.ExpDate AS ExpiryDate
+      FROM OITL T0
+      INNER JOIN ITL1 T1 ON T1.LogEntry = T0.LogEntry
+      INNER JOIN OBTN T2
+        ON T2.ItemCode = T1.ItemCode
+       AND T2.SysNumber = T1.SysNumber
+      WHERE T0.DocEntry = @docEntry
+        AND T0.DocType = 15
+        AND T1.Quantity <> 0
+      ORDER BY T0.DocLine, T2.DistNumber
+    `, { docEntry: resolvedDocEntry }));
+  }
+  const eWayBill = eWayBillRows[0] || {};
 
   return {
     delivery: {
@@ -1410,8 +1621,11 @@ const getDelivery = async (docEntry) => {
         seriesIndicator: header.SeriesIndicator || '',
         shipToCode: header.ShipToCode || '',
         payToCode: header.PayToCode || '',
-        shipTo: header.Address || '',
-        payTo: header.Address2 || '',
+        shipTo: header.Address2 || '',
+        shipToAddress: header.Address2 || '',
+        payTo: header.Address || '',
+        billToAddress: header.Address || '',
+        billToCode: header.PayToCode || '',
         postingDate: header.PostingDate ? header.PostingDate.toISOString().split('T')[0] : '',
         deliveryDate: header.DeliveryDate ? header.DeliveryDate.toISOString().split('T')[0] : '',
         documentDate: header.DocumentDate ? header.DocumentDate.toISOString().split('T')[0] : '',
@@ -1421,6 +1635,12 @@ const getDelivery = async (docEntry) => {
         paymentTermsCode: header.PaymentTerms ? String(header.PaymentTerms) : '', // Add alias
         shippingType: header.ShippingType ? String(header.ShippingType) : '',
         confirmed: String(header.Confirmed || '').toUpperCase() === 'Y',
+        languageCode: header.LanguageCode != null ? String(header.LanguageCode) : '',
+        trackingNo: header.TrackingNo || '',
+        stampNo: header.StampNo || '',
+        pickAndPackRemarks: header.PickAndPackRemarks || '',
+        bpChannelCode: header.BPChannelCode || '',
+        bpChannelContact: header.BPChannelContact != null ? String(header.BPChannelContact) : '',
         salesEmployee: header.SalesEmployeeCode != null ? String(header.SalesEmployeeCode) : '',
         purchaser: header.SalesEmployeeName || '',
         otherInstruction: header.Remarks || '',
@@ -1430,6 +1650,26 @@ const getDelivery = async (docEntry) => {
         roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
+        edocGenerationType: ({ N: 'edocNotRelevant', G: 'edocGenerate', L: 'edocGenerateLater' })[header.EDocGenerationType] || header.EDocGenerationType || '',
+        edocExportFormat: header.EDocExportFormat != null ? String(header.EDocExportFormat) : '',
+        edocStatus: ({ N: 'New', P: 'Pending', S: 'Sent', E: 'Error', C: 'OK' })[header.EDocStatus] || header.EDocStatus || '',
+        paymentMethod: header.PaymentMethod || '',
+        centralBankIndicator: header.CentralBankIndicator || '',
+        projectCode: header.ProjectCode || '',
+        qrCodeSource: header.QRCodeSource || '',
+        indicator: header.Indicator || '',
+        orderNumber: header.OrderNumber || '',
+        ownerCode: header.OwnerCode != null ? String(header.OwnerCode) : '',
+        owner: header.OwnerName || '',
+        consolidationType: header.ConsolidationType || '',
+        consolidatingBP: header.ConsolidatingBP || '',
+        useShippedGoodsAccount: ['Y', 'YES', '1', 'TRUE'].includes(String(header.UseShippedGoods || '').toUpperCase()),
+        transactionCategory: header.TransactionCategory || '',
+        taxFormNo: header.TaxFormNo || '',
+        dutyStatus: header.DutyStatus || '',
+        exportFlag: ['Y', 'YES', '1', 'TRUE'].includes(String(header.ExportFlag || '').toUpperCase()),
+        differentialTaxRate: header.DifferentialTaxRate != null ? String(header.DifferentialTaxRate) : '100',
+        supplyCovered: ['Y', 'YES', '1', 'TRUE'].includes(String(header.SupplyCovered || '').toUpperCase()),
       },
       lines: lineRows.map((l) => {
         const itemInfo = itemInfoMap[l.ItemCode] || { hsnCode: '', batchManaged: false };
@@ -1550,6 +1790,56 @@ const getDelivery = async (docEntry) => {
         };
       }),
       header_udfs: headerUdfs,
+      attachments: attachmentRows.map((row, index) => ({
+        id: Number(row.Line ?? index) + 1,
+        targetPath: row.TrgtPath || row.SrcPath || '',
+        fileName: [row.FileName, row.FileExt].filter(Boolean).join('.'),
+        attachmentDate: row.Date instanceof Date ? row.Date.toISOString().slice(0, 10) : (row.Date || ''),
+        freeText: row.FreeText || '',
+        copyToTargetDocument: String(row.CopyToTrgt || '').toUpperCase() === 'Y' ? 'Yes' : 'No',
+        documentType: '',
+        atchDocDate: '',
+        alert: String(row.Override || '').toUpperCase() === 'Y' ? 'Yes' : 'No',
+      })),
+      eway_bill_details: eWayBillRows.length ? {
+        supplyType: eWayBill.SuplyType === 'I' ? 'Inward' : 'Outward',
+        subSupplyType: eWayBill.SubSplyTyp != null ? String(eWayBill.SubSplyTyp) : '',
+        subSupplyTypeLabel: eWayBill.SubSupplyTypeLabel || '',
+        documentType: eWayBill.DocType || '',
+        documentTypeLabel: eWayBill.DocumentTypeLabel || '',
+        transactionType: eWayBill.TransType != null ? String(eWayBill.TransType) : '',
+        mainHSN: eWayBill.MainHSN || '',
+        mainHSNEntry: eWayBill.MainHSNEntry != null ? String(eWayBill.MainHSNEntry) : '',
+        ewayBillNo: eWayBill.EWayBillNo || '',
+        ewayBillDate: eWayBill.EwbDate instanceof Date ? eWayBill.EwbDate.toISOString().slice(0, 10) : (eWayBill.EwbDate || ''),
+        expirationDate: eWayBill.ExpireDate instanceof Date ? eWayBill.ExpireDate.toISOString().slice(0, 10) : (eWayBill.ExpireDate || ''),
+        transporterName: eWayBill.TransName || '',
+        transporterEntry: eWayBill.TspEntry != null ? String(eWayBill.TspEntry) : '',
+        transporterCode: eWayBill.TransporterCode || '',
+        transporterId: eWayBill.TransID || '',
+        mode: eWayBill.TransMode != null ? String(eWayBill.TransMode) : '',
+        modeLabel: eWayBill.ModeLabel || '',
+        vehicleType: eWayBill.VehicleTyp || '',
+        vehicleTypeLabel: eWayBill.VehicleTypeLabel || '',
+        vehicleNo: eWayBill.VehicleNo || '',
+        distanceInKM: eWayBill.Distance != null ? String(eWayBill.Distance) : '',
+        transporterDocNo: eWayBill.TransDocNo || '',
+        transporterDocDate: eWayBill.TransDate instanceof Date ? eWayBill.TransDate.toISOString().slice(0, 10) : (eWayBill.TransDate || ''),
+        billFromName: eWayBill.FrmTraName || '',
+        billFromGSTIN: eWayBill.FrmGSTN || '',
+        billFromState: eWayBill.FrmStateName || eWayBill.FrmState || '',
+        dispatchFromAddress: [eWayBill.FrmAddres1, eWayBill.FrmAddres2].filter(Boolean).join(' '),
+        dispatchFromPlace: eWayBill.FrmPlace || '',
+        dispatchFromZipCode: eWayBill.FrmZipCode || '',
+        dispatchFromState: eWayBill.ActFrmStateName || eWayBill.ActFrmStat || '',
+        billToName: eWayBill.ToTraName || '',
+        billToGSTIN: eWayBill.ToGSTN || '',
+        billToState: eWayBill.ToStateName || eWayBill.ToState || '',
+        shipToAddress: [eWayBill.ToAddres1, eWayBill.ToAddres2].filter(Boolean).join(' '),
+        shipToPlace: eWayBill.ToPlace || '',
+        shipToZipCode: eWayBill.ToZipCode || '',
+        shipToState: eWayBill.ActToStateName || eWayBill.ActToState || '',
+      } : {},
     }
   };
 };
@@ -1692,6 +1982,9 @@ const getReferenceData = async () => {
     buyerPriceOptions,
     sellerPriceOptions,
     udfMetadata,
+    eWayBillFormats,
+    eWayBillTransporters,
+    eWayBillDropdownOptions,
   ] = await Promise.all([
     getCustomers(),
     getItems(),
@@ -1711,6 +2004,9 @@ const getReferenceData = async () => {
     getLookupValues('U_Buyer_Price'),
     getLookupValues('U_Seller_Price'),
     getMarketingDocumentUdfs({ headerTable: 'ODLN', lineTable: 'DLN1' }),
+    getEWayBillFormats(),
+    getEWayBillTransporters(),
+    getEWayBillDropdownOptions(),
   ]);
   const lineFieldMetadata = await buildDeliveryLineUiMetadata(udfMetadata.rows || []);
 
@@ -1778,7 +2074,7 @@ const getReferenceData = async () => {
     })),
     warehouses,
     warehouse_addresses: warehouses,
-    company_address: { State: companyInfo.state },
+    company_address: { Address: companyInfo.address, State: companyInfo.state },
     tax_codes: taxCodes,
     payment_terms: paymentTerms,
     shipping_types: shippingTypes,
@@ -1802,6 +2098,9 @@ const getReferenceData = async () => {
     },
     decimal_settings: decimalSettings,
     udf_metadata: udfMetadata,
+    eway_bill_formats: eWayBillFormats,
+    eway_bill_transporters: eWayBillTransporters,
+    eway_bill_options: eWayBillDropdownOptions,
     matrix_columns: lineFieldMetadata.matrix_columns || [],
     line_field_metadata: {
       matrix_columns: lineFieldMetadata.matrix_columns || [],
@@ -2496,5 +2795,7 @@ module.exports = {
   validateBranch,
   validateSeries,
   validateWarehouseBranch,
+  resolveEWayBillHSNEntry,
+  resolveEWayBillStateCode,
   
 };

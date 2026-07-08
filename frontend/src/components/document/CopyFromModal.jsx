@@ -60,6 +60,7 @@ export default function CopyFromModal({
   onFetchDocuments,
   onFetchDocumentDetails,
   searchPlaceholder,
+  columns,
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedEntry, setSelectedEntry] = useState('');
@@ -111,6 +112,16 @@ export default function CopyFromModal({
   const selectedDocument = filteredDocuments.find((doc) => String(getDocEntry(doc)) === String(selectedEntry));
   const businessLabel = BUSINESS_LABELS[documentType] || 'Customer';
   const modalTitle = title || TITLES[documentType] || 'List of Documents';
+  const tableColumns = Array.isArray(columns) && columns.length
+    ? columns
+    : [
+        { key: 'rowNumber', label: '#', width: 44, render: (_doc, index) => index + 1 },
+        { key: 'docNum', label: 'No.', width: 96, render: (doc) => getDocValue(doc, ['DocNum', 'docNum', 'doc_num']) },
+        { key: 'docDate', label: 'Date', width: 96, render: (doc) => fmtDate(getDocValue(doc, ['DocDate', 'docDate', 'posting_date'])) },
+        { key: 'businessPartner', label: businessLabel, render: (doc) => getDocValue(doc, ['CardName', 'cardName', 'customerName', 'vendor_name']) },
+        { key: 'remarks', label: 'Remarks', render: (doc) => getDocValue(doc, ['Comments', 'comments', 'Remarks', 'remarks', 'details']) },
+        { key: 'dueDate', label: 'Due Date', width: 96, render: (doc) => fmtDate(getDocValue(doc, ['DocDueDate', 'docDueDate', 'delivery_date'])) },
+      ];
 
   const handleChoose = async (document = selectedDocument) => {
     if (!document) return;
@@ -165,18 +176,17 @@ export default function CopyFromModal({
             <table className="sap-copy-from-grid">
               <thead>
                 <tr>
-                  <th style={{ width: 44 }}>#</th>
-                  <th style={{ width: 96 }}>No.</th>
-                  <th style={{ width: 96 }}>Date</th>
-                  <th>{businessLabel}</th>
-                  <th>Remarks</th>
-                  <th style={{ width: 96 }}>Due Date</th>
+                  {tableColumns.map((column) => (
+                    <th key={column.key} style={column.width ? { width: column.width } : undefined}>
+                      {column.label}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {filteredDocuments.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="sap-copy-from-empty">
+                    <td colSpan={tableColumns.length} className="sap-copy-from-empty">
                       No open documents found
                     </td>
                   </tr>
@@ -191,12 +201,11 @@ export default function CopyFromModal({
                         onClick={() => setSelectedEntry(entry)}
                         onDoubleClick={() => handleChoose(doc)}
                       >
-                        <td>{index + 1}</td>
-                        <td>{getDocValue(doc, ['DocNum', 'docNum', 'doc_num'])}</td>
-                        <td>{fmtDate(getDocValue(doc, ['DocDate', 'docDate', 'posting_date']))}</td>
-                        <td>{getDocValue(doc, ['CardName', 'cardName', 'customerName', 'vendor_name'])}</td>
-                        <td>{getDocValue(doc, ['Comments', 'comments', 'Remarks', 'remarks', 'details'])}</td>
-                        <td>{fmtDate(getDocValue(doc, ['DocDueDate', 'docDueDate', 'delivery_date']))}</td>
+                        {tableColumns.map((column) => (
+                          <td key={column.key}>
+                            {typeof column.render === 'function' ? column.render(doc, index) : ''}
+                          </td>
+                        ))}
                       </tr>
                     );
                   })

@@ -389,6 +389,44 @@ const hasActiveChild = (menu, pathname) => {
   return menu.children?.some((child) => hasActiveChild(child, pathname));
 };
 
+const flattenSidebarSearchItems = (items = [], parents = []) =>
+  items.flatMap((item) => {
+    const displayName = getDisplayMenuName(item);
+    const menuPath = item.menuPath ? normalizePath(item.menuPath) : '';
+    const trail = [...parents, displayName].filter(Boolean);
+    const ownItem = menuPath
+      ? [{
+          menuId: item.menuId,
+          menuName: displayName,
+          menuPath,
+          trail,
+          searchText: `${displayName} ${menuPath} ${trail.join(' ')}`.toLowerCase(),
+          iconMenu: item,
+        }]
+      : [];
+
+    return [
+      ...ownItem,
+      ...flattenSidebarSearchItems(item.children || [], trail),
+    ];
+  });
+
+const SidebarSearchResult = ({ item, onOpen }) => (
+  <button
+    type="button"
+    className="sidebar__search-result"
+    onClick={() => onOpen(item.menuPath)}
+  >
+    <span className="sidebar__search-result-icon" aria-hidden="true">
+      <SidebarIcon menu={item.iconMenu} />
+    </span>
+    <span className="sidebar__search-result-body">
+      <span className="sidebar__search-result-title">{item.menuName}</span>
+      <span className="sidebar__search-result-path">{item.trail.join(' / ')}</span>
+    </span>
+  </button>
+);
+
 const SidebarMenuNode = ({ menu, collapsed, openState, setOpenState, pathname, onNavigate, depth = 0 }) => {
   const hasChildren = Boolean(menu.children?.length);
   const menuPath = menu.menuPath ? normalizePath(menu.menuPath) : '';
@@ -489,12 +527,23 @@ export default function Sidebar() {
     }
   });
   const [openState, setOpenState] = useState({});
+  const [searchQuery, setSearchQuery] = useState('');
   const pathname = normalizePath(location.pathname);
 
   const sidebarMenus = useMemo(
     () => buildSidebarMenus(menus),
     [menus],
   );
+  const sidebarSearchItems = useMemo(
+    () => flattenSidebarSearchItems(sidebarMenus),
+    [sidebarMenus],
+  );
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const sidebarSearchResults = normalizedSearchQuery
+    ? sidebarSearchItems
+        .filter((item) => item.searchText.includes(normalizedSearchQuery))
+        .slice(0, 10)
+    : [];
 
   const handleNavigate = (event, menuPath) => {
     if (!menuPath) return;
@@ -526,6 +575,18 @@ export default function Sidebar() {
     });
   };
 
+  const openSearchResult = (menuPath) => {
+    if (!menuPath) return;
+    const normalizedPath = normalizePath(menuPath);
+    if (isAdminMenuPath(normalizedPath)) {
+      window.open(normalizedPath, '_blank', 'noopener,noreferrer');
+    } else {
+      restoreTargetWindowState(normalizedPath);
+      navigate(normalizedPath, { state: null });
+    }
+    setSearchQuery('');
+  };
+
   return (
     <aside className={`sidebar-shell${collapsed ? ' is-collapsed' : ''}`}>
       <div className="sidebar">
@@ -551,8 +612,66 @@ export default function Sidebar() {
         </div>
 
         <div className="sidebar__content">
+          {!collapsed ? (
+            <div className="sidebar__search">
+              <label className="sidebar__search-label" htmlFor="sidebar-menu-search">
+                Menu Search
+              </label>
+              <div className="sidebar__search-field">
+                <span className="sidebar__search-icon" aria-hidden="true">
+                  <svg className="sidebar__icon-svg" viewBox="0 0 24 24" focusable="false">
+                    <path d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z" />
+                    <path d="M16 16l5 5" />
+                  </svg>
+                </span>
+                <input
+                  id="sidebar-menu-search"
+                  className="sidebar__search-input"
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && sidebarSearchResults[0]) {
+                      event.preventDefault();
+                      openSearchResult(sidebarSearchResults[0].menuPath);
+                    }
+                    if (event.key === 'Escape') {
+                      setSearchQuery('');
+                    }
+                  }}
+                  placeholder="Search menu"
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    className="sidebar__search-clear"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Clear menu search"
+                    title="Clear"
+                  />
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           <nav className="sidebar__nav">
-            {sidebarMenus.length ? (
+            {normalizedSearchQuery ? (
+              sidebarSearchResults.length ? (
+                <div className="sidebar__search-results" aria-label="Menu search results">
+                  {sidebarSearchResults.map((item) => (
+                    <SidebarSearchResult
+                      key={`${item.menuId}-${item.menuPath}`}
+                      item={item}
+                      onOpen={openSearchResult}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="sidebar__empty">
+                  No matching menu found.
+                </div>
+              )
+            ) : sidebarMenus.length ? (
               sidebarMenus.map((menu) => (
                 <SidebarMenuNode
                   key={menu.menuId}

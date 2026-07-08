@@ -13,7 +13,7 @@ import {
 const createBatchRow = () => ({
   batchNumber: '',
   quantity: '',
-  expiryDate: '',
+  supplierLotNo: '',
 });
 
 const sanitizeNumericInput = (value) =>
@@ -40,7 +40,7 @@ export default function BatchAllocationModal({
         ? line.batches.map((batch) => ({
             batchNumber: batch.batchNumber || '',
             quantity: batch.quantity || '',
-            expiryDate: batch.expiryDate || '',
+            supplierLotNo: batch.supplierLotNo || '',
           }))
         : [createBatchRow()];
     setRows(nextRows);
@@ -138,7 +138,7 @@ export default function BatchAllocationModal({
       .map((row) => ({
         batchNumber: String(row.batchNumber || '').trim(),
         quantity: String(row.quantity || '').trim(),
-        expiryDate: String(row.expiryDate || '').trim(),
+        supplierLotNo: String(row.supplierLotNo || '').trim(),
       }))
       .filter((row) => row.batchNumber && parseBatchNumber(row.quantity) > 0);
 
@@ -227,7 +227,7 @@ export default function BatchAllocationModal({
                 <tr>
                   <th>{mode === 'receipt' ? 'JKL Lot No.' : 'Batch Number'}</th>
                   <th>Quantity ({inventoryUoM})</th>
-                  {mode === 'receipt' ? <th>Expiry Date</th> : null}
+                  {mode === 'receipt' ? <th>Supplier Lot No.</th> : null}
                   <th></th>
                 </tr>
               </thead>
@@ -281,10 +281,11 @@ export default function BatchAllocationModal({
                     {mode === 'receipt' ? (
                       <td>
                         <input
-                          type="date"
                           className="del-grid__input"
-                          value={row.expiryDate}
-                          onChange={(event) => updateRow(index, 'expiryDate', event.target.value)}
+                          value={row.supplierLotNo}
+                          onChange={(event) => updateRow(index, 'supplierLotNo', event.target.value)}
+                          placeholder="Supplier Lot No."
+                          maxLength={36}
                         />
                       </td>
                     ) : null}
@@ -312,7 +313,7 @@ export default function BatchAllocationModal({
                     <tr>
                       <th>Batch</th>
                       <th>Available Qty ({inventoryUoM})</th>
-                      <th>Expiry</th>
+                      <th>{mode === 'receipt' ? 'Supplier Lot No.' : 'Expiry'}</th>
                       {mode === 'issue' ? <th></th> : null}
                     </tr>
                   </thead>
@@ -321,7 +322,11 @@ export default function BatchAllocationModal({
                       <tr key={`${batch.BatchNumber}-${batch.ExpiryDate || ''}`}>
                         <td>{batch.BatchNumber}</td>
                         <td style={{ textAlign: 'right' }}>{parseBatchNumber(batch.AvailableQty).toFixed(2)}</td>
-                        <td>{batch.ExpiryDate ? String(batch.ExpiryDate).slice(0, 10) : '-'}</td>
+                        <td>
+                          {mode === 'receipt'
+                            ? (batch.SupplierLotNo || '-')
+                            : (batch.ExpiryDate ? String(batch.ExpiryDate).slice(0, 10) : '-')}
+                        </td>
                         {mode === 'issue' ? (
                           <td>
                             <button
@@ -331,7 +336,7 @@ export default function BatchAllocationModal({
                                 addRow({
                                   batchNumber: batch.BatchNumber,
                                   quantity: '',
-                                  expiryDate: batch.ExpiryDate ? String(batch.ExpiryDate).slice(0, 10) : '',
+                                  supplierLotNo: batch.SupplierLotNo || '',
                                 })
                               }
                             >

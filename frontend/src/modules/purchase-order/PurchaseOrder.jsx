@@ -1345,6 +1345,18 @@ function PurchaseOrder() {
     }
   };
 
+  const refreshDocumentSeries = async () => {
+    if (currentDocEntry) return;
+
+    try {
+      const response = await fetchDocumentSeries();
+      const liveSeries = Array.isArray(response.data?.series) ? response.data.series : [];
+      setRefData(p => ({ ...p, series: liveSeries }));
+    } catch (error) {
+      setPageState(p => ({ ...p, error: getErrMsg(error, 'Failed to load live SAP B1 purchase order series.') }));
+    }
+  };
+
   const handleShipToChange = (addressCode) => {
     if (!addressCode) {
       setHeader(p => ({ ...p, shipToCode: addressCode, shipTo: '', shipToAddress: '', placeOfSupply: '' }));
@@ -2139,6 +2151,7 @@ function PurchaseOrder() {
                         className="po-field__select" 
                         value={header.series || ''} 
                         onChange={handleHeaderChange}
+                        onFocus={refreshDocumentSeries}
                         disabled={!!currentDocEntry || pageState.seriesLoading}
                       >
                         <option value="">Select Series</option>

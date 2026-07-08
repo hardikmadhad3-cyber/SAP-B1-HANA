@@ -1,5 +1,21 @@
 import React, { useState, useEffect } from 'react';
 
+const getItemCode = (item) => item?.ItemCode || item?.itemCode || '';
+const getItemName = (item) => item?.ItemName || item?.itemName || item?.Dscription || '';
+const getForeignName = (item) => item?.ForeignName || item?.FrgnName || item?.foreignName || '';
+const getItemGroup = (item) =>
+  item?.ItemGroup ||
+  item?.ItemsGroupName ||
+  item?.ItmsGrpNam ||
+  item?.ItemsGroupCode ||
+  item?.ItmsGrpCod ||
+  '';
+const getInStock = (item) => {
+  const value = item?.InStock ?? item?.OnHand ?? item?.QuantityOnStock ?? 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 export default function ItemSelectionModal({ isOpen, onClose, onSelect, items, loading, initialQuery = '' }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredItems, setFilteredItems] = useState([]);
@@ -16,10 +32,10 @@ export default function ItemSelectionModal({ isOpen, onClose, onSelect, items, l
       const query = searchQuery.toLowerCase();
       const filtered = items.filter(
         item =>
-          (item.ItemCode || '').toLowerCase().includes(query) ||
-          (item.ItemName || '').toLowerCase().includes(query) ||
-          (item.ForeignName || '').toLowerCase().includes(query) ||
-          (item.ItemGroup || '').toLowerCase().includes(query)
+          getItemCode(item).toLowerCase().includes(query) ||
+          getItemName(item).toLowerCase().includes(query) ||
+          getForeignName(item).toLowerCase().includes(query) ||
+          String(getItemGroup(item)).toLowerCase().includes(query)
       );
       setFilteredItems(filtered);
     } else {
@@ -192,13 +208,13 @@ export default function ItemSelectionModal({ isOpen, onClose, onSelect, items, l
                       }}
                     >
                       <td style={{ padding: '6px 8px', color: '#57606a' }}>{index + 1}</td>
-                      <td style={{ padding: '6px 8px', fontWeight: 500 }}>{item.ItemCode || ''}</td>
-                      <td style={{ padding: '6px 8px' }}>{item.ItemName || ''}</td>
+                      <td style={{ padding: '6px 8px', fontWeight: 500 }}>{getItemCode(item)}</td>
+                      <td style={{ padding: '6px 8px' }}>{getItemName(item)}</td>
                       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                        {item.InStock != null ? Number(item.InStock).toFixed(2) : '0.00'}
+                        {getInStock(item).toFixed(2)}
                       </td>
-                      <td style={{ padding: '6px 8px' }}>{item.ItemGroup || ''}</td>
-                      <td style={{ padding: '6px 8px' }}>{item.ForeignName || ''}</td>
+                      <td style={{ padding: '6px 8px' }}>{getItemGroup(item)}</td>
+                      <td style={{ padding: '6px 8px' }}>{getForeignName(item)}</td>
                     </tr>
                   ))
                 )}

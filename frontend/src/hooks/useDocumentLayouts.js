@@ -48,17 +48,20 @@ const chooseLayoutCode = (layouts, currentDocCode, preferredDocCode) => {
     return currentDocCode || preferredDocCode || '';
   }
 
+  const preferredLayout =
+    preferredDocCode &&
+    layouts.find((layout) => layout.layout_id === preferredDocCode && layout.is_export_supported);
+
+  if (preferredLayout) {
+    return preferredLayout.layout_id;
+  }
+
   const currentLayout = layouts.find((layout) => layout.layout_id === currentDocCode);
   if (currentLayout?.is_export_supported) {
     return currentDocCode;
   }
 
-  const preferredLayout =
-    preferredDocCode &&
-    layouts.find((layout) => layout.layout_id === preferredDocCode && layout.is_export_supported);
-
   const fallbackLayout =
-    preferredLayout ||
     layouts.find((layout) => layout.is_export_supported) ||
     layouts[0];
 

@@ -84,6 +84,51 @@ const DIST_RULE_FIELD_BY_DIMENSION = {
   5: 'distRule5',
 };
 
+const normalizeColumnToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '');
+
+const COLUMN_RENDERER_ALIASES = new Map([
+  ['LINENUM', SALES_ORDER_LINE_NUMBER_KEY],
+  ['ITEMCODE', 'itemNo'],
+  ['ITEMNO', 'itemNo'],
+  ['ITEMDESCRIPTION', 'itemDescription'],
+  ['DSCRIPTION', 'itemDescription'],
+  ['DESCRIPTION', 'itemDescription'],
+  ['QUANTITY', 'quantity'],
+  ['QTY', 'quantity'],
+  ['UOMNAME', 'uomName'],
+  ['UNITMSR', 'uomName'],
+  ['UOMCODE', 'uomCode'],
+  ['HSN', 'hsnCode'],
+  ['HSNCODE', 'hsnCode'],
+  ['HSNENTRY', 'hsnCode'],
+  ['PRICEBEFDI', 'unitPrice'],
+  ['UNITPRICE', 'unitPrice'],
+  ['VATGROUP', 'taxCode'],
+  ['TAXCODE', 'taxCode'],
+  ['LINETOTAL', 'totalLC'],
+  ['GTOTAL', 'totalLC'],
+  ['TOTAL', 'totalLC'],
+  ['DISCPRCNT', 'stdDiscount'],
+  ['DISCOUNTPERCENT', 'stdDiscount'],
+  ['DISCOUNT', 'stdDiscount'],
+  ['WHSCODE', 'whse'],
+  ['WHSE', 'whse'],
+  ['OCRCODE', 'distRule'],
+  ['DISTRULE', 'distRule'],
+  ['DISTRIBUTIONRULE', 'distRule'],
+  ['COGSOCRCOD', 'cogsDistRule'],
+  ['COUNTRYORG', 'countryOfOrigin'],
+  ['LOC', 'loc'],
+  ['LOCCODE', 'loc'],
+  ['SAC', 'sacCode'],
+  ['SACCODE', 'sacCode'],
+  ['SACENTRY', 'sacCode'],
+]);
+
 const getRuleCode = (rule) => String(rule?.FactorCode || rule?.OcrCode || rule?.code || '').trim();
 const getRuleName = (rule) => String(rule?.FactorDescription || rule?.OcrName || rule?.name || '').trim();
 const getRuleDimensionCode = (rule) => String(rule?.DimensionCode || rule?.DimCode || rule?.dimensionCode || '1').trim() || '1';
@@ -358,7 +403,27 @@ export default function ContentsTab({
     ? (rowUdfFields || [])
     : filterSalesOrderRowUdfDefinitions(rowUdfFields);
   const getColumnValueKey = (column = {}) => column.valueKey || column.rendererKey || column.key;
-  const getColumnRendererKey = (column = {}) => column.rendererKey || column.valueKey || column.key;
+  const getColumnRendererKey = (column = {}) => {
+    const candidates = [
+      column.rendererKey,
+      column.valueKey,
+      column.key,
+      column.fieldName,
+      column.layoutFieldName,
+      column.sapField,
+      column.sapColumnId,
+      column.columnUid,
+      column.columnTitle,
+      column.label,
+    ];
+
+    for (const candidate of candidates) {
+      const aliasedRenderer = COLUMN_RENDERER_ALIASES.get(normalizeColumnToken(candidate));
+      if (aliasedRenderer) return aliasedRenderer;
+    }
+
+    return column.rendererKey || column.valueKey || column.key;
+  };
   const isUdfMatrixColumn = (column = {}) => (
     Boolean(column.isUdf)
     || column.source === 'RDR1_UDF'
@@ -383,7 +448,7 @@ export default function ContentsTab({
 
   const matrixColumns = [
     ...liveMatrixFields.map((field, index) => {
-      const rendererColumn = rendererColumnMap.get(field.rendererKey || field.valueKey || field.key) || {};
+      const rendererColumn = rendererColumnMap.get(getColumnRendererKey(field)) || {};
       return {
         ...rendererColumn,
         ...field,

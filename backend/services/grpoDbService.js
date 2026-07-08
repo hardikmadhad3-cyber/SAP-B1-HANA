@@ -865,11 +865,17 @@ const getGRPO = async (docEntry) => {
   }
 
   const batchRows = await safe(db.query(`
-    SELECT BaseLinNum AS BaseLineNum, BatchNum, Quantity
-    FROM   IBT1
-    WHERE  BaseEntry = @docEntry
-      AND  BaseType = 20
-    ORDER  BY BaseLinNum, BatchNum
+    SELECT T0.BaseLinNum AS BaseLineNum,
+           T0.BatchNum,
+           T0.Quantity,
+           T1.MnfSerial AS SupplierLotNo
+    FROM IBT1 T0
+    LEFT JOIN OBTN T1
+      ON T1.ItemCode = T0.ItemCode
+     AND T1.SysNumber = T0.SysNumber
+    WHERE T0.BaseEntry = @docEntry
+      AND T0.BaseType = 20
+    ORDER BY T0.BaseLinNum, T0.BatchNum
   `, { docEntry }));
 
   const batchesByLine = {};
@@ -880,7 +886,7 @@ const getGRPO = async (docEntry) => {
     batchesByLine[b.BaseLineNum].push({
       batchNumber: b.BatchNum || '',
       quantity: String(b.Quantity || 0),
-      expiryDate: '',
+      supplierLotNo: b.SupplierLotNo || '',
     });
   });
 
@@ -954,8 +960,12 @@ const getBatchesByItem = async (itemCode, whsCode) => {
     SELECT
       T0.BatchNum AS BatchNumber,
       T0.Quantity AS AvailableQty,
-      T0.ExpDate AS ExpiryDate
+      T0.ExpDate AS ExpiryDate,
+      T1.MnfSerial AS SupplierLotNo
     FROM OIBT T0
+    LEFT JOIN OBTN T1
+      ON T1.ItemCode = T0.ItemCode
+     AND T1.SysNumber = T0.SysNumber
     WHERE T0.ItemCode = @itemCode
       AND T0.WhsCode = @whsCode
       AND T0.Quantity > 0
@@ -981,24 +991,33 @@ const buildNextBatchNumber = (latestBatchNumber = '', prefix = 'JKL') => {
 const getNextBatchNumber = async ({ prefix = 'JKL' } = {}) => {
   const normalizedPrefix = String(prefix || 'JKL').trim().toUpperCase() || 'JKL';
   const rows = await safe(db.query(`
-    SELECT TOP 1
+    SELECT TOP 100
       T0.DistNumber
     FROM OBTN T0
     WHERE UPPER(T0.DistNumber) LIKE @prefixLike
       AND LEN(T0.DistNumber) > LEN(@prefix)
-      AND PATINDEX('%[^0-9]%', SUBSTRING(T0.DistNumber, LEN(@prefix) + 1, 50)) = 0
-    ORDER BY
-      TRY_CONVERT(BIGINT, SUBSTRING(T0.DistNumber, LEN(@prefix) + 1, 50)) DESC,
-      T0.DistNumber DESC
+    ORDER BY T0.DistNumber DESC
   `, {
     prefix: normalizedPrefix,
     prefixLike: `${normalizedPrefix}%`,
   }));
+  const latest = rows
+    .map((row) => {
+      const distNumber = String(row.DistNumber || '').trim();
+      const suffix = distNumber.slice(normalizedPrefix.length);
+      return {
+        distNumber,
+        suffixValue: Number.parseInt(suffix, 10),
+        suffix,
+      };
+    })
+    .filter((row) => /^\d+$/.test(row.suffix) && Number.isFinite(row.suffixValue))
+    .sort((left, right) => right.suffixValue - left.suffixValue || right.distNumber.localeCompare(left.distNumber))[0];
 
   return {
     prefix: normalizedPrefix,
-    nextBatchNumber: buildNextBatchNumber(rows[0]?.DistNumber || '', normalizedPrefix),
-    previousBatchNumber: rows[0]?.DistNumber || '',
+    nextBatchNumber: buildNextBatchNumber(latest?.distNumber || '', normalizedPrefix),
+    previousBatchNumber: latest?.distNumber || '',
   };
 };
 
