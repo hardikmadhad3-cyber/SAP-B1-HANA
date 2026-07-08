@@ -6,6 +6,7 @@ import DocumentCurrencySelect from '../../components/document/DocumentCurrencySe
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
@@ -682,6 +683,13 @@ function ServiceARInvoicePage() {
   });
 
   const isDocumentEditable = !currentDocEntry || String(header.status || '').toLowerCase() === 'open';
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 13,
+    docEntry: currentDocEntry,
+    header,
+    total: header.totalPaymentDue || header.total || '',
+  });
   const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
   const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
   const primaryActionLabel = pageState.posting

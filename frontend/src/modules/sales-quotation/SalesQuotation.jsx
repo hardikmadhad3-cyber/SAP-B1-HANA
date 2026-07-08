@@ -41,6 +41,7 @@ import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { useAuth } from '../../auth/AuthContext';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import {
@@ -935,6 +936,13 @@ function SalesQuotation() {
   };
 
   const totals = calcTotals();
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 23,
+    docEntry: currentDocEntry,
+    header,
+    total: totals.total,
+  });
 
   // ── GST determination logic ───────────────────────────────────────────────
   const determineGSTType = (gstState) => {

@@ -16,6 +16,7 @@ import StateSelectionModal from './components/StateSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import HSNCodeModal from './components/HSNCodeModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
@@ -590,6 +591,13 @@ function PurchaseRequest() {
   };
 
   const totals = calcTotals();
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 1470000113,
+    docEntry: currentDocEntry,
+    header,
+    total: totals.total,
+  });
 
   // ── GST Logic - Recalculate Tax Codes ────────────────────────────────────
   // Automatically recalculate tax codes when place of supply or vendor changes

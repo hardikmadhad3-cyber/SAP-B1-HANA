@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-route
 
 import Layout from "./components/Layout";
 import LazyLoadErrorBoundary from "./components/LazyLoadErrorBoundary";
+import RelationshipMapHost from "./components/relationship-map/RelationshipMapHost";
 import RouteLoadingFallback from "./components/RouteLoadingFallback";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import {
@@ -94,16 +95,35 @@ const JournalEntry = lazyWithRetry(() => import("./pages/JournalEntry"));
 const SalesQuotation = lazyWithRetry(() => import("./pages/SalesQuotation"));
 const SalesQuotationList = lazyWithRetry(() => import("./pages/SalesQuotationList"));
 const SalesAnalysisReportPage = lazyWithRetry(() => import("./pages/SalesAnalysisReportPage"));
+const BillOfMaterialsReportPage = lazyWithRetry(() => import("./pages/BillOfMaterialsReportPage"));
+const OpportunitiesForecastReportPage = lazyWithRetry(() => import("./pages/OpportunitiesForecastReportPage"));
+const OpportunitiesForecastOverTimeReportPage = lazyWithRetry(() => import("./pages/OpportunitiesForecastOverTimeReportPage"));
+const OpportunitiesStatisticsReportPage = lazyWithRetry(() => import("./pages/OpportunitiesStatisticsReportPage"));
+const OpportunitiesReportPage = lazyWithRetry(() => import("./pages/OpportunitiesReportPage"));
+const OpportunitiesPipelineReportPage = lazyWithRetry(() => import("./pages/OpportunitiesPipelineReportPage"));
+const OpportunitiesStageAnalysisReportPage = lazyWithRetry(() => import("./pages/OpportunitiesStageAnalysisReportPage"));
+const WonOpportunitiesReportPage = lazyWithRetry(() => import("./pages/WonOpportunitiesReportPage"));
+const LostOpportunitiesReportPage = lazyWithRetry(() => import("./pages/LostOpportunitiesReportPage"));
+const InformationSourceDistributionOverTimeReportPage = lazyWithRetry(() => import("./pages/InformationSourceDistributionOverTimeReportPage"));
 const ItemListReportPage = lazyWithRetry(() => import("./pages/ItemListReportPage"));
+const ProductionOpenItemsReportPage = lazyWithRetry(() => import("./pages/ProductionOpenItemsReportPage"));
 const InventoryPostingListReportPage = lazyWithRetry(() => import("./pages/InventoryPostingListReportPage"));
 const InventoryInWarehouseReportPage = lazyWithRetry(() => import("./pages/InventoryInWarehouseReportPage"));
 const InventoryAuditReportPage = lazyWithRetry(() => import("./pages/InventoryAuditReportPage"));
 const InventoryAgingReportPage = lazyWithRetry(() => import("./pages/InventoryAgingReportPage"));
 const PurchaseAnalysisReport = lazyWithRetry(() => import("./pages/PurchaseAnalysisReport"));
 const PurchaseRequestReportPage = lazyWithRetry(() => import("./pages/PurchaseRequestReportPage"));
+const ActivityOverviewReportPage = lazyWithRetry(() => import("./pages/ActivityOverviewReportPage"));
+const CampaignsListReportPage = lazyWithRetry(() => import("./pages/CampaignsListReportPage"));
+const ActivityPage = lazyWithRetry(() => import("./pages/ActivityPage"));
+const CRMReportPage = lazyWithRetry(() => import("./pages/CRMReportPage"));
+const InactiveCustomersReportPage = lazyWithRetry(() => import("./pages/InactiveCustomersReportPage"));
 const GLAccountsBusinessPartnersReportPage = lazyWithRetry(() => import("./pages/GLAccountsBusinessPartnersReportPage"));
 const GeneralLedgerReportPage = lazyWithRetry(() => import("./pages/GeneralLedgerReportPage"));
 const FinancialAccountingReportPage = lazyWithRetry(() => import("./pages/FinancialAccountingReportPage"));
+const FinancialStatementReportPage = lazyWithRetry(() => import("./pages/FinancialStatementReportPage"));
+const StatementCashFlowReportPage = lazyWithRetry(() => import("./pages/StatementCashFlowReportPage"));
+const BusinessAssessmentReportPage = lazyWithRetry(() => import("./pages/BusinessAssessmentReportPage"));
 const CustomerReceivablesAgingReportPage = lazyWithRetry(() => import("./pages/CustomerReceivablesAgingReportPage"));
 const VendorLiabilitiesAgingReportPage = lazyWithRetry(() => import("./pages/VendorLiabilitiesAgingReportPage"));
 const ReportsStudioPage = lazyWithRetry(() => import("./pages/ReportsStudioPage"));
@@ -155,6 +175,7 @@ function App() {
         <CompanyTitleManager />
         <SapInitialFocusManager />
         <LazyLoadErrorBoundary>
+          <RelationshipMapHost />
           <Suspense fallback={<RouteLoadingFallback />}>
             <Routes>
               <Route
@@ -239,7 +260,17 @@ function App() {
                   <Route path="/reports/menu/:menuId" element={<ReportRunnerPage />} />
                   <Route path="/reports/report/:reportId" element={<ReportRunnerPage />} />
                   <Route path="/reports/sales/analysis" element={<SalesAnalysisReportPage />} />
+                  <Route path="/reports/crm/opportunities/forecast" element={<OpportunitiesForecastReportPage />} />
+                  <Route path="/reports/crm/opportunities/forecast-over-time" element={<OpportunitiesForecastOverTimeReportPage />} />
+                  <Route path="/reports/crm/opportunities/statistics" element={<OpportunitiesStatisticsReportPage />} />
+                  <Route path="/reports/crm/opportunities/report" element={<OpportunitiesReportPage />} />
+                  <Route path="/reports/crm/opportunities/stage-analysis" element={<OpportunitiesStageAnalysisReportPage />} />
+                  <Route path="/reports/crm/opportunities/pipeline" element={<OpportunitiesPipelineReportPage />} />
+                  <Route path="/reports/crm/opportunities/information-source-distribution-over-time" element={<InformationSourceDistributionOverTimeReportPage />} />
+                  <Route path="/reports/crm/opportunities/won" element={<WonOpportunitiesReportPage />} />
+                  <Route path="/reports/crm/opportunities/lost" element={<LostOpportunitiesReportPage />} />
                   <Route path="/reports/item-list" element={<ItemListReportPage />} />
+                  <Route path="/reports/production/open-items-list" element={<ProductionOpenItemsReportPage />} />
                   <Route path="/reports/inventory/posting-list" element={<InventoryPostingListReportPage />} />
                   <Route path="/reports/inventory/in-warehouse" element={<InventoryInWarehouseReportPage />} />
                   <Route path="/reports/inventory/audit" element={<InventoryAuditReportPage />} />
@@ -248,12 +279,21 @@ function App() {
                   <Route path="/reports/purchase-analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchase/analysis" element={<PurchaseAnalysisReport />} />
                   <Route path="/reports/purchasing/purchase-request-report" element={<PurchaseRequestReportPage />} />
+                  <Route path="/reports/crm/activities-overview" element={<ActivityOverviewReportPage />} />
+                  <Route path="/reports/crm/campaigns-list" element={<CampaignsListReportPage />} />
+                  <Route path="/reports/crm/inactive-customers" element={<InactiveCustomersReportPage />} />
+                  <Route path="/reports/crm/*" element={<CRMReportPage />} />
+                  <Route path="/activity" element={<ActivityPage />} />
                   <Route path="/reports/financial/accounting/gl-accounts-business-partners" element={<GLAccountsBusinessPartnersReportPage />} />
                   <Route path="/reports/financial/accounting/general-ledger" element={<GeneralLedgerReportPage />} />
                   <Route path="/reports/financial/accounting/aging/customer-receivables" element={<CustomerReceivablesAgingReportPage />} />
                   <Route path="/reports/financial/accounting/aging/vendor-liabilities" element={<VendorLiabilitiesAgingReportPage />} />
                   <Route path="/reports/financial/accounting/aging/:agingReportKey" element={<FinancialAccountingReportPage />} />
                   <Route path="/reports/financial/accounting/:reportKey" element={<FinancialAccountingReportPage />} />
+                  <Route path="/reports/financial/financial/statement-of-cash-flows" element={<StatementCashFlowReportPage />} />
+                  <Route path="/reports/financial/financial/business-assessment-report" element={<BusinessAssessmentReportPage />} />
+                  <Route path="/reports/financial/financial/:reportKey" element={<FinancialStatementReportPage />} />
+                  <Route path="/reports/production/bill-of-materials" element={<BillOfMaterialsReportPage />} />
                   <Route path="/bom" element={<BOM />} />
                   <Route path="/production-order" element={<ProductionOrder />} />
                   <Route path="/issue-for-production" element={<IssueForProduction />} />

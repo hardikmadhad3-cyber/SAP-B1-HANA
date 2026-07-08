@@ -278,6 +278,137 @@ const splitTopLevelArgs = (text) => {
   return args;
 };
 
+const replaceFunctionCalls = (sqlText, functionName, replacer) => {
+  let output = '';
+  let index = 0;
+  let inString = false;
+  const functionPattern = new RegExp(`^${functionName}\\s*\\(`, 'i');
+
+  while (index < sqlText.length) {
+    const char = sqlText[index];
+
+    if (char === "'") {
+      output += char;
+      if (inString && sqlText[index + 1] === "'") {
+        output += sqlText[index + 1];
+        index += 2;
+        continue;
+      }
+      inString = !inString;
+      index += 1;
+      continue;
+    }
+
+    if (inString) {
+      output += char;
+      index += 1;
+      continue;
+    }
+
+    const rest = sqlText.slice(index);
+    const match = rest.match(functionPattern);
+    const previous = sqlText[index - 1] || '';
+    if (!match || isIdentifierChar(previous)) {
+      output += char;
+      index += 1;
+      continue;
+    }
+
+    const openParen = index + match[0].lastIndexOf('(');
+    let depth = 0;
+    let nestedString = false;
+    let closeParen = -1;
+
+    for (let cursor = openParen; cursor < sqlText.length; cursor += 1) {
+      const cursorChar = sqlText[cursor];
+      if (cursorChar === "'") {
+        if (nestedString && sqlText[cursor + 1] === "'") {
+          cursor += 1;
+          continue;
+        }
+        nestedString = !nestedString;
+        continue;
+      }
+      if (nestedString) continue;
+      if (cursorChar === '(') depth += 1;
+      if (cursorChar === ')') {
+        depth -= 1;
+        if (depth === 0) {
+          closeParen = cursor;
+          break;
+        }
+      }
+    }
+
+    if (closeParen === -1) {
+      output += char;
+      index += 1;
+      continue;
+    }
+
+    const original = sqlText.slice(index, closeParen + 1);
+    const args = splitTopLevelArgs(sqlText.slice(openParen + 1, closeParen));
+    output += replacer(args, original);
+    index = closeParen + 1;
+  }
+
+  return output;
+};
+
+const normalizeConvertType = (typeText) => {
+  const type = String(typeText || '').trim().replace(/\s+/g, ' ');
+  const varcharMatch = type.match(/^N?VARCHAR\s*\(\s*(MAX|\d+)\s*\)$/i);
+  if (varcharMatch) {
+    return `NVARCHAR(${varcharMatch[1].toUpperCase() === 'MAX' ? 5000 : varcharMatch[1]})`;
+  }
+  if (/^N?VARCHAR$/i.test(type)) return 'NVARCHAR(5000)';
+  if (/^INT$/i.test(type)) return 'INTEGER';
+  return type.toUpperCase();
+};
+
+const replaceConvertCalls = (sqlText) =>
+  replaceFunctionCalls(sqlText, 'CONVERT', (args, original) => {
+    if (args.length < 2) return original;
+
+    const targetType = normalizeConvertType(args[0]);
+    const expression = replaceConvertCalls(args[1]);
+    const style = String(args[2] || '').trim();
+
+    if (style === '23') {
+      return `TO_VARCHAR(CAST(${expression} AS DATE), 'YYYY-MM-DD')`;
+    }
+    if (style === '103') {
+      return `TO_VARCHAR(CAST(${expression} AS DATE), 'DD/MM/YYYY')`;
+    }
+
+    return `CAST(${expression} AS ${targetType})`;
+  });
+
+const replaceDateDiffCalls = (sqlText) =>
+  replaceFunctionCalls(sqlText, 'DATEDIFF', (args, original) => {
+    if (args.length < 3) return original;
+
+    const unit = String(args[0] || '').trim().toUpperCase();
+    if (unit !== 'DAY' && unit !== 'DD' && unit !== 'D') return original;
+
+    return `DAYS_BETWEEN(${args[1]}, ${args[2]})`;
+  });
+
+const replaceDatePartCalls = (sqlText) =>
+  replaceFunctionCalls(sqlText, 'DATEPART', (args, original) => {
+    if (args.length < 2) return original;
+
+    const unit = String(args[0] || '').trim().toUpperCase();
+    const expression = args[1];
+    if (['YEAR', 'YYYY', 'YY'].includes(unit)) return `YEAR(${expression})`;
+    if (['QUARTER', 'QQ', 'Q'].includes(unit)) return `QUARTER(${expression})`;
+    if (['MONTH', 'MM', 'M'].includes(unit)) return `MONTH(${expression})`;
+    if (['WEEK', 'WK', 'WW'].includes(unit)) return `WEEK(${expression})`;
+    if (['DAY', 'DD', 'D'].includes(unit)) return `DAYOFMONTH(${expression})`;
+
+    return original;
+  });
+
 const buildNestedConcat = (args) => {
   const normalizedArgs = args.map((arg) => replaceConcatCalls(arg));
   if (normalizedArgs.length <= 2) return `CONCAT(${normalizedArgs.join(', ')})`;
@@ -410,13 +541,14 @@ const normalizeSql = (sqlText) => {
     .replace(/\bSYSUTCDATETIME\s*\(\s*\)/gi, 'CURRENT_TIMESTAMP')
     .replace(/\bGETDATE\s*\(\s*\)/gi, 'CURRENT_TIMESTAMP')
     .replace(/\bCONVERT\s*\(\s*date\s*,\s*CURRENT_TIMESTAMP\s*\)/gi, 'CURRENT_DATE')
-    .replace(/\bDATEDIFF\s*\(\s*DAY\s*,\s*([^,]+?)\s*,\s*CURRENT_TIMESTAMP\s*\)/gi, 'DAYS_BETWEEN($1, CURRENT_DATE)')
     .replace(/\bISNULL\s*\(/gi, 'IFNULL(')
     .replace(/\bLEN\s*\(/gi, 'LENGTH(')
-    .replace(/\bOFFSET\s+(@[A-Za-z_][A-Za-z0-9_]*|\d+)\s+ROWS\s+FETCH\s+NEXT\s+(@[A-Za-z_][A-Za-z0-9_]*|\d+)\s+ROWS\s+ONLY/gi, 'LIMIT $2 OFFSET $1')
-    .replace(/\bCONVERT\s*\(\s*VARCHAR\s*\(\s*10\s*\)\s*,\s*([^)]+?)\s*,\s*23\s*\)/gi, "TO_VARCHAR($1, 'YYYY-MM-DD')");
+    .replace(/\bOFFSET\s+(@[A-Za-z_][A-Za-z0-9_]*|\d+)\s+ROWS\s+FETCH\s+NEXT\s+(@[A-Za-z_][A-Za-z0-9_]*|\d+)\s+ROWS\s+ONLY/gi, 'LIMIT $2 OFFSET $1');
 
   sql = replaceInformationSchemaViews(sql);
+  sql = replaceConvertCalls(sql);
+  sql = replaceDateDiffCalls(sql);
+  sql = replaceDatePartCalls(sql);
   sql = replaceConcatCalls(sql);
   sql = replaceIsNumericCalls(sql);
   sql = applyTopLimit(sql);

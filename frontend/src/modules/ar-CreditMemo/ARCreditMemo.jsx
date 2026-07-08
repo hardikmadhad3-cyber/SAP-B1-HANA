@@ -20,6 +20,7 @@ import LineValueLookupModal from '../../components/sales-document/LineValueLooku
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
 import CopyToModal from './components/CopyToModal';
@@ -959,6 +960,13 @@ function ARCreditMemo() {
   };
 
   const totals = calcTotals();
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 14,
+    docEntry: currentDocEntry,
+    header,
+    total: totals.total,
+  });
 
   // Continue in next part...
 
