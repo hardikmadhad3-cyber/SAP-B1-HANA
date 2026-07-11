@@ -8,6 +8,7 @@ const env = require('../config/env');
 const hanaDb = require('../db/hanaDb');
 const { getRequestContext } = require('./requestContextService');
 const { getActiveCompanyConfig, splitSqlServerName } = require('./companyConfigService');
+const { withDatabaseSlot } = require('./safetyControls');
 
 const buildConfig = (connectionConfig) => {
   const sqlServer = splitSqlServerName(connectionConfig.server, connectionConfig.instanceName);
@@ -110,22 +111,24 @@ const getPool = async (connectionConfig) => {
 
 const query = async (queryStr, params = {}, options = {}) => {
   const connectionConfig = await resolveSqlConnectionConfig(options);
-  if (connectionConfig.dialect === 'hana') {
-    return hanaDb.query(queryStr, params, {
-      ...options,
-      connectionConfig,
-      database: connectionConfig.database,
-    });
-  }
+  return withDatabaseSlot(queryStr, async () => {
+    if (connectionConfig.dialect === 'hana') {
+      return hanaDb.query(queryStr, params, {
+        ...options,
+        connectionConfig,
+        database: connectionConfig.database,
+      });
+    }
 
-  const pool = await getPool(connectionConfig);
-  const req = pool.request();
+    const pool = await getPool(connectionConfig);
+    const req = pool.request();
 
-  for (const [key, value] of Object.entries(params)) {
-    req.input(key, value);
-  }
+    for (const [key, value] of Object.entries(params)) {
+      req.input(key, value);
+    }
 
-  return req.query(queryStr);
+    return req.query(queryStr);
+  });
 };
 
 const getDialect = async (options = {}) => {

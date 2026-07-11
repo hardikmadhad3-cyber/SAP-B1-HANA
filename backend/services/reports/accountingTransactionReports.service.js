@@ -152,7 +152,7 @@ const getReport = async (reportKey, criteria = {}) => {
       : { debit: "ISNULL(L.Debit, 0)", credit: "ISNULL(L.Credit, 0)" };
 
   const rows = await rowsOf(`
-    SELECT TOP 20000
+    SELECT TOP 5000
       H.TransId, L.Line_ID AS LineId, H.RefDate AS PostingDate, L.DueDate, L.TaxDate AS DocumentDate,
       ISNULL(H.Series, 0) AS SeriesCode, ISNULL(S.SeriesName, '') AS SeriesName,
       ISNULL(H.Number, H.TransId) AS JournalNumber, ISNULL(H.TransType, 30) AS TransType,

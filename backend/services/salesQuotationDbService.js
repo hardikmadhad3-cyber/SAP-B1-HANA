@@ -676,7 +676,7 @@ const getContactsByCustomer = async (cardCode) => {
 };
 
 const getAddressesByCustomer = (cardCode) => safe(db.query(`
-  SELECT CardCode, AdresType, Address,
+  SELECT CRD1.*, CardCode, AdresType, Address,
          Street, StreetNo, Block, Building,
          Address2, Address3,
          City, County, State, ZipCode, Country

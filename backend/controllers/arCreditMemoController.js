@@ -95,7 +95,7 @@ const getARCreditMemo = async (req, res) => {
     const data = await arCreditMemoService.getARCreditMemo(req.params.docEntry);
     res.json(data);
   } catch (error) {
-    res.status(500).json(getErrorPayload(error, 'Failed to load AR credit memo details.'));
+    res.status(error.status || 500).json(getErrorPayload(error, 'Failed to load AR credit memo details.'));
   }
 };
 
@@ -222,7 +222,7 @@ module.exports = {
   // getDeliveryForCopy:      async (req, res) => { try { res.json(await arCreditMemoService.getDeliveryForCopy(req.params.docEntry)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
   getOpenARInvoices:       async (req, res) => { try { const { customerCode } = req.query; res.json(await arCreditMemoService.getOpenARInvoices(customerCode)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
   getARInvoiceForCopy:     async (req, res) => { try { res.json(await arCreditMemoService.getARInvoiceForCopy(req.params.docEntry)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
-  getARCreditMemoForCopy:  async (req, res) => { try { res.json(await arCreditMemoService.getARCreditMemoForCopy(req.params.docEntry)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
+  getARCreditMemoForCopy:  async (req, res) => { try { res.json(await arCreditMemoService.getARCreditMemoForCopy(req.params.docEntry)); } catch(e) { res.status(e.status || 500).json(getErrorPayload(e, 'Failed.')); } },
   // getOpenSalesOrders:      async (req, res) => { try { res.json(await arCreditMemoService.getOpenSalesOrders()); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
   // getSalesOrderForCopy:    async (req, res) => { try { res.json(await arCreditMemoService.getSalesOrderForCopy(req.params.docEntry)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },
   // getOpenReturns:          async (req, res) => { try { const { customerCode } = req.query; res.json(await arCreditMemoService.getOpenReturns(customerCode)); } catch(e) { res.status(500).json(getErrorPayload(e, 'Failed.')); } },

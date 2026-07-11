@@ -12,6 +12,7 @@ import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import AddressModal from './components/AddressModal';
+import { mapAddressFields } from '../../utils/documentAddress';
 import EWayBillModal from './components/EWayBillModal';
 import TaxInfoModal from './components/TaxInfoModal';
 import StateSelectionModal from './components/StateSelectionModal';
@@ -103,17 +104,24 @@ const mapAddressToModalForm = (address, existing = {}) => ({
     billToAddress: existing.billToAddress || '',
     streetPoBox: address?.Street || '',
     streetNo: address?.StreetNo || '',
-    buildingFloorRoom: address?.Building || '',
+    buildingFloorRoom: address?.BuildingFloorRoom || address?.Building || '',
     block: address?.Block || '',
     city: address?.City || '',
     zipCode: address?.ZipCode || '',
     county: address?.County || '',
     state: address?.State || '',
     countryRegion: address?.Country || '',
-    addressName2: address?.Address2 || '',
-    addressName3: address?.Address3 || '',
-    gln: address?.GLN || '',
-    gstin: address?.GSTIN || '',
+    addressName2: address?.AddressName2 || address?.Address2 || '',
+    addressName3: address?.AddressName3 || address?.Address3 || '',
+    gln: address?.GlobalLocationNumber || address?.GlblLocNum || address?.GLN || '',
+    erpAddress: address?.U_ERPAddress || address?.U_ERP_Address || address?.ERPAddress || '',
+    contactPerson: address?.U_ContactPerson || address?.U_CONTACT_PERSON || address?.ContactPerson || '',
+    mobile: address?.U_Mobile || address?.U_MOBILE || address?.Mobile || address?.MobilePhone || '',
+    dateOfRegistration: address?.U_DateOfRegistration || address?.U_Date_Of_Registration || address?.DateOfRegistration || '',
+    dateDetailsOfRegistration: address?.U_DateDetlOfReg || address?.U_Date_Detl_Of_Reg || address?.DateDetlOfReg || '',
+    addressStatus: address?.U_Status || address?.AddressStatus || address?.Status || '',
+    gstin: address?.GSTRegnNo || address?.GSTIN || address?.U_GSTIN_No || address?.U_GSTINNo || '',
+    ...mapAddressFields(address),
 });
 const normalizeAddressText = (value) =>
     String(value || '')

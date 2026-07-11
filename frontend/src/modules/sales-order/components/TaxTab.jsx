@@ -1,75 +1,88 @@
 import React from 'react';
 
-export default function TaxTab({ onOpenTaxInfoModal }) {
+const ensureSavedOption = (options, value) => {
+  const normalized = String(value || '');
+  if (!normalized || options.some((option) => String(option.value) === normalized)) return options;
+  return [...options, { value: normalized, label: normalized }];
+};
+
+export default function TaxTab({
+  header,
+  onHeaderChange,
+  onOpenTaxInfoModal,
+  isEditable = true,
+}) {
+  const transactionOptions = ensureSavedOption([
+    { value: 'B2B', label: 'B2B' },
+    { value: 'B2C', label: 'B2C' },
+    { value: 'SEZ', label: 'SEZ' },
+    { value: 'EXP', label: 'Export' },
+  ], header.transactionCategory);
+  const dutyOptions = ensureSavedOption([
+    { value: 'Y', label: 'With Payment of Duty' },
+    { value: 'N', label: 'Without Payment of Duty' },
+  ], header.dutyStatus);
+
   return (
-    <div className="so-tab-panel">
-      <div className="so-field-grid">
-        {/* Tax Information Button */}
-        <div className="so-field" style={{ gridColumn: '1 / -1' }}>
-          <label className="so-field__label"></label>
-          <div style={{ flex: 1 }}>
-            <button type="button" className="so-btn so-btn--primary" onClick={onOpenTaxInfoModal}>
-              Tax Information
-            </button>
+    <div className="sap-tab-panel so-tab-panel so-tax-panel">
+      <div className="sap-tab-grid">
+        <div className="sap-tab-column">
+          <div className="sap-section-heading-row">
+            <div className="sap-section-title">Tax Information</div>
+            <button type="button" className="so-btn so-btn--primary so-tax-info-btn" onClick={onOpenTaxInfoModal} disabled={!isEditable}>...</button>
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-tax-label">Transaction Category</label>
+            <select className="so-field__select" name="transactionCategory" value={header.transactionCategory || ''} onChange={onHeaderChange} disabled={!isEditable}>
+              <option value=""></option>
+              {transactionOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-tax-label">Form No.</label>
+            <input className="so-field__input" name="taxFormNo" value={header.taxFormNo || ''} onChange={onHeaderChange} disabled={!isEditable} />
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-tax-label">Duty Status</label>
+            <select className="so-field__select" name="dutyStatus" value={header.dutyStatus || 'Y'} onChange={onHeaderChange} disabled={!isEditable}>
+              {dutyOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
           </div>
         </div>
 
-        {/* Transaction Category */}
-        <div className="so-field">
-          <label className="so-field__label">Transaction Category</label>
-          <select className="so-field__select">
-            <option value="">— Select —</option>
-            <option>B2B</option>
-            <option>B2C</option>
-            <option>Export</option>
-            <option>SEZ</option>
-          </select>
-        </div>
+        <div className="sap-tab-column">
+          <div className="sap-section-title">Export</div>
 
-        {/* Form No. */}
-        <div className="so-field">
-          <label className="so-field__label">Form No.</label>
-          <input className="so-field__input" />
-        </div>
+          <div className="sap-form-row">
+            <label className="so-tax-label">Export</label>
+            <label className="sap-checkbox-row">
+              <input type="checkbox" name="exportFlag" checked={Boolean(header.exportFlag)} onChange={onHeaderChange} disabled={!isEditable} />
+              <span>Export</span>
+            </label>
+          </div>
 
-        {/* Duty Status */}
-        <div className="so-field">
-          <label className="so-field__label">Duty Status</label>
-          <select className="so-field__select">
-            <option value="">— Select —</option>
-            <option>With Payment of Duty</option>
-            <option>Without Payment of Duty</option>
-            <option>Exempted</option>
-          </select>
-        </div>
+          <div className="sap-form-row sap-form-row--full">
+            <label className="sap-checkbox-row">
+              <input type="checkbox" name="supplyCovered" checked={header.supplyCovered !== false} onChange={onHeaderChange} disabled={!isEditable} />
+              <span>Supply Covered under Sec 7 of IGST Act</span>
+            </label>
+          </div>
 
-        {/* Differential % of Tax Rate */}
-        <div className="so-field">
-          <label className="so-field__label">Differential % of Tax Rate</label>
-          <select className="so-field__select">
-            <option value="100">100</option>
-            <option value="75">75</option>
-            <option value="50">50</option>
-            <option value="25">25</option>
-          </select>
-        </div>
-
-        {/* Export Checkbox */}
-        <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 0' }}>
-          <span style={{ width: '110px' }}></span>
-          <input type="checkbox" id="exportCheck" style={{ cursor: 'pointer' }} />
-          <label htmlFor="exportCheck" style={{ cursor: 'pointer', margin: 0, fontSize: 12 }}>
-            Export
-          </label>
-        </div>
-
-        {/* Supply Covered under Sec 2 of IGST Act Checkbox */}
-        <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 0' }}>
-          <span style={{ width: '110px' }}></span>
-          <input type="checkbox" id="supplyCoveredCheck" style={{ cursor: 'pointer' }} />
-          <label htmlFor="supplyCoveredCheck" style={{ cursor: 'pointer', margin: 0, fontSize: 12 }}>
-            Supply Covered under Sec 2 of IGST Act
-          </label>
+          <div className="sap-form-row">
+            <label className="so-tax-label">Differential % of Tax Rate</label>
+            <select className="so-field__select" name="differentialTaxRate" value={header.differentialTaxRate || '100'} onChange={onHeaderChange} disabled={!isEditable}>
+              {[100, 75, 50, 25].map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
     </div>

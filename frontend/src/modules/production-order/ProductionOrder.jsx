@@ -14,6 +14,7 @@ import {
   closeProductionOrder,
   explodeBOM,
   fetchProdOrderItems,
+  fetchProdOrderFinishItems,
   fetchProdOrderComponentItems,
   fetchProdOrderWarehouses,
   fetchProdOrderDistributionRules,
@@ -226,7 +227,14 @@ export default function ProductionOrderModule() {
       ...prev,
       [name]: nextValue,
       ...(name === "linked_to" ? { linked_order: "", linked_order_entry: "" } : {}),
+      ...(name === "type" && mode === MODES.ADD
+        ? { item_code: "", item_name: "", uom_name: "", warehouse: "" }
+        : {}),
     }));
+
+    if (name === "type" && mode === MODES.ADD) {
+      setLines([EMPTY_LINE()]);
+    }
     
     // When planned_qty changes, recalculate all component planned quantities
     if (name === 'planned_qty') {
@@ -256,8 +264,9 @@ export default function ProductionOrderModule() {
     setItemModal({ open: false, target: null });
     
     if (target === "header") {
-      const selectedItemCode = item.ItemCode || item.TreeCode || item.Code || "";
-      const selectedItemName = item.ItemName || item.ProductDescription || item.Name || "";
+      const isSpecialOrder = header.type === "bopotSpecial";
+      const selectedItemCode = item.ItemNo || item.ItemCode || item.TreeCode || item.Code || "";
+      const selectedItemName = item.ItemDescription || item.ItemName || item.ProductDescription || item.Name || "";
       const selectedWarehouse = item.BOMWarehouse || item.Warehouse || item.DefaultWarehouse || "";
       const selectedUom = item.UoMName || item.InventoryUOM || item.InventoryUOMName || "";
 
@@ -268,6 +277,12 @@ export default function ProductionOrderModule() {
         uom_name: selectedUom || prev.uom_name,
         warehouse: selectedWarehouse || prev.warehouse,
       }));
+
+      if (isSpecialOrder) {
+        setLines((prev) => (prev.length ? prev : [EMPTY_LINE()]));
+        showAlert("success", `Item selected: ${selectedItemCode}`);
+        return;
+      }
       
       // Automatically explode BOM for the selected item
       try {
@@ -341,7 +356,7 @@ export default function ProductionOrderModule() {
         )
       );
     }
-  }, [itemModal, header.planned_qty, lines, showAlert]);
+  }, [itemModal, header.planned_qty, header.type, lines, showAlert]);
 
   // ── Customer selected from modal ───────────────────────────────────────────
   const handleCustomerSelect = useCallback((customer) => {
@@ -379,11 +394,26 @@ export default function ProductionOrderModule() {
               ...l,
               component_type: value,
               item_code: "",
+              item_name: "",
               uom: "",
+              uom_code: "",
+              uom_name: "",
+              warehouse: "",
               issue_method: "im_Manual",
             };
           }
-          return { ...l, component_type: value };
+          return {
+            ...l,
+            component_type: value,
+            item_code: "",
+            item_name: "",
+            line_text: "",
+            uom: "",
+            uom_code: "",
+            uom_name: "",
+            warehouse: "",
+            issue_method: "im_Manual",
+          };
         }
         return { ...l, [field]: value };
       })
@@ -627,6 +657,7 @@ export default function ProductionOrderModule() {
   };
 
   const isReadOnly = header.status === "boposClosed" || header.status === "boposCancelled";
+  const isSpecialType = header.type === "bopotSpecial";
   const statusKey  = STATUS_LABELS[header.status] || header.status;
   const canEditStatus = mode === MODES.UPDATE && !isReadOnly;
   const componentCount = lines.filter((line) => line.item_code || line.line_text).length;
@@ -643,6 +674,41 @@ export default function ProductionOrderModule() {
     return String(Math.floor(diffMs / 86400000));
   })();
   const totalRunTime = formatSummaryNumber(componentCount);
+  const itemModalLine = itemModal.target === "header"
+    ? null
+    : lines.find((line) => line._id === itemModal.target);
+  const isResourceItemModal = itemModalLine?.component_type === "pit_Resource";
+  const itemModalTitle = itemModal.target === "header"
+    ? (isSpecialType ? "List of Items" : "List of Bill of Materials")
+    : isResourceItemModal
+      ? "Resource Search"
+      : "Component Search";
+  const itemModalFetchItems = itemModal.target === "header"
+    ? (isSpecialType ? fetchProdOrderFinishItems : fetchProdOrderItems)
+    : isResourceItemModal
+      ? fetchProdOrderResources
+      : fetchProdOrderComponentItems;
+  const itemModalColumns = itemModal.target === "header"
+    ? isSpecialType
+      ? [
+          { key: "ItemDescription", label: "Item Description" },
+          { key: "ItemNo", label: "Item No." },
+          { key: "InStock", label: "In Stock", className: "im-lookup-table__num", render: (value) => Number(value || 0).toFixed(2) },
+          { key: "ItemGroup", label: "Item Group" },
+        ]
+      : [
+          { key: "ItemCode", label: "Item No." },
+          { key: "ItemName", label: "Item Description" },
+          { key: "InStock", label: "In Stock", className: "im-lookup-table__num", render: (value) => Number(value || 0).toFixed(2) },
+        ]
+    : isResourceItemModal
+      ? [
+          { key: "Code", label: "Resource Code" },
+          { key: "Name", label: "Resource Name" },
+          { key: "DefaultWarehouse", label: "Whse" },
+          { key: "IssueMethod", label: "Issue Method" },
+        ]
+      : undefined;
 
   // ── List view ──────────────────────────────────────────────────────────────
   if (mode === MODES.LIST) {
@@ -712,9 +778,9 @@ export default function ProductionOrderModule() {
               <label className="im-field__label po-lbl">Product No.</label>
               <div className="im-lookup-wrap">
                 <input className="im-field__input" name="item_code" value={header.item_code}
-                  onChange={handleHeaderChange} readOnly={mode === MODES.UPDATE}
+                  onChange={handleHeaderChange} readOnly={mode === MODES.UPDATE || isSpecialType}
                   style={{ width: 130 }} autoFocus />
-                {mode !== MODES.UPDATE && (
+                {mode !== MODES.UPDATE && !isSpecialType && (
                   <button className="im-lookup-btn" onClick={() => setItemModal({ open: true, target: "header" })}>…</button>
                 )}
               </div>
@@ -722,8 +788,16 @@ export default function ProductionOrderModule() {
 
             <div className="im-field">
               <label className="im-field__label po-lbl">Product Description</label>
-              <input className="im-field__input" name="item_name" value={header.item_name}
-                onChange={handleHeaderChange} style={{ flex: 1 }} />
+              {isSpecialType && mode !== MODES.UPDATE ? (
+                <div className="im-lookup-wrap" style={{ flex: 1 }}>
+                  <input className="im-field__input" name="item_name" value={header.item_name}
+                    onChange={handleHeaderChange} style={{ flex: 1 }} />
+                  <button className="im-lookup-btn" onClick={() => setItemModal({ open: true, target: "header" })}>…</button>
+                </div>
+              ) : (
+                <input className="im-field__input" name="item_name" value={header.item_name}
+                  onChange={handleHeaderChange} style={{ flex: 1 }} />
+              )}
             </div>
 
             <div className="im-field">
@@ -1088,39 +1162,11 @@ export default function ProductionOrderModule() {
         <ItemSearchModal
           onSelect={handleItemSelect}
           onClose={() => setItemModal({ open: false, target: null })}
-          title={
-            itemModal.target === "header"
-              ? "List of Bill of Materials"
-              : lines.find((line) => line._id === itemModal.target)?.component_type === "pit_Resource"
-                ? "Resource Search"
-                : "Component Search"
-          }
-          fetchItems={
-            itemModal.target === "header"
-              ? fetchProdOrderItems
-              : lines.find((line) => line._id === itemModal.target)?.component_type === "pit_Resource"
-                ? fetchProdOrderResources
-                : fetchProdOrderComponentItems
-          }
+          title={itemModalTitle}
+          fetchItems={itemModalFetchItems}
           autoSearchOnOpen
           emptyMessage={itemModal.target === "header" ? "" : "No items found."}
-          columns={
-            itemModal.target === "header"
-              ? [
-                  { key: "ItemCode", label: "Item No." },
-                  { key: "ItemName", label: "Item Description" },
-                  { key: "InStock", label: "In Stock", render: (value) => Number(value || 0).toFixed(2) },
-                ]
-              : itemModal.target !== "header" &&
-                lines.find((line) => line._id === itemModal.target)?.component_type === "pit_Resource"
-              ? [
-                  { key: "Code", label: "Resource Code" },
-                  { key: "Name", label: "Resource Name" },
-                  { key: "DefaultWarehouse", label: "Whse" },
-                  { key: "IssueMethod", label: "Issue Method" },
-                ]
-              : undefined
-          }
+          columns={itemModalColumns}
         />
       )}
 

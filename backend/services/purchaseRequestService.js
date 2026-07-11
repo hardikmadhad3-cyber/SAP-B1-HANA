@@ -145,7 +145,7 @@ const getVendorDetails = async (vendorCode) => {
     ),
     safeQuery(
       `
-        SELECT
+        SELECT T0.*,
           T0.CardCode,
           T0.Address,
           T0.AdresType,

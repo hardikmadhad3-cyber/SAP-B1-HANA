@@ -22,7 +22,12 @@ module.exports = {
     "Failed to load incoming payment reference data.",
   ),
   searchBusinessPartners: handle(
-    (req) => incomingPaymentsService.searchBusinessPartners(req.query.query || "", req.query.bpType || "Customer"),
+    (req) => incomingPaymentsService.searchBusinessPartners(
+      req.query.query || "",
+      req.query.bpType || "Customer",
+      req.query.page,
+      req.query.pageSize,
+    ),
     "Failed to search business partners.",
   ),
   lookupControlAccounts: handle(

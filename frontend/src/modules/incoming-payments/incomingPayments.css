@@ -1006,6 +1006,15 @@
   background: #f0f2f5;
 }
 
+.ip-lookup-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  font-size: 11px;
+  color: #44515e;
+}
+
 @media (max-width: 1120px) {
   .sap-header-area,
   .sap-footer-area {

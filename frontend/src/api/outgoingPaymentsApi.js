@@ -5,8 +5,8 @@ const BASE = "/outgoing-payments";
 export const fetchOutgoingPaymentReferenceData = () =>
   apiClient.get(`${BASE}/reference-data`).then((response) => response.data);
 
-export const searchOutgoingPaymentBusinessPartners = (query = "", bpType = "Vendor") =>
-  apiClient.get(`${BASE}/business-partners`, { params: { query, bpType } }).then((response) => response.data);
+export const searchOutgoingPaymentBusinessPartners = (query = "", bpType = "Vendor", page = 1, pageSize = 100) =>
+  apiClient.get(`${BASE}/business-partners`, { params: { query, bpType, page, pageSize } }).then((response) => response.data);
 
 export const searchOutgoingPayments = (query = "") =>
   apiClient.get(`${BASE}/documents`, { params: { query } }).then((response) => response.data);

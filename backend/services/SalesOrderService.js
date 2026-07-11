@@ -366,12 +366,28 @@ const hasLineDiscountValue = (line = {}) => [
   line.DiscPrcnt,
 ].some(hasValue);
 
+const getLineForRate = (line = {}) => (
+  line.forRate ??
+  line.ForRate ??
+  line.FORRate ??
+  line.U_ForRate ??
+  line.U_FORRATE ??
+  line.U_FOR_RATE ??
+  line.udf?.U_ForRate ??
+  line.udf?.U_FORRATE ??
+  line.udf?.U_FOR_RATE
+);
+
 const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
   { sapField: 'U_COMPRC', getValue: (line) => line.commission },
   { sapField: 'U_S_BrokPerQty', getValue: (line) => line.sellerBrokeragePerQty },
   { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf },
   { sapField: 'U_Rate', getValue: (line) => (hasLineDiscountValue(line) ? getLineDiscountAmount(line) : undefined) },
+  { sapField: 'U_ForRate', getValue: getLineForRate },
+  { sapField: 'U_FORRATE', getValue: getLineForRate },
+  { sapField: 'U_FOR_RATE', getValue: getLineForRate },
+  { sapField: 'U_For_Rate', getValue: getLineForRate },
   { sapField: 'U_Brok_Seller', getValue: (line) => line.sellerBrokerage },
   { sapField: 'U_Brok_Buyer', getValue: (line) => line.buyerBrokerage },
   { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
@@ -446,6 +462,62 @@ const setOptionalNumber = (target, field, value) => {
   }
 };
 
+const firstAllowedUdfKey = (allowedHeaderUdfKeys = new Set(), aliases = []) => {
+  const allowedKeys = Array.from(allowedHeaderUdfKeys || []);
+  for (const alias of aliases) {
+    if (allowedHeaderUdfKeys.has(alias)) return alias;
+
+    const normalizedAlias = compactSapUdfFieldName(alias);
+    const matchedKey = allowedKeys.find((key) => compactSapUdfFieldName(key) === normalizedAlias);
+    if (matchedKey) return matchedKey;
+  }
+  return '';
+};
+
+const setOptionalHeaderUdf = (target, allowedHeaderUdfKeys, aliases, value) => {
+  const field = firstAllowedUdfKey(allowedHeaderUdfKeys, aliases);
+  if (!field || !hasValue(value)) return;
+  target[field] = value;
+};
+
+const buildSalesOrderTaxHeaderUdfs = (header = {}, allowedHeaderUdfKeys = new Set()) => {
+  const values = {};
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_TransCat', 'U_TransactionCategory'], header.transactionCategory);
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_FormNo', 'U_TaxFormNo'], header.taxFormNo);
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_DutyStatus'], header.dutyStatus);
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_Export', 'U_IsExport', 'U_Exported'], header.exportFlag ? 'Y' : 'N');
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_DiffPercent', 'U_DifferentialTaxRate', 'U_DiffTaxRate'], header.differentialTaxRate || '100');
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_SupplySec7', 'U_SupplUnSec', 'U_SupplyCovered'], header.supplyCovered === false ? 'N' : 'Y');
+  return values;
+};
+
+const SALES_ORDER_TAX_INFO_UDF_ALIASES = {
+  panNo: ['U_PANNo', 'U_PAN_No', 'U_PAN'],
+  panCircleNo: ['U_PANCircleNo', 'U_PAN_Circle_No'],
+  panWardNo: ['U_PANWardNo', 'U_PAN_Ward_No'],
+  panAssessingOfficer: ['U_PANAssessingOfficer', 'U_PAN_Assessing_Officer'],
+  deducteeRefNo: ['U_DeducteeRefNo', 'U_Deductee_Ref_No'],
+  lstVatNo: ['U_LSTVATNo', 'U_LST_VAT_No', 'U_LSTVAT'],
+  cstNo: ['U_CSTNo', 'U_CST_No'],
+  tanNo: ['U_TANNo', 'U_TAN_No'],
+  serviceTaxNo: ['U_ServiceTaxNo', 'U_Service_Tax_No'],
+  companyType: ['U_CompanyType', 'U_Company_Type'],
+  natureOfBusiness: ['U_NatureOfBusiness', 'U_Nature_Business'],
+  assesseeType: ['U_AssesseeType', 'U_Assessee_Type'],
+  tinNo: ['U_TINNo', 'U_TIN_No'],
+  itrFiling: ['U_ITRFiling', 'U_ITR_Filing'],
+  gstType: ['U_GSTType', 'U_GST_Type'],
+  gstin: ['U_GSTIN', 'U_GSTINNo', 'U_GSTIN_No'],
+};
+
+const buildSalesOrderTaxInfoHeaderUdfs = (taxInfo = {}, allowedHeaderUdfKeys = new Set()) => {
+  const values = {};
+  Object.entries(SALES_ORDER_TAX_INFO_UDF_ALIASES).forEach(([key, aliases]) => {
+    setOptionalHeaderUdf(values, allowedHeaderUdfKeys, aliases, taxInfo[key]);
+  });
+  return values;
+};
+
 const coerceValueForSqlType = (value, sqlDataType) => {
   if (!hasValue(value)) return undefined;
 
@@ -462,25 +534,33 @@ const coerceValueForSqlType = (value, sqlDataType) => {
   return String(value).trim();
 };
 
+const resolveMetadataFieldName = (fieldMetadata = {}, fieldName) => {
+  if (fieldMetadata?.[fieldName]) return fieldName;
+  const normalizedFieldName = compactSapUdfFieldName(fieldName);
+  return Object.keys(fieldMetadata || {}).find((candidate) => compactSapUdfFieldName(candidate) === normalizedFieldName) || '';
+};
+
 const setValidatedRdr1Field = (target, fieldMetadata, fieldName, value) => {
-  const sqlDataType = fieldMetadata?.[fieldName];
+  const resolvedFieldName = resolveMetadataFieldName(fieldMetadata, fieldName);
+  const sqlDataType = fieldMetadata?.[resolvedFieldName];
   if (!sqlDataType) return;
 
   const coercedValue = coerceValueForSqlType(value, sqlDataType);
   if (coercedValue !== undefined) {
-    target[fieldName] = coercedValue;
+    target[resolvedFieldName] = coercedValue;
   }
 };
 
 const setValidatedRdr1Udf = (target, fieldMetadata, fieldName, value) => {
-  if (!fieldMetadata?.[fieldName]) return;
+  const resolvedFieldName = resolveMetadataFieldName(fieldMetadata, fieldName);
+  if (!resolvedFieldName) return;
 
   if (isBlankUdfValue(value)) {
-    target[fieldName] = null;
+    target[resolvedFieldName] = null;
     return;
   }
 
-  setValidatedRdr1Field(target, fieldMetadata, fieldName, value);
+  setValidatedRdr1Field(target, fieldMetadata, resolvedFieldName, value);
 };
 
 const buildDocumentLinePayload = async (line = {}, context = {}) => {
@@ -769,6 +849,7 @@ const getReferenceData = async (companyId) => {
       warehouses: [],
       warehouse_addresses: [],
       payment_terms: [],
+      payment_methods: [],
       shipping_types: [],
       branches: [],
       branches_enabled: false,
@@ -1020,6 +1101,7 @@ const submitSalesOrder = async (payload) => {
     // STEP 5: Extract Remarks and Freight
     // ═══════════════════════════════════════════════════════════════
     const Remarks = payload.header.otherInstruction || payload.header.remarks || '';
+    const JournalRemark = payload.header.journalRemark || '';
     const Freight = payload.header.freight ? Number(payload.header.freight) : 0;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const documentLines = await buildDocumentLinesPayload(payload.lines);
@@ -1064,6 +1146,8 @@ const submitSalesOrder = async (payload) => {
       } : {}),
 
       PaymentGroupCode: payload.header.paymentTerms ? Number(payload.header.paymentTerms) : undefined,
+      ...(payload.header.paymentMethod ? { PaymentMethod: payload.header.paymentMethod } : {}),
+      ...(JournalRemark ? { JournalMemo: JournalRemark } : {}),
 
       // ✅ Add Sales Employee if present (converted from name to code)
       ...(SlpCode !== null && SlpCode !== undefined ? { SalesPersonCode: SlpCode } : {}),
@@ -1091,7 +1175,11 @@ const submitSalesOrder = async (payload) => {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, allowedHeaderUdfKeys, headerUdfDefinitionsByKey));
+    Object.assign(sapPayload, normalizeUdfValues({
+      ...(payload.header_udfs || {}),
+      ...buildSalesOrderTaxHeaderUdfs(payload.header, allowedHeaderUdfKeys),
+      ...buildSalesOrderTaxInfoHeaderUdfs(payload.tax_info || payload.taxInfoForm || {}, allowedHeaderUdfKeys),
+    }, allowedHeaderUdfKeys, headerUdfDefinitionsByKey));
 
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 SAP PAYLOAD TO BE SENT:");
@@ -1200,6 +1288,7 @@ const updateSalesOrder = async (docEntry, payload) => {
     // STEP 5: Extract Remarks and Freight
     // ═══════════════════════════════════════════════════════════════
     const Remarks = payload.header.otherInstruction || payload.header.remarks || '';
+    const JournalRemark = payload.header.journalRemark || '';
     const Freight = Number(payload.header.freight) || 0;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const documentLines = await buildDocumentLinesPayload(payload.lines, true, {
@@ -1248,6 +1337,8 @@ const updateSalesOrder = async (docEntry, payload) => {
       PaymentGroupCode: payload.header.paymentTerms
         ? Number(payload.header.paymentTerms)
         : undefined,
+      ...(payload.header.paymentMethod ? { PaymentMethod: payload.header.paymentMethod } : {}),
+      ...(JournalRemark ? { JournalMemo: JournalRemark } : {}),
 
       ...(SlpCode !== null && SlpCode !== undefined && { SalesPersonCode: SlpCode }),
       ...(OwnerCode !== null && OwnerCode !== undefined && { DocumentsOwner: OwnerCode }),
@@ -1268,7 +1359,11 @@ const updateSalesOrder = async (docEntry, payload) => {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, allowedHeaderUdfKeys, headerUdfDefinitionsByKey));
+    Object.assign(sapPayload, normalizeUdfValues({
+      ...(payload.header_udfs || {}),
+      ...buildSalesOrderTaxHeaderUdfs(payload.header, allowedHeaderUdfKeys),
+      ...buildSalesOrderTaxInfoHeaderUdfs(payload.tax_info || payload.taxInfoForm || {}, allowedHeaderUdfKeys),
+    }, allowedHeaderUdfKeys, headerUdfDefinitionsByKey));
 
     console.log("🔥 FINAL SAP PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 

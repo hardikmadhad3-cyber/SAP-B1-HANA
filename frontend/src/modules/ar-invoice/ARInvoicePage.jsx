@@ -11,6 +11,7 @@ import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import AddressModal from './components/AddressModal';
+import { mapAddressFields } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
 import StateSelectionModal from '../sales-order/components/StateSelectionModal';
@@ -111,17 +112,24 @@ const mapAddressToModalForm = (address, existing = {}) => ({
   billToAddress: existing.billToAddress || '',
   streetPoBox: address?.Street || '',
   streetNo: address?.StreetNo || '',
-  buildingFloorRoom: address?.Building || '',
+  buildingFloorRoom: address?.BuildingFloorRoom || address?.Building || '',
   block: address?.Block || '',
   city: address?.City || '',
   zipCode: address?.ZipCode || '',
   county: address?.County || '',
   state: address?.State || '',
   countryRegion: address?.Country || '',
-  addressName2: address?.Address2 || '',
-  addressName3: address?.Address3 || '',
-  gln: address?.GLN || '',
-  gstin: address?.GSTIN || '',
+  addressName2: address?.AddressName2 || address?.Address2 || '',
+  addressName3: address?.AddressName3 || address?.Address3 || '',
+  gln: address?.GlobalLocationNumber || address?.GlblLocNum || address?.GLN || '',
+  erpAddress: address?.U_ERPAddress || address?.U_ERP_Address || address?.ERPAddress || '',
+  contactPerson: address?.U_ContactPerson || address?.U_CONTACT_PERSON || address?.ContactPerson || '',
+  mobile: address?.U_Mobile || address?.U_MOBILE || address?.Mobile || address?.MobilePhone || '',
+  dateOfRegistration: address?.U_DateOfRegistration || address?.U_Date_Of_Registration || address?.DateOfRegistration || '',
+  dateDetailsOfRegistration: address?.U_DateDetlOfReg || address?.U_Date_Detl_Of_Reg || address?.DateDetlOfReg || '',
+  addressStatus: address?.U_Status || address?.AddressStatus || address?.Status || '',
+  gstin: address?.GSTRegnNo || address?.GSTIN || address?.U_GSTIN_No || address?.U_GSTINNo || '',
+  ...mapAddressFields(address),
 });
 const normalizeAddressText = (value) =>
   String(value || '')
@@ -2981,41 +2989,33 @@ function ARInvoicePage() {
       )}
 
       <fieldset className="del-fieldset" disabled={!isDocumentEditable} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-      <div className={`so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`}>
-        <div className="so-layout__main">
+      <div className={`sap-document-layout so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ' sap-document-layout--no-udf'}`}>
+        <div className="sap-document-main so-layout__main">
 
             {/* ══ HEADER CARD ══════════════════════════════════════════════ */}
             <div className="del-header-card">
               <div className="row g-2">
                 {/* LEFT COLUMN */}
                 <div className="col-md-6">
-                  <div className="del-field-grid" style={{ gridTemplateColumns: '1fr' }}>
+                  <div className="del-field-grid del-field-grid--single">
                     
                     {/* Customer */}
                     <div className="del-field">
                       <label className="del-field__label">Customer *</label>
-                      <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                      <div className="sap-input-group">
                         <input
                           name="vendor"
-                          className={`so-field__input${valErrors.header.vendor ? ' so-field__input--error' : ''}`}
+                          className={`del-field__input${valErrors.header.vendor ? ' del-field__input--error' : ''}`}
                           value={header.vendor}
                           onChange={handleHeaderChange}
                           disabled={!!currentDocEntry}
                           placeholder="Customer code"
-                          style={{ flex: 1 }}
                         />
                         <button
                           type="button"
-                          className="btn btn-sm"
+                          className="del-btn del-btn--lookup"
                           onClick={openBpModal}
                           disabled={!!currentDocEntry}
-                          style={{
-                            padding: '0 8px',
-                            fontSize: 11,
-                            border: '1px solid #a0aab4',
-                            background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                            minWidth: '28px'
-                          }}
                           title="Select Business Partner"
                         >
                           ...
@@ -3089,27 +3089,19 @@ function ARInvoicePage() {
                     {/* Place of Supply */}
                     <div className="del-field">
                       <label className="del-field__label">Place of Supply *</label>
-                      <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                      <div className="sap-input-group">
                         <input
                           name="placeOfSupply"
-                          className={`so-field__input${valErrors.header.placeOfSupply ? ' so-field__input--error' : ''}`}
+                          className={`del-field__input${valErrors.header.placeOfSupply ? ' del-field__input--error' : ''}`}
                           value={getStateDisplayName(header.placeOfSupply, refData.states)}
                           onChange={handleHeaderChange}
                           placeholder="State code"
-                          style={{ flex: 1 }}
                           disabled={!isDocumentEditable}
                         />
                         <button
                           type="button"
-                          className="btn btn-sm"
+                          className="del-btn del-btn--lookup"
                           onClick={openStateModal}
-                          style={{
-                            padding: '0 8px',
-                            fontSize: 11,
-                            border: '1px solid #a0aab4',
-                            background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                            minWidth: '28px'
-                          }}
                           title="Select State"
                           disabled={!isDocumentEditable}
                         >
@@ -3145,7 +3137,7 @@ function ARInvoicePage() {
 
                 {/* RIGHT COLUMN */}
                 <div className="col-md-6">
-                  <div className="del-field-grid" style={{ gridTemplateColumns: '1fr' }}>
+                  <div className="del-field-grid del-field-grid--single">
 
                     {/* Series */}
                     <div className="del-field">
@@ -3313,7 +3305,7 @@ function ARInvoicePage() {
 
             {/* ══ TOTALS FOOTER ═════════════════════════════════════════════ */}
             <div className="del-header-card">
-              <div className="del-field-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div className="del-field-grid del-field-grid--summary">
                 <div>
                   <div className="del-field">
                     <label className="del-field__label">Sales Employee</label>
@@ -3503,7 +3495,7 @@ function ARInvoicePage() {
           </div>{/* end main col */}
 
           <HeaderUdfSidebar
-            className="so-layout__sidebar"
+            className="sap-header-udf-panel so-layout__sidebar"
             isOpen={sidebarOpen}
             fields={visHdrUdfs}
             formSettings={formSettings}
@@ -3514,7 +3506,7 @@ function ARInvoicePage() {
           />
           <FormSettingsPanel
             variant="sidebar"
-            className="so-layout__sidebar"
+            className="sap-header-udf-panel so-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={matrixColumnDefinitions}

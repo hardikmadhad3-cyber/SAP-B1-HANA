@@ -96,12 +96,18 @@ export default function ContentsTab({
   const standardColumns = hasLiveMatrixFields
     ? matrixFields
         .map((field) => {
+          const standardColumn = standardColumnByKey.get(field.key);
+          const isUdfColumn = standardColumn ? Boolean(standardColumn.isUdf) : Boolean(field.isUdf);
+          const mergedColumn = {
+            ...(standardColumn || {}),
+            ...field,
+            isUdf: isUdfColumn,
+          };
           const fallbackOrder = standardColumnOrderByKey.get(field.key) || 90000;
           return {
-            ...(standardColumnByKey.get(field.key) || {}),
-            ...field,
+            ...mergedColumn,
             order: Number.isFinite(Number(field.order)) ? Number(field.order) : fallbackOrder,
-            field: getColumnUdfField(field),
+            field: getColumnUdfField(mergedColumn),
           };
         })
         .filter((column) => column.key)
@@ -508,7 +514,7 @@ export default function ContentsTab({
   };
 
   return (
-    <div className="del-tab-panel" style={{ overflow: 'visible', minWidth: 0, maxWidth: 'none' }}>
+    <div className="sap-tab-panel del-tab-panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
         <div className="del-section-title" style={{ margin: 0 }}>Document Lines</div>
         <button type="button" className="del-btn del-btn--primary" onClick={onAddLine}>

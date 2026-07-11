@@ -863,7 +863,11 @@ function HeaderUdfSidebar({
     ? 'po-udf-sidebar-horizontal'
     : 'col-xl-3 col-lg-4 align-self-start';
 
-  const rootClassName = [containerClass, className].filter(Boolean).join(' ');
+  const rootClassName = [
+    containerClass,
+    orientation === 'horizontal' ? '' : 'sap-header-udf-panel',
+    className,
+  ].filter(Boolean).join(' ');
   const showClose = typeof onClose === 'function';
   const orderedFields = sortHeaderUdfFields(safeFields);
   const sellerContactPersonField = orderedFields.find(isSellerContactPersonField);
@@ -1528,7 +1532,7 @@ function HeaderUdfSidebar({
 
   return (
     <>
-      <div className={rootClassName} style={style}>
+      <div className={rootClassName} style={{ ...style, width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}>
         <div
           className={`card p-3 po-udf-sidebar-card ${orientation === 'horizontal' ? 'po-udf-sidebar-card-horizontal' : ''}`}
         >

@@ -6,7 +6,7 @@ import { filterSalesOrderRowUdfDefinitions } from '../../../config/salesOrderFor
 import LineValueLookupModal from '../../../components/sales-document/LineValueLookupModal';
 import { SALES_ORDER_LINE_NUMBER_KEY } from '../documentLayout';
 
-import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
+import { getCalculatedForRate, getLineTotalsForDisplay } from '../../../utils/lineTotals';
 
 const MATRIX_COLS = [
   { key: 'itemNo', label: 'Item No.', minWidth: 160 },
@@ -34,6 +34,7 @@ const MATRIX_COLS = [
   { key: 'taxAmount', label: 'Tax Amount (LC)', minWidth: 115 },
   { key: 'totalLC', label: 'Total (LC)', minWidth: 115 },
   { key: 'whse', label: 'Whse', minWidth: 75 },
+  { key: 'forRate', label: 'FOR Rate', minWidth: 115 },
   { key: 'distRule', label: 'Distr. Rule', minWidth: 105 },
   { key: 'openQty', label: 'Open Qty', minWidth: 85 },
   { key: 'countryOfOrigin', label: 'Country/Region of Origin', minWidth: 175 },
@@ -117,6 +118,9 @@ const COLUMN_RENDERER_ALIASES = new Map([
   ['DISCOUNT', 'stdDiscount'],
   ['WHSCODE', 'whse'],
   ['WHSE', 'whse'],
+  ['FORRATE', 'forRate'],
+  ['FOR', 'forRate'],
+  ['FORPRICE', 'forRate'],
   ['OCRCODE', 'distRule'],
   ['DISTRULE', 'distRule'],
   ['DISTRIBUTIONRULE', 'distRule'],
@@ -231,7 +235,7 @@ function DistributionRuleAssignmentModal({
           <button type="button" onClick={onClose} style={{ border: '1px solid var(--sap-border-strong)', background: '#f5f6f7', width: 24, height: 22, cursor: 'pointer' }}>x</button>
         </div>
 
-        <div style={{ padding: 12, overflow: 'auto', display: 'grid', gridTemplateColumns: 'minmax(360px, 1fr) minmax(360px, 1fr)', gap: 14 }}>
+        <div className="so-distribution-modal__body">
           <div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
@@ -534,9 +538,12 @@ export default function ContentsTab({
     const setting = getMatrixColumnSetting(column);
     const disabled = column.readOnly || setting.active === false;
     const valueKey = getColumnValueKey(column);
-    const value = isUdfMatrixColumn(column)
+    const rawValue = isUdfMatrixColumn(column)
       ? (line.udf?.[valueKey] || '')
       : (line[valueKey] ?? '');
+    const value = valueKey === 'forRate'
+      ? (rawValue || getCalculatedForRate(line, effectiveTaxCodes))
+      : rawValue;
 
     const inputType = column.type === 'date'
       ? 'date'
@@ -967,6 +974,16 @@ export default function ContentsTab({
           />
         </td>
       ),
+      forRate: () => (
+        <td key="forRate">
+          <input
+            className="so-grid__input"
+            name="forRate"
+            value={line.forRate || getCalculatedForRate(line, effectiveTaxCodes)}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
       whse: () => (
         <td key="whse">
           <select
@@ -1311,7 +1328,7 @@ export default function ContentsTab({
 
   return (
     <>
-    <div className="so-tab-panel">
+    <div className="sap-tab-panel so-tab-panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
         <div className="so-section-title">Document Lines</div>
         <button type="button" className="so-btn so-btn--primary" onClick={onAddLine}>

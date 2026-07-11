@@ -43,7 +43,9 @@ const fetchStateFromWarehouse = (whsCode) =>
   apiClient.get(`/purchase-order/warehouse-state/${encodeURIComponent(whsCode)}`);
 
 const fetchItemsForModal = () =>
-  apiClient.get('/purchase-order/items-modal');
+  apiClient.get('/purchase-order/items-modal', {
+    params: { _: Date.now() },
+  });
 
 const fetchFreightCharges = (docEntry) =>
   apiClient.get('/purchase-order/freight-charges', { params: { docEntry } });

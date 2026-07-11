@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import 'bootstrap/dist/css/bootstrap.min.css'; // If using Bootstrap
 import './index.css';
+import './components/document/addressComponentModal.css';
 import App from './App'; // Points to your Router
 import reportWebVitals from './reportWebVitals';
 

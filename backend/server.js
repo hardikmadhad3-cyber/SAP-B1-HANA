@@ -42,6 +42,11 @@ const {
 const { runWithRequestContext } = require('./services/requestContextService');
 const apiTimingMiddleware = require('./middleware/apiTiming');
 const { cacheMiddleware, invalidateCacheMiddleware } = require('./middleware/cacheMiddleware');
+const {
+  apiRateLimitMiddleware,
+  reportRateLimitMiddleware,
+  reportSafetyMiddleware,
+} = require('./services/safetyControls');
 
 const authRoutes            = require('./routes/authRoutes');
 const menuRoutes            = require('./routes/menuRoutes');
@@ -144,6 +149,7 @@ const isReusableLookupRequest = (req) => {
 
   return (
     path.endsWith('/reference-data') ||
+    path.endsWith('/lookups') ||
     path === '/api/sap/layout/document' ||
     path.startsWith('/api/hsn-codes') ||
     path.includes('/lookup/') ||
@@ -158,7 +164,7 @@ const isReusableLookupRequest = (req) => {
 
 const reusableLookupCache = cacheMiddleware({
   namespace: (req) => `lookup:${req.path.toLowerCase()}`,
-  ttlSeconds: 300,
+  ttlSeconds: 1800,
   shouldCache: isReusableLookupRequest,
 });
 
@@ -267,6 +273,8 @@ app.use((req, res, next) => {
   return authenticateAccessToken(req, res, next);
 });
 
+app.use('/api', apiRateLimitMiddleware);
+app.use('/api/reports', reportRateLimitMiddleware, reportSafetyMiddleware);
 app.use('/api', reusableLookupCache);
 
 // Routes

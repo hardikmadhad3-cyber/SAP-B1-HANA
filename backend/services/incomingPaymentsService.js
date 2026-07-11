@@ -16,18 +16,25 @@ const toDateString = (value) => {
 
 const toNumber = (value) => Number(value || 0);
 
-const formatAddress = (row = {}) =>
-  [
-    row.AddressBuilding,
+const formatAddress = (row = {}) => {
+  const structuredAddress = [
     row.AddressStreet,
+    row.AddressStreetNo,
     row.AddressBlock,
+    row.AddressBuilding,
+    row.AddressName2,
+    row.AddressName3,
     [row.AddressCity, row.AddressZipCode].filter(Boolean).join(" "),
     row.AddressState,
     row.AddressCountry,
   ]
     .map((part) => String(part || "").trim())
     .filter(Boolean)
+    .filter((part, index, parts) => parts.findIndex((value) => value.toLowerCase() === part.toLowerCase()) === index)
     .join("\n");
+  const storedAddress = String(row.PaymentAddress || row.Address || "").trim();
+  return storedAddress.length > structuredAddress.length ? storedAddress : structuredAddress || storedAddress;
+};
 
 const parseAmount = (value) => {
   const parsed = Number(String(value ?? "").replace(/,/g, "").replace(/^INR\s*/i, ""));
@@ -142,11 +149,13 @@ const buildPaymentMeansPayload = async ({ paymentMeans = {}, dueAmount = 0, fall
   return result;
 };
 
-const queryBusinessPartnerRows = (cardType, trimmed, { validForColumn = "validFor", frozenForColumn = "frozenFor" } = {}) =>
+const queryBusinessPartnerRows = (cardType, trimmed, offset, pageSize, { validForColumn = "validFor", frozenForColumn = "frozenFor" } = {}) =>
   queryRows(`
     SELECT
+      COUNT(*) OVER() AS TotalCount,
       T0.CardCode,
       T0.CardName,
+      T0.CardFName,
       T0.Currency,
       T0.Balance,
       T0.CardType,
@@ -159,11 +168,14 @@ const queryBusinessPartnerRows = (cardType, trimmed, { validForColumn = "validFo
       T1.Address AS AddressCode,
       T1.Building AS AddressBuilding,
       T1.Street AS AddressStreet,
+      T1.StreetNo AS AddressStreetNo,
       T1.Block AS AddressBlock,
       T1.City AS AddressCity,
       T1.ZipCode AS AddressZipCode,
       T1.State AS AddressState,
       T1.Country AS AddressCountry,
+      T1.Address2 AS AddressName2,
+      T1.Address3 AS AddressName3,
       T1.GSTRegnNo AS GstRegistrationNumber
     FROM OCRD T0
     LEFT JOIN CRD1 T1
@@ -176,19 +188,26 @@ const queryBusinessPartnerRows = (cardType, trimmed, { validForColumn = "validFo
           AND TX.AdresType = 'B'
           AND (COALESCE(T0.BillToDef, '') = '' OR TX.Address = T0.BillToDef)
       )
-    WHERE T0.CardType = @cardType
+    WHERE (@cardType = '' OR T0.CardType = @cardType)
       AND ISNULL(T0.${frozenForColumn}, 'N') <> 'Y'
       AND (@query = ''
-        OR T0.CardCode LIKE @like
-        OR T0.CardName LIKE @like)
+        OR UPPER(ISNULL(T0.CardCode, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.CardName, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.CardFName, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.LicTradNum, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.Phone1, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.E_Mail, '')) LIKE @likeUpper)
     ORDER BY T0.CardName, T0.CardCode
-  `, { cardType, query: trimmed, like: `%${trimmed}%` });
+    OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+  `, { cardType, query: trimmed, likeUpper: `%${trimmed.toUpperCase()}%`, offset, pageSize });
 
-const queryBasicBusinessPartnerRows = (cardType, trimmed) =>
+const queryBasicBusinessPartnerRows = (cardType, trimmed, offset, pageSize) =>
   queryRows(`
-    SELECT TOP 200
+    SELECT
+      COUNT(*) OVER() AS TotalCount,
       T0.CardCode,
       T0.CardName,
+      T0.CardFName,
       T0.Currency,
       T0.Balance,
       T0.CardType,
@@ -201,37 +220,49 @@ const queryBasicBusinessPartnerRows = (cardType, trimmed) =>
       '' AS AddressCode,
       '' AS AddressBuilding,
       '' AS AddressStreet,
+      '' AS AddressStreetNo,
       '' AS AddressBlock,
       '' AS AddressCity,
       '' AS AddressZipCode,
       '' AS AddressState,
       '' AS AddressCountry,
+      '' AS AddressName2,
+      '' AS AddressName3,
       '' AS GstRegistrationNumber
     FROM OCRD T0
-    WHERE T0.CardType = @cardType
+    WHERE (@cardType = '' OR T0.CardType = @cardType)
       AND (@query = ''
-        OR T0.CardCode LIKE @like
-        OR T0.CardName LIKE @like)
+        OR UPPER(ISNULL(T0.CardCode, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.CardName, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.CardFName, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.LicTradNum, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.Phone1, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.E_Mail, '')) LIKE @likeUpper)
     ORDER BY T0.CardName, T0.CardCode
-  `, { cardType, query: trimmed, like: `%${trimmed}%` });
+    OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+  `, { cardType, query: trimmed, likeUpper: `%${trimmed.toUpperCase()}%`, offset, pageSize });
 
-const searchBusinessPartners = async (query = "", bpType = "Customer") => {
+const searchBusinessPartners = async (query = "", bpType = "Customer", requestedPage = 1, requestedPageSize = 100) => {
   const trimmed = String(query || "").trim();
-  const cardType = String(bpType || "").toLowerCase() === "vendor" ? "S" : "C";
+  const normalizedType = String(bpType || "").toLowerCase();
+  const cardType = normalizedType === "all" ? "" : normalizedType === "vendor" ? "S" : "C";
+  const page = Math.max(1, Number.parseInt(requestedPage, 10) || 1);
+  const pageSize = Math.min(200, Math.max(1, Number.parseInt(requestedPageSize, 10) || 100));
+  const offset = (page - 1) * pageSize;
   let rows;
   try {
-    rows = await queryBusinessPartnerRows(cardType, trimmed);
+    rows = await queryBusinessPartnerRows(cardType, trimmed, offset, pageSize);
   } catch (error) {
     console.warn("[IncomingPaymentsService] BP lookup using validFor/frozenFor failed:", error.message);
     try {
-      rows = await queryBusinessPartnerRows(cardType, trimmed, { validForColumn: "ValidFor", frozenForColumn: "FrozenFor" });
+      rows = await queryBusinessPartnerRows(cardType, trimmed, offset, pageSize, { validForColumn: "ValidFor", frozenForColumn: "FrozenFor" });
     } catch (fallbackError) {
       console.warn("[IncomingPaymentsService] BP lookup using ValidFor/FrozenFor failed:", fallbackError.message);
-      rows = await queryBasicBusinessPartnerRows(cardType, trimmed);
+      rows = await queryBasicBusinessPartnerRows(cardType, trimmed, offset, pageSize);
     }
   }
 
-  return rows.map((row) => ({
+  const items = rows.map((row) => ({
     code: row.CardCode,
     name: row.CardName,
     currency: row.Currency || "",
@@ -247,6 +278,11 @@ const searchBusinessPartners = async (query = "", bpType = "Customer") => {
     billToBuilding: row.AddressBuilding || "",
     gstRegistrationNumber: row.GstRegistrationNumber || "",
   }));
+  const totalCount = Number(rows[0]?.TotalCount || 0);
+  return {
+    items,
+    pagination: { page, pageSize, totalCount, totalPages: Math.max(1, Math.ceil(totalCount / pageSize)) },
+  };
 };
 
 const lookupControlAccounts = async (query = "") => {
@@ -377,29 +413,54 @@ const getPaymentSeries = async () => {
 const searchIncomingPayments = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(`
-    SELECT TOP 100
-      DocEntry,
-      DocNum,
-      DocDate,
-      TaxDate,
-      CardCode,
-      CardName,
-      Address,
-      CounterRef,
-      TransId,
-      BPLId,
-      JrnlMemo,
-      DocTotal,
-      NoDocSum
-    FROM ORCT
-    WHERE Canceled <> 'Y'
+    SELECT TOP 500
+      T0.DocEntry,
+      T0.DocNum,
+      T0.DocDate,
+      T0.TaxDate,
+      T0.CardCode,
+      T0.CardName,
+      T0.Address AS PaymentAddress,
+      T0.CounterRef,
+      T0.TransId,
+      T0.BPLId,
+      T0.JrnlMemo,
+      T0.DocTotal,
+      T0.NoDocSum,
+      BP.BillToDef,
+      BP.Address,
+      AD.Address AS AddressCode,
+      AD.Building AS AddressBuilding,
+      AD.Street AS AddressStreet,
+      AD.StreetNo AS AddressStreetNo,
+      AD.Block AS AddressBlock,
+      AD.City AS AddressCity,
+      AD.ZipCode AS AddressZipCode,
+      AD.State AS AddressState,
+      AD.Country AS AddressCountry,
+      AD.Address2 AS AddressName2,
+      AD.Address3 AS AddressName3
+    FROM ORCT T0
+    LEFT JOIN OCRD BP ON BP.CardCode = T0.CardCode
+    LEFT JOIN CRD1 AD
+      ON AD.CardCode = BP.CardCode
+      AND AD.AdresType = 'B'
+      AND AD.LineNum = (
+        SELECT MIN(TX.LineNum)
+        FROM CRD1 TX
+        WHERE TX.CardCode = BP.CardCode
+          AND TX.AdresType = 'B'
+          AND (COALESCE(BP.BillToDef, '') = '' OR TX.Address = BP.BillToDef)
+      )
+    WHERE T0.Canceled <> 'Y'
       AND (@query = ''
-        OR CAST(DocNum AS NVARCHAR(30)) LIKE @like
-        OR CardCode LIKE @like
-        OR CardName LIKE @like
-        OR ISNULL(CounterRef, '') LIKE @like)
-    ORDER BY DocDate DESC, DocNum DESC
-  `, { query: trimmed, like: `%${trimmed}%` });
+        OR UPPER(CAST(T0.DocNum AS NVARCHAR(30))) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.CardCode, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.CardName, '')) LIKE @likeUpper
+        OR UPPER(ISNULL(T0.CounterRef, '')) LIKE @likeUpper
+        OR UPPER(CAST(ISNULL(T0.TransId, 0) AS NVARCHAR(30))) LIKE @likeUpper)
+    ORDER BY T0.DocDate DESC, T0.DocNum DESC
+  `, { query: trimmed, likeUpper: `%${trimmed.toUpperCase()}%` });
 
   return rows.map((row) => ({
     code: String(row.DocNum || ""),
@@ -410,7 +471,8 @@ const searchIncomingPayments = async (query = "") => {
     documentDate: toDateString(row.TaxDate || row.DocDate),
     businessPartnerCode: row.CardCode || "",
     businessPartnerName: row.CardName || "",
-    billToAddress: row.Address || "",
+    billToCode: row.BillToDef || row.AddressCode || "",
+    billToAddress: formatAddress(row),
     referenceNumber: row.CounterRef || "",
     transactionNumber: row.TransId ? String(row.TransId) : "",
     branch: row.BPLId ? String(row.BPLId) : "",
@@ -434,15 +496,39 @@ const getIncomingPaymentByDocEntry = async (docEntry) => {
       T0.TaxDate,
       T0.CardCode,
       T0.CardName,
-      T0.Address,
+      T0.Address AS PaymentAddress,
       T0.CounterRef,
       T0.TransId,
       T0.BPLId,
       T0.JrnlMemo,
       T0.Comments,
       T0.DocTotal,
-      T0.NoDocSum
+      T0.NoDocSum,
+      BP.BillToDef,
+      BP.Address,
+      AD.Address AS AddressCode,
+      AD.Building AS AddressBuilding,
+      AD.Street AS AddressStreet,
+      AD.StreetNo AS AddressStreetNo,
+      AD.Block AS AddressBlock,
+      AD.City AS AddressCity,
+      AD.ZipCode AS AddressZipCode,
+      AD.State AS AddressState,
+      AD.Country AS AddressCountry,
+      AD.Address2 AS AddressName2,
+      AD.Address3 AS AddressName3
     FROM ORCT T0
+    LEFT JOIN OCRD BP ON BP.CardCode = T0.CardCode
+    LEFT JOIN CRD1 AD
+      ON AD.CardCode = BP.CardCode
+      AND AD.AdresType = 'B'
+      AND AD.LineNum = (
+        SELECT MIN(TX.LineNum)
+        FROM CRD1 TX
+        WHERE TX.CardCode = BP.CardCode
+          AND TX.AdresType = 'B'
+          AND (COALESCE(BP.BillToDef, '') = '' OR TX.Address = BP.BillToDef)
+      )
     WHERE T0.DocEntry = @docEntry
   `, { docEntry: docEntryNumber });
 
@@ -497,7 +583,8 @@ const getIncomingPaymentByDocEntry = async (docEntry) => {
     documentDate: toDateString(header.TaxDate || header.DocDate),
     businessPartnerCode: header.CardCode || "",
     businessPartnerName: header.CardName || "",
-    billToAddress: header.Address || "",
+    billToCode: header.BillToDef || header.AddressCode || "",
+    billToAddress: formatAddress(header),
     referenceNumber: header.CounterRef || "",
     transactionNumber: header.TransId ? String(header.TransId) : "",
     branch: header.BPLId ? String(header.BPLId) : "",

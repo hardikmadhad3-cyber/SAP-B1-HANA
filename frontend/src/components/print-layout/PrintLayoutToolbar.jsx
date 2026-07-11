@@ -78,6 +78,24 @@ const buildDefaultReportParameterPayload = (parameters = []) =>
     }))
     .filter((parameter) => String(parameter.name || '').trim());
 
+const getLayoutCode = (layout) =>
+  String(layout?.docCode || layout?.layoutId || layout?.layout_id || '').trim();
+
+const getLayoutName = (layout) =>
+  String(layout?.reportName || layout?.docName || layout?.layout_name || getLayoutCode(layout)).trim();
+
+const canExportLayout = (layout) => {
+  if (!layout) return false;
+  if (typeof layout.isExportSupported === 'boolean') return layout.isExportSupported;
+  if (typeof layout.is_export_supported === 'boolean') return layout.is_export_supported;
+  if (typeof layout.is_export_supported === 'number') return layout.is_export_supported === 1;
+
+  const category = String(layout.category || layout.category_code || '').trim().toUpperCase();
+  if (category) return category === 'C';
+
+  return Boolean(layout.isCrystal);
+};
+
 function PdfPreviewModal({ documentLabel, previewPdf, onClose, onDownload }) {
   if (!previewPdf?.url) {
     return null;
@@ -198,6 +216,93 @@ function PrintParameterModal({
   );
 }
 
+function ChooseLayoutModal({
+  isOpen,
+  documentLabel,
+  layouts,
+  selectedDocCode,
+  loading,
+  onSelect,
+  onCancel,
+  onConfirm,
+}) {
+  if (!isOpen) {
+    return null;
+  }
+
+  const selectedLayout = layouts.find((layout) => getLayoutCode(layout) === selectedDocCode);
+  const selectedCanExport = canExportLayout(selectedLayout);
+
+  return (
+    <div className="sap-layout-chooser__backdrop" role="presentation" onMouseDown={(event) => event.stopPropagation()}>
+      <section
+        className="sap-layout-chooser__dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Choose ${documentLabel} layout`}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="sap-layout-chooser__titlebar">
+          <span>Choose Layout</span>
+          <div className="sap-layout-chooser__window-actions">
+            <span aria-hidden="true">-</span>
+            <button type="button" onClick={onCancel} disabled={loading} aria-label="Close choose layout">
+              x
+            </button>
+          </div>
+        </header>
+
+        <div className="sap-layout-chooser__body">
+          <div className="sap-layout-chooser__label">Layout</div>
+          <div className="sap-layout-chooser__grid" role="listbox" aria-label="Available layouts">
+            {layouts.map((layout, index) => {
+              const layoutCode = getLayoutCode(layout);
+              const layoutName = getLayoutName(layout);
+              const isSelected = layoutCode === selectedDocCode;
+              const isExportSupported = canExportLayout(layout);
+
+              return (
+                <button
+                  key={layoutCode || `${layoutName}-${index}`}
+                  type="button"
+                  className={`sap-layout-chooser__row${isSelected ? ' is-selected' : ''}${!isExportSupported ? ' is-disabled' : ''}`}
+                  role="option"
+                  aria-selected={isSelected}
+                  disabled={loading}
+                  title={isExportSupported ? layoutName : `${layoutName} is not a Crystal Report layout`}
+                  onClick={() => onSelect(layoutCode)}
+                  onDoubleClick={() => {
+                    if (isExportSupported) {
+                      onSelect(layoutCode);
+                      onConfirm(layoutCode);
+                    }
+                  }}
+                >
+                  <span>{layoutName}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <footer className="sap-layout-chooser__footer">
+          <button
+            type="button"
+            className="sap-layout-chooser__button sap-layout-chooser__button--primary"
+            onClick={() => onConfirm()}
+            disabled={loading || !selectedDocCode || !selectedCanExport}
+          >
+            OK
+          </button>
+          <button type="button" className="sap-layout-chooser__button" onClick={onCancel} disabled={loading}>
+            Cancel
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function PrintLayoutToolbar({
   documentType,
   documentLabel = 'Document',
@@ -222,6 +327,8 @@ function PrintLayoutToolbar({
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [reportMetadata, setReportMetadata] = useState(null);
   const [selectedDocCode, setSelectedDocCode] = useState('');
+  const [layoutChooserOpen, setLayoutChooserOpen] = useState(false);
+  const [pendingDocCode, setPendingDocCode] = useState('');
   const [previewPdf, setPreviewPdf] = useState(null);
   const [parameterPrompt, setParameterPrompt] = useState({
     open: false,
@@ -247,12 +354,12 @@ function PrintLayoutToolbar({
   const docCode = String(resolvedLayout?.docCode || '').trim();
   const effectiveDocCode = String(selectedDocCode || docCode || '').trim();
   const selectedCandidate = layoutCandidates.find((layout) =>
-    String(layout.docCode || layout.layoutId || '').trim().toLowerCase() === effectiveDocCode.toLowerCase(),
+    getLayoutCode(layout).toLowerCase() === effectiveDocCode.toLowerCase(),
   );
   const layoutDisplayValue = metadataLoading
     ? 'Loading SAP B1 layout...'
     : effectiveDocCode
-      ? `${effectiveDocCode} - ${resolvedLayout?.reportName || resolvedLayout?.docName || selectedCandidate?.reportName || selectedCandidate?.docName || effectiveDocCode}`
+      ? getLayoutName(selectedCandidate || resolvedLayout)
       : 'SAP B1 layout resolves when document is loaded';
 
   useEffect(() => {
@@ -262,6 +369,8 @@ function PrintLayoutToolbar({
   useEffect(() => {
     setReportMetadata(null);
     setSelectedDocCode('');
+    setPendingDocCode('');
+    setLayoutChooserOpen(false);
   }, [documentType, docEntry, docNumber, series, cardCode, layoutReloadKey]);
 
   useEffect(() => () => {
@@ -292,6 +401,31 @@ function PrintLayoutToolbar({
 
   const notifyError = (message) => {
     onError?.(message);
+  };
+
+  const openLayoutChooser = () => {
+    if (loading || metadataLoading || disabled || !showLayoutChooser) {
+      return;
+    }
+
+    setPendingDocCode(effectiveDocCode);
+    setLayoutChooserOpen(true);
+  };
+
+  const closeLayoutChooser = () => {
+    setLayoutChooserOpen(false);
+  };
+
+  const confirmLayoutChooser = (nextDocCode = pendingDocCode) => {
+    const pendingLayout = layoutCandidates.find((layout) => getLayoutCode(layout) === nextDocCode);
+
+    if (!nextDocCode || !canExportLayout(pendingLayout)) {
+      notifyError('Choose an active Crystal Report layout before printing.');
+      return;
+    }
+
+    setSelectedDocCode(nextDocCode);
+    setLayoutChooserOpen(false);
   };
 
   useEffect(() => {
@@ -609,25 +743,16 @@ function PrintLayoutToolbar({
           Layout
         </label>
         {showLayoutChooser ? (
-          <select
+          <button
+            type="button"
             id={`${documentType}-print-doc-code`}
-            className={`${inputClass} ${inputClass}--layout`}
-            value={effectiveDocCode}
-            onChange={(event) => setSelectedDocCode(event.target.value)}
+            className={`${inputClass} ${inputClass}--layout sap-layout-chooser__trigger`}
+            onClick={openLayoutChooser}
             disabled={loading || metadataLoading || disabled}
             title="Choose one of the active SAP B1 Crystal layouts."
           >
-            <option value="">Choose Layout</option>
-            {layoutCandidates.map((layout) => {
-              const candidateDocCode = String(layout.docCode || layout.layoutId || '').trim();
-              const candidateName = layout.reportName || layout.docName || candidateDocCode;
-              return (
-                <option key={candidateDocCode} value={candidateDocCode}>
-                  {candidateName}
-                </option>
-              );
-            })}
-          </select>
+            <span>{effectiveDocCode ? layoutDisplayValue : 'Choose Layout'}</span>
+          </button>
         ) : (
           <input
             id={`${documentType}-print-doc-code`}
@@ -693,6 +818,17 @@ function PrintLayoutToolbar({
         onChange={updatePromptValue}
         onCancel={closeParameterPrompt}
         onConfirm={confirmParameterPrompt}
+      />
+
+      <ChooseLayoutModal
+        isOpen={layoutChooserOpen}
+        documentLabel={documentLabel}
+        layouts={layoutCandidates}
+        selectedDocCode={pendingDocCode}
+        loading={loading || metadataLoading || disabled}
+        onSelect={setPendingDocCode}
+        onCancel={closeLayoutChooser}
+        onConfirm={confirmLayoutChooser}
       />
 
     </div>

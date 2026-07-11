@@ -11,6 +11,7 @@ import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import EWayBillModal from './components/EWayBillModal';
 import AttachmentsTab from './components/AttachmentsTab';
 import AddressModal from './components/AddressModal';
+import { mapAddressFields } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import BatchAllocationModal from './components/BatchAllocationModal';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
@@ -20,6 +21,7 @@ import ItemSelectionModal from './components/ItemSelectionModal';
 import QualitySelectionModal from '../sales-order/components/QualitySelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
+import SapGoldenArrowButton from '../../components/document/SapGoldenArrowButton';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -40,6 +42,7 @@ import {
   consumeCopyToState as consumePersistedCopyToState,
   replaceRouteStatePreservingWindow,
 } from '../../utils/copyToState';
+import { openLinkedBusinessPartner } from '../../utils/sapLinkedNavigation';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
@@ -106,6 +109,12 @@ const getErrMsg = (e, fb) => {
 };
 const today = () => new Date().toISOString().split('T')[0];
 const parseNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const firstNonBlank = (...values) => {
+  for (const value of values) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+  return '';
+};
 const roundTo = (v, d) => { const f = 10 ** Math.max(d, 0); return Math.round((v + Number.EPSILON) * f) / f; };
 
 const hasUdfValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
@@ -281,17 +290,24 @@ const mapAddressToModalForm = (address, existing = {}) => ({
   billToAddress: existing.billToAddress || '',
   streetPoBox: address?.Street || '',
   streetNo: address?.StreetNo || '',
-  buildingFloorRoom: address?.Building || '',
+  buildingFloorRoom: address?.BuildingFloorRoom || address?.Building || '',
   block: address?.Block || '',
   city: address?.City || '',
   zipCode: address?.ZipCode || '',
   county: address?.County || '',
   state: address?.State || '',
   countryRegion: address?.Country || '',
-  addressName2: address?.Address2 || '',
-  addressName3: address?.Address3 || '',
-  gln: address?.GLN || '',
-  gstin: address?.GSTIN || '',
+  addressName2: address?.AddressName2 || address?.Address2 || '',
+  addressName3: address?.AddressName3 || address?.Address3 || '',
+  gln: address?.GlobalLocationNumber || address?.GlblLocNum || address?.GLN || '',
+  erpAddress: address?.U_ERPAddress || address?.U_ERP_Address || address?.ERPAddress || '',
+  contactPerson: address?.U_ContactPerson || address?.U_CONTACT_PERSON || address?.ContactPerson || '',
+  mobile: address?.U_Mobile || address?.U_MOBILE || address?.Mobile || address?.MobilePhone || '',
+  dateOfRegistration: address?.U_DateOfRegistration || address?.U_Date_Of_Registration || address?.DateOfRegistration || '',
+  dateDetailsOfRegistration: address?.U_DateDetlOfReg || address?.U_Date_Detl_Of_Reg || address?.DateDetlOfReg || '',
+  addressStatus: address?.U_Status || address?.AddressStatus || address?.Status || '',
+  gstin: address?.GSTRegnNo || address?.GSTIN || address?.U_GSTIN_No || address?.U_GSTINNo || '',
+  ...mapAddressFields(address),
 });
 const normalizeAddressText = (value) =>
   String(value || '')
@@ -780,6 +796,41 @@ function Delivery() {
       : 'Add & New';
 
   useEffect(() => {
+    const draft = location.state?.deliveryDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setHeader(draft.header || createInitialHeader(generalSettingsRef.current));
+    setLines(Array.isArray(draft.lines) && draft.lines.length ? draft.lines : [createLine(ROW_UDF_DEFINITIONS)]);
+    setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [location.state, navigate, location.pathname]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    deliveryDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+    },
+  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines]);
+
+  const openBusinessPartnerLink = useCallback(() => {
+    openLinkedBusinessPartner({
+      cardCode: header.vendor,
+      sourcePath: location.pathname,
+      sourceTitle: `Delivery${header.docNo || currentDocEntry ? ` #${header.docNo || currentDocEntry}` : ''}`,
+      sourceRestoreState: buildLinkedRestoreState(),
+      navigate,
+      upsertTask,
+    });
+  }, [buildLinkedRestoreState, currentDocEntry, header.docNo, header.vendor, location.pathname, navigate, upsertTask]);
+
+  useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
     loadedLinesSignatureRef.current = getDeliveryLinesUpdateSignature(lines);
     setSnapshotPending(false);
@@ -835,9 +886,9 @@ function Delivery() {
       openQty: String(line?.openQty ?? line?.OpenQuantity ?? line?.OpenQty ?? ''),
       unitPrice: String(line?.unitPrice ?? line?.UnitPrice ?? line?.Price ?? ''),
       uomName: line?.uomName || line?.UoMName || line?.UomName || line?.UnitMsr || line?.unitMsr || item?.SalesUnit || rawUomCode,
-      price: String(line?.price ?? line?.Price ?? line?.unitPrice ?? line?.UnitPrice ?? ''),
-      priceAfterDiscount: String(line?.priceAfterDiscount ?? line?.PriceAfterDiscount ?? ''),
-      itemCost: String(line?.itemCost ?? line?.ItemCost ?? item?.ItemCost ?? item?.AvgPrice ?? ''),
+      price: String(firstNonBlank(line?.price, line?.Price, line?.unitPrice, line?.UnitPrice)),
+      priceAfterDiscount: String(firstNonBlank(line?.priceAfterDiscount, line?.PriceAfterDiscount)),
+      itemCost: String(firstNonBlank(line?.itemCost, line?.ItemCost, line?.StockPrice, line?.stockPrice, item?.ItemCost, item?.AvgPrice)),
       binLocationAllocation: line?.binLocationAllocation || line?.BinLocationAllocation || '',
       sellerPrice: String(line?.sellerPrice ?? line?.SellerPrice ?? ''),
       buyerPrice: String(line?.buyerPrice ?? line?.BuyerPrice ?? ''),
@@ -960,14 +1011,6 @@ function Delivery() {
       });
     });
   }, []);
-
-  const openFirstMissingBatchModal = useCallback((nextLines = []) => {
-    const lineIndex = nextLines.findIndex(needsBatchAllocation);
-    if (lineIndex < 0) return;
-
-    setActiveTab('Contents');
-    window.setTimeout(() => openBatchModal(lineIndex, nextLines[lineIndex]), 0);
-  }, [openBatchModal]);
 
   const openRequiredBatchAllocationOnAdd = useCallback(() => {
     const hydratedLines = lines.map(line => hydrateLoadedLine(line));
@@ -1354,12 +1397,10 @@ function Delivery() {
     const hydratedLines = lines.map(line => hydrateLoadedLine(line));
     setLines(hydratedLines);
     refreshBatchAvailabilityForLines(hydratedLines);
-    openFirstMissingBatchModal(hydratedLines);
   }, [
     currentDocEntry,
     hydrateLoadedLine,
     lines,
-    openFirstMissingBatchModal,
     refData.items.length,
     refreshBatchAvailabilityForLines,
   ]);
@@ -1475,11 +1516,9 @@ function Delivery() {
           udf: normalizeUdfState(rowUdfDefinitions, mergeUdfValues(pickLineUdfValues(l), l.line_udfs, l.lineUdfs, l.udf)),
         });
       });
-      const shouldPromptForBatches = copiedLines.some(needsBatchAllocation);
-      copiedLinesNeedBatchOpenRef.current = !shouldPromptForBatches && !refData.items.length && copiedLines.some(line => line.itemNo);
+      copiedLinesNeedBatchOpenRef.current = !refData.items.length && copiedLines.some(line => line.itemNo);
       setLines(copiedLines);
       refreshBatchAvailabilityForLines(copiedLines);
-      if (shouldPromptForBatches) openFirstMissingBatchModal(copiedLines);
     } else {
       copiedLinesNeedBatchOpenRef.current = false;
       setLines([createLine(rowUdfDefinitions)]);
@@ -3737,11 +3776,9 @@ function Delivery() {
       });
     });
     const nextLines = newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)];
-    const shouldPromptForBatches = nextLines.some(needsBatchAllocation);
-    copiedLinesNeedBatchOpenRef.current = !shouldPromptForBatches && !refData.items.length && newLines.some(line => line.itemNo);
+    copiedLinesNeedBatchOpenRef.current = !refData.items.length && newLines.some(line => line.itemNo);
     setLines(nextLines);
     refreshBatchAvailabilityForLines(nextLines);
-    if (shouldPromptForBatches) openFirstMissingBatchModal(nextLines);
 
     const cardCode = normHeader.vendor || srcHeader.customerCode || srcHeader.customer || srcHeader.CardCode;
     if (cardCode && cardCode !== header.vendor) loadVendorDetails(cardCode);
@@ -4194,42 +4231,39 @@ function Delivery() {
       )}
 
       <fieldset disabled={!isDocumentEditable} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-        <div className={`del-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`} style={{ padding: '0 12px', overflow: 'visible', minWidth: 0 }}>
+        <div className={`sap-document-layout del-layout${isRightSidebarOpen ? ' is-sidebar-open' : ' sap-document-layout--no-udf'}`}>
 
-          <div className="del-layout__main" style={{ minWidth: 0, overflow: 'visible' }}>
+          <div className="sap-document-main del-layout__main">
 
             {/* ══ HEADER CARD ══════════════════════════════════════════════ */}
             <div className="del-header-card">
               <div className="row g-2">
                 {/* LEFT COLUMN */}
                 <div className="col-md-6">
-                  <div className="del-field-grid" style={{ gridTemplateColumns: '1fr' }}>
+                  <div className="del-field-grid del-field-grid--single">
                     
                     {/* Buyer's Code */}
                     <div className="del-field">
                       <label className="del-field__label">Buyer's Code *</label>
-                      <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                      <div className="sap-input-group">
                          <input
                           name="vendor"
-                          className={`so-field__input${valErrors.header.vendor ? ' so-field__input--error' : ''}`}
-                          value={header.vendor}
+                          className={`del-field__input${valErrors.header.vendor ? ' del-field__input--error' : ''}`}
+                         value={header.vendor}
                           onChange={handleHeaderChange}
                           disabled={!!currentDocEntry}
                           placeholder="Customer code"
-                          style={{ flex: 1 }}
+                        />
+                        <SapGoldenArrowButton
+                          onClick={openBusinessPartnerLink}
+                          disabled={!header.vendor}
+                          title="Open Business Partner"
                         />
                         <button
                           type="button"
-                          className="btn btn-sm"
+                          className="del-btn del-btn--lookup"
                           onClick={openBpModal}
                           disabled={!!currentDocEntry}
-                          style={{
-                            padding: '0 8px',
-                            fontSize: 11,
-                            border: '1px solid #a0aab4',
-                            background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                            minWidth: '28px'
-                          }}
                           title="Select Business Partner"
                         >
                           ...
@@ -4274,26 +4308,18 @@ function Delivery() {
                     {/* Place of Supply */}
                     <div className="del-field">
                       <label className="del-field__label">Place of Supply *</label>
-                      <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                      <div className="sap-input-group">
                         <input
                           name="placeOfSupply"
-                          className={`so-field__input${valErrors.header.placeOfSupply ? ' so-field__input--error' : ''}`}
+                          className={`del-field__input${valErrors.header.placeOfSupply ? ' del-field__input--error' : ''}`}
                           value={getStateDisplayName(header.placeOfSupply, refData.states)}
                           onChange={handleHeaderChange}
                           placeholder="State code"
-                          style={{ flex: 1 }}
                         />
                         <button
                           type="button"
-                          className="btn btn-sm"
+                          className="del-btn del-btn--lookup"
                           onClick={openStateModal}
-                          style={{
-                            padding: '0 8px',
-                            fontSize: 11,
-                            border: '1px solid #a0aab4',
-                            background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                            minWidth: '28px'
-                          }}
                           title="Select State"
                         >
                           ...
@@ -4350,7 +4376,7 @@ function Delivery() {
                 {/* RIGHT COLUMN */}
                 <div className="col-md-6">
                   <fieldset style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-                  <div className="del-field-grid" style={{ gridTemplateColumns: '1fr' }}>
+                  <div className="del-field-grid del-field-grid--single">
 
                     {/* Series */}
                     <div className="del-field">
@@ -4468,6 +4494,7 @@ function Delivery() {
                 matrixFields={matrixColumnDefinitions}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
+                currency={header.currency || 'INR'}
               />
             )}
 
@@ -4522,7 +4549,7 @@ function Delivery() {
 
             {/* ══ TOTALS FOOTER ═════════════════════════════════════════════ */}
             <div className="del-header-card">
-              <div className="del-field-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div className="del-field-grid del-field-grid--summary">
                 <div>
                   <div className="del-field">
                     <label className="del-field__label">Sales Employee</label>
@@ -4722,7 +4749,7 @@ function Delivery() {
           </div>{/* end main col */}
 
           <HeaderUdfSidebar
-            className="del-layout__sidebar"
+            className="sap-header-udf-panel del-layout__sidebar"
             isOpen={sidebarOpen}
             fields={visibleHeaderUdfs}
             formSettings={formSettings}
@@ -4733,7 +4760,7 @@ function Delivery() {
           />
           <FormSettingsPanel
             variant="sidebar"
-            className="del-layout__sidebar"
+            className="sap-header-udf-panel del-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={matrixColumnDefinitions}

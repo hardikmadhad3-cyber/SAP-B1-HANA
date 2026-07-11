@@ -201,6 +201,9 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
   buyerQuality:    firstString(line.buyerQuality, line.BuyerQuality),
   quantity:        firstString(line.Quantity, line.OpenQty, line.quantity, 0),
   unitPrice:       firstString(line.UnitPrice, line.Price, line.unitPrice, 0),
+  price:           firstString(line.Price, line.UnitPrice, line.price, line.unitPrice, 0),
+  priceAfterDiscount: firstString(line.PriceAfterDiscount, line.priceAfterDiscount),
+  itemCost:        firstString(line.ItemCost, line.StockPrice, line.itemCost, line.stockPrice),
   discountAmount:  firstString(
     line.discountAmount,
     line.DiscountAmount,

@@ -76,11 +76,17 @@ function FormSettingsPanel({
   }
 
   const isSidebar = variant === 'sidebar';
-  const wrapperClassName = [isSidebar ? '' : 'po-form-settings-floating', className]
+  const wrapperClassName = [isSidebar ? 'sap-header-udf-panel' : 'po-form-settings-floating', className]
     .filter(Boolean)
     .join(' ');
   const wrapperStyle = isSidebar
-    ? style
+    ? {
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
+        ...(style || {}),
+      }
     : {
         position: 'fixed',
         top: '172px',

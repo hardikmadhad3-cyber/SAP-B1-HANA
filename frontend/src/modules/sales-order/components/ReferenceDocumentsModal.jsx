@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { fetchSalesOrderReferenceDocumentLookup } from '../../../api/salesOrderApi';
+import SapGoldenArrowButton from '../../../components/document/SapGoldenArrowButton';
 
 export const SALES_ORDER_REFERENCE_DOCUMENT_TYPES = [
   { value: '22', label: 'Purchase Order', serviceLayer: 'rot_PurchaseOrder' },
@@ -52,6 +53,7 @@ export default function ReferenceDocumentsModal({
   onSave,
   isEditable = true,
   cardCode = '',
+  onOpenDocument,
 }) {
   const [activeTab, setActiveTab] = useState('to');
   const [rows, setRows] = useState([]);
@@ -302,6 +304,13 @@ export default function ReferenceDocumentsModal({
                         >
                           ...
                         </button>
+                        {row.docEntry && row.transactionType ? (
+                          <SapGoldenArrowButton
+                            onClick={() => onOpenDocument?.(row)}
+                            title="Open referenced document"
+                            className="so-reference-modal__open-btn"
+                          />
+                        ) : null}
                       </div>
                     </td>
                     <td>

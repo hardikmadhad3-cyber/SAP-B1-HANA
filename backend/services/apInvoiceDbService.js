@@ -292,7 +292,7 @@ const getContactsByVendor = async (cardCode) => safe(db.query(`
 `, { cardCode }));
 
 const getAddressesByVendor = async (cardCode) => safe(db.query(`
-  SELECT 
+  SELECT T0.*,
     T0.CardCode,
     T0.Address,
     T0.AdresType,

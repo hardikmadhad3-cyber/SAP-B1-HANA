@@ -92,7 +92,18 @@ const explodeBOM = async (req, res) => {
 
 const lookupItems = async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     const data = await productionDbService.lookupProductionOrderItems(req.query.query || '');
+    res.json(data);
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error));
+  }
+};
+
+const lookupFinishItems = async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const data = await productionDbService.lookupFinishItems(req.query.query || '');
     res.json(data);
   } catch (error) {
     res.status(500).json(getErrorPayload(error));
@@ -101,6 +112,7 @@ const lookupItems = async (req, res) => {
 
 const lookupComponentItems = async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     const data = await productionDbService.lookupComponentItems(req.query.query || '');
     res.json(data);
   } catch (error) {
@@ -110,6 +122,7 @@ const lookupComponentItems = async (req, res) => {
 
 const lookupResources = async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     const data = await productionDbService.lookupResources(req.query.query || '');
     res.json(data);
   } catch (error) {
@@ -199,6 +212,7 @@ module.exports = {
   closeProductionOrder,
   explodeBOM,
   lookupItems,
+  lookupFinishItems,
   lookupComponentItems,
   lookupResources,
   lookupRouteStages,

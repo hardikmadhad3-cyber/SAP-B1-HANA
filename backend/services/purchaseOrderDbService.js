@@ -117,6 +117,8 @@ const getItems = () => safe(db.query(`
     T0.PUoMEntry   AS PurchaseUomEntry,
     T0.IUoMEntry   AS InventoryUomEntry,
     T0.DfltWH      AS DefaultWarehouse,
+    T0.DfltWH      AS WarehouseCode,
+    T0.DfltWH      AS WhsCode,
     CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS UnitPrice,
     CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS Price,
     CAST(T0.LastPurPrc AS DECIMAL(19,6)) AS LastPurPrc,
@@ -127,7 +129,8 @@ const getItems = () => safe(db.query(`
   FROM OITM T0
   LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID
   WHERE T0.PrchseItem = 'Y'
-    AND T0.validFor  <> 'N'
+    AND ISNULL(T0.validFor, 'Y') <> 'N'
+    AND ISNULL(T0.frozenFor, 'N') <> 'Y'
   ORDER BY T0.ItemCode
 `));
 
@@ -144,6 +147,8 @@ const getItemsForModal = () => safe(db.query(`
     T0.PUoMEntry       AS PurchaseUomEntry,
     T0.IUoMEntry       AS InventoryUomEntry,
     T0.DfltWH          AS DefaultWarehouse,
+    T0.DfltWH          AS WarehouseCode,
+    T0.DfltWH          AS WhsCode,
     CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS UnitPrice,
     CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS Price,
     CAST(T0.LastPurPrc AS DECIMAL(19,6)) AS LastPurPrc,
@@ -157,7 +162,8 @@ const getItemsForModal = () => safe(db.query(`
   LEFT JOIN OITB T1  ON T1.ItmsGrpCod = T0.ItmsGrpCod
   LEFT JOIN OCHP CHP ON CHP.AbsEntry  = T0.ChapterID
   WHERE T0.PrchseItem = 'Y'
-    AND T0.validFor  <> 'N'
+    AND ISNULL(T0.validFor, 'Y') <> 'N'
+    AND ISNULL(T0.frozenFor, 'N') <> 'Y'
   ORDER BY T0.ItemCode
 `));
 
@@ -662,7 +668,7 @@ const getContactsByVendor = async (cardCode) => {
 
 const getAddressesByVendor = async (cardCode) => {
   const result = await safe(db.query(`
-    SELECT 
+    SELECT T0.*,
       T0.CardCode,
       T0.Address,
       T0.AdresType,
@@ -917,7 +923,7 @@ const getPurchaseOrder = async (docEntry) => {
 
 const getDocumentSeries = async () => {
   const result = await db.query(`
-    SELECT 
+    SELECT
       T0.Series,
       T0.SeriesName,
       T0.Indicator,

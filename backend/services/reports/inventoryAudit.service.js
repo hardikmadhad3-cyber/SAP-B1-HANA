@@ -525,7 +525,7 @@ const getReport = async (criteria = {}, options = {}) => {
   const rows = await queryRows(
     `
       WITH PeriodRows AS (
-        SELECT TOP 20000
+        SELECT TOP 5000
           'movement' AS RowKind,
           1 AS RowRank,
           CAST(${activeDateSql} AS DATE) AS RowDate,
@@ -634,7 +634,7 @@ const getReport = async (criteria = {}, options = {}) => {
           SELECT * FROM OpeningRows
         ) CombinedRows
       )
-      SELECT TOP 20000 *
+      SELECT TOP 5000 *
       FROM NumberedRows
       ORDER BY ${criteria.displayMode === "byAccount" ? "AccountFormatCode, RowRank, RowDate, SortSeq" : "ItemCode, RowRank, RowDate, SortSeq"}
     `,

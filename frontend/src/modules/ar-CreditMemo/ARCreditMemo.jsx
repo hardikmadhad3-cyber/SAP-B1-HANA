@@ -10,6 +10,7 @@ import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import AddressModal from './components/AddressModal';
+import { mapAddressFields } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
 import StateSelectionModal from '../sales-order/components/StateSelectionModal';
@@ -86,6 +87,7 @@ const getErrMsg = (e, fb) => {
 const today = () => new Date().toISOString().split('T')[0];
 const parseNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const roundTo = (v, d) => { const f = 10 ** Math.max(d, 0); return Math.round((v + Number.EPSILON) * f) / f; };
+const calcRoundingAmount = (value, decimals) => roundTo(Math.round(value) - value, decimals);
 const fmtDec = (v, d) => { if (v === '' || v == null) return ''; const n = Number(v); return Number.isNaN(n) ? '' : n.toFixed(Math.max(d, 0)); };
 const sanitize = (v, d) => {
   const c = String(v ?? '').replace(/[^\d.-]/g, '').replace(/(?!^)-/g, '').replace(/^(-?)\./, '$10.').replace(/(\..*)\./g, '$1');
@@ -107,17 +109,24 @@ const mapAddressToModalForm = (address, existing = {}) => ({
   billToAddress: existing.billToAddress || '',
   streetPoBox: address?.Street || '',
   streetNo: address?.StreetNo || '',
-  buildingFloorRoom: address?.Building || '',
+  buildingFloorRoom: address?.BuildingFloorRoom || address?.Building || '',
   block: address?.Block || '',
   city: address?.City || '',
   zipCode: address?.ZipCode || '',
   county: address?.County || '',
   state: address?.State || '',
   countryRegion: address?.Country || '',
-  addressName2: address?.Address2 || '',
-  addressName3: address?.Address3 || '',
-  gln: address?.GLN || '',
-  gstin: address?.GSTIN || '',
+  addressName2: address?.AddressName2 || address?.Address2 || '',
+  addressName3: address?.AddressName3 || address?.Address3 || '',
+  gln: address?.GlobalLocationNumber || address?.GlblLocNum || address?.GLN || '',
+  erpAddress: address?.U_ERPAddress || address?.U_ERP_Address || address?.ERPAddress || '',
+  contactPerson: address?.U_ContactPerson || address?.U_CONTACT_PERSON || address?.ContactPerson || '',
+  mobile: address?.U_Mobile || address?.U_MOBILE || address?.Mobile || address?.MobilePhone || '',
+  dateOfRegistration: address?.U_DateOfRegistration || address?.U_Date_Of_Registration || address?.DateOfRegistration || '',
+  dateDetailsOfRegistration: address?.U_DateDetlOfReg || address?.U_Date_Detl_Of_Reg || address?.DateDetlOfReg || '',
+  addressStatus: address?.U_Status || address?.AddressStatus || address?.Status || '',
+  gstin: address?.GSTRegnNo || address?.GSTIN || address?.U_GSTIN_No || address?.U_GSTINNo || '',
+  ...mapAddressFields(address),
 });
 const normalizeAddressText = (value) =>
   String(value || '')
@@ -196,7 +205,7 @@ const INIT_HEADER = {
   branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
   shippingType: '', confirmed: false, journalRemark: '', paymentTerms: '',
   paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
-  totalPaymentDue: '', rounding: false, owner: '', purchaser: '', salesEmployee: '',
+  totalPaymentDue: '', rounding: false, roundingAmount: '', owner: '', purchaser: '', salesEmployee: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
   billToAddress: '', billToCode: '', shipToAddress: '',
 };
@@ -207,6 +216,19 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 }));
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+const getARCreditMemoDocumentLines = (creditMemo = {}) => {
+  const candidates = [
+    creditMemo.lines,
+    creditMemo.Lines,
+    creditMemo.documentLines,
+    creditMemo.DocumentLines,
+    creditMemo.rows,
+    creditMemo.DocumentRows,
+  ];
+
+  return candidates.find((value) => Array.isArray(value) && value.length) || [];
+};
+
 function ARCreditMemo() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -221,6 +243,7 @@ function ARCreditMemo() {
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
   const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState([]);
+  const [loadedCreditMemo, setLoadedCreditMemo] = useState(null);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
@@ -370,6 +393,7 @@ function ARCreditMemo() {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
         if (!activeCompanyId) {
+          setLoadedCreditMemo(null);
           setHeaderUdfDefinitions([]);
           setRowUdfDefinitions([]);
           setMatrixColumnDefinitions([]);
@@ -550,6 +574,19 @@ function ARCreditMemo() {
       try {
         const r = await fetchARCreditMemoByDocEntry(docEntry);
         const so = r.data.ar_credit_memo;
+        console.log('AR Credit Memo response:', r.data);
+        console.log('DocType:', so?.header?.docType);
+        console.log('Document lines:', getARCreditMemoDocumentLines(so));
+        if (ignore || !so) return;
+        if (String(so.header?.docType || 'I').trim().toUpperCase() === 'S') {
+          setLoadedCreditMemo(null);
+          setPageState(p => ({
+            ...p,
+            error: 'This A/R Credit Memo is a Service type document. Open it in the Service A/R Credit Memo page.',
+            success: '',
+          }));
+          return;
+        }
         let editSeries = [];
         try {
           const seriesDate = so?.header?.postingDate || so?.header?.documentDate || '';
@@ -558,7 +595,7 @@ function ARCreditMemo() {
         } catch (_seriesError) {
           editSeries = [];
         }
-        if (ignore || !so) return;
+        if (ignore) return;
         setCurrentDocEntry(so.doc_entry || Number(docEntry));
         const savedSeriesValue = String(so.header?.series || '');
         const savedSeriesOption = savedSeriesValue
@@ -580,6 +617,7 @@ function ARCreditMemo() {
             series: mergedEditSeries,
           }));
         }
+        setLoadedCreditMemo(so);
         setHeader(prev => ({
           ...prev,
           ...INIT_HEADER,
@@ -593,20 +631,21 @@ function ARCreditMemo() {
           docNo: so.header?.docNo || so.header?.docNum || '',
           series: so.header?.series || '',
           nextNumber: so.header?.docNo || so.header?.docNum || '',
+          rounding: Boolean(so.header?.rounding || parseNum(so.header?.roundingAmount) !== 0),
+          roundingAmount: so.header?.roundingAmount ?? '',
         }));
         
-        setLines(
-          Array.isArray(so.lines) && so.lines.length
-            ? so.lines.map((line) => hydrateWorkbookDocumentLine({
-                line,
-                createLine,
-                rowUdfDefinitions,
-                normalizeUdfState,
-                items: refData.items,
-                fallbackWarehouse: so.header?.warehouse || DEFAULT_WAREHOUSE_CODE,
-              }))
-            : [createLine(rowUdfDefinitions)]
-        );
+        const savedDocumentLines = getARCreditMemoDocumentLines(so);
+        if (savedDocumentLines.length) {
+          setLines(savedDocumentLines.map((line) => hydrateWorkbookDocumentLine({
+            line,
+            createLine,
+            rowUdfDefinitions,
+            normalizeUdfState,
+            items: refData.items,
+            fallbackWarehouse: so.header?.warehouse || DEFAULT_WAREHOUSE_CODE,
+          })));
+        }
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
         setSnapshotPending(true);
         setIsDirty(false);
@@ -626,6 +665,21 @@ function ARCreditMemo() {
     load();
     return () => { ignore = true; };
   }, [location.pathname, requestedEditDocEntry, navigate]);
+
+  useEffect(() => {
+    if (!loadedCreditMemo || isDirty) return;
+    const savedDocumentLines = getARCreditMemoDocumentLines(loadedCreditMemo);
+    if (!savedDocumentLines.length) return;
+
+    setLines(savedDocumentLines.map((line) => hydrateWorkbookDocumentLine({
+      line,
+      createLine,
+      rowUdfDefinitions,
+      normalizeUdfState,
+      items: refData.items,
+      fallbackWarehouse: loadedCreditMemo.header?.warehouse || DEFAULT_WAREHOUSE_CODE,
+    })));
+  }, [loadedCreditMemo, rowUdfDefinitions, refData.items, isDirty]);
 
   useEffect(() => {
     if (!currentDocEntry) {
@@ -945,7 +999,10 @@ function ARCreditMemo() {
         if (net <= 0 || !l.taxCode) return;
         const rate = taxRateMap.get(String(l.taxCode || '')) || 0;
         const base = discSub * (net / subtotal);
-        const lineTax = roundTo(base * rate / 100, numDec.tax);
+        const explicitTaxValue = String(l.taxAmount ?? '').trim() === '' ? null : Number(l.taxAmount);
+        const lineTax = Number.isFinite(explicitTaxValue)
+          ? roundTo(explicitTaxValue, numDec.tax)
+          : roundTo(base * rate / 100, numDec.tax);
         taxAmt += lineTax;
         const ex = taxMap.get(l.taxCode) || { taxCode: l.taxCode, taxRate: rate, taxableAmount: 0, taxAmount: 0 };
         ex.taxableAmount = roundTo(ex.taxableAmount + base, numDec.total);
@@ -956,7 +1013,21 @@ function ARCreditMemo() {
     taxAmt = roundTo(taxAmt, numDec.tax);
     if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
     taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+    const totalBeforeRounding = roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue);
+    const roundingAmount = header.rounding ? calcRoundingAmount(totalBeforeRounding, numDec.totalPaymentDue) : 0;
+    const total = roundTo(totalBeforeRounding + roundingAmount, numDec.totalPaymentDue);
+    return {
+      subtotal,
+      discAmt,
+      discSub,
+      freight,
+      freightTaxAmt,
+      taxAmt,
+      totalBeforeRounding,
+      roundingAmount,
+      total,
+      taxBreakdown: Array.from(taxMap.values()),
+    };
   };
 
   const totals = calcTotals();
@@ -2362,6 +2433,8 @@ function ARCreditMemo() {
         placeOfSupply: header.placeOfSupply,
         branch: header.branch,
         contactPerson: header.contactPerson,
+        totalPaymentDue: fmtDec(totals.total, numDec.totalPaymentDue),
+        roundingAmount: fmtDec(totals.roundingAmount, numDec.totalPaymentDue),
       };
       
       // Only include series if it's explicitly set and valid
@@ -2386,6 +2459,7 @@ function ARCreditMemo() {
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       setSnapshotPending(false);
       setIsDirty(false);
+      setLoadedCreditMemo(null);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
       setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
@@ -2407,6 +2481,7 @@ function ARCreditMemo() {
   const resetForm = () => {
     setSnapshotPending(false);
     setIsDirty(false);
+    setLoadedCreditMemo(null);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
     setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
@@ -2514,41 +2589,33 @@ function ARCreditMemo() {
       )}
 
       <fieldset className="del-fieldset" disabled={!isDocumentEditable} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-      <div className={`so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`}>
-        <div className="so-layout__main">
+      <div className={`sap-document-layout so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ' sap-document-layout--no-udf'}`}>
+        <div className="sap-document-main so-layout__main">
 
             {/* ══ HEADER CARD ══════════════════════════════════════════════ */}
             <div className="del-header-card">
               <div className="row g-2">
                 {/* LEFT COLUMN */}
                 <div className="col-md-6">
-                  <div className="del-field-grid" style={{ gridTemplateColumns: '1fr' }}>
+                  <div className="del-field-grid del-field-grid--single">
                     
                     {/* Buyer's Code */}
                     <div className="del-field">
                       <label className="del-field__label">Buyer's Code *</label>
-                      <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                      <div className="sap-input-group">
                         <input
                           name="vendor"
-                          className={`so-field__input${valErrors.header.vendor ? ' so-field__input--error' : ''}`}
+                          className={`del-field__input${valErrors.header.vendor ? ' del-field__input--error' : ''}`}
                           value={header.vendor}
                           onChange={handleHeaderChange}
                           disabled={!!currentDocEntry}
                           placeholder="Customer code"
-                          style={{ flex: 1 }}
                         />
                         <button
                           type="button"
-                          className="btn btn-sm"
+                          className="del-btn del-btn--lookup"
                           onClick={openBpModal}
                           disabled={!!currentDocEntry}
-                          style={{
-                            padding: '0 8px',
-                            fontSize: 11,
-                            border: '1px solid #a0aab4',
-                            background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                            minWidth: '28px'
-                          }}
                           title="Select Business Partner"
                         >
                           ...
@@ -2592,26 +2659,18 @@ function ARCreditMemo() {
                     {/* Place of Supply */}
                     <div className="del-field">
                       <label className="del-field__label">Place of Supply *</label>
-                      <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                      <div className="sap-input-group">
                         <input
                           name="placeOfSupply"
-                          className={`so-field__input${valErrors.header.placeOfSupply ? ' so-field__input--error' : ''}`}
+                          className={`del-field__input${valErrors.header.placeOfSupply ? ' del-field__input--error' : ''}`}
                           value={getStateDisplayName(header.placeOfSupply, refData.states)}
                           onChange={handleHeaderChange}
                           placeholder="State code"
-                          style={{ flex: 1 }}
                         />
                         <button
                           type="button"
-                          className="btn btn-sm"
+                          className="del-btn del-btn--lookup"
                           onClick={openStateModal}
-                          style={{
-                            padding: '0 8px',
-                            fontSize: 11,
-                            border: '1px solid #a0aab4',
-                            background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                            minWidth: '28px'
-                          }}
                           title="Select State"
                         >
                           ...
@@ -2664,7 +2723,7 @@ function ARCreditMemo() {
 
                 {/* RIGHT COLUMN */}
                 <div className="col-md-6">
-                  <div className="del-field-grid" style={{ gridTemplateColumns: '1fr' }}>
+                  <div className="del-field-grid del-field-grid--single">
 
                     {/* Series */}
                     <div className="del-field">
@@ -2813,7 +2872,7 @@ function ARCreditMemo() {
 
             {/* ══ TOTALS FOOTER ═════════════════════════════════════════════ */}
             <div className="del-header-card">
-              <div className="del-field-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div className="del-field-grid del-field-grid--summary">
                 <div>
                   <div className="del-field">
                     <label className="del-field__label">Sales Employee</label>
@@ -2890,7 +2949,7 @@ function ARCreditMemo() {
                         </tr>
                         <tr>
                           <td><input type="checkbox" className="" name="rounding" checked={header.rounding} onChange={handleHeaderChange} style={{ marginRight: 6 }} /><span>Rounding</span></td>
-                          <td></td>
+                          <td className="del-grid__cell--num"><input className="del-grid__input" value={fmtDec(totals.roundingAmount, numDec.totalPaymentDue)} readOnly /></td>
                         </tr>
                         <tr>
                           <td>Tax</td>
@@ -2970,7 +3029,7 @@ function ARCreditMemo() {
           </div>{/* end main col */}
 
           <HeaderUdfSidebar
-            className="so-layout__sidebar"
+            className="sap-header-udf-panel so-layout__sidebar"
             isOpen={sidebarOpen}
             fields={visHdrUdfs}
             formSettings={formSettings}
@@ -2981,7 +3040,7 @@ function ARCreditMemo() {
           />
           <FormSettingsPanel
             variant="sidebar"
-            className="so-layout__sidebar"
+            className="sap-header-udf-panel so-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={matrixColumnDefinitions}

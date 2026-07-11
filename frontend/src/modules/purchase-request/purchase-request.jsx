@@ -23,6 +23,7 @@ import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
@@ -1038,10 +1039,17 @@ function PurchaseRequest() {
 
   // ── Address Modal handlers ────────────────────────────────────────────────
   const openAddressModal = (type) => {
-    setAddressForm({
-      streetNo: '', buildingFloorRoom: '', block: '', city: '', zipCode: '', county: '',
-      state: '', countryRegion: '', addressName2: '', addressName3: '', gln: '', gstin: ''
-    });
+    const isShipTo = type === 'shipTo';
+    const addresses = isShipTo ? vendorEffectiveShipToAddresses : vendorEffectiveBillToAddresses;
+    const addressCode = isShipTo
+      ? header.shipToCode
+      : (header.payToCode || header.billToCode);
+    const addressText = isShipTo
+      ? header.shipTo
+      : (header.payTo || header.billTo);
+    const activeAddress = resolveAddressForModal(addressCode, addresses, addressText);
+
+    setAddressForm(mapAddressToModalForm(activeAddress));
     setAddressModal({ type });
   };
 
@@ -1051,7 +1059,8 @@ function PurchaseRequest() {
 
   const saveAddressModal = () => {
     const formatted = [
-      [addressForm.streetNo, addressForm.buildingFloorRoom].filter(Boolean).join(', '),
+      [addressForm.streetPoBox, addressForm.streetNo].filter(Boolean).join(', '),
+      addressForm.buildingFloorRoom,
       [addressForm.block, addressForm.city].filter(Boolean).join(', '),
       [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
       addressForm.countryRegion,

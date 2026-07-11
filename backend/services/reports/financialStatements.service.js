@@ -666,7 +666,7 @@ const getCashFlowDocumentRows = async (criteria = {}, options = {}) => {
       : "ISNULL(H.DocTotal, 0)";
     const rows = await safeQueryRows(
       `
-        SELECT TOP 50000
+      SELECT TOP 5000
           H.DocEntry,
           H.DocNum,
           H.CardCode,
@@ -733,7 +733,7 @@ const getCashFlowJournalRows = async (criteria = {}, cashAccountCodes = [], opti
 
   const rows = await safeQueryRows(
     `
-      SELECT TOP 50000
+      SELECT TOP 5000
         L.TransId,
         L.Line_ID,
         L.DueDate,
@@ -974,7 +974,7 @@ const getCashFlowReferenceReport = async (criteria = {}, options = {}) => {
 
   const rows = await queryRows(
     `
-      SELECT TOP 50000
+        SELECT TOP 5000
         H.RefDate,
         ISNULL(H.TransType, L.TransType) AS TransType,
         H.TransId,
@@ -1136,7 +1136,7 @@ const getStatementCashMovementBuckets = async (criteria = {}, options = {}) => {
 
   const rows = await safeQueryRows(
     `
-      SELECT TOP 50000
+      SELECT TOP 5000
         ISNULL(L.TransType, H.TransType) AS TransType,
         ISNULL(H.Memo, '') AS Memo,
         ISNULL(L.LineMemo, '') AS LineMemo,

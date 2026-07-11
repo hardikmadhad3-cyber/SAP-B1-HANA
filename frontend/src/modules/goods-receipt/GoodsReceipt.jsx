@@ -14,6 +14,7 @@ import ReferenceInformationModal, {
 import BatchAllocationModal from '../../components/BatchAllocationModal';
 import DistributionRuleAssignmentModal from '../../components/DistributionRuleAssignmentModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import {
   BATCH_QTY_TOLERANCE,
   getRequiredBatchQty,
@@ -46,6 +47,8 @@ import {
   normalizeUdfState,
   readSavedFormSettings,
 } from '../../config/inventoryDocumentForm';
+import { openLinkedReferenceDocument } from '../../utils/sapLinkedNavigation';
+import { replaceRouteStatePreservingWindow } from '../../utils/copyToState';
 
 const TAB_NAMES = ['Contents', 'Attachments'];
 const today = () => new Date().toISOString().split('T')[0];
@@ -132,6 +135,7 @@ const buildDistributionDimensions = (rules = []) => {
 function GoodsReceipt() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { upsertTask } = useSapWindowTaskbarActions();
   const fileInputRef = useRef(null);
   const attachmentsRef = useRef([]);
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
@@ -216,6 +220,47 @@ function GoodsReceipt() {
     : currentDocEntry
       ? updateActionLabel
       : 'Add';
+  useEffect(() => {
+    const draft = location.state?.goodsReceiptDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setHeader(draft.header || createHeader());
+    setLines(Array.isArray(draft.lines) && draft.lines.length ? draft.lines : [createLine(rowUdfFields)]);
+    setHeaderUdfs(draft.headerUdfs || {});
+    setReferenceDocuments(Array.isArray(draft.referenceDocuments) ? draft.referenceDocuments : []);
+    setReferenceDocumentsChanged(Boolean(draft.referenceDocumentsChanged));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [location.state, navigate, location.pathname, rowUdfFields]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    goodsReceiptDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      referenceDocuments,
+      referenceDocumentsChanged,
+      activeTab,
+      isDirty,
+    },
+  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged]);
+
+  const openReferenceDocumentLink = useCallback((row) => {
+    openLinkedReferenceDocument({
+      transactionType: row?.transactionType,
+      docEntry: row?.docEntry,
+      docNumber: row?.docNumber,
+      sourcePath: location.pathname,
+      sourceTitle: `Goods Receipt${header.number || currentDocEntry ? ` #${header.number || currentDocEntry}` : ''}`,
+      sourceRestoreState: buildLinkedRestoreState(),
+      navigate,
+      upsertTask,
+    });
+  }, [buildLinkedRestoreState, currentDocEntry, header.number, location.pathname, navigate, upsertTask]);
+
   const markDirty = (event) => {
     if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
     if (currentDocEntry) setIsDirty(true);
@@ -1678,6 +1723,7 @@ function GoodsReceipt() {
         documentDate={header.documentDate}
         remarks={header.remarks}
         documentTotal={documentTotal}
+        onOpenDocument={openReferenceDocumentLink}
       />
 
       <ItemSelectionModal

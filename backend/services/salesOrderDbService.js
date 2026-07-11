@@ -59,6 +59,27 @@ const getDisplayDiscountAmount = (unitPrice, discountPercent) => {
   return formatDecimal((price * percent) / 100, 2);
 };
 
+const getTaxRateFromCode = (taxCode) => {
+  const normalized = String(taxCode || '').trim();
+  if (!normalized) return 0;
+
+  const match = normalized.match(/(\d+(?:\.\d+)?)/);
+  if (!match) return 0;
+
+  const rate = Number(match[1]);
+  return Number.isFinite(rate) ? rate : 0;
+};
+
+const getCalculatedForRate = (unitPrice, discountPercent, taxCode) => {
+  const price = toFiniteNumber(unitPrice);
+  if (price === null) return '';
+
+  const discount = toFiniteNumber(discountPercent) || 0;
+  const taxRate = getTaxRateFromCode(taxCode);
+  const discountedPrice = price * (1 - (discount / 100));
+  return formatDecimal(discountedPrice * (1 + (taxRate / 100)), 5);
+};
+
 const normalizeSalesOrderStatusCode = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return '';
@@ -124,6 +145,15 @@ const resolveTableColumnName = (fieldMetadata = {}, candidateColumnName) => {
   return Object.keys(fieldMetadata || {}).find(
     (columnName) => String(columnName || '').trim().toLowerCase() === normalizedCandidate
   );
+};
+
+const optionalHeaderColumn = (fieldMetadata = {}, candidates = [], alias, fallback = "''") => {
+  const resolvedColumn = candidates
+    .map((candidate) => resolveTableColumnName(fieldMetadata, candidate))
+    .find(Boolean);
+  return resolvedColumn
+    ? `T0.${quoteSqlIdentifier(resolvedColumn)} AS ${quoteSqlIdentifier(alias)}`
+    : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
 };
 
 const resolveSalesOrderSellerColumns = async () => {
@@ -473,6 +503,12 @@ const getPaymentTerms = () => safe(db.query(`
   ORDER  BY PymntGroup
 `));
 
+const getPaymentMethods = () => safe(db.query(`
+  SELECT PayMethCod AS Code, Descript AS Description
+  FROM   OPYM
+  ORDER  BY PayMethCod
+`));
+
 const getShippingTypes = () => safe(db.query(`
   SELECT TrnspCode, TrnspName
   FROM   OSHP
@@ -693,6 +729,37 @@ const mergeLineUdfValueMaps = (...maps) => maps.reduce((acc, map) => {
 
   return acc;
 }, {});
+
+const firstNonBlank = (...values) => {
+  for (const value of values) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return value;
+    }
+  }
+  return '';
+};
+
+const getUdfValueByAliases = (values = {}, aliases = []) => {
+  const entries = Object.entries(values || {});
+  for (const alias of aliases) {
+    const normalizedAlias = normalizeUdfNameForMatch(alias);
+    const match = entries.find(([key]) => normalizeUdfNameForMatch(key) === normalizedAlias);
+    if (match && match[1] !== undefined && match[1] !== null && String(match[1]).trim() !== '') {
+      return match[1];
+    }
+  }
+  return '';
+};
+
+const resolveForRateColumnName = (lineFieldMetadata = {}) => (
+  resolveColumnName(lineFieldMetadata, 'U_ForRate') ||
+  resolveColumnName(lineFieldMetadata, 'U_FORRATE') ||
+  resolveColumnName(lineFieldMetadata, 'U_FOR_RATE') ||
+  resolveColumnName(lineFieldMetadata, 'U_For_Rate') ||
+  resolveColumnName(lineFieldMetadata, 'U_FORRate') ||
+  resolveTableColumnName(lineFieldMetadata, 'Rate') ||
+  ''
+);
 
 const getSalesOrderLineFieldMetadata = async () => {
   return getTableFieldMetadata('RDR1');
@@ -1978,15 +2045,29 @@ const getContactsByCustomer = async (cardCode) => {
 
   return result;
 };
-const getAddressesByCustomer = (cardCode) => safe(db.query(`
-  SELECT CardCode, AdresType, Address,
-         Street, StreetNo, Block, Building,
-         Address2, Address3,
-         City, County, State, ZipCode, Country
-  FROM   CRD1
-  WHERE  CardCode = @cardCode
-  ORDER  BY AdresType, Address
-`, { cardCode }));
+const getAddressesByCustomer = async (cardCode) => {
+  const crd1FieldMetadata = await getTableFieldMetadata('CRD1');
+  const optionalCrd1Column = (candidates, alias, fallback = "''") => {
+    const resolvedColumn = candidates
+      .map((candidate) => resolveTableColumnName(crd1FieldMetadata, candidate))
+      .find(Boolean);
+    return resolvedColumn
+      ? `T0.${quoteSqlIdentifier(resolvedColumn)} AS ${quoteSqlIdentifier(alias)}`
+      : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
+  };
+
+  return safe(db.query(`
+    SELECT T0.*, T0.CardCode, T0.AdresType, T0.Address,
+           T0.Street, T0.StreetNo, T0.Block, T0.Building,
+           T0.Address2, T0.Address3,
+           T0.City, T0.County, T0.State, T0.ZipCode, T0.Country,
+           ${optionalCrd1Column(['GSTRegnNo', 'GSTIN'], 'GSTIN')},
+           ${optionalCrd1Column(['GSTType'], 'GSTType')}
+    FROM   CRD1 T0
+    WHERE  T0.CardCode = @cardCode
+    ORDER  BY T0.AdresType, T0.Address
+  `, { cardCode }));
+};
 
 const getStateFromAddress = async (cardCode, addressCode) => {
   if (!cardCode || !addressCode) {
@@ -2009,12 +2090,12 @@ const getStateFromAddress = async (cardCode, addressCode) => {
 
 const getReferenceData = async () => {
   const [
-    customers, items, warehouses, paymentTerms,
+    customers, items, warehouses, paymentTerms, paymentMethods,
     shippingTypes, branches, states, countries, distributionRules, taxCodes, sacCodes, uomRaw, salesEmployees, owners,
     buyerQualityOptions, sellerQualityOptions, buyerPriceOptions, sellerPriceOptions, udfMetadata,
     headerFieldMetadata,
   ] = await Promise.all([
-    getCustomers(), getItems(), getWarehouses(), getPaymentTerms(),
+    getCustomers(), getItems(), getWarehouses(), getPaymentTerms(), getPaymentMethods(),
     getShippingTypes(), getBranches(), getStates(), getCountries(), getDistributionRules(), getTaxCodes(), hsnCodeDbService.getSACCodes('', 5000, 0), getUomGroups(), getSalesEmployees(), getOwners(),
     getLookupValues('U_Buyer_Quality'),
     getLookupValues('U_Seller_Quality'),
@@ -2075,6 +2156,7 @@ const getReferenceData = async () => {
     Currency:        c.Currency,
     VatGroup:        c.VatGroup,
     PayTermsGrpCode: c.GroupNum,
+    PaymentMethod:   c.PymCode || '',
     Balance:         c.Balance,
     CurrentAccountBalance: c.Balance,
     FrozenFor:       c.frozenFor,
@@ -2106,6 +2188,10 @@ const getReferenceData = async () => {
     warehouses:          mappedWarehouses,
     warehouse_addresses: mappedWarehouses,
     payment_terms:  paymentTerms.map(t => ({ GroupNum: t.GroupNum, PymntGroup: t.PymntGroup })),
+    payment_methods: paymentMethods.map(method => ({
+      Code: method.Code || '',
+      Description: method.Description || method.Code || '',
+    })).filter(method => method.Code),
     shipping_types: shippingTypes.map(s => ({ TrnspCode: s.TrnspCode, TrnspName: s.TrnspName })),
     branches:       branches.map(b => ({ BPLId: b.BPLId, BPLName: b.BPLName })),
     branches_enabled: branchesEnabled,
@@ -2673,16 +2759,21 @@ const getSalesOrder = async (docEntry) => {
   }
 
   const resolvedDocEntry = resolvedDocument.DocEntry;
+  const headerFieldMetadata = await getTableFieldMetadata('ORDR');
   const lineFieldMetadata = await getSalesOrderLineFieldMetadata();
   const sacFieldMetadata = await getTableFieldMetadata('OSAC');
   const lineField = (columnName, alias, fallback = "''") => (
-    lineFieldMetadata?.[columnName]
-      ? `T1.${quoteSqlIdentifier(columnName)} AS ${quoteSqlIdentifier(alias)}`
+    resolveTableColumnName(lineFieldMetadata, columnName)
+      ? `T1.${quoteSqlIdentifier(resolveTableColumnName(lineFieldMetadata, columnName))} AS ${quoteSqlIdentifier(alias)}`
       : `${fallback} AS ${quoteSqlIdentifier(alias)}`
   );
   const hasSellerPaymentTermField = Boolean(lineFieldMetadata?.U_Seller_Payment_Term);
   const hasSellerPaymentTermsField = Boolean(lineFieldMetadata?.U_Seller_Payment_Terms);
   const hasRateField = Boolean(lineFieldMetadata?.U_Rate);
+  const paymentMethodColumn = resolveTableColumnName(headerFieldMetadata, 'PeyMethod');
+  const paymentMethodExpression = paymentMethodColumn ? `T0.${quoteSqlIdentifier(paymentMethodColumn)}` : "''";
+  const forRateColumnName = resolveForRateColumnName(lineFieldMetadata);
+  const forRateExpression = forRateColumnName ? `T1.${quoteSqlIdentifier(forRateColumnName)}` : "''";
   const sacSql = getSacLookupSqlParts('T1', 'SAC', sacFieldMetadata, lineFieldMetadata);
 
   // ✅ Get complete header and line data with Place of Supply and HSN Code
@@ -2714,6 +2805,13 @@ const getSalesOrder = async (docEntry) => {
     T0.TrnspCode,
     T0.Confirmed,
     T0.JrnlMemo,
+    ${paymentMethodExpression} AS PaymentMethod,
+    ${optionalHeaderColumn(headerFieldMetadata, ['TransCat', 'TransactionCategory'], 'TransactionCategory')},
+    ${optionalHeaderColumn(headerFieldMetadata, ['FormNo', 'TaxFormNo'], 'TaxFormNo')},
+    ${optionalHeaderColumn(headerFieldMetadata, ['DutyStatus'], 'DutyStatus')},
+    ${optionalHeaderColumn(headerFieldMetadata, ['Export', 'IsExport', 'Exported'], 'ExportFlag')},
+    ${optionalHeaderColumn(headerFieldMetadata, ['DiffPercent', 'DifferentialTaxRate', 'DiffTaxRate'], 'DifferentialTaxRate', "'100'")},
+    ${optionalHeaderColumn(headerFieldMetadata, ['SupplySec7', 'SupplUnSec', 'SupplyCovered'], 'SupplyCovered')},
     T0.Series,
     T0.DiscPrcnt,
 
@@ -2763,6 +2861,7 @@ const getSalesOrder = async (docEntry) => {
     CAST((ISNULL(T1.Quantity, 0) - ISNULL(T1.OpenQty, 0)) AS DECIMAL(19, 6)) AS DeliveredQuantity,
     ISNULL(T1.VatSum, 0) AS LineTaxAmount,
     T1.LineTotal,
+    ${forRateExpression} AS ForRate,
     ${lineField('U_SPLRBT', 'SpecialRebate')},
     ${lineField('U_COMPRC', 'Commission')},
     ${lineField('U_S_BrokPerQty', 'SellerBrokeragePerQty')},
@@ -3117,6 +3216,15 @@ ORDER BY T1.LineNum
         shippingType: String(header.TrnspCode || ''),
         confirmed: header.Confirmed === 'Y',
         journalRemark: header.JrnlMemo || '',
+        paymentMethod: header.PaymentMethod || '',
+        transactionCategory: header.TransactionCategory || '',
+        taxFormNo: header.TaxFormNo || '',
+        dutyStatus: header.DutyStatus || 'Y',
+        exportFlag: ['Y', 'YES', '1', 'TRUE'].includes(String(header.ExportFlag || '').toUpperCase()),
+        differentialTaxRate: header.DifferentialTaxRate != null ? String(header.DifferentialTaxRate) : '100',
+        supplyCovered: header.SupplyCovered == null || header.SupplyCovered === ''
+          ? true
+          : ['Y', 'YES', '1', 'TRUE'].includes(String(header.SupplyCovered || '').toUpperCase()),
         discount: String(header.DiscPrcnt || ''),
         tax: '', // Tax is calculated, not stored
         currency: header.DocCur || 'INR',
@@ -3137,6 +3245,13 @@ ORDER BY T1.LineNum
         const displayDiscountAmount = savedDiscountAmount != null && String(savedDiscountAmount).trim() !== ''
           ? String(savedDiscountAmount)
           : getDisplayDiscountAmount(displayUnitPrice, line.LineDiscPrcnt);
+        const calculatedForRate = getCalculatedForRate(displayUnitPrice, line.LineDiscPrcnt, line.TaxCode);
+        const savedForRate = firstNonBlank(
+          getUdfValueByAliases(lineUdf, ['U_ForRate', 'U_FORRATE', 'U_FOR_RATE', 'U_For_Rate', 'U_FORRate']),
+          line.ForRate,
+          line.Rate,
+          calculatedForRate
+        );
         // Get HSN Code from the joined query
         const hsnCode = line.HSNCode || '';
         
@@ -3153,6 +3268,7 @@ ORDER BY T1.LineNum
           sacServiceCode: line.SACServiceCode || '',
           quantity: String(line.Quantity || 0),
           unitPrice: displayUnitPrice,
+          forRate: savedForRate !== '' ? String(savedForRate) : calculatedForRate,
           unitPriceUdf: savedUnitPriceUdf != null && savedUnitPriceUdf !== '' ? String(savedUnitPriceUdf) : '',
           sellerQuality: lineUdf.U_Seller_Quality || line.SellerQuality || '',
           buyerQuality: lineUdf.U_Buyer_Quality || line.BuyerQuality || '',
@@ -3295,11 +3411,15 @@ const getSalesOrderForCopy = async (docEntry) => {
     : headerFieldMetadata?.BPLId
       ? 'T0.BPLId'
       : 'NULL';
+  const paymentMethodColumn = resolveTableColumnName(headerFieldMetadata, 'PeyMethod');
+  const paymentMethodExpression = paymentMethodColumn ? `T0.${quoteSqlIdentifier(paymentMethodColumn)}` : "''";
   const lineField = (columnName, alias, fallback = "''") => (
-    lineFieldMetadata?.[columnName]
-      ? `T0.${columnName} AS ${sqlAlias(alias)}`
+    resolveTableColumnName(lineFieldMetadata, columnName)
+      ? `T0.${quoteSqlIdentifier(resolveTableColumnName(lineFieldMetadata, columnName))} AS ${sqlAlias(alias)}`
       : `${fallback} AS ${sqlAlias(alias)}`
   );
+  const forRateColumnName = resolveForRateColumnName(lineFieldMetadata);
+  const forRateExpression = forRateColumnName ? `T0.${quoteSqlIdentifier(forRateColumnName)}` : "''";
   const sacSql = getSacLookupSqlParts('T0', 'SAC', sacFieldMetadata, lineFieldMetadata);
 
   const headerResult = await db.query(`
@@ -3312,6 +3432,13 @@ const getSalesOrderForCopy = async (docEntry) => {
       ${headerBranchField} AS BPL_IDAssignedToInvoice,
       T0.GroupNum, T0.SlpCode,
       T0.DiscPrcnt, T0.TotalExpns AS Freight,
+      ${paymentMethodExpression} AS PaymentMethod,
+      ${optionalHeaderColumn(headerFieldMetadata, ['TransCat', 'TransactionCategory'], 'TransactionCategory')},
+      ${optionalHeaderColumn(headerFieldMetadata, ['FormNo', 'TaxFormNo'], 'TaxFormNo')},
+      ${optionalHeaderColumn(headerFieldMetadata, ['DutyStatus'], 'DutyStatus')},
+      ${optionalHeaderColumn(headerFieldMetadata, ['Export', 'IsExport', 'Exported'], 'ExportFlag')},
+      ${optionalHeaderColumn(headerFieldMetadata, ['DiffPercent', 'DifferentialTaxRate', 'DiffTaxRate'], 'DifferentialTaxRate', "'100'")},
+      ${optionalHeaderColumn(headerFieldMetadata, ['SupplySec7', 'SupplUnSec', 'SupplyCovered'], 'SupplyCovered')},
       T0.VatSum AS TaxAmount, T0.DocCur, T0.DocTotal
     FROM ORDR T0
     WHERE T0.DocEntry = @DocEntry
@@ -3323,6 +3450,8 @@ const getSalesOrderForCopy = async (docEntry) => {
       T0.Dscription AS ItemDescription,
       T0.OpenQty AS Quantity,
       COALESCE(T0.PriceBefDi, T0.Price) AS UnitPrice,
+      T0.Price AS Price,
+      ${lineField('StockPrice', 'ItemCost', 'ITM.AvgPrice')},
       T0.DiscPrcnt AS DiscountPercent,
       T0.WhsCode AS WarehouseCode,
       T0.TaxCode, T0.unitMsr AS UomCode, T0.unitMsr AS UomName,
@@ -3338,6 +3467,7 @@ const getSalesOrderForCopy = async (docEntry) => {
       ${lineField('FreeTxt', 'FreeText')},
       ${lineField('CountryOrg', 'CountryOfOrigin')},
       T0.OpenQty AS OpenQty,
+      ${forRateExpression} AS ForRate,
       CAST((ISNULL(T0.Quantity, 0) - ISNULL(T0.OpenQty, 0)) AS DECIMAL(19, 6)) AS DeliveredQty,
       CASE
         WHEN ISNULL(T0.Quantity, 0) = 0 THEN ISNULL(T0.LineTotal, 0)

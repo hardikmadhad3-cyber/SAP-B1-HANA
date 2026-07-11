@@ -5,8 +5,8 @@ const BASE = "/incoming-payments";
 export const fetchIncomingPaymentReferenceData = () =>
   apiClient.get(`${BASE}/reference-data`).then((response) => response.data);
 
-export const searchIncomingPaymentBusinessPartners = (query = "", bpType = "Customer") =>
-  apiClient.get(`${BASE}/business-partners`, { params: { query, bpType } }).then((response) => response.data);
+export const searchIncomingPaymentBusinessPartners = (query = "", bpType = "Customer", page = 1, pageSize = 100) =>
+  apiClient.get(`${BASE}/business-partners`, { params: { query, bpType, page, pageSize } }).then((response) => response.data);
 
 export const searchIncomingPayments = (query = "") =>
   apiClient.get(`${BASE}/documents`, { params: { query } }).then((response) => response.data);

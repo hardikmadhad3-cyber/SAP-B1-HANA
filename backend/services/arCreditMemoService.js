@@ -312,6 +312,7 @@ const submitARCreditMemo = async (payload) => {
       // Comments
       Comments: payload.header.otherInstruction || payload.header.comments || undefined,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: yesNo(payload.header.rounding),
 
       DocumentLines: payload.lines.map((l, index) => {
         console.log(`🔍 [ARCreditMemoService] Processing line ${index}:`, l);
@@ -424,6 +425,7 @@ const updateARCreditMemo = async (docEntry, payload) => {
       NumAtCard: payload.header.salesContractNo || payload.header.customerRefNo || undefined,
       Comments: payload.header.otherInstruction || payload.header.comments || undefined,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: yesNo(payload.header.rounding),
 
       DocumentLines: payload.lines.map((l) => {
         const lineNum = l.lineNum ?? l.LineNum;

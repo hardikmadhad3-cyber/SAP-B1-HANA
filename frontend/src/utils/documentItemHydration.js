@@ -39,7 +39,22 @@ export const hydrateDocumentLineFromItem = (line = {}, item = {}, {
   const uomCode = side === 'purchase'
     ? String(item.PurchaseUnit || item.InventoryUOM || '').trim()
     : String(item.SalesUnit || item.InventoryUOM || '').trim();
-  const defaultWarehouse = item.DefaultWarehouse || item.WarehouseCode || fallbackWarehouse || '';
+  const defaultWarehouse =
+    item.DefaultWarehouse ||
+    item.defaultWarehouse ||
+    item.DfltWH ||
+    item.dfltWH ||
+    item.DfltWh ||
+    item.Warehouse ||
+    item.warehouse ||
+    item.WarehouseCode ||
+    item.warehouseCode ||
+    item.WhsCode ||
+    item.whsCode ||
+    item.Whse ||
+    item.whse ||
+    fallbackWarehouse ||
+    '';
   const itemPrice = getItemPrice(item, side);
   const salesGlAccount = firstItemValue(item, [
     'SalesGLAccount',

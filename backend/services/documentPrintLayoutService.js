@@ -31,33 +31,41 @@ const DOCUMENT_PRINT_CONFIG = {
     aliases: ['service-ar-invoice', 'servicearinvoice', 'services-ar-invoice', 'service-invoice', 'serviceinv'],
     label: 'Service A/R Invoice',
     objectType: '13',
-    typeCode: 'INV2',
+    typeCode: 'INV1',
+    typeCodePrefix: 'INV',
     tableName: 'OINV',
     filePrefix: 'service-ar-invoice',
+    contentType: 'service',
   },
   serviceApInvoice: {
     aliases: ['service-ap-invoice', 'serviceapinvoice', 'services-ap-invoice', 'service-purchase-invoice', 'servicepch'],
     label: 'Service A/P Invoice',
     objectType: '18',
-    typeCode: 'PCH2',
+    typeCode: 'PCH1',
+    typeCodePrefix: 'PCH',
     tableName: 'OPCH',
     filePrefix: 'service-ap-invoice',
+    contentType: 'service',
   },
   serviceApCreditMemo: {
     aliases: ['service-ap-credit-memo', 'serviceapcreditmemo', 'services-ap-credit-memo', 'service-purchase-credit-memo', 'servicerpc'],
     label: 'Service A/P Credit Memo',
     objectType: '19',
-    typeCode: 'RPC2',
+    typeCode: 'RPC1',
+    typeCodePrefix: 'RPC',
     tableName: 'ORPC',
     filePrefix: 'service-ap-credit-memo',
+    contentType: 'service',
   },
   serviceArCreditMemo: {
     aliases: ['service-ar-credit-memo', 'servicearcreditmemo', 'services-ar-credit-memo', 'service-sales-credit-memo', 'servicerin'],
     label: 'Service A/R Credit Memo',
     objectType: '14',
-    typeCode: 'RIN2',
+    typeCode: 'RIN1',
+    typeCodePrefix: 'RIN',
     tableName: 'ORIN',
     filePrefix: 'service-ar-credit-memo',
+    contentType: 'service',
   },
   arCreditMemo: {
     aliases: ['ar-credit-memo', 'arcreditmemo', 'a/r-credit-memo', 'credit-memo', 'rin', '14'],
@@ -246,8 +254,17 @@ const isCrystalLayout = (layout = {}) => {
   return type.includes('crystal');
 };
 
-const filterDocumentLayouts = (_config, layouts = []) =>
-  layouts.filter((layout) => isActiveLayout(layout) && isCrystalLayout(layout));
+const isLayoutAvailableForDocumentMode = (config, layout) => {
+  if (!isActiveLayout(layout)) return false;
+  return String(layout.TypeCode || layout.type_code || '').trim().toUpperCase()
+    === String(config.typeCode || '').trim().toUpperCase();
+};
+
+const filterActiveSapLayouts = (config, layouts = []) =>
+  layouts.filter((layout) => isLayoutAvailableForDocumentMode(config, layout));
+
+const filterDocumentLayouts = (config, layouts = []) =>
+  filterActiveSapLayouts(config, layouts).filter((layout) => isCrystalLayout(layout));
 
 const SAP_DEFAULT_LAYOUT_FLAG_COLUMNS = [
   'IsDefault',
@@ -259,13 +276,56 @@ const SAP_DEFAULT_LAYOUT_FLAG_COLUMNS = [
   'DefaultLayout',
 ];
 
+const serviceLayoutTypeCodeCache = new Map();
+
+const resolveLayoutTypeCode = async (config, schema) => {
+  if (config.contentType !== 'service') return config.typeCode;
+
+  const cacheKey = `${String(schema || '').trim().toUpperCase()}:${config.key}`;
+  if (serviceLayoutTypeCodeCache.has(cacheKey)) {
+    return serviceLayoutTypeCodeCache.get(cacheKey);
+  }
+
+  const prefix = String(config.typeCodePrefix || config.typeCode || '').trim().toUpperCase();
+  const result = await dbService.query(`
+    SELECT TOP 1
+      T0.TypeCode,
+      T1.NAME AS TypeName
+    FROM RDOC T0
+    LEFT JOIN RTYP T1 ON T1.CODE = T0.TypeCode
+    WHERE T0.Status = 'A'
+      AND UPPER(T0.TypeCode) LIKE @typeCodePrefix
+      AND (
+        UPPER(T0.DocName) LIKE @servicePattern
+        OR UPPER(COALESCE(T1.NAME, '')) LIKE @servicePattern
+      )
+    ORDER BY
+      CASE WHEN UPPER(COALESCE(T1.NAME, '')) LIKE @servicePattern THEN 0 ELSE 1 END,
+      T0.TypeCode
+  `, {
+    typeCodePrefix: `${prefix}%`,
+    servicePattern: '%SERVICE%',
+  }, { databaseName: schema });
+
+  const detectedTypeCode = String(result.recordset?.[0]?.TypeCode || '').trim();
+  const resolvedTypeCode = detectedTypeCode || config.typeCode;
+  if (detectedTypeCode) {
+    serviceLayoutTypeCodeCache.set(cacheKey, resolvedTypeCode);
+  }
+  return resolvedTypeCode;
+};
+
 const isTruthySapFlag = (value) => {
   const normalized = String(value ?? '').trim().toUpperCase();
   return ['1', 'Y', 'YES', 'T', 'TRUE'].includes(normalized);
 };
 
 const getSapLayoutRows = async (config, schema) => {
-  const defaultFlagColumnSet = await getExistingTableColumns('RDOC', SAP_DEFAULT_LAYOUT_FLAG_COLUMNS, schema);
+  const resolvedTypeCode = await resolveLayoutTypeCode(config, schema);
+  const availableColumnSet = await getExistingTableColumns('RDOC', SAP_DEFAULT_LAYOUT_FLAG_COLUMNS, schema);
+  const defaultFlagColumnSet = new Set(
+    SAP_DEFAULT_LAYOUT_FLAG_COLUMNS.filter((columnName) => availableColumnSet.has(columnName)),
+  );
   const defaultFlagColumns = [...defaultFlagColumnSet];
   const defaultFlagSelect = defaultFlagColumns.length
     ? `,\n      ${defaultFlagColumns.map((columnName) => `T0.${columnName} AS ${columnName}`).join(',\n      ')}`
@@ -305,20 +365,32 @@ const getSapLayoutRows = async (config, schema) => {
     WHERE T0.TypeCode = @typeCode
       AND T0.Status = 'A'
     ORDER BY T0.DocCode
-  `, { typeCode: config.typeCode }, { databaseName: schema });
+  `, { typeCode: resolvedTypeCode }, { databaseName: schema });
 
   return {
     layouts: result.recordset || [],
     defaultFlagColumns,
+    typeCode: resolvedTypeCode,
   };
 };
 
 const selectSapAssignedLayout = ({ config, layouts, defaultFlagColumns, docCode = '' }) => {
+  const activeLayouts = filterActiveSapLayouts(config, layouts);
   const crystalLayouts = filterDocumentLayouts(config, layouts);
   const normalizedDocCode = String(docCode || '').trim();
 
+  if (!activeLayouts.length) {
+    throw createHttpError(404, `SAP B1 has no active layout assigned for ${config.label} (${config.typeCode}).`);
+  }
+
   if (!crystalLayouts.length) {
-    throw createHttpError(404, `SAP B1 has no active Crystal Report layout assigned for ${config.label} (${config.typeCode}).`);
+    return {
+      layout: null,
+      layoutCandidates: activeLayouts,
+      requiresLayoutSelection: true,
+      selectionSource: 'SAP B1 Choose Layout list',
+      warnings: [`SAP B1 has active ${config.label} layouts, but none are Crystal Report layouts available for PDF export.`],
+    };
   }
 
   if (normalizedDocCode) {
@@ -332,7 +404,7 @@ const selectSapAssignedLayout = ({ config, layouts, defaultFlagColumns, docCode 
 
     return {
       layout: selectedLayout,
-      layoutCandidates: crystalLayouts,
+      layoutCandidates: activeLayouts,
       requiresLayoutSelection: false,
       selectionSource: 'SAP B1 Choose Layout selection',
       warnings: [],
@@ -346,7 +418,7 @@ const selectSapAssignedLayout = ({ config, layouts, defaultFlagColumns, docCode 
   if (defaultLayouts.length === 1) {
     return {
       layout: defaultLayouts[0],
-      layoutCandidates: crystalLayouts,
+      layoutCandidates: activeLayouts,
       requiresLayoutSelection: false,
       selectionSource: `RDOC default flag (${defaultFlagColumns.join(', ')})`,
       warnings: [],
@@ -356,7 +428,7 @@ const selectSapAssignedLayout = ({ config, layouts, defaultFlagColumns, docCode 
   if (defaultLayouts.length > 1) {
     return {
       layout: null,
-      layoutCandidates: crystalLayouts,
+      layoutCandidates: activeLayouts,
       requiresLayoutSelection: true,
       selectionSource: 'SAP B1 Choose Layout list',
       warnings: [`SAP B1 exposes multiple default Crystal Report layouts for ${config.label}; choose the required layout.`],
@@ -366,7 +438,7 @@ const selectSapAssignedLayout = ({ config, layouts, defaultFlagColumns, docCode 
   if (crystalLayouts.length === 1) {
     return {
       layout: crystalLayouts[0],
-      layoutCandidates: crystalLayouts,
+      layoutCandidates: activeLayouts,
       requiresLayoutSelection: false,
       selectionSource: 'Single active SAP B1 Crystal layout',
       warnings: defaultFlagColumns.length
@@ -377,7 +449,7 @@ const selectSapAssignedLayout = ({ config, layouts, defaultFlagColumns, docCode 
 
   return {
     layout: null,
-    layoutCandidates: crystalLayouts,
+    layoutCandidates: activeLayouts,
     requiresLayoutSelection: true,
     selectionSource: 'SAP B1 Choose Layout list',
     warnings: [],
@@ -387,17 +459,18 @@ const selectSapAssignedLayout = ({ config, layouts, defaultFlagColumns, docCode 
 const getLayouts = async (documentType) => {
   const config = getDocumentPrintConfig(documentType);
   const defaultSchema = await resolvePrintSchema();
-  const { layouts } = await getSapLayoutRows(config, defaultSchema);
+  const { layouts, typeCode } = await getSapLayoutRows(config, defaultSchema);
+  const resolvedConfig = { ...config, typeCode };
 
   return {
     documentType: config.key,
     documentLabel: config.label,
     objectType: config.objectType,
-    typeCode: config.typeCode,
+    typeCode,
     defaultDocCode: '',
     defaultSchema,
     companyDatabase: defaultSchema,
-    layouts: filterDocumentLayouts(config, layouts),
+    layouts: filterActiveSapLayouts(resolvedConfig, layouts),
     warnings: [],
   };
 };
@@ -413,7 +486,8 @@ const getLayoutParameters = async ({
   const config = getDocumentPrintConfig(documentType);
   const normalizedDocCode = toRequiredString(docCode, 'Layout DocCode');
   const normalizedSchema = await resolvePrintSchema(schema);
-  const layout = await getLayoutForDocument(config, normalizedDocCode, normalizedSchema);
+  const typeCode = await resolveLayoutTypeCode(config, normalizedSchema);
+  const layout = await getLayoutForDocument({ ...config, typeCode }, normalizedDocCode, normalizedSchema);
   const parameters = await reportService.loadReportParameters(normalizedDocCode, {
     reportCompanyDb: normalizedSchema,
   });
@@ -429,7 +503,7 @@ const getLayoutParameters = async ({
     documentType: config.key,
     documentLabel: config.label,
     objectType: config.objectType,
-    typeCode: config.typeCode,
+    typeCode,
     docCode: normalizedDocCode,
     layoutName: String(layout.DocName || '').trim(),
     schema: normalizedSchema,
@@ -441,6 +515,12 @@ const normalizeOptionalText = (value) => String(value ?? '').trim();
 
 const valuesMatch = (left, right) =>
   normalizeOptionalText(left).toLowerCase() === normalizeOptionalText(right).toLowerCase();
+
+const appendDocumentContentTypeFilter = (config, filters) => {
+  if (config.contentType === 'service') {
+    filters.push("DocType = 'S'");
+  }
+};
 
 const documentMatchesPrintIdentity = (document, { docNum = '', series = '', cardCode = '' } = {}) => {
   if (!document) return false;
@@ -471,6 +551,7 @@ const getDocumentByPrintIdentity = async (
 
   const filters = ['DocNum = @docNum'];
   const params = { docNum: normalizedDocNum };
+  appendDocumentContentTypeFilter(config, filters);
 
   if (normalizedSeries) {
     filters.push('Series = @series');
@@ -499,10 +580,12 @@ const getDocumentSummary = async (config, docEntry, {
   cardCode = '',
 } = {}) => {
   const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
+  const filters = ['DocEntry = @docEntry'];
+  appendDocumentContentTypeFilter(config, filters);
   const result = await dbService.query(`
     SELECT TOP 1 DocEntry, DocNum, Series, CardCode, CardName
     FROM ${config.tableName}
-    WHERE DocEntry = @docEntry
+    WHERE ${filters.join('\n      AND ')}
   `, {
     docEntry: normalizedDocEntry,
   }, schema ? { databaseName: schema } : {});
@@ -606,7 +689,8 @@ const getDocumentReportMetadata = async ({
   const resolvedDocEntry = toRequiredPositiveIntegerString(document.DocEntry || normalizedDocEntry, 'Resolved DocEntry');
   const resolvedDocNum = String(document.DocNum || docNum || '').trim();
   const resolvedCardCode = String(document.CardCode || cardCode || '').trim();
-  const { layouts, defaultFlagColumns } = await getSapLayoutRows(config, normalizedSchema);
+  const { layouts, defaultFlagColumns, typeCode } = await getSapLayoutRows(config, normalizedSchema);
+  const resolvedConfig = { ...config, typeCode };
   const {
     layout,
     layoutCandidates,
@@ -614,18 +698,18 @@ const getDocumentReportMetadata = async ({
     selectionSource,
     warnings,
   } = selectSapAssignedLayout({
-    config,
+    config: resolvedConfig,
     layouts,
     defaultFlagColumns,
     docCode,
   });
   const layoutCandidateMetadata = (layoutCandidates || []).map((candidate) =>
-    buildLayoutMetadata(candidate, { selectionSource: 'SAP B1 active Crystal layout' }));
+    buildLayoutMetadata(candidate, { selectionSource: 'SAP B1 active layout' }));
   const baseMetadata = {
     documentType: config.key,
     documentLabel: config.label,
     objectType: config.objectType,
-    typeCode: config.typeCode,
+    typeCode,
     schema: normalizedSchema,
     companyDatabase: normalizedSchema,
     tableName: config.tableName,
@@ -641,7 +725,7 @@ const getDocumentReportMetadata = async ({
     warnings,
     diagnostics: {
       layoutSource: selectionSource,
-      activeCrystalLayoutCount: filterDocumentLayouts(config, layouts).length,
+      activeCrystalLayoutCount: filterDocumentLayouts(resolvedConfig, layouts).length,
       defaultFlagColumns,
       reportService: 'SAP Business One Report Service / Crystal Reports',
     },
