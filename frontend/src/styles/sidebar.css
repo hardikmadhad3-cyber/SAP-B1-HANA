@@ -176,13 +176,15 @@ body.sap-floating-window-maximized .app-shell {
   min-width: 0;
   min-height: 0 !important;
   overflow-x: hidden !important;
-  overflow-y: visible !important;
+  overflow-y: auto !important;
 }
 
 .page-window-frame__body :is(
   .po-layout,
   .so-layout,
   .del-layout,
+  .sap-document-layout,
+  .sap-document-main,
   .sap-window,
   .sap-header-area,
   .sap-mid-row,
@@ -190,6 +192,7 @@ body.sap-floating-window-maximized .app-shell {
   .po-tab-panel,
   .so-tab-panel,
   .del-tab-panel,
+  .sap-tab-panel,
   .im-tab-panel,
   .admin-entity-page,
   .admin-panel-page

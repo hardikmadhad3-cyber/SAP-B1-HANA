@@ -25,6 +25,15 @@
 
 .po-readonly { background: #f0f2f5 !important; color: #555; }
 
+.po-section-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #000;
+}
+
 .po-checkline {
   display: inline-flex;
   align-items: center;
@@ -252,6 +261,148 @@
   gap: 2px;
 }
 .po-cell-lookup .po-cell-input { flex: 1; }
+
+/* SAP-style choose-from-list modal */
+.po-page .im-modal-overlay--bom-list {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 64px 16px 20px;
+  background: rgba(0, 0, 0, 0.42);
+  box-sizing: border-box;
+  z-index: 10000;
+}
+
+.po-page .im-modal--bom-list {
+  width: min(780px, calc(100vw - 32px));
+  height: min(560px, calc(100vh - 94px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #a9b8c8;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(16, 24, 40, 0.28);
+}
+
+.po-page .im-modal--bom-list .im-modal__header {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid #c8d0da;
+  background: #e8edf2;
+  color: #003366;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.po-page .im-modal--bom-list .im-modal__close {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  color: #555;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.po-page .im-modal__search--sap-list {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #d8e0e8;
+  background: #fff;
+}
+
+.po-page .im-modal__search--sap-list .im-field__input {
+  height: 24px;
+  min-width: 0;
+}
+
+.po-page .im-modal__search--sap-list .im-btn,
+.po-page .im-modal__footer--sap-list .im-btn {
+  min-height: 24px;
+  padding: 2px 12px;
+  font-size: 11px;
+}
+
+.po-page .im-modal__body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.po-page .im-modal--bom-list .im-lookup-table {
+  min-width: 720px;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.po-page .im-modal--bom-list .im-lookup-table th {
+  top: 0;
+  z-index: 1;
+  padding: 6px 10px;
+  border-right: 1px solid #d7dee7;
+  white-space: nowrap;
+}
+
+.po-page .im-modal--bom-list .im-lookup-table td {
+  height: 26px;
+  padding: 4px 10px;
+  border-right: 1px solid #eef2f6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.po-page .im-modal--bom-list .im-lookup-table th:nth-child(1),
+.po-page .im-modal--bom-list .im-lookup-table td:nth-child(1) {
+  width: 44px;
+}
+
+.po-page .im-modal--bom-list .im-lookup-table th:nth-child(2),
+.po-page .im-modal--bom-list .im-lookup-table td:nth-child(2) {
+  width: 260px;
+}
+
+.po-page .im-modal--bom-list .im-lookup-table th:nth-child(3),
+.po-page .im-modal--bom-list .im-lookup-table td:nth-child(3) {
+  width: 150px;
+}
+
+.po-page .im-modal--bom-list .im-lookup-table th:nth-child(4),
+.po-page .im-modal--bom-list .im-lookup-table td:nth-child(4) {
+  width: 100px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.po-page .im-modal--bom-list .im-lookup-table th:nth-child(5),
+.po-page .im-modal--bom-list .im-lookup-table td:nth-child(5) {
+  width: 160px;
+}
+
+.po-page .im-lookup-table__row--selected,
+.po-page .im-lookup-table__row--selected:hover {
+  background: #cfe5ff !important;
+}
+
+.po-page .im-modal__footer--sap-list {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid #d5dce5;
+  background: #f8fafc;
+}
 
 /* ── Row +/- buttons ── */
 .po-row-btns {

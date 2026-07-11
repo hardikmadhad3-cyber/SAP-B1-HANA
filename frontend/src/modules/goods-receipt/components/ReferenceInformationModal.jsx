@@ -4,6 +4,7 @@ import { fetchGoodsIssueList } from '../../../api/goodsIssueApi';
 import { fetchGoodsReceipts } from '../../../api/goodsReceiptApi';
 import { fetchInventoryTransferRequestList } from '../../../api/inventoryTransferRequestApi';
 import { fetchInventoryTransferList } from '../../../api/inventoryTransferApi';
+import SapGoldenArrowButton from '../../../components/document/SapGoldenArrowButton';
 
 const MIN_REFERENCE_ROWS = 8;
 const DEFAULT_TRANSACTION_TYPE_GROUPS = [
@@ -393,6 +394,7 @@ function ReferenceInformationModal({
   remarks,
   documentTotal,
   transactionTypeGroups = [],
+  onOpenDocument,
 }) {
   const [activeTab, setActiveTab] = useState('to');
   const [restrictToBusinessPartner, setRestrictToBusinessPartner] = useState(false);
@@ -675,6 +677,12 @@ function ReferenceInformationModal({
                             >
                               ...
                             </button>
+                            {row.transactionType && row.docEntry ? (
+                              <SapGoldenArrowButton
+                                onClick={() => onOpenDocument?.(row)}
+                                title="Open referenced document"
+                              />
+                            ) : null}
                           </div>
                         </td>
                         <td>

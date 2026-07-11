@@ -26,13 +26,16 @@ export const explodeBOM = (itemCode, qty = 1) =>
 
 // Lookups
 export const fetchProdOrderItems = (query = '') =>
-  apiClient.get('/production-order/lookup/items', { params: { query } }).then((r) => r.data);
+  apiClient.get('/production-order/lookup/items', { params: { query, top: 500 } }).then((r) => r.data);
+
+export const fetchProdOrderFinishItems = (query = '') =>
+  apiClient.get('/production-order/lookup/finish-items', { params: { query, top: 500 } }).then((r) => r.data);
 
 export const fetchProdOrderComponentItems = (query = '') =>
-  apiClient.get('/production-order/lookup/component-items', { params: { query } }).then((r) => r.data);
+  apiClient.get('/production-order/lookup/component-items', { params: { query, top: 500 } }).then((r) => r.data);
 
 export const fetchProdOrderResources = (query = '') =>
-  apiClient.get('/production-order/lookup/resources', { params: { query } }).then((r) => r.data);
+  apiClient.get('/production-order/lookup/resources', { params: { query, top: 500 } }).then((r) => r.data);
 
 export const fetchProdOrderRouteStages = (query = '') =>
   apiClient.get('/production-order/lookup/route-stages', { params: { query } }).then((r) => r.data);

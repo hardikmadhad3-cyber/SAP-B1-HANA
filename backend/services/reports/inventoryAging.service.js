@@ -361,7 +361,7 @@ const getReport = async (criteria = {}, options = {}) => {
 
   const rows = await queryRows(
     `
-      SELECT TOP 50000
+      SELECT TOP 5000
         CAST(${dateSql} AS DATE) AS MovementDate,
         ${transSeqSql} AS SortSeq,
         T0.ItemCode,

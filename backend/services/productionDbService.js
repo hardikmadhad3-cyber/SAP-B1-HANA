@@ -389,7 +389,7 @@ const lookupProductionOrderItems = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(
     `
-      SELECT TOP 50
+      SELECT TOP 500
              T.Code AS TreeCode,
              T.Name AS ProductDescription,
              T.Qauntity AS BOMQuantity,
@@ -436,11 +436,50 @@ const lookupProductionOrderItems = async (query = "") => {
   }));
 };
 
+const lookupFinishItems = async (query = "") => {
+  const trimmed = String(query || "").trim();
+  const rows = await queryRows(
+    `
+      SELECT TOP 500
+             I.ItemCode,
+             I.ItemName,
+             CAST(ISNULL(I.OnHand, 0) AS DECIMAL(19, 6)) AS InStock,
+             G.ItmsGrpNam AS ItemGroup,
+             I.InvntryUom,
+             I.DfltWH AS DefaultWarehouse
+      FROM OITM I
+      LEFT JOIN OITB G ON G.ItmsGrpCod = I.ItmsGrpCod
+      WHERE (
+        @query = ''
+        OR I.ItemCode LIKE @like
+        OR I.ItemName LIKE @like
+      )
+        AND ISNULL(I.validFor, 'Y') = 'Y'
+        AND ISNULL(I.frozenFor, 'N') = 'N'
+      ORDER BY I.ItemName, I.ItemCode
+    `,
+    { query: trimmed, like: `%${trimmed}%` }
+  );
+
+  return rows.map((row) => ({
+    ItemDescription: row.ItemName || "",
+    ItemNo: row.ItemCode || "",
+    ItemCode: row.ItemCode || "",
+    ItemName: row.ItemName || "",
+    InStock: row.InStock ?? 0,
+    ItemGroup: row.ItemGroup || "",
+    InventoryUOM: row.InvntryUom || "",
+    UoMName: row.InvntryUom || "",
+    DefaultWarehouse: row.DefaultWarehouse || "",
+    Warehouse: row.DefaultWarehouse || "",
+  }));
+};
+
 const lookupComponentItems = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(
     `
-      SELECT TOP 50 ItemCode, ItemName, InvntryUom, DfltWH AS DefaultWarehouse, ManSerNum, ManBtchNum
+      SELECT TOP 500 ItemCode, ItemName, InvntryUom, DfltWH AS DefaultWarehouse, ManSerNum, ManBtchNum
       FROM OITM
       WHERE InvntItem = 'Y'
         AND (
@@ -467,7 +506,7 @@ const lookupResources = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(
     `
-      SELECT TOP 50 ResCode, ResName, DfltWH
+      SELECT TOP 500 ResCode, ResName, DfltWH
       FROM ORSC
       WHERE ProdRes = 'Y'
         AND (
@@ -1349,6 +1388,7 @@ module.exports = {
   getProductionOrderByDocEntry,
   explodeBOM,
   lookupProductionOrderItems,
+  lookupFinishItems,
   lookupComponentItems,
   lookupResources,
   lookupRouteStages,

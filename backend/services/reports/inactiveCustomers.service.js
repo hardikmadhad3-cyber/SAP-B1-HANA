@@ -164,7 +164,7 @@ const getReport = async (criteria = {}) => {
   clauses.push(`NOT (${activityChecks.join("\n        OR ")})`);
 
   const rows = await queryRows(`
-    SELECT TOP 50000
+    SELECT TOP 5000
       ROW_NUMBER() OVER (ORDER BY BP.CardCode) AS rowNo,
       BP.CardCode AS customerCode,
       ISNULL(BP.CardName, '') AS bpName,

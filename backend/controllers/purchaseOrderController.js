@@ -177,6 +177,7 @@ const getPurchaseRequestForCopy = async (req, res) => {
 
 const getItemsForModal = async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     res.json(await purchaseOrderService.getItemsForModal());
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load items.'));

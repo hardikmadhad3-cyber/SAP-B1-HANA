@@ -464,7 +464,7 @@ const getContactsByVendor = async (cardCode) => {
 
 const getAddressesByVendor = async (cardCode) => {
   const result = await safe(db.query(`
-    SELECT 
+    SELECT T0.*,
       T0.CardCode,
       T0.Address,
       T0.AdresType,

@@ -62,14 +62,13 @@ function DocumentCurrencySelect({
   return (
     <div className={`${classPrefix}-field`}>
       <label className={`${classPrefix}-field__label`}>Currency</label>
-      <div style={{ display: 'flex', gap: 3, flex: 1 }}>
+      <div className="sap-input-group sap-input-group--currency">
         <select
           name="currencyMode"
           className={`${classPrefix}-field__select`}
           value={mode}
           onChange={handleModeChange}
           disabled={disabled}
-          style={{ flex: '1 1 58%' }}
         >
           {CURRENCY_MODES.map((option) => (
             <option key={option.value} value={option.value}>
@@ -84,7 +83,6 @@ function DocumentCurrencySelect({
             value={displayCurrency}
             readOnly
             disabled={disabled}
-            style={{ flex: '0 0 92px', background: '#f7f9fb' }}
             tabIndex={-1}
           />
         )}

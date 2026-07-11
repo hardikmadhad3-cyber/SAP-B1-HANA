@@ -387,7 +387,7 @@ const getReport = async (criteria = {}, options = {}) => {
 
   const rows = await queryRows(
     `
-      SELECT TOP 50000
+      SELECT TOP 5000
         ROW_NUMBER() OVER (ORDER BY ${selectExpression(codeColumn, "1")}) AS rowNo,
         CAST(${selectExpression(codeColumn)} AS NVARCHAR(50)) AS campaignNo,
         CAST(${selectExpression(nameColumn)} AS NVARCHAR(255)) AS campaignName,

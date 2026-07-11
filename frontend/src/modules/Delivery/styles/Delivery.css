@@ -6,9 +6,10 @@
   background: #f0f2f5;
   min-height: 100vh;
   box-sizing: border-box;
-  overflow-x: auto !important;
+  overflow-x: hidden !important;
   overflow-y: auto;
   width: 100%;
+  max-width: 100%;
 }
 
 .del-page fieldset {
@@ -173,6 +174,9 @@
   background: #e8edf2;
   border-bottom: 1px solid #c8d0da;
   flex-wrap: wrap;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .del-toolbar__title {
@@ -283,36 +287,76 @@
   border: 1px solid #c8d0da;
   border-radius: 3px;
   padding: 8px 10px;
-}
-
-.del-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  padding: 0 12px;
   min-width: 0;
-  align-items: start;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
-.del-layout.is-sidebar-open {
-  grid-template-columns: minmax(0, 1fr) minmax(250px, 320px);
-  gap: 12px;
-}
-
-.del-layout__main,
-.del-layout__sidebar {
+.del-header-card > .row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 8px 18px;
+  margin: 0;
   min-width: 0;
   max-width: 100%;
 }
 
+.del-header-card > .row > [class*="col-"] {
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+}
+
+.sap-document-layout,
+.del-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  padding: 0 12px 12px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  align-items: start;
+  box-sizing: border-box;
+}
+
+.sap-document-layout.is-sidebar-open,
+.del-layout.is-sidebar-open {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+}
+
+.sap-document-layout.sap-document-layout--no-udf {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.sap-document-main,
+.del-layout__main,
+.del-layout__sidebar {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sap-document-main,
 .del-layout__main {
-  overflow: visible;
+  overflow: hidden;
 }
 
 .del-layout__sidebar {
   width: 100%;
   min-height: 0;
   overflow: visible;
+}
+
+.sap-header-udf-panel {
+  width: 100%;
+  max-width: 320px;
+  min-width: 0;
+  position: relative;
+  box-sizing: border-box;
 }
 
 .del-layout__sidebar.col-xl-3,
@@ -325,9 +369,12 @@
 
 .del-layout__sidebar .po-udf-sidebar-card {
   position: sticky;
-  top: 12px;
-  max-height: calc(100vh - 24px);
-  overflow-y: auto;
+  top: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 180px);
+  min-height: 0;
+  overflow: hidden;
   overflow-x: hidden;
   scrollbar-gutter: stable;
   word-wrap: break-word;
@@ -344,7 +391,10 @@
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  overflow: visible;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .del-layout__sidebar .po-udf-sidebar-card .form-label {
@@ -422,6 +472,72 @@
   margin-bottom: 12px;
 }
 
+@media (max-width: 1200px) {
+  .sap-document-layout.is-sidebar-open,
+  .del-layout.is-sidebar-open {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 280px);
+    gap: 12px;
+  }
+
+  .del-field-grid {
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+  }
+
+  .del-header-card > .row {
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+  }
+
+  .sap-tab-grid {
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+    column-gap: 18px;
+  }
+
+  .sap-form-row {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 992px) {
+  .sap-document-layout.is-sidebar-open,
+  .del-layout.is-sidebar-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sap-header-udf-panel,
+  .del-layout__sidebar {
+    order: 2;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .del-layout__sidebar .po-udf-sidebar-card {
+    max-height: min(420px, calc(100vh - 180px));
+  }
+
+  .del-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .del-field-grid--summary,
+  .del-header-card > .row {
+    grid-template-columns: 1fr;
+  }
+
+  .sap-tab-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .del-toolbar,
+  .del-header-card {
+    margin-left: 8px;
+    margin-right: 8px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
 /* ── Horizontal UDF sidebar mode ── */
 .po-udf-sidebar-horizontal {
   width: 100%;
@@ -448,40 +564,317 @@
 
 .del-field-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 6px 10px;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 8px 18px;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.del-field-grid--single {
+  grid-template-columns: 1fr;
+}
+
+.del-field-grid--summary {
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+}
+
+.sap-tab-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  column-gap: 28px;
+  row-gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  align-items: start;
+}
+
+.sap-tab-column {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.sap-tab-section {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  box-sizing: border-box;
+}
+
+.sap-tab-section--full {
+  grid-column: 1 / -1;
+}
+
+.sap-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #003366;
+  margin: 0 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e0e6ed;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sap-section-heading-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sap-form-row {
+  display: grid;
+  grid-template-columns: 135px minmax(0, 1fr);
+  gap: 6px;
   align-items: center;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-bottom: 6px;
+  box-sizing: border-box;
+}
+
+.sap-form-row--full {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.sap-form-row--stacked {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.sap-form-row--stacked .del-field__label,
+.sap-form-row--stacked .so-field__label,
+.sap-form-row--stacked .im-field__label {
+  text-align: left;
+  white-space: normal;
+}
+
+.sap-form-row--stacked textarea,
+.sap-form-row--stacked .del-textarea,
+.sap-form-row--stacked .so-field__textarea,
+.sap-form-row--stacked .im-textarea {
+  width: 100%;
+}
+
+.sap-form-row label,
+.sap-form-row .del-field__label,
+.sap-form-row .so-field__label,
+.sap-form-row .so-tax-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
+  text-align: right;
+}
+
+.sap-form-row input,
+.sap-form-row select,
+.sap-form-row textarea,
+.sap-form-row .del-field__input,
+.sap-form-row .del-field__select,
+.sap-form-row .del-textarea,
+.sap-form-row .so-field__input,
+.sap-form-row .so-field__select,
+.sap-form-row .so-field__textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.sap-form-row textarea,
+.sap-form-row .del-textarea,
+.sap-form-row .so-field__textarea,
+.sap-form-row .so-textarea {
+  resize: vertical;
+  min-height: 54px;
+  white-space: normal;
+}
+
+.sap-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+
+.sap-input-group--currency {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(64px, 92px);
+}
+
+.sap-input-group--currency select:last-child {
+  grid-column: 1 / -1;
+}
+
+.sap-input-group--currency input[readonly] {
+  background: #f7f9fb;
+}
+
+.sap-input-group--compact {
+  justify-content: flex-start;
+}
+
+.sap-input-group--wrap {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.sap-input-group > * {
+  min-width: 0;
+}
+
+.sap-input-group input,
+.sap-input-group select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sap-input-group button {
+  flex: 0 0 auto;
+}
+
+.sap-input-group .del-btn,
+.sap-input-group .so-btn,
+.del-btn--lookup,
+.so-btn--lookup {
+  min-width: 28px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 20px;
+}
+
+.so-btn--lookup-wide,
+.del-btn--lookup-wide {
+  min-width: 80px;
+}
+
+.sap-input-group--wrap .so-field__input,
+.sap-input-group--wrap .del-field__input,
+.sap-input-group--wrap .im-field__input,
+.sap-input-group--wrap .so-field__select,
+.sap-input-group--wrap .del-field__select,
+.sap-input-group--wrap .im-field__select {
+  flex: 0 1 110px;
+  min-width: 70px;
+}
+
+.sap-input-group--wrap input[type="radio"],
+.sap-input-group--wrap input[type="checkbox"] {
+  flex: 0 0 auto;
+}
+
+.sap-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.sap-inline-row > * {
+  min-width: 0;
+}
+
+.sap-inline-label {
+  margin: 0;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.sap-inline-control {
+  flex: 1 1 120px;
+}
+
+.sap-inline-control--short {
+  flex: 0 1 96px;
+}
+
+.sap-inline-control--date {
+  flex: 0 1 160px;
+}
+
+.sap-inline-control--mode {
+  flex: 0 1 130px;
+}
+
+.sap-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-bottom: 6px;
+  text-align: left;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.sap-checkbox-row input {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.sap-checkbox-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sap-due-date-section {
+  border-top: 1px solid #d7dde3;
+  margin-top: 4px;
+  padding-top: 10px;
 }
 
 .del-field {
   min-width: 0;
-}
-
-.del-field__label {
-  flex: 0 0 100px;
-  font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.del-field {
-  display: flex;
-  align-items: center;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
   gap: 6px;
+  align-items: center;
   min-height: 26px;
+  margin-bottom: 6px;
 }
 
 .del-field__label {
-  flex: 0 0 110px;
   font-size: 12px;
   color: #444;
   text-align: right;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .del-field__input {
-  flex: 1;
+  flex: 1 1 auto;
   height: 22px;
   padding: 0 5px;
   font-size: 12px;
@@ -490,6 +883,8 @@
   background: #fff;
   color: #1a1a1a;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .del-field__input:focus {
   outline: none;
@@ -505,7 +900,7 @@
 }
 
 .del-field__select {
-  flex: 1;
+  flex: 1 1 auto;
   height: 22px;
   padding: 0 4px;
   font-size: 12px;
@@ -513,6 +908,8 @@
   border-radius: 2px;
   background: #fff;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .del-field__select:focus { outline: none; border-color: #0070c0; }
 .del-field__select--error {
@@ -538,12 +935,42 @@
   user-select: none;
 }
 
+@media (max-width: 1100px) {
+  .sap-tab-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sap-form-row {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .sap-form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sap-form-row label,
+  .sap-form-row .del-field__label,
+  .sap-form-row .so-field__label,
+  .sap-form-row .so-tax-label {
+    white-space: normal;
+    text-align: left;
+  }
+}
+
 /* ── Tabs ── */
 .del-tabs {
   margin: 10px 12px 0;
   border-bottom: 2px solid #0070c0;
   display: flex;
   gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
 }
 
 .del-tab {
@@ -584,8 +1011,8 @@
   padding: 10px;
   min-height: 260px;
   min-width: 0;
-  max-width: none;
-  overflow: visible;
+  max-width: 100%;
+  overflow: hidden;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -593,15 +1020,15 @@
 
 .del-tab-panel > * {
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
 }
 
 /* ── Data grids ── */
 .del-grid-wrap {
   width: 100%;
   min-width: 0;
-  max-width: none;
-  overflow: visible;
+  max-width: 100%;
+  overflow: hidden;
   box-sizing: border-box;
 }
 
@@ -612,16 +1039,16 @@
   border: 1px solid #d7dde5;
   width: 100%;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
   box-sizing: border-box;
   position: relative;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .del-grid-wrap__scroller {
   width: 100%;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
   overflow-y: auto;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -883,10 +1310,12 @@
 
 /* ── Force horizontal scroll for Contents tab ── */
 .del-grid-wrap--contents {
-  overflow-x: auto !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
 }
 
 .del-grid-wrap__scroller--contents {
+  max-width: 100% !important;
   overflow-x: auto !important;
   overflow-y: auto !important;
 }

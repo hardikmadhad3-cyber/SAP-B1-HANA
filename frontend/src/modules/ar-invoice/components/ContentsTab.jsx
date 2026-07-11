@@ -651,7 +651,7 @@ export default function ContentsTab({
   };
 
   return (
-    <div className="del-tab-panel" style={{ overflow: 'visible', minWidth: 0, maxWidth: 'none' }}>
+    <div className="sap-tab-panel del-tab-panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
         <div className="del-section-title" style={{ margin: 0 }}>Document Lines</div>
         <button type="button" className="del-btn del-btn--primary" onClick={onAddLine} disabled={!isEditable}>

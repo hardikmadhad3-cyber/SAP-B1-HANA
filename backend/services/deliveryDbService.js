@@ -22,6 +22,58 @@ const safe = async (promise) => {
   }
 };
 
+const REFERENCE_DATA_CACHE_TTL_MS = Number(process.env.DELIVERY_REFERENCE_DATA_CACHE_TTL_MS || 5 * 60 * 1000);
+const referenceDataCache = new Map();
+
+const cloneReferenceData = (data) => JSON.parse(JSON.stringify(data || {}));
+
+const getReferenceDataCacheKey = async () => {
+  try {
+    return String(await db.resolveDatabaseName() || 'default');
+  } catch (_error) {
+    return 'default';
+  }
+};
+
+const getCachedReferenceData = async (loadData) => {
+  if (!Number.isFinite(REFERENCE_DATA_CACHE_TTL_MS) || REFERENCE_DATA_CACHE_TTL_MS <= 0) {
+    return loadData();
+  }
+
+  const cacheKey = await getReferenceDataCacheKey();
+  const now = Date.now();
+  const cached = referenceDataCache.get(cacheKey);
+
+  if (cached?.data && cached.expiresAt > now) {
+    return cloneReferenceData(cached.data);
+  }
+
+  if (cached?.pending) {
+    return cloneReferenceData(await cached.pending);
+  }
+
+  const pending = loadData();
+  referenceDataCache.set(cacheKey, {
+    pending,
+    expiresAt: now + REFERENCE_DATA_CACHE_TTL_MS,
+  });
+
+  try {
+    const data = await pending;
+    referenceDataCache.set(cacheKey, {
+      data,
+      expiresAt: Date.now() + REFERENCE_DATA_CACHE_TTL_MS,
+    });
+    return cloneReferenceData(data);
+  } catch (error) {
+    const latest = referenceDataCache.get(cacheKey);
+    if (latest?.pending === pending) {
+      referenceDataCache.delete(cacheKey);
+    }
+    throw error;
+  }
+};
+
 const quoteSqlIdentifier = (identifier) => `[${String(identifier || '').replace(/]/g, ']]')}]`;
 const normalizeUdfNameForMatch = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const unique = (values = []) => [...new Set(values.filter(Boolean))];
@@ -747,7 +799,7 @@ const getCompanyInfo = () => safe(db.query(`
 
 const getContactsByCustomer = async (cardCode) => {
   const result = await safe(db.query(`
-    SELECT 
+    SELECT
       T0.CardCode,
       T0.CntctCode,
       T0.Name,
@@ -766,7 +818,7 @@ const getContactsByCustomer = async (cardCode) => {
 
 const getAddressesByCustomer = async (cardCode) => {
   const result = await safe(db.query(`
-    SELECT 
+    SELECT T0.*,
       T0.CardCode,
       T0.Address,
       T0.AdresType,
@@ -1330,6 +1382,7 @@ const getDelivery = async (docEntry) => {
     hasDln1Column('BaseType') ? 'T0.BaseType' : 'NULL AS BaseType',
     hasDln1Column('BaseLine') ? 'T0.BaseLine' : 'NULL AS BaseLine',
     hasDln1Column('U_Rate') ? 'T0.U_Rate AS DiscountAmount' : 'CAST(NULL AS DECIMAL(19, 6)) AS DiscountAmount',
+    hasDln1Column('StockPrice') ? 'T0.StockPrice AS ItemCost' : 'ITM.AvgPrice AS ItemCost',
   ];
 
   let lineRows = [];
@@ -1347,7 +1400,6 @@ const getDelivery = async (docEntry) => {
         ${optionalLineSelects.join(',\n        ')},
         CHP.ChapterID AS HSNCode,
         ITM.ManBtchNum AS BatchManaged,
-        ITM.AvgPrice AS ItemCost,
         '' AS Branch,
         '' AS Loc
       FROM DLN1 T0
@@ -1962,7 +2014,7 @@ const getStateFromWarehouse = async (whsCode) => {
 
 // ── MAIN REFERENCE DATA FUNCTION ──────────────────────────────────────────────
 
-const getReferenceData = async () => {
+const loadReferenceDataUncached = async () => {
   const [
     customers,
     items,
@@ -2109,6 +2161,8 @@ const getReferenceData = async () => {
     warnings: [],
   };
 };
+
+const getReferenceData = async () => getCachedReferenceData(loadReferenceDataUncached);
 
 const getCustomerDetails = async (customerCode) => {
   if (!customerCode) {

@@ -18,6 +18,7 @@ import HSNCodeModal from './components/HSNCodeModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
+import SapGoldenArrowButton from '../../components/document/SapGoldenArrowButton';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
@@ -62,7 +63,8 @@ import {
   readSavedFormSettings,
 } from '../../config/grpoForm';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
-import { consumeCopyToState } from '../../utils/copyToState';
+import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import { openLinkedBusinessPartner } from '../../utils/sapLinkedNavigation';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
@@ -474,6 +476,41 @@ function GoodsReceiptPO() {
     : currentDocEntry
       ? updateActionLabel
       : 'Add & New';
+
+  useEffect(() => {
+    const draft = location.state?.grpoDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setHeader(draft.header || INIT_HEADER);
+    setLines(Array.isArray(draft.lines) && draft.lines.length ? draft.lines : [createLine(ROW_UDF_DEFINITIONS)]);
+    setHeaderUdfs(draft.headerUdfs || createUdfState(HEADER_UDF_DEFINITIONS));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [location.state, navigate, location.pathname]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    grpoDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+    },
+  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines]);
+
+  const openBusinessPartnerLink = useCallback(() => {
+    openLinkedBusinessPartner({
+      cardCode: header.vendor,
+      sourcePath: location.pathname,
+      sourceTitle: `Goods Receipt PO${header.docNo || currentDocEntry ? ` #${header.docNo || currentDocEntry}` : ''}`,
+      sourceRestoreState: buildLinkedRestoreState(),
+      navigate,
+      upsertTask,
+    });
+  }, [buildLinkedRestoreState, currentDocEntry, header.docNo, header.vendor, location.pathname, navigate, upsertTask]);
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
@@ -2078,6 +2115,11 @@ function GoodsReceiptPO() {
                         disabled={!!currentDocEntry} 
                         style={{ flex: 1 }} 
                         placeholder="Select Vendor"
+                      />
+                      <SapGoldenArrowButton
+                        onClick={openBusinessPartnerLink}
+                        disabled={!header.vendor}
+                        title="Open Business Partner"
                       />
                       {!currentDocEntry && (
                         <button type="button" onClick={openBpModal} style={{ padding: '0 6px', fontSize: 11, border: '1px solid #a0aab4', background: 'linear-gradient(180deg,#fff 0%,#e8ecf0 100%)', minWidth: 24, height: 22, cursor: 'pointer', borderRadius: 2 }} title="Select Vendor">...</button>

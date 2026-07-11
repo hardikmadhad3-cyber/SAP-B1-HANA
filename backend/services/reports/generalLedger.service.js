@@ -307,7 +307,7 @@ const getReport = async (criteria = {}, options = {}) => {
           ) AS CumulativeBalance
         FROM LedgerBase B
       )
-      SELECT TOP 20000 R.*
+      SELECT TOP 5000 R.*
       FROM RunningLedger R
       ${resultClauses.length ? `WHERE ${resultClauses.join("\n        AND ")}` : ""}
       ORDER BY R.EntityCode, R.PostingDate, R.TransId, R.LineId

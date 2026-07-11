@@ -166,7 +166,7 @@ const getCompanyInfo = () => safe(db.query(`
 
 const getContactsByVendor = async (cardCode) => {
   const result = await safe(db.query(`
-    SELECT 
+    SELECT
       T0.CardCode,
       T0.CntctCode,
       T0.Name,
@@ -185,7 +185,7 @@ const getContactsByVendor = async (cardCode) => {
 
 const getAddressesByVendor = async (cardCode) => {
   const result = await safe(db.query(`
-    SELECT 
+    SELECT T0.*,
       T0.CardCode,
       T0.Address,
       T0.AdresType,

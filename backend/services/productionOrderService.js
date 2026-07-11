@@ -263,9 +263,11 @@ const explodeBOM = async (itemCode, qty = 1) => {
 // ── Create ────────────────────────────────────────────────────────────────────
 const createProductionOrder = async (body) => {
   console.log('[ProductionOrder] Create called with status:', body.status);
+  const isSpecialOrder = body.type === 'bopotSpecial';
   
-  // Validate that the item has a BOM before creating production order
-  if (body.item_code) {
+  // Standard/Disassemble orders need a BOM. Special orders use a normal item
+  // as the finished item and manual components, matching SAP B1 behavior.
+  if (body.item_code && !isSpecialOrder) {
     let bomData;
     try {
       const bomResp = await sapService.request({
@@ -476,7 +478,7 @@ const lookupItems = async (query = '') => {
   
   const bomResp = await sapService.request({
     method: 'GET',
-    url: `/ProductTrees?$select=TreeCode,ProductDescription${bomFilter}&$top=50`,
+    url: `/ProductTrees?$select=TreeCode,ProductDescription${bomFilter}&$top=500`,
   });
   
   const bomsData = bomResp.data?.value || [];
@@ -492,7 +494,7 @@ const lookupItems = async (query = '') => {
   const itemFilter = itemCodes.map(code => `ItemCode eq '${escapeOData(code)}'`).join(' or ');
   const itemResp = await sapService.request({
     method: 'GET',
-    url: `/Items?$select=ItemCode,ItemName,InventoryUOM,InventoryItem&$filter=${encodeURIComponent(itemFilter)}&$top=50`,
+    url: `/Items?$select=ItemCode,ItemName,InventoryUOM,InventoryItem&$filter=${encodeURIComponent(itemFilter)}&$top=500`,
   });
   
   return itemResp.data?.value || [];
@@ -506,7 +508,7 @@ const lookupComponentItems = async (query = '') => {
   }
   const resp = await sapService.request({
     method: 'GET',
-    url: `/Items?$select=ItemCode,ItemName,InventoryUOM,DefaultWarehouse,ManageSerialNumbers,ManageBatchNumbers&$filter=${encodeURIComponent(filterParts.join(' and '))}&$top=50`,
+    url: `/Items?$select=ItemCode,ItemName,InventoryUOM,DefaultWarehouse,ManageSerialNumbers,ManageBatchNumbers&$filter=${encodeURIComponent(filterParts.join(' and '))}&$top=500`,
   });
   return resp.data?.value || [];
 };
@@ -517,7 +519,7 @@ const lookupResources = async (query = '') => {
     : '';
   const resp = await sapService.request({
     method: 'GET',
-    url: `/Resources?$select=Code,Name,DefaultWarehouse,IssueMethod${filter}&$top=50`,
+    url: `/Resources?$select=Code,Name,DefaultWarehouse,IssueMethod${filter}&$top=500`,
   });
   return resp.data?.value || [];
 };

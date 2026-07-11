@@ -794,6 +794,7 @@ const getContactsByCustomer = async (cardCode) => {
 const getBillToAddressesByCustomer = async (cardCode) => {
   const result = await safe(db.query(`
     SELECT
+      CRD1.*,
       CardCode,
       Address,
       Street,
@@ -813,6 +814,7 @@ const getBillToAddressesByCustomer = async (cardCode) => {
   `, { cardCode }));
 
   return result.map(a => ({
+    ...a,
     CardCode: a.CardCode,
     Address: a.Address,
     Street: a.Street,
@@ -831,6 +833,7 @@ const getBillToAddressesByCustomer = async (cardCode) => {
 const getShipToAddressesByCustomer = async (cardCode) => {
   const result = await safe(db.query(`
     SELECT
+      CRD1.*,
       CardCode,
       Address,
       Street,
@@ -850,6 +853,7 @@ const getShipToAddressesByCustomer = async (cardCode) => {
   `, { cardCode }));
 
   return result.map(a => ({
+    ...a,
     CardCode: a.CardCode,
     Address: a.Address,
     Street: a.Street,

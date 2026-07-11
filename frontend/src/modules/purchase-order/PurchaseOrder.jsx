@@ -18,6 +18,7 @@ import HSNCodeModal from './components/HSNCodeModal';
 import CopyFromModal from './components/CopyFromModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
+import SapGoldenArrowButton from '../../components/document/SapGoldenArrowButton';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
@@ -54,7 +55,8 @@ import {
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { PURCHASE_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
-import { consumeCopyToState } from '../../utils/copyToState';
+import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import { openLinkedBusinessPartner } from '../../utils/sapLinkedNavigation';
 import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument } from '../../api/copyFromApi';
 import {
   BASE_MATRIX_COLUMNS,
@@ -127,6 +129,22 @@ const findPreferredGstTaxCode = ({ taxCodes = [], gstType = '', currentTaxCode =
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 const DEFAULT_WAREHOUSE = '';
+const getItemDefaultWarehouse = (item = {}) => String(
+  item.DefaultWarehouse ||
+  item.defaultWarehouse ||
+  item.DfltWH ||
+  item.dfltWH ||
+  item.DfltWh ||
+  item.Warehouse ||
+  item.warehouse ||
+  item.WarehouseCode ||
+  item.warehouseCode ||
+  item.WhsCode ||
+  item.whsCode ||
+  item.Whse ||
+  item.whse ||
+  ''
+).trim();
 const DEFAULT_BUYER_LOCATION_OPTIONS = ['WL001', 'WL002', 'WL003', 'WL004', 'WL005', 'WL006', 'WL007']
   .map((code) => ({ value: code, label: `${code} - ${code}` }));
 const CURRENCY_MODE_OPTIONS = [
@@ -446,6 +464,41 @@ function PurchaseOrder() {
     : currentDocEntry
       ? updateActionLabel
       : 'Add & New';
+
+  useEffect(() => {
+    const draft = location.state?.purchaseOrderDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setHeader(draft.header || INIT_HEADER);
+    setLines(Array.isArray(draft.lines) && draft.lines.length ? draft.lines : [createLine(ROW_UDF_DEFINITIONS)]);
+    setHeaderUdfs(draft.headerUdfs || createUdfState(HEADER_UDF_DEFINITIONS));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [location.state, navigate, location.pathname]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    purchaseOrderDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+    },
+  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines]);
+
+  const openBusinessPartnerLink = useCallback(() => {
+    openLinkedBusinessPartner({
+      cardCode: header.vendor,
+      sourcePath: location.pathname,
+      sourceTitle: `Purchase Order${header.docNo || currentDocEntry ? ` #${header.docNo || currentDocEntry}` : ''}`,
+      sourceRestoreState: buildLinkedRestoreState(),
+      navigate,
+      upsertTask,
+    });
+  }, [buildLinkedRestoreState, currentDocEntry, header.docNo, header.vendor, location.pathname, navigate, upsertTask]);
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
@@ -1185,6 +1238,7 @@ function PurchaseOrder() {
       if (name === 'itemNo') {
         const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
         if (item) {
+          const itemDefaultWarehouse = getItemDefaultWarehouse(item);
           next.itemDescription = item.ItemName || next.itemDescription;
           next.hsnCode = item.HSNCode || next.hsnCode || '';
           next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
@@ -1192,9 +1246,8 @@ function PurchaseOrder() {
             next.unitPrice = getItemPrice(item, 'purchase') || next.unitPrice;
           }
 
-          // Auto-assign default warehouse
-          if (item.DefaultWarehouse) {
-            next.whse = item.DefaultWarehouse;
+          if (itemDefaultWarehouse) {
+            next.whse = itemDefaultWarehouse;
           }
         }
 
@@ -1209,6 +1262,16 @@ function PurchaseOrder() {
       next.total = fmtDec(calcLineTotal(next), numDec.total);
       return next;
     }));
+
+    if (name === 'itemNo') {
+      const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
+      const itemDefaultWarehouse = getItemDefaultWarehouse(item);
+      if (itemDefaultWarehouse) {
+        setHeader(prev => (
+          prev.warehouse ? prev : { ...prev, warehouse: itemDefaultWarehouse }
+        ));
+      }
+    }
   };
 
   const handleNumBlur = (field, target = 'line', i = null) => {
@@ -1491,6 +1554,7 @@ function PurchaseOrder() {
     const lineIndex = itemModal.lineIndex;
     if (lineIndex < 0) return;
     const mergedItem = mergeItemMaster(item, refData.items);
+    const itemDefaultWarehouse = getItemDefaultWarehouse(mergedItem);
     try {
       const hsnResponse = await fetchHSNCodeFromItem(mergedItem.ItemCode);
       const hsnCode = hsnResponse.data?.hsnCode || mergedItem.HSNCode || '';
@@ -1503,6 +1567,9 @@ function PurchaseOrder() {
           calcLineTotal,
           formatTotal: (value) => fmtDec(value, numDec.total),
         });
+        if (itemDefaultWarehouse) {
+          next.whse = itemDefaultWarehouse;
+        }
         if (!next.taxCodeManuallyOverridden) {
           const preferredTaxCode = getPreferredLineTaxCode(next.taxCode);
           if (preferredTaxCode) {
@@ -1522,10 +1589,18 @@ function PurchaseOrder() {
           calcLineTotal,
           formatTotal: (value) => fmtDec(value, numDec.total),
         });
+        if (itemDefaultWarehouse) {
+          next.whse = itemDefaultWarehouse;
+        }
         next.taxCode = !line.taxCodeManuallyOverridden ? (getPreferredLineTaxCode(next.taxCode) || next.taxCode) : line.taxCode;
         next.total = fmtDec(calcLineTotal(next), numDec.total);
         return next;
       }));
+    }
+    if (itemDefaultWarehouse) {
+      setHeader(prev => (
+        prev.warehouse ? prev : { ...prev, warehouse: itemDefaultWarehouse }
+      ));
     }
     closeItemModal();
   };
@@ -1984,6 +2059,11 @@ function PurchaseOrder() {
                           disabled={!!currentDocEntry}
                           placeholder="Vendor code"
                           style={{ flex: 1 }}
+                        />
+                        <SapGoldenArrowButton
+                          onClick={openBusinessPartnerLink}
+                          disabled={!header.vendor}
+                          title="Open Business Partner"
                         />
                         <button
                           type="button"

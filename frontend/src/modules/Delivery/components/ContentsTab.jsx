@@ -75,6 +75,16 @@ const getPriceAfterDiscount = (line = {}) => {
   return (unitPrice * (1 - (discountPercent / 100))).toFixed(2);
 };
 
+const formatSapAmountWithCurrency = (value, currency = '', decimals = 6) => {
+  if (value === undefined || value === null || String(value).trim() === '') return '';
+  const numericValue = Number(value);
+  const formattedValue = Number.isFinite(numericValue)
+    ? numericValue.toFixed(decimals)
+    : String(value);
+  const normalizedCurrency = String(currency || '').trim();
+  return normalizedCurrency ? `${formattedValue} ${normalizedCurrency}` : formattedValue;
+};
+
 const getGenericUdfField = (column = {}) => {
   const key = column.valueKey || column.rendererKey || column.key;
   if (!String(key || '').startsWith('U_')) return null;
@@ -111,6 +121,7 @@ export default function ContentsTab({
   matrixFields = MATRIX_COLS,
   rowUdfFields = [],
   onRowUdfChange,
+  currency = '',
 }) {
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
   const getTaxAmountDisplay = (line) => {
@@ -666,7 +677,7 @@ export default function ContentsTab({
         <td key="itemCost">
           <input
             className="del-grid__input"
-            value={line.itemCost || ''}
+            value={formatSapAmountWithCurrency(line.itemCost, currency, 6)}
             readOnly
             style={{ background: '#f5f8fc' }}
           />
@@ -1036,7 +1047,7 @@ export default function ContentsTab({
   };
 
   return (
-    <div className="del-tab-panel" style={{ overflow: 'visible', minWidth: 0, maxWidth: 'none' }}>
+    <div className="sap-tab-panel del-tab-panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
         <div className="del-section-title">Document Lines</div>
         <button type="button" className="del-btn del-btn--primary" onClick={onAddLine}>
@@ -1046,20 +1057,11 @@ export default function ContentsTab({
 
       <div 
         className="del-grid-wrap del-grid-wrap--contents"
-        style={{ 
-          width: '100%', 
-          minWidth: 0, 
-          maxWidth: 'none',
-          overflow: 'visible',
-          border: '1px solid #d7dde5'
-        }}
+        style={{ border: '1px solid #d7dde5' }}
       >
         <div 
           className="del-grid-wrap__scroller del-grid-wrap__scroller--contents"
           style={{
-            width: '100%',
-            minWidth: 0,
-            maxWidth: 'none',
             overflowX: 'auto',
             overflowY: 'auto',
             maxHeight: '400px'

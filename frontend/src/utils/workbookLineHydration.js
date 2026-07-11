@@ -88,6 +88,7 @@ const udfAlias = {
   sellerQty: ['U_S_QTY', 'S_Qty'],
   taxCodeRepeat: ['U_TAXCODE', 'U_TaxCode'],
   price: ['U_PRICE', 'U_Price'],
+  forRate: ['U_ForRate', 'U_FORRATE', 'U_FOR_RATE', 'U_For_Rate', 'U_FORRate', 'FOR Rate', 'FORRATE', 'Rate'],
   fixBrokBuyer: ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER', 'U_FIXBROKBUYER', 'FIX Brok BUYER'],
   fixBrockSeller: ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller', 'U_FIXBROCKSELLER', 'U_FIXBROKSELLER', 'Fix Brock Seller'],
 };
@@ -120,6 +121,7 @@ const canonicalUdfFields = [
   { canonical: ['U_S_Qty', 'U_S_QTY'], aliases: udfAlias.sellerQty, lineAliases: ['sellerQty', 'SellerQty'] },
   { canonical: ['U_TAXCODE', 'U_TaxCode'], aliases: udfAlias.taxCodeRepeat, lineAliases: ['taxCodeRepeat', 'TaxCodeRepeat', 'U_TAXCODE', 'U_TaxCode'] },
   { canonical: ['U_PRICE', 'U_Price'], aliases: udfAlias.price, lineAliases: ['U_PRICE', 'U_Price'] },
+  { canonical: ['U_ForRate', 'U_FORRATE'], aliases: udfAlias.forRate, lineAliases: ['forRate', 'ForRate', 'FORRate', 'U_ForRate', 'U_FORRATE', 'U_FOR_RATE'] },
   { canonical: ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER'], aliases: udfAlias.fixBrokBuyer, lineAliases: ['U_Fix_Brock_B', 'fixBrokBuyer'] },
   { canonical: ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller'], aliases: udfAlias.fixBrockSeller, lineAliases: ['U_Fix_Brock_S', 'fixBrockSeller'] },
 ];
@@ -159,7 +161,7 @@ export const hydrateWorkbookDocumentLine = ({
 }) => {
   const source = line || {};
   const udfs = getWorkbookLineUdfs(source);
-  const itemCode = firstString(source.itemNo, source.ItemCode, source.itemCode, source.AccountCode, source.AcctCode);
+  const itemCode = firstString(source.itemNo, source.ItemCode, source.itemCode);
   const item = (items || []).find((candidate) => String(candidate?.ItemCode || '').trim() === itemCode) || {};
   const normalizeUdfs = typeof normalizeUdfState === 'function'
     ? normalizeUdfState
@@ -210,6 +212,7 @@ export const hydrateWorkbookDocumentLine = ({
     quotedDate: firstString(source.quotedDate, source.QuotedDate, source.ShipDate),
     unitPrice,
     price: firstString(source.price, source.U_PRICE, source.U_Price, findUdfValue(normalizedUdfs, udfAlias.price)),
+    forRate: valueFromLineOrUdf(source, udfs, 'forRate', udfAlias.forRate, 'ForRate', 'FORRate', 'LineRate', 'Rate', 'U_ForRate', 'U_FORRATE', 'U_FOR_RATE'),
     unitPriceUdf: firstString(source.unitPriceUdf, source.UnitPriceUdf, findUdfValue(udfs, ['U_Unit_Price'])),
     stdDiscount: firstString(source.stdDiscount, source.DiscountPercent, source.DiscPrcnt),
     taxCode,
@@ -269,6 +272,7 @@ export const hydrateWorkbookDocumentLine = ({
     U_TotalPackage: firstString(source.U_TotalPackage, source.U_Total_Package, source.TotalPackage, findUdfValue(udfs, udfAlias.totalPackage)),
     U_Cost_Sheet: firstString(source.U_Cost_Sheet, findUdfValue(udfs, udfAlias.costSheet)),
     U_ContainerType: firstString(source.U_ContainerType, findUdfValue(udfs, udfAlias.containerType)),
+    U_ForRate: firstString(source.U_ForRate, source.U_FORRATE, source.U_FOR_RATE, source.forRate, source.ForRate, findUdfValue(udfs, udfAlias.forRate)),
     U_Fix_Brock_B: firstString(source.U_Fix_Brock_B, source.U_FIX_BROK_BUYER, findUdfValue(udfs, udfAlias.fixBrokBuyer)),
     U_Fix_Brock_S: firstString(source.U_Fix_Brock_S, source.U_Fix_Brock_Seller, findUdfValue(udfs, udfAlias.fixBrockSeller)),
     lineNum: source.lineNum ?? source.LineNum,

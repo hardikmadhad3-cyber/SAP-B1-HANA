@@ -4,6 +4,7 @@ const ctrl    = require('../controllers/productionOrderController');
 
 // Lookups (before /:docEntry)
 router.get('/lookup/items',              ctrl.lookupItems);
+router.get('/lookup/finish-items',       ctrl.lookupFinishItems);
 router.get('/lookup/component-items',    ctrl.lookupComponentItems);
 router.get('/lookup/resources',          ctrl.lookupResources);
 router.get('/lookup/route-stages',       ctrl.lookupRouteStages);

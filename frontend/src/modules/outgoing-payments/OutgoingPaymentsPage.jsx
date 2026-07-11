@@ -77,24 +77,57 @@ function SapLookupField({
   buttonLabel = "...",
   triggerOpen = 0,
   onBlur = () => {},
+  paginated = false,
+  pageSize = 100,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ page: 1, pageSize, totalCount: 0, totalPages: 1 });
   const searchRef = useRef(null);
+  const allRowsRef = useRef([]);
+  const requestRef = useRef(0);
 
-  const load = async (nextQuery = "") => {
+  const load = async (nextQuery = "", nextPage = 1) => {
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
     setLoading(true);
     try {
-      const data = await fetchOptions(nextQuery);
-      setRows(data || []);
+      const data = await fetchOptions(nextQuery, nextPage, pageSize);
+      if (requestId !== requestRef.current) return;
+      const nextRows = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
+      if (paginated) {
+        setRows(nextRows);
+        setPage(data?.pagination?.page || nextPage);
+        setPagination(data?.pagination || { page: nextPage, pageSize, totalCount: nextRows.length, totalPages: 1 });
+        setSelectedIndex(0);
+        return;
+      }
+      const term = String(nextQuery || "").trim().toLowerCase();
+      if (!term) {
+        allRowsRef.current = nextRows;
+        setRows(nextRows);
+      } else if (nextRows.length) {
+        setRows(nextRows);
+      } else {
+        setRows(allRowsRef.current.filter((row) =>
+          Object.values(row || {}).some((value) => String(value ?? "").toLowerCase().includes(term)),
+        ));
+      }
       setSelectedIndex(0);
     } catch (_error) {
-      setRows([]);
+      if (requestId !== requestRef.current) return;
+      const term = String(nextQuery || "").trim().toLowerCase();
+      setRows(term
+        ? allRowsRef.current.filter((row) =>
+          Object.values(row || {}).some((value) => String(value ?? "").toLowerCase().includes(term)),
+        )
+        : []);
     } finally {
-      setLoading(false);
+      if (requestId === requestRef.current) setLoading(false);
     }
   };
 
@@ -102,7 +135,8 @@ function SapLookupField({
     if (readOnly) return;
     setOpen(true);
     setQuery("");
-    load("");
+    setPage(1);
+    load("", 1);
   };
 
   useEffect(() => {
@@ -113,6 +147,14 @@ function SapLookupField({
     if (triggerOpen > 0) openModal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerOpen]);
+
+  useEffect(() => {
+    if (!open || !paginated) return undefined;
+    const timer = window.setInterval(() => load(query, page), 15000);
+    return () => window.clearInterval(timer);
+    // Refresh live SAP master data while the lookup remains open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, paginated, query, page]);
 
   const pick = (row) => {
     if (!row) return;
@@ -157,7 +199,8 @@ function SapLookupField({
                     value={query}
                     onChange={(event) => {
                       setQuery(event.target.value);
-                      load(event.target.value);
+                      setPage(1);
+                      load(event.target.value, 1);
                     }}
                   />
                 </div>
@@ -188,7 +231,7 @@ function SapLookupField({
                             onClick={() => setSelectedIndex(index)}
                             onDoubleClick={() => pick(row)}
                           >
-                            <td>{index + 1}</td>
+                            <td>{paginated ? ((page - 1) * pagination.pageSize) + index + 1 : index + 1}</td>
                             {columns.map((column) => (
                               <td
                                 key={column.key}
@@ -208,6 +251,15 @@ function SapLookupField({
                 </div>
               </div>
               <div className="modal-footer ip-lookup-footer">
+                {paginated ? (
+                  <div className="ip-lookup-pagination">
+                    <span>{pagination.totalCount ? `Showing ${((page - 1) * pagination.pageSize) + 1}-${Math.min(page * pagination.pageSize, pagination.totalCount)} of ${pagination.totalCount}` : "Showing 0"}</span>
+                    <button type="button" className="po-btn" onClick={() => load(query, page)} disabled={loading}>Refresh</button>
+                    <button type="button" className="po-btn" onClick={() => load(query, page - 1)} disabled={loading || page <= 1}>Previous</button>
+                    <span>Page {page} of {pagination.totalPages}</span>
+                    <button type="button" className="po-btn" onClick={() => load(query, page + 1)} disabled={loading || page >= pagination.totalPages}>Next</button>
+                  </div>
+                ) : null}
                 <button type="button" className="po-btn po-btn--primary" onClick={() => pick(rows[selectedIndex])} disabled={!rows.length}>Choose</button>
                 <button type="button" className="po-btn" onClick={() => setOpen(false)}>Cancel</button>
               </div>
@@ -752,6 +804,7 @@ export default function OutgoingPaymentsPage() {
         businessPartnerCode: payment.businessPartnerCode || "",
         businessPartnerName: payment.businessPartnerName || "",
         bpType: postedAccountRows.length ? "Account" : current.bpType,
+        billToCode: payment.payToCode || current.billToCode,
         billToAddress: payment.payToAddress || "",
         postingDate: payment.postingDate || current.postingDate,
         dueDate: payment.dueDate || payment.postingDate || current.dueDate,
@@ -1101,10 +1154,11 @@ export default function OutgoingPaymentsPage() {
                         value={header.businessPartnerCode}
                         onChange={(value) => updateHeader("businessPartnerCode", value)}
                         onSelect={handleBusinessPartnerSelect}
-                        fetchOptions={(query) => searchOutgoingPaymentBusinessPartners(query, header.bpType)}
+                        fetchOptions={(query, page, pageSize) => searchOutgoingPaymentBusinessPartners(query, header.bpType, page, pageSize)}
                         title={partnerLookupTitle}
                         columns={sapBusinessPartnerLookupColumns}
                         triggerOpen={bpLookupTrigger}
+                        paginated
                       />
                     </FieldRow>
                     <FieldRow label="Name">

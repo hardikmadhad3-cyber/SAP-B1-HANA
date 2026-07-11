@@ -10,23 +10,22 @@ export default function LogisticsTab({
   isEditable = true,
 }) {
   return (
-    <div className="del-tab-panel">
-      <div className="del-field-grid" style={{ gridTemplateColumns: '1fr 1fr', columnGap: '24px' }}>
+    <div className="sap-tab-panel del-tab-panel">
+      <div className="sap-tab-grid">
         
         {/* ══ LEFT COLUMN: SHIPPING INFORMATION ═════════════════════════ */}
-        <div>
+        <div className="sap-tab-column">
           <h6 className="del-section-title">Shipping Information</h6>
           
           {/* Ship To Code */}
           <div className="del-field">
             <label className="del-field__label">Ship To Code</label>
-            <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-start' }}>
+            <div className="sap-input-group">
               <select
                 className="del-field__select"
                 name="shipToCode"
                 value={header.shipToCode || ''}
                 onChange={onHeaderChange}
-                style={{ flex: 1 }}
               >
                 <option value="">Select</option>
                 {vendorShipToAddresses.map(a => (
@@ -37,9 +36,8 @@ export default function LogisticsTab({
               </select>
               <button
                 type="button"
-                className="del-btn"
+                className="del-btn del-btn--lookup"
                 onClick={() => onOpenAddressModal('shipTo')}
-                style={{ padding: '4px 8px', fontSize: 11, marginTop: 0 }}
               >
                 ...
               </button>
@@ -55,20 +53,18 @@ export default function LogisticsTab({
               name="shipToAddress"
               value={header.shipToAddress || header.shipTo || ''}
               onChange={onHeaderChange}
-              style={{ flex: 1 }}
             />
           </div>
 
           {/* Bill To Code */}
           <div className="del-field">
             <label className="del-field__label">Bill To Code</label>
-            <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-start' }}>
+            <div className="sap-input-group">
               <select
                 className="del-field__select"
                 name="billToCode"
                 value={header.billToCode || ''}
                 onChange={onHeaderChange}
-                style={{ flex: 1 }}
               >
                 <option value="">Select</option>
                 {vendorBillToAddresses.map(a => (
@@ -79,9 +75,8 @@ export default function LogisticsTab({
               </select>
               <button
                 type="button"
-                className="del-btn"
+                className="del-btn del-btn--lookup"
                 onClick={() => onOpenAddressModal('billTo')}
-                style={{ padding: '4px 8px', fontSize: 11, marginTop: 0 }}
               >
                 ...
               </button>
@@ -97,28 +92,26 @@ export default function LogisticsTab({
               name="billToAddress"
               value={header.billToAddress || header.payTo || ''}
               onChange={onHeaderChange}
-              style={{ flex: 1 }}
             />
           </div>
 
           {/* Use Bill to Address to Determine Tax */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px' }}>
+          <div className="sap-checkbox-row">
             <input
               type="checkbox"
               id="useBillToAddress"
               name="useBillToForTax"
               checked={!!header.useBillToForTax}
               onChange={onHeaderChange}
-              style={{ cursor: 'pointer', width: '16px', height: '16px' }}
             />
-            <label htmlFor="useBillToAddress" style={{ cursor: 'pointer', margin: 0, fontSize: '12px', color: '#333' }}>
+            <label htmlFor="useBillToAddress">
               Use Bill to Address to Determine Tax
             </label>
           </div>
         </div>
 
         {/* ══ RIGHT COLUMN: DELIVERY INFORMATION ═════════════════════════ */}
-        <div>
+        <div className="sap-tab-column">
           <h6 className="del-section-title">Delivery Information</h6>
           
           {/* Shipping Type */}
@@ -185,15 +178,14 @@ export default function LogisticsTab({
           </div>
 
           {/* Confirmed */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px' }}>
+          <div className="sap-checkbox-row">
             <input
               type="checkbox"
               name="confirmed"
               checked={header.confirmed}
               onChange={onHeaderChange}
-              style={{ cursor: 'pointer', width: '16px', height: '16px' }}
             />
-            <label style={{ cursor: 'pointer', margin: 0, fontSize: '12px', color: '#333' }}>
+            <label>
               Confirmed
             </label>
           </div>

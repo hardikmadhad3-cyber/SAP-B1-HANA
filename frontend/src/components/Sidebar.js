@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { useSapWindowTaskbar, useSapWindowTaskbarActions } from './SapWindowTaskbarContext';
 import { normalizePath } from '../auth/routeUtils';
 import { restoreTargetWindowState } from '../utils/copyToState';
 import '../styles/sidebar.css';
@@ -389,6 +390,9 @@ const hasActiveChild = (menu, pathname) => {
   return menu.children?.some((child) => hasActiveChild(child, pathname));
 };
 
+const getComparableTaskPath = (path = '') =>
+  normalizePath(String(path || '').split(/[?#]/)[0]);
+
 const flattenSidebarSearchItems = (items = [], parents = []) =>
   items.flatMap((item) => {
     const displayName = getDisplayMenuName(item);
@@ -519,6 +523,8 @@ export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { menus, company } = useAuth();
+  const taskbar = useSapWindowTaskbar();
+  const { restoreTask } = useSapWindowTaskbarActions();
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
@@ -545,6 +551,16 @@ export default function Sidebar() {
         .slice(0, 10)
     : [];
 
+  const restoreExistingTaskForPath = (menuPath) => {
+    const normalizedMenuPath = normalizePath(menuPath);
+    const matchingTask = [...(taskbar?.tasks || [])]
+      .reverse()
+      .find((task) => getComparableTaskPath(task?.path) === normalizedMenuPath);
+
+    if (!matchingTask) return false;
+    return restoreTask(matchingTask);
+  };
+
   const handleNavigate = (event, menuPath) => {
     if (!menuPath) return;
     if (
@@ -559,6 +575,9 @@ export default function Sidebar() {
     }
 
     event.preventDefault();
+    if (restoreExistingTaskForPath(menuPath)) {
+      return;
+    }
     restoreTargetWindowState(menuPath);
     navigate(menuPath, { state: null });
   };
@@ -580,6 +599,9 @@ export default function Sidebar() {
     const normalizedPath = normalizePath(menuPath);
     if (isAdminMenuPath(normalizedPath)) {
       window.open(normalizedPath, '_blank', 'noopener,noreferrer');
+    } else if (restoreExistingTaskForPath(normalizedPath)) {
+      setSearchQuery('');
+      return;
     } else {
       restoreTargetWindowState(normalizedPath);
       navigate(normalizedPath, { state: null });
