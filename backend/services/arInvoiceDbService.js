@@ -1595,6 +1595,22 @@ const getWarehouseState = async (whsCode) => {
   };
 };
 
+const getWarehouseBranch = async (whsCode) => {
+  const normalizedWarehouseCode = String(whsCode || '').trim();
+  if (!normalizedWarehouseCode) return { branchId: '' };
+
+  const result = await safe(db.query(`
+    SELECT TOP 1 BPLid AS BPLId
+    FROM OWHS
+    WHERE WhsCode = @whsCode
+      AND Inactive <> 'Y'
+  `, { whsCode: normalizedWarehouseCode }));
+
+  return {
+    branchId: result[0]?.BPLId != null ? String(result[0].BPLId) : '',
+  };
+};
+
 const getBatchesByItem = async (itemCode, whsCode) => {
   const result = await safe(db.query(`
     SELECT 
@@ -1747,6 +1763,7 @@ module.exports = {
   getNextNumber,
   getStateFromAddress,
   getWarehouseState,
+  getWarehouseBranch,
   getBatchesByItem,
   getFreightCharges,
   getItemsForModal,

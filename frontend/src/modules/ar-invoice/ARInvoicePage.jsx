@@ -29,7 +29,7 @@ import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarCon
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
-import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
@@ -142,6 +142,13 @@ const normalizeBaseLine = (line, fallbackIndex) =>
   line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? fallbackIndex;
 const normalizeWarehouse = (line = {}, header = {}) =>
   line.whse || line.WarehouseCode || line.WhsCode || line.warehouse || header.warehouse || header.WarehouseCode || '';
+const normalizeBranchSelection = (value) => {
+  const normalized = String(value ?? '').trim();
+  const lowered = normalized.toLowerCase();
+  return normalized && lowered !== '0' && lowered !== '-1' && lowered !== 'select branch' && lowered !== 'no branch'
+    ? normalized
+    : '';
+};
 const hasUdfValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
 const isCheckedValue = (value) =>
   ['Y', 'YES', 'TRUE', '1', 'TYES', true].includes(
@@ -465,6 +472,7 @@ function ARInvoicePage() {
     blanket_agreements: [],
     line_field_metadata: { matrix_columns: [], sap_form: {} },
   });
+  const [seriesReloadToken, setSeriesReloadToken] = useState(0);
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
   useValidationHighlights(valErrors);
@@ -559,17 +567,38 @@ function ARInvoicePage() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
   const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+  const getBranchFromWarehouseCode = useCallback((warehouseCode = '') => {
+    const code = String(warehouseCode || '').trim();
+    if (!code) return '';
+
+    const warehouse = (refData.warehouses || []).find((row) => (
+      String(row?.WhsCode || row?.WarehouseCode || row?.warehouse || '').trim() === code
+    ));
+
+    return normalizeBranchSelection(getWarehouseBranchId(warehouse));
+  }, [refData.warehouses]);
   const resolvePreferredSeries = (seriesList, postingDateValue, selectedSeries = '') => {
     if (!Array.isArray(seriesList) || !seriesList.length) return null;
 
+    const selectedBranchId = normalizeBranchSelection(header.branch);
+    const compatibleSeries = seriesList.filter((series) => {
+      const seriesBranchId = String(series?.BPLId ?? '').trim();
+      return !seriesBranchId || seriesBranchId === '0' || seriesBranchId === '-1'
+        || !selectedBranchId || seriesBranchId === selectedBranchId;
+    });
+
+    // With no branch selected, SAP B1 lets the selected series establish its branch.
+    // With a branch selected, only that branch's series (or a global series) is valid.
+    if (!compatibleSeries.length) return null;
+
     const normalizedSeries = String(selectedSeries || '').trim();
     const matchedSeries = normalizedSeries
-      ? seriesList.find((series) => String(series.Series) === normalizedSeries)
+      ? compatibleSeries.find((series) => String(series.Series) === normalizedSeries)
       : null;
 
     if (matchedSeries) return matchedSeries;
 
-    const sapDefaultSeries = seriesList.find((series) => series.IsDefault || series.isDefault);
+    const sapDefaultSeries = compatibleSeries.find((series) => series.IsDefault || series.isDefault);
     if (sapDefaultSeries) return sapDefaultSeries;
 
     const normalizedTransactionType = normalizeFieldIdentity(header.transactionType);
@@ -582,7 +611,7 @@ function ARInvoicePage() {
             ? ['debitmemo', 'debit', 'dbn']
             : [normalizedTransactionType];
 
-      const scoredSeries = seriesList
+      const scoredSeries = compatibleSeries
         .map((series, index) => {
           const identity = normalizeFieldIdentity(`${series.SeriesName || ''} ${series.Indicator || ''}`);
           const score = transactionTokens.reduce((total, token) => (
@@ -598,7 +627,7 @@ function ARInvoicePage() {
     }
 
     const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
-    return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
+    return getDefaultSeriesForCurrentYear(compatibleSeries, seriesDate) || compatibleSeries[0];
   };
   const primaryActionLabel = pageState.posting
     ? 'Saving…'
@@ -820,7 +849,7 @@ function ARInvoicePage() {
 
     loadSeriesForPostingDate();
     return () => { ignore = true; };
-  }, [currentDocEntry, requestedEditDocEntry, header.postingDate, header.transactionType, header.branch]);
+  }, [currentDocEntry, requestedEditDocEntry, header.postingDate, header.transactionType, header.branch, seriesReloadToken]);
 
   useEffect(() => {
     const docEntry = requestedEditDocEntry;
@@ -972,7 +1001,17 @@ function ARInvoicePage() {
     const normalizedHeader = normaliseDocumentHeader(srcHeader || {});
     const firstSourceLine = Array.isArray(srcLines) && srcLines.length ? srcLines[0] : {};
     const copiedWarehouse = normalizeWarehouse(firstSourceLine, srcHeader) || '';
-    const copiedBranch = srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || srcHeader.BPLId || firstSourceLine.branch || '';
+    const copiedBranch = normalizeBranchSelection(normalizedHeader.branch)
+      || normalizeBranchSelection(
+        firstSourceLine.branch
+        || firstSourceLine.Branch
+        || firstSourceLine.BPL_IDAssignedToInvoice
+        || firstSourceLine.BPLId
+        || srcHeader.branch
+        || srcHeader.BPL_IDAssignedToInvoice
+        || srcHeader.BPLId
+      )
+      || getBranchFromWarehouseCode(copiedWarehouse);
     const copiedBaseType = baseDocument?.baseType || BASE_TYPE[copyFrom.type] || firstSourceLine.baseType || 15;
     const copiedBaseEntry = baseDocument?.baseEntry || copyFrom.docEntry;
 
@@ -987,7 +1026,10 @@ function ARInvoicePage() {
       paymentTerms:     srcHeader.paymentTerms  || srcHeader.GroupNum  || '',
       placeOfSupply:    srcHeader.placeOfSupply || '',
       otherInstruction: srcHeader.otherInstruction || srcHeader.Comments || '',
+      series:           '',
+      nextNumber:       '',
     }));
+    setSeriesReloadToken((token) => token + 1);
     const copiedHeaderUdfs = mergeUdfValues(copyFrom.headerUdfs, copyFrom.header_udfs, srcHeader.header_udfs, srcHeader.headerUdfs);
     setHeaderUdfs({
       ...copiedHeaderUdfs,
@@ -1021,7 +1063,7 @@ function ARInvoicePage() {
     const sourceLabel = copyFrom.sourceLabel || copyFrom.type || 'source document';
     setPageState(p => ({ ...p, success: `Copied from ${sourceLabel}. Please review and save.` }));
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state || persistedCopyState);
-  }, [location.pathname, location.state?.copyFrom, navigate, headerUdfDefinitions, rowUdfDefinitions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.state?.copyFrom, navigate, headerUdfDefinitions, rowUdfDefinitions, getBranchFromWarehouseCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived / computed ────────────────────────────────────────────────────
   const belongsToCurrentVendor = (row) => {
@@ -1066,6 +1108,27 @@ function ARInvoicePage() {
       indicator: firstOption.indicator || prev.indicator,
     }));
   }, [currentDocEntry, requestedEditDocEntry, header.transactionType, transactionTypeOptions]);
+
+  useEffect(() => {
+    if (currentDocEntry || requestedEditDocEntry || normalizeBranchSelection(header.branch) || !header.warehouse) return;
+
+    const warehouseBranch = getBranchFromWarehouseCode(header.warehouse);
+    if (!warehouseBranch) return;
+
+    setHeader((prev) => {
+      if (normalizeBranchSelection(prev.branch) || String(prev.warehouse || '') !== String(header.warehouse)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        branch: warehouseBranch,
+        series: '',
+        nextNumber: '',
+      };
+    });
+    setSeriesReloadToken((token) => token + 1);
+  }, [currentDocEntry, requestedEditDocEntry, header.branch, header.warehouse, getBranchFromWarehouseCode]);
+
   const resolveARInvoiceAddress = useCallback((code, addresses = [], fallbackText = '') => {
     const normalizedCode = String(code || '').trim();
     if (normalizedCode) {
@@ -1625,6 +1688,19 @@ function ARInvoicePage() {
       });
       return;
     }
+
+    if (name === 'warehouse') {
+      const warehouseBranch = getBranchFromWarehouseCode(value);
+      setHeader(prev => ({
+        ...prev,
+        warehouse: value,
+        branch: warehouseBranch || prev.branch,
+        ...(warehouseBranch && warehouseBranch !== normalizeBranchSelection(prev.branch)
+          ? { series: '', nextNumber: '' }
+          : {}),
+      }));
+      return;
+    }
     
     if (name === 'vendor') {
       setHeader(prev => {
@@ -1702,9 +1778,20 @@ function ARInvoicePage() {
   
   const handleSeriesChange = async (seriesValue) => {
     if (!seriesValue) return;
+
+    const selectedSeries = refData.series.find((series) => String(series.Series) === String(seriesValue));
+    const seriesBranchId = String(selectedSeries?.BPLId ?? '').trim();
+    const branchFromSeries = !seriesBranchId || seriesBranchId === '0' || seriesBranchId === '-1'
+      ? ''
+      : seriesBranchId;
     
     setPageState(p => ({ ...p, seriesLoading: true }));
-    setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
+    setHeader(p => ({
+      ...p,
+      series: seriesValue,
+      nextNumber: '...',
+      branch: branchFromSeries || p.branch,
+    }));
     
     try {
       const res = await fetchNextNumber(seriesValue);
@@ -2458,6 +2545,24 @@ function ARInvoicePage() {
         return e; 
       }
 
+      if (!isUpdate && !String(header.series || '').trim()) {
+        e.header.series = 'Select a valid numbering series.';
+        e.form = 'A valid numbering series is required for this posting date.';
+        return e;
+      }
+
+      if (!isUpdate && refData.branches.length) {
+        const selectedSeries = refData.series.find((series) => String(series.Series) === String(header.series));
+        const resolvedBranch = normalizeBranchSelection(header.branch)
+          || normalizeBranchSelection(selectedSeries?.BPLId)
+          || getBranchFromWarehouseCode(header.warehouse || normalizeWarehouse(lines[0] || {}, header));
+        if (!resolvedBranch) {
+          e.header.branch = 'Select the branch assigned to this warehouse and numbering series.';
+          e.form = 'Branch is required before the A/R Invoice can be added.';
+          return e;
+        }
+      }
+
       console.log('🔍 Filtering lines with items...');
       const pop = lines.filter(l => String(l.itemNo || '').trim());
       console.log(`🔍 Found ${pop.length} lines with items out of ${lines.length} total lines`);
@@ -2646,8 +2751,15 @@ function ARInvoicePage() {
     const copySource = unwrapCopyFromDocument(data);
     const baseType = BASE_TYPE[sourceType] || 17;
     const normHeader = normaliseDocumentHeader(copySource.header);
+    const firstSourceLine = Array.isArray(copySource.lines) && copySource.lines.length ? copySource.lines[0] : {};
+    const copiedWarehouse = normalizeWarehouse(firstSourceLine, copySource.header || {});
+    const resolvedBranch = normalizeBranchSelection(normHeader.branch)
+      || normalizeBranchSelection(firstSourceLine.branch || firstSourceLine.Branch || firstSourceLine.BPL_IDAssignedToInvoice || firstSourceLine.BPLId)
+      || getBranchFromWarehouseCode(copiedWarehouse);
+    const resolvedHeader = { ...normHeader, branch: resolvedBranch, warehouse: normHeader.warehouse || copiedWarehouse || header.warehouse };
 
-    setHeader(prev => ({ ...prev, ...normHeader }));
+    setHeader(prev => ({ ...prev, ...resolvedHeader, series: '', nextNumber: '' }));
+    setSeriesReloadToken((token) => token + 1);
     const copiedHeaderUdfs = mergeUdfValues(copySource.header_udfs, copySource.headerUdfs, copySource.header?.header_udfs, copySource.header?.headerUdfs);
     setHeaderUdfs({
       ...copiedHeaderUdfs,
@@ -2656,11 +2768,12 @@ function ARInvoicePage() {
 
     const rawLines = copySource.lines;
     const newLines = rawLines.map((line, idx) => {
-      const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch);
+      const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, resolvedBranch);
       const copiedLineUdfs = mergeUdfValues(line.line_udfs, line.lineUdfs, line.udf, normalizedLine.udf);
       return {
         ...createLine(rowUdfDefinitions),
         ...normalizedLine,
+        branch: normalizeBranchSelection(normalizedLine.branch) || resolvedBranch,
         udf: {
           ...copiedLineUdfs,
           ...normalizeUdfState(rowUdfDefinitions, copiedLineUdfs),
@@ -2819,12 +2932,19 @@ function ARInvoicePage() {
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, posting: true, error: '', success: '' }));
     try {
+      const selectedSeries = refData.series.find((series) => String(series.Series) === String(header.series));
+      const selectedSeriesBranch = normalizeBranchSelection(selectedSeries?.BPLId);
+      const firstLineWarehouse = normalizeWarehouse(lines[0] || {}, header);
+      const resolvedBranch = normalizeBranchSelection(header.branch)
+        || selectedSeriesBranch
+        || normalizeBranchSelection(lines[0]?.branch || lines[0]?.loc)
+        || getBranchFromWarehouseCode(header.warehouse || firstLineWarehouse);
       const prep = { 
         ...header, 
         transactionType: getDocumentTypeCodeForTransaction(header.transactionType),
         deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
         placeOfSupply: header.placeOfSupply,
-        branch: header.branch,
+        branch: resolvedBranch,
         contactPerson: header.contactPerson,
       };
       
@@ -3144,7 +3264,7 @@ function ARInvoicePage() {
                       <label className="del-field__label">Series</label>
                       <select 
                         name="series"
-                        className="del-field__select" 
+                        className={`del-field__select${valErrors.header.series ? ' del-field__input--error' : ''}`}
                         value={header.series}
                         onChange={handleHeaderChange}
                         disabled={!!currentDocEntry || pageState.seriesLoading}
@@ -3206,8 +3326,8 @@ function ARInvoicePage() {
 
                     {/* Branch */}
                     <div className="del-field">
-                      <label className="del-field__label">Branch</label>
-                      <select name="branch" className="del-field__select" value={header.branch} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
+                      <label className="del-field__label">Branch *</label>
+                      <select name="branch" className={`del-field__select${valErrors.header.branch ? ' del-field__input--error' : ''}`} value={header.branch} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
                         <option value="">Select Branch</option>
                         {refData.branches.map(b => (
                           <option key={b.BPLId} value={b.BPLId}>

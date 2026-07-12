@@ -7,32 +7,63 @@ const { applyUdfValues, isBlankUdfValue, normalizeUdfValue } = require('./udfPay
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
-  return normalized === '' ? -1 : Number(normalized);
+  const branchId = Number(normalized);
+  return Number.isInteger(branchId) && branchId > 0 ? branchId : undefined;
 };
 
-const resolveARInvoiceSeries = async (header = {}) => {
+const resolveARInvoiceSeries = async (header = {}, lines = []) => {
   const selectedSeries = Number(header.series);
+  let requestedBranchId = normalizeBranchId(header.branch);
+
+  if (!requestedBranchId) {
+    const firstLine = Array.isArray(lines) ? lines[0] || {} : {};
+    const warehouseCode = String(
+      header.warehouse || firstLine.whse || firstLine.warehouse || firstLine.WarehouseCode || '',
+    ).trim();
+    if (warehouseCode) {
+      const warehouseBranch = await arInvoiceDb.getWarehouseBranch(warehouseCode);
+      requestedBranchId = normalizeBranchId(warehouseBranch?.branchId);
+    }
+  }
   try {
     const seriesRows = await arInvoiceDb.getDocumentSeries(
       header.postingDate || header.documentDate || null,
       header.transactionType || '',
-      header.branch || '',
+      requestedBranchId || '',
     );
 
     if (!Array.isArray(seriesRows) || !seriesRows.length) {
-      return Number.isFinite(selectedSeries) && selectedSeries > 0 ? selectedSeries : undefined;
+      return {
+        series: Number.isFinite(selectedSeries) && selectedSeries > 0 ? selectedSeries : undefined,
+        branchId: requestedBranchId,
+      };
     }
 
     const selectedRow = Number.isFinite(selectedSeries) && selectedSeries > 0
       ? seriesRows.find((row) => Number(row.Series) === selectedSeries)
       : null;
     const defaultRow = seriesRows.find((row) => row.IsDefault) || seriesRows[0];
-    const resolved = Number((selectedRow || defaultRow)?.Series);
+    const resolvedRow = selectedRow || defaultRow;
+    const resolved = Number(resolvedRow?.Series);
+    const seriesBranchId = normalizeBranchId(resolvedRow?.BPLId);
 
-    return Number.isFinite(resolved) && resolved > 0 ? resolved : undefined;
+    if (requestedBranchId && seriesBranchId && requestedBranchId !== seriesBranchId) {
+      const mismatchError = new Error('The selected A/R Invoice numbering series belongs to a different branch. Select a matching series or branch.');
+      mismatchError.code = 'AR_INVOICE_SERIES_BRANCH_MISMATCH';
+      throw mismatchError;
+    }
+
+    return {
+      series: Number.isFinite(resolved) && resolved > 0 ? resolved : undefined,
+      branchId: requestedBranchId || seriesBranchId,
+    };
   } catch (error) {
+    if (error.code === 'AR_INVOICE_SERIES_BRANCH_MISMATCH') throw error;
     console.warn('[ARInvoiceService] Could not validate invoice series; using submitted value.', error.message);
-    return Number.isFinite(selectedSeries) && selectedSeries > 0 ? selectedSeries : undefined;
+    return {
+      series: Number.isFinite(selectedSeries) && selectedSeries > 0 ? selectedSeries : undefined,
+      branchId: requestedBranchId,
+    };
   }
 };
 
@@ -312,6 +343,8 @@ const getARInvoice = async (docEntry) => {
 // ───────── CREATE INVOICE (USING SERVICE LAYER) ─────────
 
 const submitARInvoice = async (payload) => {
+  let lastSapPayload = null;
+
   try {
     console.log("🔥 [ARInvoiceService] RECEIVED AR INVOICE PAYLOAD:", JSON.stringify(payload, null, 2));
 
@@ -331,7 +364,7 @@ const submitARInvoice = async (payload) => {
     }
     
     console.log("🔍 [ARInvoiceService] Using customer code:", customerCode);
-    const resolvedSeries = await resolveARInvoiceSeries(payload.header);
+    const resolvedSeries = await resolveARInvoiceSeries(payload.header, payload.lines);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('OINV'),
@@ -344,7 +377,7 @@ const submitARInvoice = async (payload) => {
       CardCode: String(customerCode).trim(),
 
       // Series for auto-numbering - only include if explicitly provided and valid
-      ...(resolvedSeries ? { Series: resolvedSeries } : {}),
+      ...(resolvedSeries.series ? { Series: resolvedSeries.series } : {}),
 
       DocDate: payload.header.postingDate || payload.header.documentDate,
       DocDueDate: payload.header.deliveryDate || payload.header.dueDate,
@@ -359,8 +392,10 @@ const submitARInvoice = async (payload) => {
           : undefined,
 
       // Branch mapping
-      BPLId: normalizeBranchId(payload.header.branch),
-      BPL_IDAssignedToInvoice: normalizeBranchId(payload.header.branch),
+      ...(resolvedSeries.branchId ? {
+        BPLId: resolvedSeries.branchId,
+        BPL_IDAssignedToInvoice: resolvedSeries.branchId,
+      } : {}),
 
       PaymentGroupCode: payload.header.paymentTerms ? Number(payload.header.paymentTerms) : undefined,
 
@@ -411,6 +446,7 @@ const submitARInvoice = async (payload) => {
         return line;
       })
     };
+    lastSapPayload = sapPayload;
 
     addIfPresent(sapPayload, 'ShipToCode', payload.header.shipToCode);
     addIfPresent(sapPayload, 'PayToCode', payload.header.billToCode || payload.header.payToCode);
@@ -463,6 +499,16 @@ const submitARInvoice = async (payload) => {
       errorMessage = error.response.data.error.message;
     } else if (error.message) {
       errorMessage = error.message;
+    }
+
+    if (String(errorMessage).includes('10000521') && lastSapPayload) {
+      const submittedContext = [
+        lastSapPayload.Series ? `Series=${lastSapPayload.Series}` : '',
+        lastSapPayload.BPLId ? `BPLId=${lastSapPayload.BPLId}` : '',
+      ].filter(Boolean).join(', ');
+      if (submittedContext) {
+        errorMessage = `${errorMessage} (submitted ${submittedContext})`;
+      }
     }
 
     // Create a new error with the SAP message

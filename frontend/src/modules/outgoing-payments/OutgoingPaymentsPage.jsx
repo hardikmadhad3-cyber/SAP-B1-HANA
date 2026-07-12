@@ -14,7 +14,7 @@ import {
 import { useRelationshipMapRegistration } from "../../components/relationship-map/RelationshipMapHost";
 import PaymentMeansModal, {
   createDefaultPaymentMeans,
-  paymentMeansTotal,
+  validatePaymentMeans,
 } from "../payments/PaymentMeansModal";
 import "./outgoingPayments.css";
 
@@ -401,6 +401,7 @@ export default function OutgoingPaymentsPage() {
           seriesRows[0] ||
           null;
         const branchRows = data.branches || [];
+        const defaultCashAccount = data.defaultCashAccount || "";
         setBranches(branchRows);
         setDocumentSeries(seriesRows);
         setDistributionRules(normalizeDistributionRules(data.distributionRules || data.distribution_rules || []));
@@ -415,11 +416,16 @@ export default function OutgoingPaymentsPage() {
             transactionNumber: data.nextTransactionNumber || current.transactionNumber,
             branch: selectedBranch,
             branchRegNo: getBranchRegNo(branchRows, selectedBranch),
+            cashAccount: current.cashAccount || defaultCashAccount,
           };
         });
         setPaymentMeans((current) => ({
           ...current,
           currency: current.currency || "INR",
+          cash: {
+            ...(current.cash || {}),
+            account: current.cash?.account || defaultCashAccount,
+          },
         }));
       })
       .catch(() => {
@@ -460,8 +466,8 @@ export default function OutgoingPaymentsPage() {
 
   const getPayableInvoiceTotal = (rows = invoices) =>
     rows.reduce((sum, invoice) => {
+      if (!invoice.selected) return sum;
       const payment = clampPayment(invoice.totalPayment, invoice.balanceDue);
-      if (!invoice.selected && payment <= 0) return sum;
       return sum + payment;
     }, 0);
 
@@ -494,7 +500,7 @@ export default function OutgoingPaymentsPage() {
   };
 
   const normalizeInvoices = (rows = []) =>
-    rows.map((row) => ({ ...row, selected: false, cashDiscountPercent: "0.00" }));
+    rows.map((row) => ({ ...row, selected: false, cashDiscountPercent: "0.00", totalPayment: "0.00" }));
 
   const changeBpType = (bpType) => {
     if (isFoundDocument) return;
@@ -571,6 +577,7 @@ export default function OutgoingPaymentsPage() {
     if (isFoundDocument) return;
     setLoadError("");
     setSuccessMessage("");
+    const partnerCurrency = row.currency && row.currency !== "##" ? row.currency : header.docCurrency || "INR";
     setHeader((current) => ({
       ...current,
       businessPartnerCode: row.code,
@@ -579,6 +586,13 @@ export default function OutgoingPaymentsPage() {
       billToAddress: row.payToAddress || "",
       contactPerson: row.contactPerson || "",
       controlAccount: row.controlAccount || current.controlAccount,
+      docCurrency: partnerCurrency,
+    }));
+    setPaymentOnAccount(false);
+    setPaymentOnAccountAmount("0.00");
+    setPaymentMeans(createDefaultPaymentMeans({
+      currency: partnerCurrency,
+      cashAccount: header.cashAccount || paymentMeans.cash?.account || "",
     }));
     setJournalRemarks(`Outgoing Payments - ${row.code}`);
     if (header.bpType === "Vendor") {
@@ -667,7 +681,7 @@ export default function OutgoingPaymentsPage() {
               ...invoice,
               selected,
               cashDiscountPercent: selected ? normalizePercent(invoice.cashDiscountPercent).toFixed(2) : invoice.cashDiscountPercent,
-              totalPayment: selected ? calculateDiscountedPayment(invoice) : invoice.totalPayment,
+              totalPayment: selected ? calculateDiscountedPayment(invoice) : "0.00",
             }
           : invoice,
       ),
@@ -772,7 +786,7 @@ export default function OutgoingPaymentsPage() {
   const deselectAll = () => {
     if (isFoundDocument) return;
     setSuccessMessage("");
-    setInvoices((current) => current.map((invoice) => ({ ...invoice, selected: false })));
+    setInvoices((current) => current.map((invoice) => ({ ...invoice, selected: false, totalPayment: "0.00" })));
   };
 
   const openBusinessPartnerLookup = ({ clearMessages = true } = {}) => {
@@ -928,36 +942,25 @@ export default function OutgoingPaymentsPage() {
 
   const openPaymentMeans = () => {
     if (isFoundDocument) return;
-    setPaymentMeans((current) => {
-      const paid = paymentMeansTotal(current);
-      if (paid > 0) return current;
-      return createDefaultPaymentMeans({
-        currency: header.docCurrency || "INR",
-        amount: totalAmountDue,
-      });
-    });
+    setPaymentMeans((current) => ({
+      ...current,
+      currency: header.docCurrency || current.currency || "INR",
+      cash: {
+        ...(current.cash || {}),
+        account: current.cash?.account || header.cashAccount || "",
+      },
+    }));
     setPaymentMeansOpen(true);
   };
 
   const getPostingPaymentMeans = (payableTotal) => {
-    const paid = paymentMeansTotal(paymentMeans);
-    const nextMeans = paid > 0
-      ? paymentMeans
-      : createDefaultPaymentMeans({
-          currency: header.docCurrency || "INR",
-          amount: payableTotal,
-        });
-    const nextPaid = paymentMeansTotal(nextMeans);
-
-    if (Math.abs(nextPaid - payableTotal) > 0.01) {
-      setLoadError("Payment Means paid amount must match Total Amount Due.");
-      setPaymentMeans(nextMeans);
+    const error = validatePaymentMeans(paymentMeans, payableTotal);
+    if (error) {
+      setLoadError(error);
       setPaymentMeansOpen(true);
       return null;
     }
-
-    setPaymentMeans(nextMeans);
-    return nextMeans;
+    return paymentMeans;
   };
 
   const handleOk = async () => {
@@ -1015,6 +1018,7 @@ export default function OutgoingPaymentsPage() {
     }
 
     const payableInvoices = invoices
+      .filter((invoice) => invoice.selected)
       .map((invoice) => {
         const payment = clampPayment(invoice.totalPayment, invoice.balanceDue);
         return payment > 0
@@ -1026,7 +1030,7 @@ export default function OutgoingPaymentsPage() {
             }
           : invoice;
       })
-      .filter((invoice) => invoice.selected && clampPayment(invoice.totalPayment, invoice.balanceDue) > 0);
+      .filter((invoice) => clampPayment(invoice.totalPayment, invoice.balanceDue) > 0);
 
     setInvoices((current) =>
       current.map((invoice) => {
@@ -1099,6 +1103,13 @@ export default function OutgoingPaymentsPage() {
   const showAccountContentGrid = isAccount;
   const partnerLookupTitle = isVendor ? "Vendors" : isAccount ? "G/L Accounts" : "Business Partners";
   const partnerAddressLabel = isVendor ? "Pay To" : "Bill To";
+  const changePaymentOnAccount = (checked) => {
+    if (isFoundDocument || isAccount) return;
+    setLoadError("");
+    setSuccessMessage("");
+    setPaymentOnAccount(checked);
+    if (!checked) setPaymentOnAccountAmount("0.00");
+  };
 
   return (
     <div className="po-page sap-document-page ip-payments-page">
@@ -1506,13 +1517,18 @@ export default function OutgoingPaymentsPage() {
         <div className="sap-payment-row">
           <div className="sap-payment-on-account">
             <label>
-              <input type="checkbox" checked={isAccount || paymentOnAccount} disabled={isAccount} onChange={(event) => setPaymentOnAccount(event.target.checked)} />
+              <input type="checkbox" checked={isAccount || paymentOnAccount} disabled={isAccount || isFoundDocument} onChange={(event) => changePaymentOnAccount(event.target.checked)} />
               <span>Payment on Account</span>
             </label>
             <input
               value={paymentOnAccountAmount}
-              disabled={!isAccount && !paymentOnAccount}
-              onChange={(event) => setPaymentOnAccountAmount(event.target.value)}
+              inputMode="decimal"
+              aria-label="Payment on Account amount"
+              disabled={isFoundDocument || (!isAccount && !paymentOnAccount)}
+              onChange={(event) => {
+                setLoadError("");
+                setPaymentOnAccountAmount(event.target.value);
+              }}
               onBlur={() => setPaymentOnAccountAmount(money(parseAmount(paymentOnAccountAmount)))}
             />
           </div>
@@ -1526,7 +1542,7 @@ export default function OutgoingPaymentsPage() {
             <FieldRow label="Journal Remarks">
               <input value={journalRemarks} onChange={(event) => setJournalRemarks(event.target.value)} />
             </FieldRow>
-            {paymentOnAccount ? (
+            {isAccount || paymentOnAccount ? (
               <FieldRow label="Control Account">
                 <SapLookupField
                   value={header.controlAccount}
@@ -1580,6 +1596,10 @@ export default function OutgoingPaymentsPage() {
         totalAmountDue={totalAmountDue}
         onChange={setPaymentMeans}
         onClose={() => setPaymentMeansOpen(false)}
+        onConfirm={() => {
+          setLoadError("");
+          setPaymentMeansOpen(false);
+        }}
         lookupAccounts={searchOutgoingPaymentControlAccounts}
         AccountLookupField={SapLookupField}
       />

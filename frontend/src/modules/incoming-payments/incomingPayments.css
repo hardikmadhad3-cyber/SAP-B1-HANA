@@ -823,6 +823,15 @@
   grid-column: 2;
 }
 
+.ip-payment-means__error {
+  margin-top: 8px;
+  border: 1px solid #d34b4b;
+  background: #fff1f1;
+  color: #a31212;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
 .ip-payment-means__actions {
   display: flex;
   gap: 8px;
