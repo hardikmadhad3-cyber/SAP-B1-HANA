@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { getBP, searchBP } from '../../api/businessPartnerApi';
 import { createPredefinedText, fetchPredefinedTexts } from '../../api/predefinedTextApi';
+import SapLookupModal from '../common/SapLookupModal';
 import LineValueLookupModal from '../sales-document/LineValueLookupModal';
 import BusinessPartnerModal from '../../modules/sales-order/components/BusinessPartnerModal';
 
@@ -582,7 +582,6 @@ function SellerAddressModal({
   emptyMessage = 'No seller addresses found',
 }) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedRow, setSelectedRow] = useState(null);
 
   const filteredAddresses = useMemo(() => {
     const usableAddresses = dedupeAddresses(addresses);
@@ -595,164 +594,33 @@ function SellerAddressModal({
     );
   }, [addresses, searchTerm]);
 
-  if (!isOpen) return null;
-
   const chooseAddress = (address) => {
     if (!address) return;
     onSelect(address);
     onClose();
   };
 
-  const modal = (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 21000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(0,0,0,0.35)',
-        padding: 24,
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Seller Address"
-        onClick={(event) => event.stopPropagation()}
-        style={{
-          width: 'min(760px, calc(100vw - 48px))',
-          maxHeight: 'calc(100vh - 64px)',
-          display: 'flex',
-          flexDirection: 'column',
-          background: '#fff',
-          border: '1px solid #999',
-          borderRadius: 3,
-          boxShadow: '0 18px 40px rgba(0,0,0,0.28)',
-          overflow: 'hidden',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '6px 10px',
-            background: 'linear-gradient(to bottom, #f0f3f7, #e3ebf3)',
-            borderBottom: '1px solid #c8d2dc',
-          }}
-        >
-          <h6 className="mb-0" style={{ fontSize: 12, fontWeight: 700 }}>
-            {title}
-          </h6>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="btn btn-sm"
-            style={{ padding: '0 8px', fontSize: 13, border: '1px solid #999', background: '#f0f0f0' }}
-          >
-            x
-          </button>
-        </div>
-
-        <div style={{ padding: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, margin: 0 }}>Find</label>
-          <input
-            type="text"
-            className="form-control form-control-sm"
-            value={searchTerm}
-            onChange={(event) => {
-              setSearchTerm(event.target.value);
-              setSelectedRow(null);
-            }}
-            style={{ maxWidth: 340, fontSize: 11, background: '#fff' }}
-            autoFocus
-          />
-        </div>
-
-        {error ? (
-          <div style={{ color: '#b00020', background: '#fff3f3', padding: '6px 10px', fontSize: 11 }}>
-            {error}
-          </div>
-        ) : null}
-
-        <div style={{ flex: 1, minHeight: 220, overflow: 'auto', padding: '0 10px 10px' }}>
-          {loading ? (
-            <div style={{ padding: 20, textAlign: 'center', fontSize: 11, color: '#666' }}>
-              Loading addresses...
-            </div>
-          ) : (
-            <table className="table table-sm mb-0" style={{ fontSize: 11 }}>
-              <tbody>
-                {filteredAddresses.length === 0 ? (
-                  <tr>
-                    <td style={{ padding: 18, textAlign: 'center', color: '#777' }}>
-                      {emptyMessage}
-                    </td>
-                  </tr>
-                ) : (
-                  filteredAddresses.map((address, index) => {
-                    const addressId = getAddressId(address);
-                    const rowText = formatAddressRowText(address);
-                    const selected = selectedRow === index;
-
-                    return (
-                      <tr
-                        key={`${addressId}-${index}`}
-                        onClick={() => setSelectedRow(index)}
-                        onDoubleClick={() => chooseAddress(address)}
-                        style={{
-                          cursor: 'pointer',
-                          backgroundColor: selected ? '#e7f2fb' : index % 2 === 0 ? '#fff' : '#f3f3f3',
-                        }}
-                      >
-                        <td style={{ width: 48, padding: '5px 8px', color: '#666' }}>{index + 1}</td>
-                        <td style={{ padding: '5px 8px', fontWeight: selected ? 700 : 500 }}>
-                          {addressId}
-                          {rowText ? <span style={{ fontWeight: 400 }}> / {rowText}</span> : null}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, padding: 10, borderTop: '1px solid #ccc', background: '#f0f0f0' }}>
-          <button
-            type="button"
-            className="btn btn-sm"
-            disabled={selectedRow === null || loading || !filteredAddresses[selectedRow]}
-            onClick={() => chooseAddress(filteredAddresses[selectedRow])}
-            style={{
-              minWidth: 82,
-              fontSize: 11,
-              border: '1px solid #999',
-              background: selectedRow !== null ? 'linear-gradient(180deg, #006fb8 0%, #00558f 100%)' : '#e0e6ed',
-              color: selectedRow !== null ? '#fff' : '#172334',
-            }}
-          >
-            Choose
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={onClose}
-            style={{ minWidth: 82, fontSize: 11, border: '1px solid #999', background: 'linear-gradient(180deg, #fff 0%, #e8edf2 100%)' }}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
+  return (
+    <SapLookupModal
+      open={isOpen}
+      title={title}
+      columns={[
+        { key: 'rowNumber', label: '#', width: 44, searchable: false, render: (_address, index) => index + 1 },
+        { key: 'addressId', label: 'Address ID', width: 150, render: getAddressId },
+        { key: 'address', label: 'Address', render: formatAddressRowText },
+      ]}
+      rows={filteredAddresses}
+      loading={loading}
+      initialQuery={searchTerm}
+      searchPlaceholder="Search addresses"
+      emptyMessage={error || emptyMessage}
+      onQueryChange={setSearchTerm}
+      onClose={onClose}
+      onSelect={chooseAddress}
+      getRowKey={(address, index) => `${getAddressId(address)}-${index}`}
+      width="min(760px, calc(100% - 40px))"
+    />
   );
-
-  return createPortal(modal, document.body);
 }
 
 function HeaderUdfSidebar({
@@ -861,13 +729,48 @@ function HeaderUdfSidebar({
   const safeFields = Array.isArray(fields) ? fields.filter((field) => field && field.key) : [];
   const containerClass = orientation === 'horizontal'
     ? 'po-udf-sidebar-horizontal'
-    : 'col-xl-3 col-lg-4 align-self-start';
+    : 'col-xl-3 col-lg-4';
 
   const rootClassName = [
     containerClass,
     orientation === 'horizontal' ? '' : 'sap-header-udf-panel',
     className,
   ].filter(Boolean).join(' ');
+  const isVerticalSidebar = orientation !== 'horizontal';
+  const sidebarFrameStyle = isVerticalSidebar
+    ? {
+        alignSelf: 'stretch',
+        display: 'flex',
+        height: 'auto',
+        minHeight: 0,
+        maxHeight: 'none',
+        overflow: 'hidden',
+        width: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
+        ...(style || {}),
+      }
+    : (style || {});
+  const sidebarCardStyle = isVerticalSidebar
+    ? {
+        position: 'static',
+        top: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 0,
+        maxHeight: '100%',
+        overflow: 'hidden',
+      }
+    : {};
+  const sidebarBodyStyle = isVerticalSidebar
+    ? {
+        flex: '1 1 auto',
+        minHeight: 0,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+      }
+    : undefined;
   const showClose = typeof onClose === 'function';
   const orderedFields = sortHeaderUdfFields(safeFields);
   const sellerContactPersonField = orderedFields.find(isSellerContactPersonField);
@@ -1118,7 +1021,7 @@ function HeaderUdfSidebar({
     changeField,
   ]);
 
-  if (!isOpen || safeFields.length === 0) {
+  if (!isOpen) {
     return null;
   }
 
@@ -1532,9 +1435,10 @@ function HeaderUdfSidebar({
 
   return (
     <>
-      <div className={rootClassName} style={{ ...style, width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}>
+      <div className={rootClassName} style={{ ...sidebarFrameStyle, ...style, width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}>
         <div
           className={`card p-3 po-udf-sidebar-card ${orientation === 'horizontal' ? 'po-udf-sidebar-card-horizontal' : ''}`}
+          style={sidebarCardStyle}
         >
           <div className="po-udf-sidebar-header">
             <div>
@@ -1554,7 +1458,12 @@ function HeaderUdfSidebar({
             ) : null}
           </div>
 
-          <div className="po-udf-sidebar-body">
+          <div className="po-udf-sidebar-body" style={sidebarBodyStyle}>
+            {orderedFields.length === 0 ? (
+              <div className="text-muted small">
+                No header UDF fields are available for this document.
+              </div>
+            ) : null}
             {orderedFields.filter((field) => field && field.key).map((field) => {
               const termsOfSupplyField = isTermsOfSupplyField(field);
               const fieldValue = values[field.key];

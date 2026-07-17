@@ -38,8 +38,6 @@ export default function CopyItemsModal({ order, lines = [], onOk, onClose }) {
         <div className="ifp-sap-modal__titlebar">
           <span>Select Items to Copy</span>
           <div className="ifp-sap-modal__controls">
-            <button type="button" disabled>-</button>
-            <button type="button" disabled>[]</button>
             <button type="button" onClick={onClose}>x</button>
           </div>
         </div>

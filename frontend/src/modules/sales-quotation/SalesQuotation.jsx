@@ -11,16 +11,16 @@ import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import TransportTab from './components/TransportTab';
 import AttachmentsTab from './components/AttachmentsTab';
-import AddressModal from './components/AddressModal';
-import { mapAddressFields } from '../../utils/documentAddress';
+import AddressModal from '../../components/document/AddressComponentModal';
+import { formatAddressComponent, mapAddressFields, pickAddressComponentFields } from '../../utils/documentAddress';
 import EWayBillModal from './components/EWayBillModal';
 import TaxInfoModal from './components/TaxInfoModal';
-import StateSelectionModal from './components/StateSelectionModal';
+import StateSelectionModal from '../../components/common/StateSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
-import CopyFromModal from './components/CopyFromModal';
+import CopyFromModal from '../../components/document/CopyFromModal';
 import CopyToDropdown from '../../components/document/CopyToDropdown';
-import HSNCodeModal from './components/HSNCodeModal';
-import ItemSelectionModal from './components/ItemSelectionModal';
+import HSNCodeModal from '../../components/common/HSNCodeModal';
+import ItemSelectionModal from '../../components/common/ItemSelectionModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
@@ -202,6 +202,7 @@ const INIT_HEADER = {
   totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
   billToAddress: '', billToCode: '', shipToAddress: '',
+  shipToAddressComponents: null, billToAddressComponents: null,
 };
 
 const resolveCurrencyCode = (currency, fallback = 'INR') => {
@@ -736,8 +737,10 @@ function SalesQuotation() {
           // Map backend address field names to frontend field names
           shipToCode: so.header?.shipToCode || '',
           shipToAddress: so.header?.shipTo || '',
+          shipToAddressComponents: so.header?.shipToAddressComponents || null,
           billToCode: so.header?.payToCode || '',
           billToAddress: so.header?.payTo || '',
+          billToAddressComponents: so.header?.billToAddressComponents || null,
           // Copy all other fields from backend
           postingDate: so.header?.postingDate || '',
           deliveryDate: so.header?.deliveryDate || '',
@@ -1572,14 +1575,20 @@ function SalesQuotation() {
       header.billToAddress || header.payTo,
     );
     const activeAddress = type === 'billTo' ? billAddress : shipAddress;
+    const activeComponents = type === 'billTo'
+      ? header.billToAddressComponents
+      : header.shipToAddressComponents;
 
     setAddressForm(
-      mapAddressToModalForm(activeAddress, {
-        shipToCode: header.shipToCode || shipAddress?.Address || '',
-        shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
-        billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
-        billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
-      }),
+      {
+        ...mapAddressToModalForm(activeAddress, {
+          shipToCode: header.shipToCode || shipAddress?.Address || '',
+          shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
+          billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
+          billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
+        }),
+        ...(activeComponents || {}),
+      },
     );
     setAddressModal({ type });
   };
@@ -1589,27 +1598,22 @@ function SalesQuotation() {
   };
 
   const saveAddressModal = () => {
-    const formatted = [
-      [addressForm.streetPoBox, addressForm.streetNo].filter(Boolean).join(', '),
-      addressForm.buildingFloorRoom,
-      [addressForm.block, addressForm.city].filter(Boolean).join(', '),
-      [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion,
-      addressForm.addressName2,
-      addressForm.addressName3,
-    ].filter(Boolean).join('\n');
+    const formatted = formatAddressComponent(addressForm);
+    const components = pickAddressComponentFields(addressForm);
+    markDirty();
 
     if (addressModal.type === 'shipTo') {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode || p.shipToCode,
-        shipToAddress: formatted || addressForm.shipToAddress,
-        shipTo: formatted || addressForm.shipToAddress,
+        shipToAddress: formatted,
+        shipTo: formatted,
+        shipToAddressComponents: components,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
         payTo: addressForm.billToAddress || p.payTo,
-        placeOfSupply: addressForm.state || p.placeOfSupply,
+        placeOfSupply: addressForm.state || '',
       }));
     } else {
       setHeader(p => ({
@@ -1619,9 +1623,10 @@ function SalesQuotation() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
-        billToAddress: formatted || addressForm.billToAddress,
-        payTo: formatted || addressForm.billToAddress,
-        placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
+        billToAddress: formatted,
+        payTo: formatted,
+        billToAddressComponents: components,
+        placeOfSupply: header.useBillToForTax ? addressForm.state || '' : p.placeOfSupply,
       }));
     }
     closeAddressModal();
@@ -1629,6 +1634,37 @@ function SalesQuotation() {
 
   const handleAddressFormChange = (e) => {
     const { name, value } = e.target;
+
+    if (name === 'shipToCode') {
+      const selectedAddress = resolveSalesQuotationAddress(value, vendorEffectiveShipToAddresses);
+      setAddressForm(prev => {
+        const nextState = {
+          ...prev,
+          shipToCode: value,
+          shipToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.shipToAddress,
+        };
+        return addressModal?.type === 'shipTo'
+          ? mapAddressToModalForm(selectedAddress, nextState)
+          : nextState;
+      });
+      return;
+    }
+
+    if (name === 'billToCode') {
+      const selectedAddress = resolveSalesQuotationAddress(value, vendorEffectiveBillToAddresses);
+      setAddressForm(prev => {
+        const nextState = {
+          ...prev,
+          billToCode: value,
+          billToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.billToAddress,
+        };
+        return addressModal?.type === 'billTo'
+          ? mapAddressToModalForm(selectedAddress, nextState)
+          : nextState;
+      });
+      return;
+    }
+
     setAddressForm(p => ({ ...p, [name]: value }));
   };
 

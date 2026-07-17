@@ -1,11 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   fetchIncomingPaymentByDocEntry,
   fetchIncomingPaymentOpenInvoices,
   fetchIncomingPaymentReferenceData,
-  searchIncomingPayments,
   searchIncomingPaymentBusinessPartners,
   searchIncomingPaymentControlAccounts,
   submitIncomingPayment,
@@ -14,7 +12,9 @@ import { useRelationshipMapRegistration } from "../../components/relationship-ma
 import PaymentMeansModal, {
   createDefaultPaymentMeans,
   paymentMeansTotal,
+  validatePaymentMeans,
 } from "../payments/PaymentMeansModal";
+import SapLookupModal from "../../components/common/SapLookupModal";
 import "./incomingPayments.css";
 
 const today = new Date().toISOString().slice(0, 10);
@@ -37,8 +37,11 @@ const parseAmount = (value) => {
 };
 
 const clampPayment = (value, balanceDue) => {
-  const amount = Math.max(0, parseAmount(value));
-  return Math.min(amount, parseAmount(balanceDue));
+  const balance = parseAmount(balanceDue);
+  const amount = parseAmount(value);
+  if (balance < 0) return Math.max(balance, Math.min(0, amount));
+  if (balance > 0) return Math.min(Math.max(0, amount), balance);
+  return 0;
 };
 
 const normalizePercent = (value) => {
@@ -83,10 +86,8 @@ function SapLookupField({
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState(0);
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ page: 1, pageSize, totalCount: 0, totalPages: 1 });
-  const searchRef = useRef(null);
   const allRowsRef = useRef([]);
   const requestRef = useRef(0);
 
@@ -102,7 +103,6 @@ function SapLookupField({
         setRows(nextRows);
         setPage(data?.pagination?.page || nextPage);
         setPagination(data?.pagination || { page: nextPage, pageSize, totalCount: nextRows.length, totalPages: 1 });
-        setSelectedIndex(0);
         return;
       }
       const term = String(nextQuery || "").trim().toLowerCase();
@@ -116,7 +116,6 @@ function SapLookupField({
           Object.values(row || {}).some((value) => String(value ?? "").toLowerCase().includes(term)),
         ));
       }
-      setSelectedIndex(0);
     } catch (_error) {
       if (requestId !== requestRef.current) return;
       const term = String(nextQuery || "").trim().toLowerCase();
@@ -139,10 +138,6 @@ function SapLookupField({
   };
 
   useEffect(() => {
-    if (open) searchRef.current?.focus();
-  }, [open]);
-
-  useEffect(() => {
     if (triggerOpen > 0) openModal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerOpen]);
@@ -161,6 +156,38 @@ function SapLookupField({
     setOpen(false);
   };
 
+  const handleQueryChange = (nextQuery) => {
+    setQuery(nextQuery);
+    setPage(1);
+    load(nextQuery, 1);
+  };
+
+  const rowColumns = useMemo(() => [
+    {
+      key: "rowNumber",
+      label: "#",
+      width: 44,
+      searchable: false,
+      render: (_row, index) => (paginated ? ((page - 1) * pagination.pageSize) + index + 1 : index + 1),
+    },
+    ...columns,
+  ], [columns, page, paginated, pagination.pageSize]);
+
+  const footerNote = paginated
+    ? (pagination.totalCount
+      ? `Showing ${((page - 1) * pagination.pageSize) + 1}-${Math.min(page * pagination.pageSize, pagination.totalCount)} of ${pagination.totalCount}`
+      : "Showing 0")
+    : undefined;
+
+  const footerControls = paginated ? (
+    <>
+      <button type="button" className="sap-lookup-modal__btn" onClick={() => load(query, page)} disabled={loading}>Refresh</button>
+      <button type="button" className="sap-lookup-modal__btn" onClick={() => load(query, page - 1)} disabled={loading || page <= 1}>Previous</button>
+      <span>Page {page} of {pagination.totalPages}</span>
+      <button type="button" className="sap-lookup-modal__btn" onClick={() => load(query, page + 1)} disabled={loading || page >= pagination.totalPages}>Next</button>
+    </>
+  ) : null;
+
   return (
     <>
       <span className={`sap-lookup ${className}`}>
@@ -170,102 +197,25 @@ function SapLookupField({
         </button>
       </span>
 
-      {open ? createPortal(
-        <div
-          className="modal show d-block ip-lookup-modal-layer"
-          tabIndex="-1"
-          role="dialog"
-          onMouseDown={(event) => {
-            event.stopPropagation();
-            setOpen(false);
-          }}
-        >
-          <div className="modal-dialog modal-xl ip-lookup-dialog" role="document" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-content ip-lookup-content">
-              <div className="modal-header ip-lookup-header">
-                <h6 className="modal-title mb-0">List of {title}</h6>
-                <div className="ip-lookup-window-controls" aria-label="Window controls">
-                  <button type="button" className="ip-lookup-window-btn" aria-label="Minimize" disabled>-</button>
-                  <button type="button" className="ip-lookup-window-btn" aria-label="Maximize" disabled>[]</button>
-                  <button type="button" className="ip-lookup-window-btn ip-lookup-close" aria-label="Close" onClick={() => setOpen(false)}>x</button>
-                </div>
-              </div>
-              <div className="modal-body ip-lookup-body">
-                <div className="ip-lookup-find">
-                  <label>Find</label>
-                  <input
-                    ref={searchRef}
-                    value={query}
-                    onChange={(event) => {
-                      setQuery(event.target.value);
-                      setPage(1);
-                      load(event.target.value, 1);
-                    }}
-                  />
-                </div>
-                <div className="ip-lookup-table-wrap">
-                  <table className="ip-lookup-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        {columns.map((column) => (
-                          <th
-                            key={column.key}
-                            className={column.align === "right" ? "ip-lookup-cell--right" : undefined}
-                            style={column.width ? { minWidth: column.width } : undefined}
-                          >
-                            {column.label}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {loading ? (
-                        <tr><td colSpan={columns.length + 1}>Loading...</td></tr>
-                      ) : rows.length ? (
-                        rows.map((row, index) => (
-                          <tr
-                            key={`${row.code || index}-${index}`}
-                            className={selectedIndex === index ? "is-active" : ""}
-                            onClick={() => setSelectedIndex(index)}
-                            onDoubleClick={() => pick(row)}
-                          >
-                            <td>{paginated ? ((page - 1) * pagination.pageSize) + index + 1 : index + 1}</td>
-                            {columns.map((column) => (
-                              <td
-                                key={column.key}
-                                className={column.align === "right" ? "ip-lookup-cell--right" : undefined}
-                                style={column.width ? { minWidth: column.width } : undefined}
-                              >
-                                {column.render ? column.render(row) : row[column.key]}
-                              </td>
-                            ))}
-                          </tr>
-                        ))
-                      ) : (
-                        <tr><td colSpan={columns.length + 1}>No matching records found</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              <div className="modal-footer ip-lookup-footer">
-                {paginated ? (
-                  <div className="ip-lookup-pagination">
-                    <span>{pagination.totalCount ? `Showing ${((page - 1) * pagination.pageSize) + 1}-${Math.min(page * pagination.pageSize, pagination.totalCount)} of ${pagination.totalCount}` : "Showing 0"}</span>
-                    <button type="button" className="po-btn" onClick={() => load(query, page)} disabled={loading}>Refresh</button>
-                    <button type="button" className="po-btn" onClick={() => load(query, page - 1)} disabled={loading || page <= 1}>Previous</button>
-                    <span>Page {page} of {pagination.totalPages}</span>
-                    <button type="button" className="po-btn" onClick={() => load(query, page + 1)} disabled={loading || page >= pagination.totalPages}>Next</button>
-                  </div>
-                ) : null}
-                <button type="button" className="po-btn po-btn--primary" onClick={() => pick(rows[selectedIndex])} disabled={!rows.length}>Choose</button>
-                <button type="button" className="po-btn" onClick={() => setOpen(false)}>Cancel</button>
-              </div>
-            </div>
-          </div>
-        </div>,
-        document.body,
+      {open ? (
+        <SapLookupModal
+          open
+          title={`List of ${title}`}
+          columns={rowColumns}
+          rows={rows}
+          loading={loading}
+          initialQuery={query}
+          searchPlaceholder="Search by code, name, or type..."
+          emptyMessage="No matching records found"
+          footerNote={footerNote}
+          footerControls={footerControls}
+          onQueryChange={handleQueryChange}
+          onClose={() => setOpen(false)}
+          onSelect={pick}
+          getRowKey={(row, index) => `${row.code || row.docEntry || index}-${index}`}
+          width="min(1180px, calc(100% - 40px))"
+          portalTarget={() => document.querySelector(".ip-payment-means-layer") || document.querySelector(".app-shell__content") || document.body}
+        />
       ) : null}
     </>
   );
@@ -301,6 +251,7 @@ const normalizeLocations = (rows = []) =>
 
 export default function IncomingPaymentsPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const requestedDocEntry = Number(location.state?.incomingPaymentDocEntry || 0);
   const createInitialHeader = (branch = "", transactionNumber = "", series = {}) => ({
     businessPartnerCode: "",
@@ -378,7 +329,6 @@ export default function IncomingPaymentsPage() {
   const [remarks, setRemarks] = useState("");
   const [journalRemarks, setJournalRemarks] = useState("");
   const [bpLookupTrigger, setBpLookupTrigger] = useState(0);
-  const [documentFindTrigger, setDocumentFindTrigger] = useState(0);
   const [paymentMeansOpen, setPaymentMeansOpen] = useState(false);
   const [paymentMeans, setPaymentMeans] = useState(() => createDefaultPaymentMeans());
   const routedDocumentRef = useRef(0);
@@ -395,6 +345,7 @@ export default function IncomingPaymentsPage() {
           seriesRows[0] ||
           null;
         const branchRows = data.branches || [];
+        const defaultCashAccount = data.defaultCashAccount || "";
         setBranches(branchRows);
         setDocumentSeries(seriesRows);
         setDistributionRules(normalizeDistributionRules(data.distributionRules || data.distribution_rules || []));
@@ -409,11 +360,16 @@ export default function IncomingPaymentsPage() {
             transactionNumber: data.nextTransactionNumber || current.transactionNumber,
             branch: selectedBranch,
             branchRegNo: getBranchRegNo(branchRows, selectedBranch),
+            cashAccount: current.cashAccount || defaultCashAccount,
           };
         });
         setPaymentMeans((current) => ({
           ...current,
           currency: current.currency || "INR",
+          cash: {
+            ...(current.cash || {}),
+            account: current.cash?.account || defaultCashAccount,
+          },
         }));
       })
       .catch(() => {
@@ -454,8 +410,8 @@ export default function IncomingPaymentsPage() {
 
   const getPayableInvoiceTotal = (rows = invoices) =>
     rows.reduce((sum, invoice) => {
+      if (!invoice.selected) return sum;
       const payment = clampPayment(invoice.totalPayment, invoice.balanceDue);
-      if (!invoice.selected && payment <= 0) return sum;
       return sum + payment;
     }, 0);
 
@@ -488,7 +444,12 @@ export default function IncomingPaymentsPage() {
   };
 
   const normalizeInvoices = (rows = []) =>
-    rows.map((row) => ({ ...row, selected: false, cashDiscountPercent: "0.00" }));
+    rows.map((row) => ({
+      ...row,
+      selected: false,
+      cashDiscountPercent: "0.00",
+      totalPayment: money(parseAmount(row.totalPayment ?? row.balanceDue)),
+    }));
 
   const changeBpType = (bpType) => {
     if (isFoundDocument) return;
@@ -563,6 +524,7 @@ export default function IncomingPaymentsPage() {
     if (isFoundDocument) return;
     setLoadError("");
     setSuccessMessage("");
+    const partnerCurrency = row.currency && row.currency !== "##" ? row.currency : header.docCurrency || "INR";
     setHeader((current) => ({
       ...current,
       businessPartnerCode: row.code,
@@ -571,6 +533,13 @@ export default function IncomingPaymentsPage() {
       billToAddress: row.billToAddress || "",
       contactPerson: row.contactPerson || "",
       controlAccount: row.controlAccount || current.controlAccount,
+      docCurrency: partnerCurrency,
+    }));
+    setPaymentOnAccount(false);
+    setPaymentOnAccountAmount("0.00");
+    setPaymentMeans(createDefaultPaymentMeans({
+      currency: partnerCurrency,
+      cashAccount: header.cashAccount || paymentMeans.cash?.account || "",
     }));
     setJournalRemarks(`Incoming Payments - ${row.code}`);
     if (header.bpType === "Customer") {
@@ -659,7 +628,7 @@ export default function IncomingPaymentsPage() {
               ...invoice,
               selected,
               cashDiscountPercent: selected ? normalizePercent(invoice.cashDiscountPercent).toFixed(2) : invoice.cashDiscountPercent,
-              totalPayment: selected ? calculateDiscountedPayment(invoice) : invoice.totalPayment,
+              totalPayment: selected ? calculateDiscountedPayment(invoice) : "0.00",
             }
           : invoice,
       ),
@@ -674,7 +643,7 @@ export default function IncomingPaymentsPage() {
         invoice.id === id
           ? {
               ...invoice,
-              selected: parseAmount(value) > 0 ? true : invoice.selected,
+              selected: Math.abs(parseAmount(value)) > 0 ? true : invoice.selected,
               totalPayment: value,
             }
           : invoice,
@@ -764,7 +733,7 @@ export default function IncomingPaymentsPage() {
   const deselectAll = () => {
     if (isFoundDocument) return;
     setSuccessMessage("");
-    setInvoices((current) => current.map((invoice) => ({ ...invoice, selected: false })));
+    setInvoices((current) => current.map((invoice) => ({ ...invoice, selected: false, totalPayment: "0.00" })));
   };
 
   const openBusinessPartnerLookup = ({ clearMessages = true } = {}) => {
@@ -778,7 +747,7 @@ export default function IncomingPaymentsPage() {
   const openFind = () => {
     setLoadError("");
     setSuccessMessage("");
-    setDocumentFindTrigger((value) => value + 1);
+    navigate("/incoming-payments/find");
   };
 
   const handleIncomingPaymentSelect = async (row) => {
@@ -919,36 +888,25 @@ export default function IncomingPaymentsPage() {
 
   const openPaymentMeans = () => {
     if (isFoundDocument) return;
-    setPaymentMeans((current) => {
-      const paid = paymentMeansTotal(current);
-      if (paid > 0) return current;
-      return createDefaultPaymentMeans({
-        currency: header.docCurrency || "INR",
-        amount: totalAmountDue,
-      });
-    });
+    setPaymentMeans((current) => ({
+      ...current,
+      currency: header.docCurrency || current.currency || "INR",
+      cash: {
+        ...(current.cash || {}),
+        account: current.cash?.account || header.cashAccount || "",
+      },
+    }));
     setPaymentMeansOpen(true);
   };
 
   const getPostingPaymentMeans = (payableTotal) => {
-    const paid = paymentMeansTotal(paymentMeans);
-    const nextMeans = paid > 0
-      ? paymentMeans
-      : createDefaultPaymentMeans({
-          currency: header.docCurrency || "INR",
-          amount: payableTotal,
-        });
-    const nextPaid = paymentMeansTotal(nextMeans);
-
-    if (Math.abs(nextPaid - payableTotal) > 0.01) {
-      setLoadError("Payment Means paid amount must match Total Amount Due.");
-      setPaymentMeans(nextMeans);
+    const error = validatePaymentMeans(paymentMeans, payableTotal);
+    if (error) {
+      setLoadError(error);
       setPaymentMeansOpen(true);
       return null;
     }
-
-    setPaymentMeans(nextMeans);
-    return nextMeans;
+    return paymentMeans;
   };
 
   const handleOk = async () => {
@@ -997,18 +955,19 @@ export default function IncomingPaymentsPage() {
     if (!postingPaymentMeans) return;
 
     const invalidPayment = invoices.some(
-      (invoice) => invoice.selected && clampPayment(invoice.totalPayment, invoice.balanceDue) <= 0,
+      (invoice) => invoice.selected && Math.abs(clampPayment(invoice.totalPayment, invoice.balanceDue)) <= 0.01,
     );
 
     if (invalidPayment) {
-      setLoadError("Selected documents must have a Total Payment amount greater than zero.");
+      setLoadError("Selected documents must have a Total Payment amount.");
       return;
     }
 
     const payableInvoices = invoices
+      .filter((invoice) => invoice.selected)
       .map((invoice) => {
         const payment = clampPayment(invoice.totalPayment, invoice.balanceDue);
-        return payment > 0
+        return Math.abs(payment) > 0.01
           ? {
               ...invoice,
               selected: true,
@@ -1017,7 +976,7 @@ export default function IncomingPaymentsPage() {
             }
           : invoice;
       })
-      .filter((invoice) => invoice.selected && clampPayment(invoice.totalPayment, invoice.balanceDue) > 0);
+      .filter((invoice) => Math.abs(clampPayment(invoice.totalPayment, invoice.balanceDue)) > 0.01);
 
     setInvoices((current) =>
       current.map((invoice) => {
@@ -1090,6 +1049,30 @@ export default function IncomingPaymentsPage() {
   const showAccountContentGrid = isAccount;
   const partnerLookupTitle = isVendor ? "Vendors" : isAccount ? "G/L Accounts" : "Business Partners";
   const partnerAddressLabel = isVendor ? "Pay To" : "Bill To";
+  const changePaymentOnAccount = (checked) => {
+    if (isFoundDocument || isAccount) return;
+    setLoadError("");
+    setSuccessMessage("");
+    setPaymentOnAccount(checked);
+    if (!checked) setPaymentOnAccountAmount("0.00");
+  };
+
+  const confirmPaymentMeans = (means) => {
+    const paid = paymentMeansTotal(means);
+    const shouldCreateAdvance =
+      header.bpType === "Customer" &&
+      !paymentOnAccount &&
+      Math.abs(selectedTotal) <= 0.01 &&
+      paid > 0;
+
+    if (shouldCreateAdvance) {
+      setPaymentOnAccount(true);
+      setPaymentOnAccountAmount(money(paid));
+    }
+
+    setLoadError("");
+    setPaymentMeansOpen(false);
+  };
 
   return (
     <div className="po-page sap-document-page ip-payments-page">
@@ -1104,23 +1087,6 @@ export default function IncomingPaymentsPage() {
         <button type="button" className="po-btn" onClick={selectAll} disabled={posting || isFoundDocument}>Select All</button>
         <button type="button" className="po-btn" onClick={addInSequence} disabled={posting || isFoundDocument}>Add in Sequence</button>
       </div>
-      <span className="sap-hidden-lookup">
-        <SapLookupField
-          value=""
-          onChange={() => {}}
-          onSelect={handleIncomingPaymentSelect}
-          fetchOptions={searchIncomingPayments}
-          title="Incoming Payments"
-          columns={[
-            { label: "Document No.", key: "documentNo" },
-            { label: "BP Code", key: "businessPartnerCode" },
-            { label: "BP Name", key: "businessPartnerName" },
-            { label: "Posting Date", key: "postingDate" },
-            { label: "Total", key: "totalAmount" },
-          ]}
-          triggerOpen={documentFindTrigger}
-        />
-      </span>
       {loadError ? <div className="sap-alert sap-alert--top">{loadError}</div> : null}
       {successMessage ? <div className="sap-alert sap-alert--success sap-alert--top">{successMessage}</div> : null}
 
@@ -1413,7 +1379,7 @@ export default function IncomingPaymentsPage() {
                       <span className="sap-link-cell">{invoice.documentNo}</span>
                     </td>
                     <td className="sap-cell--readonly">{invoice.installment || "1 of 1"}</td>
-                    <td className="sap-cell--readonly">{invoice.documentType === "A/R Invoice" ? "IN" : invoice.documentType}</td>
+                    <td className="sap-cell--readonly">{invoice.documentTypeCode || (invoice.documentType === "A/R Invoice" ? "IN" : invoice.documentType)}</td>
                     <td className="sap-cell--readonly">{formatSapDate(invoice.date)}</td>
                     <td className="sap-cell--readonly">{formatSapDate(invoice.dueDate)}</td>
                     <td className="sap-cell--readonly">*</td>
@@ -1480,14 +1446,26 @@ export default function IncomingPaymentsPage() {
         <div className="sap-payment-row">
           <div className="sap-payment-on-account">
             <label>
-              <input type="checkbox" checked={isAccount || paymentOnAccount} disabled={isAccount} onChange={(event) => setPaymentOnAccount(event.target.checked)} />
+              <input type="checkbox" checked={isAccount || paymentOnAccount} disabled={isAccount || isFoundDocument} onChange={(event) => changePaymentOnAccount(event.target.checked)} />
               <span>Payment on Account</span>
             </label>
             <input
               value={paymentOnAccountAmount}
-              disabled={!isAccount && !paymentOnAccount}
-              onChange={(event) => setPaymentOnAccountAmount(event.target.value)}
-              onBlur={() => setPaymentOnAccountAmount(money(parseAmount(paymentOnAccountAmount)))}
+              inputMode="decimal"
+              aria-label="Payment on Account amount"
+              disabled={isFoundDocument}
+              onChange={(event) => {
+                setLoadError("");
+                if (!isAccount && parseAmount(event.target.value) > 0) {
+                  setPaymentOnAccount(true);
+                }
+                setPaymentOnAccountAmount(event.target.value);
+              }}
+              onBlur={() => {
+                const amount = parseAmount(paymentOnAccountAmount);
+                if (!isAccount && amount <= 0) setPaymentOnAccount(false);
+                setPaymentOnAccountAmount(money(amount));
+              }}
             />
           </div>
         </div>
@@ -1500,7 +1478,7 @@ export default function IncomingPaymentsPage() {
             <FieldRow label="Journal Remarks">
               <input value={journalRemarks} onChange={(event) => setJournalRemarks(event.target.value)} />
             </FieldRow>
-            {paymentOnAccount ? (
+            {isAccount || paymentOnAccount ? (
               <FieldRow label="Control Account">
                 <SapLookupField
                   value={header.controlAccount}
@@ -1540,8 +1518,10 @@ export default function IncomingPaymentsPage() {
         open={paymentMeansOpen}
         value={paymentMeans}
         totalAmountDue={totalAmountDue}
+        allowPaidAsTotalDue={header.bpType === "Customer"}
         onChange={setPaymentMeans}
         onClose={() => setPaymentMeansOpen(false)}
+        onConfirm={confirmPaymentMeans}
         lookupAccounts={searchIncomingPaymentControlAccounts}
         AccountLookupField={SapLookupField}
       />

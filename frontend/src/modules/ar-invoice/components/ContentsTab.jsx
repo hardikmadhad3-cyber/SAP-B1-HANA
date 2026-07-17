@@ -219,6 +219,7 @@ export default function ContentsTab({
   onRemoveLine,
   onOpenHSNModal,
   onOpenItemModal,
+  onOpenBatchModal,
   onOpenLineLookup,
   getUomOptions,
   effectiveTaxCodes,
@@ -274,6 +275,10 @@ export default function ContentsTab({
     return isVisibleBySetting(column, formSettings.matrixColumns?.[column.key] || {});
   });
   const tableMinWidth = INDEX_COL_WIDTH + ACTION_COL_WIDTH + matrixCols.reduce((total, col) => total + col.minWidth, 0);
+  const isBatchColumn = (column = {}) => ['batch', 'batches'].includes(normalizeIdentity(
+    column.rendererKey || column.valueKey || column.key || column.label
+  ));
+  const hasBatchColumn = matrixCols.some(isBatchColumn);
 
   const getTaxAmountDisplay = (line, lineTotals) => {
     if (String(line.taxAmount ?? '').trim()) return line.taxAmount;
@@ -467,6 +472,51 @@ export default function ContentsTab({
     );
   };
 
+  const renderBatchCell = (line, i) => {
+    const errors = valErrors.lines[i] || {};
+    const hasItem = !!line.itemNo;
+    const hasWarehouse = !!line.whse;
+    const hasQty = !!line.quantity && parseFloat(line.quantity) > 0;
+    const canOpenBatch = line.batchManaged && hasItem && hasWarehouse && hasQty && line.hasBatchesAvailable !== false;
+    const buttonTitle = !hasItem
+      ? 'Select Item first'
+      : !hasWarehouse
+        ? 'Select Warehouse first'
+        : !hasQty
+          ? 'Enter quantity'
+          : line.hasBatchesAvailable === false
+            ? 'No batches available'
+            : 'Assign batches';
+
+    if (!line.batchManaged) {
+      return <span style={{ color: '#888', fontSize: 11 }}>Not Batch Item</span>;
+    }
+
+    if (line.batchManaged && line.hasBatchesAvailable === false) {
+      return <span style={{ color: '#888', fontSize: 11 }}>No Batches Available</span>;
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <button
+          type="button"
+          className="del-btn"
+          style={{ fontSize: 11, padding: '2px 8px' }}
+          onClick={() => onOpenBatchModal && onOpenBatchModal(i)}
+          disabled={!isEditable || !canOpenBatch}
+          title={buttonTitle}
+        >
+          {line.batches?.length ? `${line.batches.length} Assigned` : 'Assign Batch'}
+        </button>
+        {errors.batches ? (
+          <span style={{ color: '#d9534f', fontSize: 11, lineHeight: 1.2 }}>
+            {errors.batches}
+          </span>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderCell = (column, line, i, uomOpts, lineTotals) => {
     const errors = valErrors.lines[i] || {};
     if (column.boundUdf) return renderGenericInput(column, line, i, { error: errors[column.key] });
@@ -560,6 +610,16 @@ export default function ContentsTab({
                 <option value={line.whse}>{line.whse}</option>
               )}
             </select>
+          </td>
+        );
+      case 'binLocationAllocation':
+        if (hasBatchColumn) return renderGenericInput(column, line, i);
+        return <td key="binLocationAllocation">{renderBatchCell(line, i)}</td>;
+      case 'batch':
+      case 'batches':
+        return (
+          <td key={column.key}>
+            {renderBatchCell(line, i)}
           </td>
         );
       case 'glAccount':

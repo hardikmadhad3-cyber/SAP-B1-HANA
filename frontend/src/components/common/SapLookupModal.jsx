@@ -1,31 +1,71 @@
-import React, { useEffect, useState } from "react";
-import "../../modules/item-master/styles/itemMaster.css";
+import React, { useEffect, useId, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 export default function SapLookupModal({
   open,
   title,
-  columns,
+  columns = [],
   fetchOptions,
+  rows,
+  loading: externalLoading = false,
   onClose,
   onSelect,
+  onNew,
+  onQueryChange,
+  footerNote,
+  footerControls,
   initialQuery = "",
-  width = "min(860px, calc(100vw - 40px))",
+  searchPlaceholder = "Search",
+  emptyMessage = "No matching records found.",
+  newLabel = "New",
+  chooseLabel = "Choose",
+  cancelLabel = "Cancel",
+  getRowKey,
+  width = "min(980px, calc(100% - 40px))",
+  portalTarget,
+  fetchOnOpen = true,
 }) {
+  const searchId = useId();
   const [query, setQuery] = useState(initialQuery);
-  const [rows, setRows] = useState([]);
+  const [fetchedRows, setFetchedRows] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(-1);
+  const baseRows = Array.isArray(rows) ? rows : fetchedRows;
+  const isLoading = externalLoading || loading;
+  const visibleColumns = useMemo(
+    () => columns.filter(Boolean),
+    [columns],
+  );
+  const activeRows = useMemo(() => {
+    if (!Array.isArray(rows)) return baseRows;
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return baseRows;
+
+    return baseRows.filter((row) =>
+      visibleColumns.some((column) => {
+        if (column.searchable === false || column.key === "rowNumber") return false;
+        const value = typeof column.render === "function" ? column.render(row, 0) : row[column.key];
+        return String(value ?? "").toLowerCase().includes(normalizedQuery);
+      })
+    );
+  }, [baseRows, query, rows, visibleColumns]);
 
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open || !fetchOptions) return undefined;
+    if (!fetchOnOpen && !query.trim()) {
+      setFetchedRows([]);
+      setLoading(false);
+      return undefined;
+    }
 
     let ignore = false;
     setLoading(true);
     Promise.resolve(fetchOptions(query))
       .then((nextRows) => {
-        if (!ignore) setRows(Array.isArray(nextRows) ? nextRows : []);
+        if (!ignore) setFetchedRows(Array.isArray(nextRows) ? nextRows : []);
       })
       .catch(() => {
-        if (!ignore) setRows([]);
+        if (!ignore) setFetchedRows([]);
       })
       .finally(() => {
         if (!ignore) setLoading(false);
@@ -34,65 +74,110 @@ export default function SapLookupModal({
     return () => {
       ignore = true;
     };
-  }, [open, query, fetchOptions]);
+  }, [open, query, fetchOptions, fetchOnOpen]);
 
   useEffect(() => {
     if (open) setQuery(initialQuery);
   }, [open, initialQuery]);
 
+  useEffect(() => {
+    setSelectedIndex(-1);
+  }, [query, open, activeRows.length]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose?.();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open]);
+
+  const chooseRow = (row) => {
+    if (!row) return;
+    onSelect(row);
+  };
+
+  const handleChoose = () => {
+    if (selectedIndex < 0) return;
+    chooseRow(activeRows[selectedIndex]);
+  };
+
   if (!open) return null;
 
-  return (
+  const target =
+    typeof document === "undefined"
+      ? null
+      : typeof portalTarget === "function"
+        ? portalTarget()
+        : portalTarget || document.querySelector(".app-shell__content") || document.body;
+
+  const modal = (
     <div
-      className="im-modal-overlay"
-      onClick={(event) => {
-        event.stopPropagation();
-        onClose();
-      }}
+      className="sap-lookup-modal__overlay"
+      role="presentation"
+      onMouseDown={onClose}
     >
-      <div className="im-modal" style={{ width }} onClick={(event) => event.stopPropagation()}>
-        <div className="im-modal__header">
+      <section
+        className="sap-lookup-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        style={{ width }}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="sap-lookup-modal__header">
           <span>{title}</span>
-          <button type="button" className="im-modal__close" onClick={onClose}>x</button>
-        </div>
-        <div className="im-modal__search" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <button type="button" className="sap-lookup-modal__close" aria-label="Close" onClick={onClose}>
+            x
+          </button>
+        </header>
+
+        <div className="sap-lookup-modal__filter">
+          <label htmlFor={searchId}>Find</label>
           <input
-            className="im-field__input"
-            style={{ maxWidth: "260px" }}
+            id={searchId}
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search"
+            onChange={(event) => {
+              setQuery(event.target.value);
+              onQueryChange?.(event.target.value);
+            }}
+            placeholder={searchPlaceholder}
+            autoFocus
           />
-          {loading && <span style={{ fontSize: "12px", color: "#666" }}>Loading...</span>}
         </div>
-        <div className="im-modal__body">
-          {rows.length === 0 ? (
-            <div className="im-modal__empty">No matching records found.</div>
+
+        <div className="sap-lookup-modal__body">
+          {isLoading ? (
+            <div className="sap-lookup-modal__empty">Loading...</div>
+          ) : activeRows.length === 0 ? (
+            <div className="sap-lookup-modal__empty">{emptyMessage}</div>
           ) : (
-            <table className="im-lookup-table">
+            <table className="sap-lookup-modal__table">
               <thead>
                 <tr>
-                  {columns.map((column) => (
-                    <th key={column.key}>{column.label}</th>
+                  {visibleColumns.map((column) => (
+                    <th key={column.key} style={column.width ? { width: column.width } : undefined}>
+                      {column.label}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, index) => (
+                {activeRows.map((row, index) => (
                   <tr
-                    key={row.code || row.CardCode || row.ItemCode || index}
-                    className="im-lookup-table__row"
+                    key={getRowKey ? getRowKey(row, index) : (row.code || row.CardCode || row.ItemCode || row.value || index)}
+                    className={selectedIndex === index ? "is-selected" : undefined}
+                    onClick={() => setSelectedIndex(index)}
                     onDoubleClick={(event) => {
                       event.stopPropagation();
-                      onSelect(row);
-                    }}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onSelect(row);
+                      chooseRow(row);
                     }}
                   >
-                    {columns.map((column) => (
-                      <td key={column.key}>{row[column.key] ?? ""}</td>
+                    {visibleColumns.map((column) => (
+                      <td key={column.key} className={column.align === "right" ? "is-right" : undefined}>
+                        {typeof column.render === "function" ? column.render(row, index) : (row[column.key] ?? "")}
+                      </td>
                     ))}
                   </tr>
                 ))}
@@ -100,10 +185,30 @@ export default function SapLookupModal({
             </table>
           )}
         </div>
-        <div className="im-modal__footer">
-          <button type="button" className="im-btn" onClick={onClose}>Cancel</button>
-        </div>
-      </div>
+
+        <footer className="sap-lookup-modal__footer">
+          <span>{footerNote || `${activeRows.length} records`}</span>
+          {footerControls ? <div className="sap-lookup-modal__footer-controls">{footerControls}</div> : null}
+          <button
+            type="button"
+            className="sap-lookup-modal__btn sap-lookup-modal__btn--primary"
+            onClick={handleChoose}
+            disabled={selectedIndex < 0}
+          >
+            {chooseLabel}
+          </button>
+          <button type="button" className="sap-lookup-modal__btn" onClick={onClose}>
+            {cancelLabel}
+          </button>
+          {onNew ? (
+            <button type="button" className="sap-lookup-modal__btn sap-lookup-modal__btn--primary" onClick={onNew}>
+              {newLabel}
+            </button>
+          ) : null}
+        </footer>
+      </section>
     </div>
   );
+
+  return target ? createPortal(modal, target) : modal;
 }

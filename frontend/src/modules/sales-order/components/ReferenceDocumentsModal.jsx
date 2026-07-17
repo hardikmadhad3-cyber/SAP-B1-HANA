@@ -46,6 +46,15 @@ const compactRows = (rows = []) => rows
   }))
   .filter((row) => row.transactionType || row.docNumber || row.docEntry || row.extDocNumber);
 
+const updateRowsAtVisibleIndex = (rows = [], activeTab = 'to', visibleIndex = -1, updater) => {
+  let seen = -1;
+  return rows.map((row) => {
+    if ((row.direction || 'to') !== activeTab) return row;
+    seen += 1;
+    return seen === visibleIndex ? updater(row) : row;
+  });
+};
+
 export default function ReferenceDocumentsModal({
   isOpen,
   referenceDocuments = [],
@@ -129,26 +138,15 @@ export default function ReferenceDocumentsModal({
 
   const updateRow = (visibleIndex, field, value) => {
     if (!isEditable) return;
-    setRows((prev) => {
-      let seen = -1;
-      return prev.map((row) => {
-        if ((row.direction || 'to') !== activeTab) return row;
-        seen += 1;
-        return seen === visibleIndex ? { ...row, [field]: value } : row;
-      });
-    });
+    setRows((prev) => updateRowsAtVisibleIndex(prev, activeTab, visibleIndex, (row) => ({
+      ...row,
+      [field]: value,
+    })));
   };
 
   const updateVisibleRow = (visibleIndex, updater) => {
     if (!isEditable) return;
-    setRows((prev) => {
-      let seen = -1;
-      return prev.map((row) => {
-        if ((row.direction || 'to') !== activeTab) return row;
-        seen += 1;
-        return seen === visibleIndex ? updater(row) : row;
-      });
-    });
+    setRows((prev) => updateRowsAtVisibleIndex(prev, activeTab, visibleIndex, updater));
   };
 
   const handleTransactionTypeChange = (visibleIndex, value) => {
@@ -202,6 +200,43 @@ export default function ReferenceDocumentsModal({
       extDocNumber: documentRow.extDocNumber || row.extDocNumber || '',
     }));
     setLookup((prev) => ({ ...prev, open: false, rowIndex: -1 }));
+  };
+
+  const getRowsWithLookupDocument = (documentRow) => updateRowsAtVisibleIndex(
+    rows,
+    activeTab,
+    lookup.rowIndex,
+    (row) => ({
+      ...row,
+      transactionType: lookup.transactionType || row.transactionType,
+      docEntry: documentRow.docEntry || '',
+      docNumber: documentRow.docNumber || '',
+      extDocNumber: documentRow.extDocNumber || row.extDocNumber || '',
+    }),
+  );
+
+  const openDocumentFromRows = (row, nextRows = rows) => {
+    onOpenDocument?.(row, {
+      referenceDocuments: compactRows(nextRows),
+      referenceDocumentsChanged: true,
+      referenceDocumentsModalOpen: true,
+    });
+  };
+
+  const openLookupDocument = (documentRow) => {
+    const nextRows = getRowsWithLookupDocument(documentRow);
+    const nextRow = nextRows.filter((row) => (row.direction || 'to') === activeTab)[lookup.rowIndex] || {};
+    setRows(nextRows);
+    setLookup((prev) => ({ ...prev, open: false, rowIndex: -1 }));
+    openDocumentFromRows(nextRow, nextRows);
+  };
+
+  const handleDocNumberChange = (visibleIndex, value) => {
+    updateVisibleRow(visibleIndex, (row) => ({
+      ...row,
+      docNumber: value,
+      docEntry: '',
+    }));
   };
 
   const handleSave = () => {
@@ -292,7 +327,7 @@ export default function ReferenceDocumentsModal({
                       <div className="so-reference-modal__lookup-cell">
                         <input
                           value={row.docNumber || ''}
-                          onChange={(event) => updateRow(index, 'docNumber', event.target.value)}
+                          onChange={(event) => handleDocNumberChange(index, event.target.value)}
                           disabled={!isEditable}
                         />
                         <button
@@ -304,9 +339,9 @@ export default function ReferenceDocumentsModal({
                         >
                           ...
                         </button>
-                        {row.docEntry && row.transactionType ? (
+                        {row.transactionType && (row.docEntry || row.docNumber) ? (
                           <SapGoldenArrowButton
-                            onClick={() => onOpenDocument?.(row)}
+                            onClick={() => openDocumentFromRows(row)}
                             title="Open referenced document"
                             className="so-reference-modal__open-btn"
                           />
@@ -394,13 +429,21 @@ export default function ReferenceDocumentsModal({
                             onDoubleClick={() => selectLookupDocument(option)}
                           >
                             <td>
-                              <button
-                                type="button"
-                                className="so-reference-lookup__link"
-                                onClick={() => selectLookupDocument(option)}
-                              >
-                                {option.docNumber}
-                              </button>
+                              <span className="so-reference-lookup__doc-link">
+                                {option.docEntry ? (
+                                  <SapGoldenArrowButton
+                                    onClick={() => openLookupDocument(option)}
+                                    title="Open document"
+                                  />
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="so-reference-lookup__link"
+                                  onClick={() => selectLookupDocument(option)}
+                                >
+                                  {option.docNumber}
+                                </button>
+                              </span>
                             </td>
                             <td>{option.cardCode}</td>
                             <td>{option.cardName}</td>

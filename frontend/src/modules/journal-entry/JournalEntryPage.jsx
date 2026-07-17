@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { getAccount, searchAccounts } from "../../api/chartOfAccountsApi";
 import { addJournalEntry, fetchJournalEntryByTransId } from "../../api/journalEntryApi";
+import SapLookupModal from "../../components/common/SapLookupModal";
 import { useRelationshipMapRegistration } from "../../components/relationship-map/RelationshipMapHost";
 import "./journalEntry.css";
 
@@ -85,48 +85,16 @@ const blankHeader = () => ({
 
 function AccountLookupModal({ open, query, onClose, onSelect }) {
   const [search, setSearch] = useState(query || "");
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const inputRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
     setSearch(query || "");
-    setActiveIndex(0);
   }, [open, query]);
 
-  useEffect(() => {
-    if (!open) return;
-
-    let ignore = false;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const data = await searchAccounts(search, "", 200, 0);
-        if (!ignore) {
-          setRows((data || []).map(normalizeAccount));
-          setActiveIndex(0);
-        }
-      } catch (_error) {
-        if (!ignore) setRows([]);
-      } finally {
-        if (!ignore) setLoading(false);
-      }
-    };
-
-    const timeout = setTimeout(load, 180);
-    return () => {
-      ignore = true;
-      clearTimeout(timeout);
-    };
-  }, [open, search]);
-
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
-
-  if (!open) return null;
+  const fetchAccounts = useCallback(async (nextSearch = "") => {
+    const data = await searchAccounts(nextSearch, "", 200, 0);
+    return (data || []).map(normalizeAccount);
+  }, []);
 
   const choose = (row) => {
     if (!row) return;
@@ -134,79 +102,27 @@ function AccountLookupModal({ open, query, onClose, onSelect }) {
     onClose();
   };
 
-  return createPortal(
-    <div className="je-modal-layer" onMouseDown={onClose}>
-      <div className="je-account-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="je-modal-titlebar">
-          <span>List of Accounts</span>
-          <div className="je-window-controls" aria-label="Window controls">
-            <button type="button" disabled aria-label="Minimize">-</button>
-            <button type="button" disabled aria-label="Maximize">[]</button>
-            <button type="button" onClick={onClose} aria-label="Close">x</button>
-          </div>
-        </div>
-
-        <div className="je-account-find">
-          <label>Find</label>
-          <input
-            ref={inputRef}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") choose(rows[activeIndex]);
-              if (event.key === "ArrowDown") setActiveIndex((value) => Math.min(value + 1, rows.length - 1));
-              if (event.key === "ArrowUp") setActiveIndex((value) => Math.max(value - 1, 0));
-            }}
-          />
-          <button type="button" onClick={() => setSearch(search.trim())}>Text Search</button>
-        </div>
-
-        <div className="je-account-table-wrap">
-          <table className="je-account-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Account Number</th>
-                <th>Account Name</th>
-                <th>Account Balance</th>
-                <th>Inactive</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan="5">Loading...</td></tr>
-              ) : rows.length ? (
-                rows.map((row, index) => (
-                  <tr
-                    key={`${row.code}-${index}`}
-                    className={index === activeIndex ? "is-active" : ""}
-                    onClick={() => setActiveIndex(index)}
-                    onDoubleClick={() => choose(row)}
-                  >
-                    <td>{index + 1}</td>
-                    <td>{row.code}</td>
-                    <td>{row.name}</td>
-                    <td className="je-right">{money(row.balance)}</td>
-                    <td>{row.inactive}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr><td colSpan="5">No matching accounts found</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="je-modal-footer">
-          <button type="button" className="je-btn je-btn--primary" onClick={() => choose(rows[activeIndex])} disabled={!rows.length}>
-            Choose
-          </button>
-          <button type="button" className="je-btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="je-btn">New</button>
-        </div>
-      </div>
-    </div>,
-    document.body,
+  return (
+    <SapLookupModal
+      open={open}
+      title="List of Accounts"
+      columns={[
+        { key: "rowNumber", label: "#", width: 44, searchable: false, render: (_row, index) => index + 1 },
+        { key: "code", label: "Account Number", width: 220 },
+        { key: "name", label: "Account Name" },
+        { key: "balance", label: "Account Balance", width: 160, align: "right", render: (row) => money(row.balance) },
+        { key: "inactive", label: "Inactive", width: 120 },
+      ]}
+      fetchOptions={fetchAccounts}
+      initialQuery={search}
+      searchPlaceholder="Search accounts"
+      emptyMessage="No matching accounts found"
+      onQueryChange={setSearch}
+      onClose={onClose}
+      onSelect={choose}
+      getRowKey={(row, index) => `${row.code}-${index}`}
+      width="min(1180px, calc(100% - 40px))"
+    />
   );
 }
 

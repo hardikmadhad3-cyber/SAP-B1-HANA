@@ -10,13 +10,14 @@ import AccountingTab from './components/AccountingTab';
 import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
-import AddressModal from './components/AddressModal';
-import { mapAddressFields } from '../../utils/documentAddress';
+import BatchAllocationModal from './components/BatchAllocationModal';
+import AddressModal from '../../components/document/AddressComponentModal';
+import { formatAddressComponent, mapAddressFields, pickAddressComponentFields } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
-import StateSelectionModal from '../sales-order/components/StateSelectionModal';
-import HSNCodeModal from './components/HSNCodeModal';
-import ItemSelectionModal from './components/ItemSelectionModal';
+import StateSelectionModal from '../../components/common/StateSelectionModal';
+import HSNCodeModal from '../../components/common/HSNCodeModal';
+import ItemSelectionModal from '../../components/common/ItemSelectionModal';
 import WithholdingTaxTableModal from '../APInvoice/components/WithholdingTaxTableModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
@@ -24,17 +25,22 @@ import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
-import CopyFromModal from './components/CopyFromModal';
+import CopyFromModal from '../../components/document/CopyFromModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
-import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
+import {
+  batchQtyMatchesLine,
+  getLineUomFactor,
+  sumBatchQty,
+} from '../../utils/batchQuantity';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
@@ -55,6 +61,7 @@ import {
   updateARInvoice,
   fetchDocumentSeries,
   fetchNextNumber,
+  fetchBatchesByItem,
   fetchFreightCharges,
   fetchItemsForModal,
   fetchOpenSalesQuotationsForARInvoice,
@@ -77,6 +84,8 @@ import {
   readSavedFormSettings,
 } from '../../config/arInvoiceForm';
 import { AR_INVOICE_WORKBOOK_COLUMNS } from '../../config/workbookMatrixColumns';
+
+const SAP_MANUAL_SERIES_VALUE = '__SAP_MANUAL__';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
@@ -142,11 +151,64 @@ const normalizeBaseLine = (line, fallbackIndex) =>
   line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? fallbackIndex;
 const normalizeWarehouse = (line = {}, header = {}) =>
   line.whse || line.WarehouseCode || line.WhsCode || line.warehouse || header.warehouse || header.WarehouseCode || '';
+const normalizeBranchSelection = (value) => {
+  const normalized = String(value ?? '').trim();
+  const lowered = normalized.toLowerCase();
+  return normalized && lowered !== '0' && lowered !== '-1' && lowered !== 'select branch' && lowered !== 'no branch'
+    ? normalized
+    : '';
+};
 const hasUdfValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
 const isCheckedValue = (value) =>
   ['Y', 'YES', 'TRUE', '1', 'TYES', true].includes(
     typeof value === 'string' ? value.trim().toUpperCase() : value
   );
+const isTruthySapFlag = (value) => {
+  if (value === true || value === 1) return true;
+  const text = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', 'TYES', '1'].includes(text);
+};
+const isBatchManaged = (item) => {
+  if (!item) return false;
+  return [
+    item.BatchManaged,
+    item.batchManaged,
+    item.ManBtchNum,
+    item.ManageBatchNumbers,
+    item.manageBatchNumbers,
+    item.isBatchManaged,
+  ].some(isTruthySapFlag);
+};
+const isLineBatchManaged = (line = {}, item = null) => (
+  [
+    line.BatchManaged,
+    line.batchManaged,
+    line.ManBtchNum,
+    line.ManageBatchNumbers,
+    line.manageBatchNumbers,
+    line.isBatchManaged,
+  ].some(isTruthySapFlag) || isBatchManaged(item)
+);
+const normalizeLineBatches = (batches = []) => (
+  Array.isArray(batches)
+    ? batches
+        .filter((batch) => String(batch?.batchNumber || batch?.BatchNumber || batch?.BatchNum || '').trim())
+        .map((batch) => ({
+          batchNumber: String(batch.batchNumber || batch.BatchNumber || batch.BatchNum || '').trim(),
+          quantity: String(batch.quantity ?? batch.Quantity ?? ''),
+          expiryDate: batch.expiryDate || batch.ExpiryDate || batch.ExpDate || '',
+        }))
+    : []
+);
+const checkBatchAvailability = async (itemCode, whsCode) => {
+  if (!itemCode || !whsCode) return false;
+  try {
+    const response = await fetchBatchesByItem(itemCode, whsCode);
+    return (response.data?.batches || []).length > 0;
+  } catch (_error) {
+    return true;
+  }
+};
 const isYesValue = (value) => ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase());
 const normalizeFieldIdentity = (value) =>
   String(value || '')
@@ -404,6 +466,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   documentCreated: '', brokerageNumber: '',
   U_Cost_Sheet: '', U_PackingType: '', U_ContainerType: '',
   U_GrossWt: '', U_TotalPackage: '', U_Fix_Brock_B: '', U_Fix_Brock_S: '',
+  batchManaged: false, batches: [], hasBatchesAvailable: false, uomFactor: 1,
   udf: createUdfState(rowUdfDefinitions),
 });
 
@@ -418,6 +481,7 @@ const INIT_HEADER = {
   totalPaymentDue: '', rounding: false, owner: '', purchaser: '', salesEmployee: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
   billToAddress: '', billToCode: '', shipToAddress: '',
+  shipToAddressComponents: null, billToAddressComponents: null,
   ownerCode: '', language: '', trackingNo: '', stampNo: '', pickPackRemarks: '',
   bpChannelName: '', bpChannelContact: '',
 };
@@ -465,6 +529,7 @@ function ARInvoicePage() {
     blanket_agreements: [],
     line_field_metadata: { matrix_columns: [], sap_form: {} },
   });
+  const [seriesReloadToken, setSeriesReloadToken] = useState(0);
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
   useValidationHighlights(valErrors);
@@ -487,6 +552,7 @@ function ARInvoicePage() {
     emptyMessage: 'No values found',
     columns: null,
   });
+  const [batchModal, setBatchModal] = useState({ open: false, lineIndex: null, availableBatches: [], loading: false, error: '' });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
   const [withholdingTax, setWithholdingTax] = useState({
     open: false,
@@ -559,17 +625,72 @@ function ARInvoicePage() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
   const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+  const hydrateARInvoiceBatchLine = useCallback((line = {}) => {
+    const itemCode = String(line.itemNo || line.ItemCode || '').trim();
+    const item = refData.items.find((candidate) => String(candidate.ItemCode || '').trim() === itemCode);
+    const batchManaged = isLineBatchManaged(line, item);
+    const batches = normalizeLineBatches(line.batches || line.BatchNumbers || line.BatchNumberDetails);
+    const inventoryUOM = String(line.inventoryUOM || line.InventoryUOM || item?.InventoryUOM || line.uomCode || '').trim();
+    const explicitFactor = Number(line.uomFactor);
+
+    return {
+      ...line,
+      batchManaged,
+      batches,
+      hasBatchesAvailable: batchManaged
+        ? line.hasBatchesAvailable !== false || batches.length > 0
+        : false,
+      inventoryUOM,
+      uomFactor: Number.isFinite(explicitFactor) && explicitFactor > 0 ? explicitFactor : 1,
+    };
+  }, [refData.items]);
+
+  const refreshBatchAvailabilityForLines = useCallback((nextLines = []) => {
+    nextLines.forEach((line, lineIndex) => {
+      if (!line?.batchManaged || !line?.itemNo || !line?.whse) return;
+      checkBatchAvailability(line.itemNo, line.whse).then((hasBatches) => {
+        setLines((prevLines) => prevLines.map((currentLine, currentIndex) => (
+          currentIndex === lineIndex &&
+          currentLine.itemNo === line.itemNo &&
+          currentLine.whse === line.whse
+            ? { ...currentLine, hasBatchesAvailable: hasBatches }
+            : currentLine
+        )));
+      });
+    });
+  }, []);
+  const getBranchFromWarehouseCode = useCallback((warehouseCode = '') => {
+    const code = String(warehouseCode || '').trim();
+    if (!code) return '';
+
+    const warehouse = (refData.warehouses || []).find((row) => (
+      String(row?.WhsCode || row?.WarehouseCode || row?.warehouse || '').trim() === code
+    ));
+
+    return normalizeBranchSelection(getWarehouseBranchId(warehouse));
+  }, [refData.warehouses]);
   const resolvePreferredSeries = (seriesList, postingDateValue, selectedSeries = '') => {
     if (!Array.isArray(seriesList) || !seriesList.length) return null;
 
+    const selectedBranchId = normalizeBranchSelection(header.branch);
+    const compatibleSeries = seriesList.filter((series) => {
+      const seriesBranchId = String(series?.BPLId ?? '').trim();
+      return !seriesBranchId || seriesBranchId === '0' || seriesBranchId === '-1'
+        || !selectedBranchId || seriesBranchId === selectedBranchId;
+    });
+
+    // With no branch selected, SAP B1 lets the selected series establish its branch.
+    // With a branch selected, only that branch's series (or a global series) is valid.
+    if (!compatibleSeries.length) return null;
+
     const normalizedSeries = String(selectedSeries || '').trim();
     const matchedSeries = normalizedSeries
-      ? seriesList.find((series) => String(series.Series) === normalizedSeries)
+      ? compatibleSeries.find((series) => String(series.Series) === normalizedSeries)
       : null;
 
     if (matchedSeries) return matchedSeries;
 
-    const sapDefaultSeries = seriesList.find((series) => series.IsDefault || series.isDefault);
+    const sapDefaultSeries = compatibleSeries.find((series) => series.IsDefault || series.isDefault);
     if (sapDefaultSeries) return sapDefaultSeries;
 
     const normalizedTransactionType = normalizeFieldIdentity(header.transactionType);
@@ -582,7 +703,7 @@ function ARInvoicePage() {
             ? ['debitmemo', 'debit', 'dbn']
             : [normalizedTransactionType];
 
-      const scoredSeries = seriesList
+      const scoredSeries = compatibleSeries
         .map((series, index) => {
           const identity = normalizeFieldIdentity(`${series.SeriesName || ''} ${series.Indicator || ''}`);
           const score = transactionTokens.reduce((total, token) => (
@@ -598,7 +719,7 @@ function ARInvoicePage() {
     }
 
     const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
-    return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
+    return getDefaultSeriesForCurrentYear(compatibleSeries, seriesDate) || compatibleSeries[0];
   };
   const primaryActionLabel = pageState.posting
     ? 'Saving…'
@@ -652,8 +773,10 @@ function ARInvoicePage() {
 
         setMatrixColumnDefinitions([]);
 
-        const [refDataRes, layoutRes, blanketAgreementsRes] = await Promise.all([
-          fetchARInvoiceReferenceData(activeCompanyId),
+        const refDataRes = await fetchARInvoiceReferenceData(activeCompanyId);
+        if (ignore) return;
+
+        const [layoutRes, blanketAgreementsRes] = await Promise.all([
           getDocumentLayout({
             companyDb: activeCompanyDb || undefined,
             documentType: AR_INVOICE_LAYOUT_DOCUMENT_TYPE,
@@ -820,7 +943,7 @@ function ARInvoicePage() {
 
     loadSeriesForPostingDate();
     return () => { ignore = true; };
-  }, [currentDocEntry, requestedEditDocEntry, header.postingDate, header.transactionType, header.branch]);
+  }, [currentDocEntry, requestedEditDocEntry, header.postingDate, header.transactionType, header.branch, seriesReloadToken]);
 
   useEffect(() => {
     const docEntry = requestedEditDocEntry;
@@ -873,24 +996,30 @@ function ARInvoicePage() {
           indicator: so.header?.indicator || so.header?.seriesIndicator || '',
           placeOfSupply: so.header?.placeOfSupply || '',
           branch: so.header?.branch || '',
+          shipToAddressComponents: so.header?.shipToAddressComponents || null,
+          billToAddressComponents: so.header?.billToAddressComponents || null,
           docNo: so.header?.docNo || so.header?.docNum || '',
           series: so.header?.series || '',
           nextNumber: so.header?.docNo || so.header?.docNum || '',
         }));
         
         const savedDocumentLines = getARInvoiceDocumentLines(so);
+        const nextDocumentLines = savedDocumentLines.length
+          ? savedDocumentLines.map((line) => hydrateARInvoiceBatchLine(hydrateWorkbookDocumentLine({
+              line,
+              createLine,
+              rowUdfDefinitions,
+              normalizeUdfState,
+              items: refData.items,
+              fallbackWarehouse: so.header?.warehouse || '',
+            })))
+          : [createLine(rowUdfDefinitions)];
         setLines(
           savedDocumentLines.length
-            ? savedDocumentLines.map((line) => hydrateWorkbookDocumentLine({
-                line,
-                createLine,
-                rowUdfDefinitions,
-                normalizeUdfState,
-                items: refData.items,
-                fallbackWarehouse: so.header?.warehouse || '',
-              }))
+            ? nextDocumentLines
             : [createLine(rowUdfDefinitions)]
         );
+        refreshBatchAvailabilityForLines(nextDocumentLines);
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
         setSnapshotPending(true);
         setIsDirty(false);
@@ -972,7 +1101,17 @@ function ARInvoicePage() {
     const normalizedHeader = normaliseDocumentHeader(srcHeader || {});
     const firstSourceLine = Array.isArray(srcLines) && srcLines.length ? srcLines[0] : {};
     const copiedWarehouse = normalizeWarehouse(firstSourceLine, srcHeader) || '';
-    const copiedBranch = srcHeader.branch || srcHeader.BPL_IDAssignedToInvoice || srcHeader.BPLId || firstSourceLine.branch || '';
+    const copiedBranch = normalizeBranchSelection(normalizedHeader.branch)
+      || normalizeBranchSelection(
+        firstSourceLine.branch
+        || firstSourceLine.Branch
+        || firstSourceLine.BPL_IDAssignedToInvoice
+        || firstSourceLine.BPLId
+        || srcHeader.branch
+        || srcHeader.BPL_IDAssignedToInvoice
+        || srcHeader.BPLId
+      )
+      || getBranchFromWarehouseCode(copiedWarehouse);
     const copiedBaseType = baseDocument?.baseType || BASE_TYPE[copyFrom.type] || firstSourceLine.baseType || 15;
     const copiedBaseEntry = baseDocument?.baseEntry || copyFrom.docEntry;
 
@@ -987,7 +1126,10 @@ function ARInvoicePage() {
       paymentTerms:     srcHeader.paymentTerms  || srcHeader.GroupNum  || '',
       placeOfSupply:    srcHeader.placeOfSupply || '',
       otherInstruction: srcHeader.otherInstruction || srcHeader.Comments || '',
+      series:           '',
+      nextNumber:       '',
     }));
+    setSeriesReloadToken((token) => token + 1);
     const copiedHeaderUdfs = mergeUdfValues(copyFrom.headerUdfs, copyFrom.header_udfs, srcHeader.header_udfs, srcHeader.headerUdfs);
     setHeaderUdfs({
       ...copiedHeaderUdfs,
@@ -995,10 +1137,10 @@ function ARInvoicePage() {
     });
 
     if (Array.isArray(srcLines) && srcLines.length > 0) {
-      setLines(srcLines.map((l, idx) => {
+      const copiedLines = srcLines.map((l, idx) => {
         const normalizedLine = normaliseDocumentLine(l, idx, copiedBaseEntry, copiedBaseType, copiedBranch);
         const copiedLineUdfs = mergeUdfValues(l.line_udfs, l.lineUdfs, l.udf, normalizedLine.udf);
-        return {
+        return hydrateARInvoiceBatchLine({
           ...createLine(rowUdfDefinitions),
           ...normalizedLine,
           whse: normalizeWarehouse(normalizedLine, srcHeader) || normalizeWarehouse(l, srcHeader) || copiedWarehouse || '',
@@ -1011,8 +1153,10 @@ function ARInvoicePage() {
             ...copiedLineUdfs,
             ...normalizeUdfState(rowUdfDefinitions, copiedLineUdfs),
           },
-        };
-      }));
+        });
+      });
+      setLines(copiedLines);
+      refreshBatchAvailabilityForLines(copiedLines);
     }
 
     const cardCode = srcHeader.vendor || srcHeader.CardCode;
@@ -1021,7 +1165,7 @@ function ARInvoicePage() {
     const sourceLabel = copyFrom.sourceLabel || copyFrom.type || 'source document';
     setPageState(p => ({ ...p, success: `Copied from ${sourceLabel}. Please review and save.` }));
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state || persistedCopyState);
-  }, [location.pathname, location.state?.copyFrom, navigate, headerUdfDefinitions, rowUdfDefinitions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.state?.copyFrom, navigate, headerUdfDefinitions, rowUdfDefinitions, getBranchFromWarehouseCode, hydrateARInvoiceBatchLine, refreshBatchAvailabilityForLines]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived / computed ────────────────────────────────────────────────────
   const belongsToCurrentVendor = (row) => {
@@ -1066,6 +1210,27 @@ function ARInvoicePage() {
       indicator: firstOption.indicator || prev.indicator,
     }));
   }, [currentDocEntry, requestedEditDocEntry, header.transactionType, transactionTypeOptions]);
+
+  useEffect(() => {
+    if (currentDocEntry || requestedEditDocEntry || normalizeBranchSelection(header.branch) || !header.warehouse) return;
+
+    const warehouseBranch = getBranchFromWarehouseCode(header.warehouse);
+    if (!warehouseBranch) return;
+
+    setHeader((prev) => {
+      if (normalizeBranchSelection(prev.branch) || String(prev.warehouse || '') !== String(header.warehouse)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        branch: warehouseBranch,
+        series: '',
+        nextNumber: '',
+      };
+    });
+    setSeriesReloadToken((token) => token + 1);
+  }, [currentDocEntry, requestedEditDocEntry, header.branch, header.warehouse, getBranchFromWarehouseCode]);
+
   const resolveARInvoiceAddress = useCallback((code, addresses = [], fallbackText = '') => {
     const normalizedCode = String(code || '').trim();
     if (normalizedCode) {
@@ -1625,6 +1790,19 @@ function ARInvoicePage() {
       });
       return;
     }
+
+    if (name === 'warehouse') {
+      const warehouseBranch = getBranchFromWarehouseCode(value);
+      setHeader(prev => ({
+        ...prev,
+        warehouse: value,
+        branch: warehouseBranch || prev.branch,
+        ...(warehouseBranch && warehouseBranch !== normalizeBranchSelection(prev.branch)
+          ? { series: '', nextNumber: '' }
+          : {}),
+      }));
+      return;
+    }
     
     if (name === 'vendor') {
       setHeader(prev => {
@@ -1701,10 +1879,29 @@ function ARInvoicePage() {
   };
   
   const handleSeriesChange = async (seriesValue) => {
-    if (!seriesValue) return;
+    if (!seriesValue || seriesValue === SAP_MANUAL_SERIES_VALUE) {
+      setHeader(p => ({
+        ...p,
+        series: seriesValue,
+        nextNumber: '',
+      }));
+      setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+      return;
+    }
+
+    const selectedSeries = refData.series.find((series) => String(series.Series) === String(seriesValue));
+    const seriesBranchId = String(selectedSeries?.BPLId ?? '').trim();
+    const branchFromSeries = !seriesBranchId || seriesBranchId === '0' || seriesBranchId === '-1'
+      ? ''
+      : seriesBranchId;
     
     setPageState(p => ({ ...p, seriesLoading: true }));
-    setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
+    setHeader(p => ({
+      ...p,
+      series: seriesValue,
+      nextNumber: '...',
+      branch: branchFromSeries || p.branch,
+    }));
     
     try {
       const res = await fetchNextNumber(seriesValue);
@@ -1749,8 +1946,12 @@ function ARInvoicePage() {
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
             next.uomName = next.uomCode || next.uomName || '';
             next.inventoryUOM = String(item.InventoryUOM || '').trim();
+            next.uomFactor = 1;
             next.qtyInventoryUom = next.qtyInventoryUom || next.quantity || '';
             next.uomGroup = getUomGroupName(item);
+            next.batchManaged = isBatchManaged(item);
+            next.batches = [];
+            next.hasBatchesAvailable = next.batchManaged ? true : false;
             next.countryOfOrigin = item.ItemCountryOrg || item.CountryOrg || next.countryOfOrigin || '';
             next.glAccount = next.glAccount || item.SalesGLAccount || item.IncomeAccount || item.IncomeAcct || item.RevenuesAccount || item.RevenuesAc || '';
             next.glAccountName = next.glAccountName || accountLookupOptions.find((account) => String(account.value) === String(next.glAccount || ''))?.accountName || '';
@@ -1818,8 +2019,12 @@ function ARInvoicePage() {
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
             next.uomName = next.uomCode || next.uomName || '';
             next.inventoryUOM = String(item.InventoryUOM || '').trim();
+            next.uomFactor = 1;
             next.qtyInventoryUom = next.qtyInventoryUom || next.quantity || '';
             next.uomGroup = getUomGroupName(item);
+            next.batchManaged = isBatchManaged(item);
+            next.batches = [];
+            next.hasBatchesAvailable = next.batchManaged ? true : false;
             next.countryOfOrigin = item.ItemCountryOrg || item.CountryOrg || next.countryOfOrigin || '';
             next.glAccount = next.glAccount || item.SalesGLAccount || item.IncomeAccount || item.IncomeAcct || item.RevenuesAccount || item.RevenuesAc || '';
             next.glAccountName = next.glAccountName || accountLookupOptions.find((account) => String(account.value) === String(next.glAccount || ''))?.accountName || '';
@@ -1840,6 +2045,10 @@ function ARInvoicePage() {
       const next = { ...line, [name]: numDec[name] !== undefined ? sanitize(value, numDec[name]) : value };
       if (name === 'uomCode') {
         next.uomName = value;
+      }
+      if (['itemNo', 'whse', 'quantity', 'uomCode'].includes(name)) {
+        next.batches = [];
+        if (next.batchManaged) next.hasBatchesAvailable = true;
       }
       if (name === 'taxCode') {
         next.taxCodeManuallyOverridden = Boolean(String(next.taxCode || '').trim());
@@ -2085,14 +2294,20 @@ function ARInvoicePage() {
       header.billToAddress || header.payTo,
     );
     const activeAddress = type === 'billTo' ? billAddress : shipAddress;
+    const activeComponents = type === 'billTo'
+      ? header.billToAddressComponents
+      : header.shipToAddressComponents;
 
     setAddressForm(
-      mapAddressToModalForm(activeAddress, {
-        shipToCode: header.shipToCode || shipAddress?.Address || '',
-        shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
-        billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
-        billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
-      }),
+      {
+        ...mapAddressToModalForm(activeAddress, {
+          shipToCode: header.shipToCode || shipAddress?.Address || '',
+          shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
+          billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
+          billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
+        }),
+        ...(activeComponents || {}),
+      },
     );
     setAddressModal({ type });
   };
@@ -2103,27 +2318,22 @@ function ARInvoicePage() {
 
   const saveAddressModal = () => {
     if (!isDocumentEditable) return;
-    const formatted = [
-      [addressForm.streetPoBox, addressForm.streetNo].filter(Boolean).join(', '),
-      addressForm.buildingFloorRoom,
-      [addressForm.block, addressForm.city].filter(Boolean).join(', '),
-      [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion,
-      addressForm.addressName2,
-      addressForm.addressName3,
-    ].filter(Boolean).join('\n');
+    const formatted = formatAddressComponent(addressForm);
+    const components = pickAddressComponentFields(addressForm);
+    markDirty();
 
     if (addressModal.type === 'shipTo') {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode || p.shipToCode,
-        shipToAddress: formatted || addressForm.shipToAddress,
-        shipTo: formatted || addressForm.shipToAddress,
+        shipToAddress: formatted,
+        shipTo: formatted,
+        shipToAddressComponents: components,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
         payTo: addressForm.billToAddress || p.payTo,
-        placeOfSupply: addressForm.state || p.placeOfSupply,
+        placeOfSupply: addressForm.state || '',
       }));
     } else {
       setHeader(p => ({
@@ -2133,9 +2343,10 @@ function ARInvoicePage() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
-        billToAddress: formatted || addressForm.billToAddress,
-        payTo: formatted || addressForm.billToAddress,
-        placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
+        billToAddress: formatted,
+        payTo: formatted,
+        billToAddressComponents: components,
+        placeOfSupply: header.useBillToForTax ? addressForm.state || '' : p.placeOfSupply,
       }));
     }
     closeAddressModal();
@@ -2143,6 +2354,37 @@ function ARInvoicePage() {
 
   const handleAddressFormChange = (e) => {
     const { name, value } = e.target;
+
+    if (name === 'shipToCode') {
+      const selectedAddress = resolveARInvoiceAddress(value, vendorEffectiveShipToAddresses);
+      setAddressForm(prev => {
+        const nextState = {
+          ...prev,
+          shipToCode: value,
+          shipToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.shipToAddress,
+        };
+        return addressModal?.type === 'shipTo'
+          ? mapAddressToModalForm(selectedAddress, nextState)
+          : nextState;
+      });
+      return;
+    }
+
+    if (name === 'billToCode') {
+      const selectedAddress = resolveARInvoiceAddress(value, vendorEffectiveBillToAddresses);
+      setAddressForm(prev => {
+        const nextState = {
+          ...prev,
+          billToCode: value,
+          billToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.billToAddress,
+        };
+        return addressModal?.type === 'billTo'
+          ? mapAddressToModalForm(selectedAddress, nextState)
+          : nextState;
+      });
+      return;
+    }
+
     setAddressForm(p => ({ ...p, [name]: value }));
   };
 
@@ -2220,6 +2462,98 @@ function ARInvoicePage() {
       alert(`Selected ${files.length} file(s). Upload functionality to be implemented.`);
     };
     input.click();
+  };
+
+  const openBatchModalForLine = useCallback((lineIndex, line) => {
+    if (!isDocumentEditable) return;
+    if (!line?.itemNo) {
+      setPageState((prev) => ({ ...prev, error: 'Select an item before allocating batches.', success: '' }));
+      return;
+    }
+    if (!line?.whse) {
+      setPageState((prev) => ({ ...prev, error: 'Select a warehouse before allocating batches.', success: '' }));
+      return;
+    }
+
+    const hydratedLine = hydrateARInvoiceBatchLine(line);
+    const itemNo = hydratedLine.itemNo;
+    const whse = hydratedLine.whse;
+    setBatchModal({ open: true, lineIndex, availableBatches: [], loading: true, error: '' });
+    window.setTimeout(async () => {
+      try {
+        const response = await fetchBatchesByItem(itemNo, whse);
+        setBatchModal((current) => (
+          current.open && current.lineIndex === lineIndex
+            ? {
+                open: true,
+                lineIndex,
+                availableBatches: response.data?.batches || [],
+                loading: false,
+                error: '',
+              }
+            : current
+        ));
+      } catch (error) {
+        setBatchModal((current) => (
+          current.open && current.lineIndex === lineIndex
+            ? {
+                open: true,
+                lineIndex,
+                availableBatches: [],
+                loading: false,
+                error: getErrMsg(error, 'Failed to load available batches.'),
+              }
+            : current
+        ));
+      }
+    }, 0);
+  }, [hydrateARInvoiceBatchLine, isDocumentEditable]);
+
+  const openBatchModal = useCallback((lineIndex, lineOverride = null) => {
+    openBatchModalForLine(lineIndex, lineOverride || lines[lineIndex]);
+  }, [lines, openBatchModalForLine]);
+
+  const closeBatchModal = () => {
+    setBatchModal({ open: false, lineIndex: null, availableBatches: [], loading: false, error: '' });
+  };
+
+  const saveLineBatches = (nextBatches) => {
+    if (batchModal.lineIndex == null) return;
+    markDirty();
+    setLines((prev) => prev.map((line, index) => {
+      if (index !== batchModal.lineIndex) return line;
+
+      const assignedBaseQty = sumBatchQty(nextBatches);
+      const uomFactor = getLineUomFactor(line);
+      const nextDocumentQty = uomFactor > 0
+        ? roundTo(assignedBaseQty / uomFactor, 6)
+        : roundTo(assignedBaseQty, 6);
+      const updatedLine = {
+        ...line,
+        batches: nextBatches,
+        quantity: String(nextDocumentQty),
+        qtyInventoryUom: String(assignedBaseQty),
+        hasBatchesAvailable: true,
+      };
+
+      return {
+        ...updatedLine,
+        total: fmtDec(calcLineTotalFromFields(updatedLine), numDec.total),
+      };
+    }));
+    setValErrors((prev) => ({
+      ...prev,
+      lines: {
+        ...prev.lines,
+        [batchModal.lineIndex]: {
+          ...(prev.lines[batchModal.lineIndex] || {}),
+          batches: '',
+          quantity: '',
+        },
+      },
+      form: '',
+    }));
+    closeBatchModal();
   };
 
   // ── HSN Modal handlers ────────────────────────────────────────────────────
@@ -2371,7 +2705,7 @@ function ARInvoicePage() {
 
     setLines(prev => prev.map(line => (
       line.whse && !allowedWarehouseCodes.has(String(line.whse))
-        ? { ...line, whse: '' }
+        ? { ...line, whse: '', batches: [], hasBatchesAvailable: line.batchManaged ? true : line.hasBatchesAvailable }
         : line
     )));
   }, [branchFilteredWarehouses, header.branch, refData.warehouses.length]);
@@ -2379,7 +2713,16 @@ function ARInvoicePage() {
   // Sync warehouse to all lines when header warehouse changes
   useEffect(() => {
     if (header.warehouse) {
-      setLines(prev => prev.map(l => ({ ...l, whse: header.warehouse })));
+      setLines(prev => prev.map(l => (
+        String(l.whse || '') === String(header.warehouse)
+          ? l
+          : {
+              ...l,
+              whse: header.warehouse,
+              batches: [],
+              hasBatchesAvailable: l.batchManaged ? true : l.hasBatchesAvailable,
+            }
+      )));
     }
   }, [header.warehouse]);
 
@@ -2458,6 +2801,24 @@ function ARInvoicePage() {
         return e; 
       }
 
+      if (!isUpdate && !String(header.series || '').trim()) {
+        e.header.series = 'Select a valid numbering series.';
+        e.form = 'A valid numbering series is required for this posting date.';
+        return e;
+      }
+
+      if (!isUpdate && refData.branches.length) {
+        const selectedSeries = refData.series.find((series) => String(series.Series) === String(header.series));
+        const resolvedBranch = normalizeBranchSelection(header.branch)
+          || normalizeBranchSelection(selectedSeries?.BPLId)
+          || getBranchFromWarehouseCode(header.warehouse || normalizeWarehouse(lines[0] || {}, header));
+        if (!resolvedBranch) {
+          e.header.branch = 'Select the branch assigned to this warehouse and numbering series.';
+          e.form = 'Branch is required before the A/R Invoice can be added.';
+          return e;
+        }
+      }
+
       console.log('🔍 Filtering lines with items...');
       const pop = lines.filter(l => String(l.itemNo || '').trim());
       console.log(`🔍 Found ${pop.length} lines with items out of ${lines.length} total lines`);
@@ -2533,6 +2894,22 @@ function ARInvoicePage() {
         }
         
         console.log(`🔍 Line ${i}: Validating tax code:`, l.taxCode);
+        const item = refData.items.find((candidate) => String(candidate.ItemCode || '') === String(l.itemNo || ''));
+        const batchManaged = isLineBatchManaged(l, item);
+        if (batchManaged && !isUpdate) {
+          if (!Array.isArray(l.batches) || l.batches.length === 0) {
+            e.lines[i] = { ...(e.lines[i] || {}), batches: 'Batch selection is mandatory for batch-managed item' };
+            e.form = 'Please assign batches before adding this A/R Invoice.';
+            return e;
+          }
+
+          if (!batchQtyMatchesLine(l, l.batches)) {
+            e.lines[i] = { ...(e.lines[i] || {}), batches: 'Batch quantity must match the line quantity in base UoM' };
+            e.form = 'Please assign batches before adding this A/R Invoice.';
+            return e;
+          }
+        }
+
         const hasTaxCode = String(l.taxCode || '').trim();
         const taxCodeExists = !hasTaxCode || effectiveTaxCodes.some(t => String(t.Code) === String(l.taxCode));
         if (!taxCodeExists) {
@@ -2646,8 +3023,15 @@ function ARInvoicePage() {
     const copySource = unwrapCopyFromDocument(data);
     const baseType = BASE_TYPE[sourceType] || 17;
     const normHeader = normaliseDocumentHeader(copySource.header);
+    const firstSourceLine = Array.isArray(copySource.lines) && copySource.lines.length ? copySource.lines[0] : {};
+    const copiedWarehouse = normalizeWarehouse(firstSourceLine, copySource.header || {});
+    const resolvedBranch = normalizeBranchSelection(normHeader.branch)
+      || normalizeBranchSelection(firstSourceLine.branch || firstSourceLine.Branch || firstSourceLine.BPL_IDAssignedToInvoice || firstSourceLine.BPLId)
+      || getBranchFromWarehouseCode(copiedWarehouse);
+    const resolvedHeader = { ...normHeader, branch: resolvedBranch, warehouse: normHeader.warehouse || copiedWarehouse || header.warehouse };
 
-    setHeader(prev => ({ ...prev, ...normHeader }));
+    setHeader(prev => ({ ...prev, ...resolvedHeader, series: '', nextNumber: '' }));
+    setSeriesReloadToken((token) => token + 1);
     const copiedHeaderUdfs = mergeUdfValues(copySource.header_udfs, copySource.headerUdfs, copySource.header?.header_udfs, copySource.header?.headerUdfs);
     setHeaderUdfs({
       ...copiedHeaderUdfs,
@@ -2656,18 +3040,20 @@ function ARInvoicePage() {
 
     const rawLines = copySource.lines;
     const newLines = rawLines.map((line, idx) => {
-      const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch);
+      const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, resolvedBranch);
       const copiedLineUdfs = mergeUdfValues(line.line_udfs, line.lineUdfs, line.udf, normalizedLine.udf);
-      return {
+      return hydrateARInvoiceBatchLine({
         ...createLine(rowUdfDefinitions),
         ...normalizedLine,
+        branch: normalizeBranchSelection(normalizedLine.branch) || resolvedBranch,
         udf: {
           ...copiedLineUdfs,
           ...normalizeUdfState(rowUdfDefinitions, copiedLineUdfs),
         },
-      };
+      });
     });
     setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
+    refreshBatchAvailabilityForLines(newLines);
 
     const cardCode = normHeader.vendor;
     if (cardCode && cardCode !== header.vendor) loadVendorDetails(cardCode);
@@ -2757,6 +3143,11 @@ function ARInvoicePage() {
   };
 
   const handleDuplicate = async () => {
+    const duplicateDate = today();
+    const firstLineWarehouse = normalizeWarehouse(lines[0] || {}, header);
+    const duplicateBranch = normalizeBranchSelection(header.branch)
+      || normalizeBranchSelection(lines[0]?.branch || lines[0]?.loc)
+      || getBranchFromWarehouseCode(header.warehouse || firstLineWarehouse);
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -2779,18 +3170,26 @@ function ARInvoicePage() {
     });
 
     if (duplicated) {
-      const seriesDate = String(header.postingDate || header.documentDate || today()).trim();
+      setHeader(prev => ({
+        ...prev,
+        postingDate: duplicateDate,
+        documentDate: duplicateDate,
+        deliveryDate: prev.deliveryDate || duplicateDate,
+        branch: duplicateBranch,
+        series: '',
+        nextNumber: '',
+      }));
       try {
-        const seriesResponse = await fetchDocumentSeries(seriesDate);
+        const seriesResponse = await fetchDocumentSeries(duplicateDate, header.transactionType, duplicateBranch);
         const duplicateSeries = seriesResponse.data?.series || [];
         setRefData((prev) => ({ ...prev, series: duplicateSeries }));
 
-        const preferredSeries = resolvePreferredSeries(duplicateSeries, seriesDate, header.series);
+        const preferredSeries = resolvePreferredSeries(duplicateSeries, duplicateDate, '');
         if (preferredSeries?.Series != null) {
           handleSeriesChange(preferredSeries.Series);
         }
       } catch (_error) {
-        refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+        refreshDuplicateSeries(refData.series, '', handleSeriesChange);
       }
     }
   };
@@ -2807,6 +3206,19 @@ function ARInvoicePage() {
     if (e.form || Object.values(e.header).some(Boolean) || Object.values(e.lines).some(le => Object.values(le || {}).some(Boolean))) {
       setValErrors(e);
       setPageState(p => ({ ...p, error: e.form || 'Please correct the highlighted fields.', success: '' }));
+      const firstBatchErrorLineIndex = Object.entries(e.lines || {}).find(([, lineErrors]) =>
+        Boolean(lineErrors?.batches)
+      )?.[0];
+      if (firstBatchErrorLineIndex !== undefined) {
+        const lineIndex = Number(firstBatchErrorLineIndex);
+        if (Number.isInteger(lineIndex) && lineIndex >= 0) {
+          const hydratedLines = lines.map(hydrateARInvoiceBatchLine);
+          setLines(hydratedLines);
+          setActiveTab('Contents');
+          refreshBatchAvailabilityForLines(hydratedLines);
+          window.setTimeout(() => openBatchModal(lineIndex, hydratedLines[lineIndex]), 0);
+        }
+      }
       if (hasWTaxLiableLines && withholdingTax.customerSubject) {
         setWithholdingTax((prev) => ({
           ...prev,
@@ -2819,12 +3231,20 @@ function ARInvoicePage() {
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, posting: true, error: '', success: '' }));
     try {
+      const selectedSeries = refData.series.find((series) => String(series.Series) === String(header.series));
+      const selectedSeriesBranch = normalizeBranchSelection(selectedSeries?.BPLId);
+      const firstLineWarehouse = normalizeWarehouse(lines[0] || {}, header);
+      const resolvedBranch = normalizeBranchSelection(header.branch)
+        || selectedSeriesBranch
+        || normalizeBranchSelection(lines[0]?.branch || lines[0]?.loc)
+        || getBranchFromWarehouseCode(header.warehouse || firstLineWarehouse);
       const prep = { 
         ...header, 
-        transactionType: getDocumentTypeCodeForTransaction(header.transactionType),
+        transactionType: header.transactionType,
+        transactionTypeCode: getDocumentTypeCodeForTransaction(header.transactionType),
         deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
         placeOfSupply: header.placeOfSupply,
-        branch: header.branch,
+        branch: resolvedBranch,
         contactPerson: header.contactPerson,
       };
       
@@ -3144,15 +3564,16 @@ function ARInvoicePage() {
                       <label className="del-field__label">Series</label>
                       <select 
                         name="series"
-                        className="del-field__select" 
+                        className={`del-field__select${valErrors.header.series ? ' del-field__input--error' : ''}`}
                         value={header.series}
                         onChange={handleHeaderChange}
                         disabled={!!currentDocEntry || pageState.seriesLoading}
                       >
                         <option value="">Select Series</option>
+                        <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
                         {Array.isArray(refData.series) && refData.series.map(s => (
                           <option key={s.Series} value={s.Series}>
-                            {s.SeriesName} ({s.Indicator})
+                            {s.DisplayName || s.RawSeriesName || s.SeriesName || s.Series}
                           </option>
                         ))}
                       </select>
@@ -3206,8 +3627,8 @@ function ARInvoicePage() {
 
                     {/* Branch */}
                     <div className="del-field">
-                      <label className="del-field__label">Branch</label>
-                      <select name="branch" className="del-field__select" value={header.branch} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
+                      <label className="del-field__label">Branch *</label>
+                      <select name="branch" className={`del-field__select${valErrors.header.branch ? ' del-field__input--error' : ''}`} value={header.branch} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
                         <option value="">Select Branch</option>
                         {refData.branches.map(b => (
                           <option key={b.BPLId} value={b.BPLId}>
@@ -3246,6 +3667,7 @@ function ARInvoicePage() {
                 onRemoveLine={removeLine}
                 onOpenHSNModal={openHSNModal}
                 onOpenItemModal={openItemModal}
+                onOpenBatchModal={openBatchModal}
                 onOpenLineLookup={openLineLookup}
                 lineItemOptions={lineItemOptions}
                 getUomOptions={getUomOptions}
@@ -3536,6 +3958,16 @@ function ARInvoicePage() {
         onSave={saveTaxInfoModal}
         taxInfoForm={taxInfoForm}
         onFormChange={handleTaxInfoFormChange}
+      />
+
+      <BatchAllocationModal
+        isOpen={batchModal.open}
+        line={batchModal.lineIndex != null ? lines[batchModal.lineIndex] : null}
+        availableBatches={batchModal.availableBatches}
+        loading={batchModal.loading}
+        error={batchModal.error}
+        onClose={closeBatchModal}
+        onSave={saveLineBatches}
       />
 
       {/* State Selection Modal */}

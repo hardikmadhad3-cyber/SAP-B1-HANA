@@ -8,7 +8,7 @@ import ContentsTab from './components/ContentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
-import ItemSelectionModal from '../goods-receipt/components/ItemSelectionModal';
+import ItemSelectionModal from '../../components/common/ItemSelectionModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import {
   fetchInventoryTransferRequestBusinessPartnerDetails,
@@ -1221,13 +1221,9 @@ function InventoryTransferRequest() {
         >
           Form Settings
         </button>
-        {pageState.loading && (
-          <span className="po-alert po-alert--warning" style={{ margin: 0 }}>
-            Loading...
-          </span>
-        )}
       </div>
 
+      {pageState.loading && <div className="po-alert po-alert--success">Loading...</div>}
       {pageState.error && <div className="po-alert po-alert--error">{pageState.error}</div>}
       {pageState.success && <div className="po-alert po-alert--success">{pageState.success}</div>}
 

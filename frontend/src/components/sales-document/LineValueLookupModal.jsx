@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 const overlayStyle = {
-  position: 'fixed',
+  position: 'absolute',
   inset: 0,
   backgroundColor: 'rgba(15, 23, 42, 0.34)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  zIndex: 9999,
+  zIndex: 21000,
 };
 
 const dialogStyle = {
@@ -15,8 +16,8 @@ const dialogStyle = {
   border: '1px solid var(--sap-border-strong)',
   borderRadius: 'var(--sap-radius-md)',
   width: 820,
-  maxWidth: '92vw',
-  maxHeight: '80vh',
+  maxWidth: 'calc(100% - 40px)',
+  maxHeight: 'calc(100% - 48px)',
   display: 'flex',
   flexDirection: 'column',
   boxShadow: 'var(--sap-shadow-modal)',
@@ -167,7 +168,7 @@ export default function LineValueLookupModal({
 
   if (!isOpen) return null;
 
-  return (
+  const modal = (
     <div style={overlayStyle} onClick={closeModal}>
       <div style={dialogStyle} onClick={(event) => event.stopPropagation()}>
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sap-border)', background: 'var(--sap-toolbar-bg)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -283,4 +284,10 @@ export default function LineValueLookupModal({
       </div>
     </div>
   );
+
+  const target = typeof document !== 'undefined'
+    ? document.querySelector('.app-shell__content') || document.body
+    : null;
+
+  return target ? createPortal(modal, target) : modal;
 }

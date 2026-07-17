@@ -75,3 +75,41 @@ export const mapAddressToModalForm = (address, existing = {}) => ({
   billToAddress: existing.billToAddress || '',
   ...mapAddressFields(address),
 });
+
+const cleanAddressValue = (value) => String(value ?? '').trim();
+const joinAddressLine = (...parts) => parts.map(cleanAddressValue).filter(Boolean).join(', ');
+
+export const pickAddressComponentFields = (form = {}) => ({
+  streetPoBox: form.streetPoBox || '',
+  streetNo: form.streetNo || '',
+  buildingFloorRoom: form.buildingFloorRoom || '',
+  block: form.block || '',
+  city: form.city || '',
+  zipCode: form.zipCode || '',
+  county: form.county || '',
+  state: form.state || '',
+  countryRegion: form.countryRegion || '',
+  addressName2: form.addressName2 || '',
+  addressName3: form.addressName3 || '',
+  gln: form.gln || '',
+  erpAddress: form.erpAddress || '',
+  contactPerson: form.contactPerson || '',
+  mobile: form.mobile || '',
+  dateOfRegistration: form.dateOfRegistration || '',
+  dateDetailsOfRegistration: form.dateDetailsOfRegistration || '',
+  addressStatus: form.addressStatus || '',
+  gstin: form.gstin || '',
+});
+
+export const formatAddressComponent = (form = {}) => [
+  joinAddressLine(form.streetPoBox, form.streetNo),
+  cleanAddressValue(form.buildingFloorRoom),
+  cleanAddressValue(form.block),
+  cleanAddressValue(form.city),
+  cleanAddressValue(form.zipCode),
+  cleanAddressValue(form.county),
+  cleanAddressValue(form.state),
+  cleanAddressValue(form.countryRegion),
+  cleanAddressValue(form.addressName2),
+  cleanAddressValue(form.addressName3),
+].filter(Boolean).join('\n');

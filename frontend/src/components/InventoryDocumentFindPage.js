@@ -5,13 +5,15 @@ import { createCompanyScopedRouteState } from '../utils/companyStorageScope';
 import '../styles/sales-order-list.css';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
-const INITIAL_FILTERS = {
-  query: '',
-  docNum: '',
-  status: '',
-  postingDateFrom: '',
-  postingDateTo: '',
-};
+const DEFAULT_FILTER_FIELDS = [
+  { name: 'docNum', key: 'docNum', label: 'Doc No', placeholder: 'Enter Doc No' },
+  { name: 'status', key: 'documentStatus', label: 'Status', placeholder: 'All Statuses' },
+  { name: 'postingDateFrom', key: 'postingDate', label: 'Posting Date From', type: 'date', compare: 'from' },
+  { name: 'postingDateTo', key: 'postingDate', label: 'Posting Date To', type: 'date', compare: 'to' },
+];
+
+const getInitialFilters = (filterFields = DEFAULT_FILTER_FIELDS) =>
+  filterFields.reduce((filters, field) => ({ ...filters, [field.name]: '' }), { query: '' });
 
 const formatDate = (value) => {
   if (!value) return '';
@@ -47,12 +49,16 @@ function InventoryDocumentFindPage({
   loadingLabel,
   columns,
   searchFields,
+  filterFields = DEFAULT_FILTER_FIELDS,
+  subtitle = 'Filter by document, status, and posting date.',
+  globalSearchPlaceholder = 'Search by Doc No., status, warehouse, business partner, or remarks',
 }) {
   const navigate = useNavigate();
   const { company } = useAuth();
   const [documents, setDocuments] = useState([]);
-  const [filters, setFilters] = useState(INITIAL_FILTERS);
-  const [appliedFilters, setAppliedFilters] = useState(INITIAL_FILTERS);
+  const initialFilters = useMemo(() => getInitialFilters(filterFields), [filterFields]);
+  const [filters, setFilters] = useState(initialFilters);
+  const [appliedFilters, setAppliedFilters] = useState(initialFilters);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [pageState, setPageState] = useState({
@@ -67,8 +73,9 @@ function InventoryDocumentFindPage({
       setPageState({ loading: true, error: '' });
       try {
         const response = await fetchDocuments();
+        const nextDocuments = Array.isArray(response) ? response : (Array.isArray(response.data) ? response.data : []);
         if (!ignore) {
-          setDocuments(Array.isArray(response.data) ? response.data : []);
+          setDocuments(nextDocuments);
           setPageState({ loading: false, error: '' });
         }
       } catch (error) {
@@ -89,26 +96,28 @@ function InventoryDocumentFindPage({
 
   const filteredDocuments = useMemo(() => {
     const query = normalizeText(appliedFilters.query);
-    const docNum = normalizeText(appliedFilters.docNum);
-    const status = normalizeText(appliedFilters.status);
-    const postingDateFrom = appliedFilters.postingDateFrom || '';
-    const postingDateTo = appliedFilters.postingDateTo || '';
 
     return documents.filter((document) => {
-      if (docNum && !normalizeText(document.docNum).includes(docNum)) return false;
-      if (status && !normalizeText(document.documentStatus).includes(status)) return false;
+      for (const field of filterFields) {
+        const value = appliedFilters[field.name];
+        if (!String(value || '').trim()) continue;
 
-      const postingDate = getComparableDate(document.postingDate);
-      if (postingDateFrom && postingDate && postingDate < postingDateFrom) return false;
-      if (postingDateTo && postingDate && postingDate > postingDateTo) return false;
-      if ((postingDateFrom || postingDateTo) && !postingDate) return false;
+        if (field.type === 'date') {
+          const dateValue = getComparableDate(document[field.key]);
+          if (!dateValue) return false;
+          if (field.compare === 'from' && dateValue < value) return false;
+          if (field.compare === 'to' && dateValue > value) return false;
+        } else if (!normalizeText(document[field.key || field.name]).includes(normalizeText(value))) {
+          return false;
+        }
+      }
 
       if (!query) return true;
       return searchFields.some((fieldName) =>
         normalizeText(document[fieldName]).includes(query)
       );
     });
-  }, [appliedFilters, documents, searchFields]);
+  }, [appliedFilters, documents, filterFields, searchFields]);
 
   const totalCount = filteredDocuments.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
@@ -134,8 +143,8 @@ function InventoryDocumentFindPage({
   };
 
   const handleClearFilters = () => {
-    setFilters(INITIAL_FILTERS);
-    setAppliedFilters(INITIAL_FILTERS);
+    setFilters(initialFilters);
+    setAppliedFilters(initialFilters);
     setPage(1);
   };
 
@@ -162,7 +171,7 @@ function InventoryDocumentFindPage({
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
           <h2 className="mb-1">{title}</h2>
-          <small className="text-muted">Filter by document, status, and posting date.</small>
+          <small className="text-muted">{subtitle}</small>
         </div>
         <button
           type="button"
@@ -181,55 +190,20 @@ function InventoryDocumentFindPage({
 
       <div className="card p-3 sap-find-card">
         <div className="sap-find-filter-grid mb-3">
-          <div className="sap-find-field">
-            <label className="form-label mb-1">Doc No</label>
-            <input
-              type="text"
-              className="form-control"
-              name="docNum"
-              value={filters.docNum}
-              onChange={handleFilterChange}
-              onKeyDown={handleFilterKeyDown}
-              placeholder="Enter Doc No"
-            />
-          </div>
-
-          <div className="sap-find-field">
-            <label className="form-label mb-1">Status</label>
-            <input
-              type="text"
-              className="form-control"
-              name="status"
-              value={filters.status}
-              onChange={handleFilterChange}
-              onKeyDown={handleFilterKeyDown}
-              placeholder="All Statuses"
-            />
-          </div>
-
-          <div className="sap-find-field">
-            <label className="form-label mb-1">Posting Date From</label>
-            <input
-              type="date"
-              className="form-control"
-              name="postingDateFrom"
-              value={filters.postingDateFrom}
-              onChange={handleFilterChange}
-              onKeyDown={handleFilterKeyDown}
-            />
-          </div>
-
-          <div className="sap-find-field">
-            <label className="form-label mb-1">Posting Date To</label>
-            <input
-              type="date"
-              className="form-control"
-              name="postingDateTo"
-              value={filters.postingDateTo}
-              onChange={handleFilterChange}
-              onKeyDown={handleFilterKeyDown}
-            />
-          </div>
+          {filterFields.map((field) => (
+            <div className="sap-find-field" key={field.name}>
+              <label className="form-label mb-1">{field.label}</label>
+              <input
+                type={field.type || 'text'}
+                className="form-control"
+                name={field.name}
+                value={filters[field.name] || ''}
+                onChange={handleFilterChange}
+                onKeyDown={handleFilterKeyDown}
+                placeholder={field.placeholder || ''}
+              />
+            </div>
+          ))}
 
           <div className="sap-find-field sap-find-actions">
             <button type="button" className="btn btn-primary w-100" onClick={handleApplyFilters}>
@@ -251,7 +225,7 @@ function InventoryDocumentFindPage({
               value={filters.query}
               onChange={handleFilterChange}
               onKeyDown={handleFilterKeyDown}
-              placeholder="Search by Doc No., status, warehouse, business partner, or remarks"
+              placeholder={globalSearchPlaceholder}
             />
           </div>
 

@@ -7,7 +7,7 @@ import AttachmentsTab from './components/AttachmentsTab';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import CopyFromModal from './components/CopyFromModal';
-import ItemSelectionModal from './components/ItemSelectionModal';
+import ItemSelectionModal from '../../components/common/ItemSelectionModal';
 import ReferenceInformationModal, {
   getInventoryReferenceDocumentTypeLabel,
 } from './components/ReferenceInformationModal';
@@ -1474,13 +1474,9 @@ function GoodsReceipt() {
             </button>
           </div>
         </div>
-        {pageState.loading && (
-          <span className="po-alert po-alert--warning" style={{ margin: 0 }}>
-            Loading...
-          </span>
-        )}
       </div>
 
+      {pageState.loading && <div className="po-alert po-alert--success">Loading...</div>}
       {pageState.error && <div className="po-alert po-alert--error">{pageState.error}</div>}
       {pageState.success && <div className="po-alert po-alert--success">{pageState.success}</div>}
 

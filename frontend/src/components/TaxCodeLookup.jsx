@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { focusNextSapField } from '../utils/sapTabNavigation';
 
 const normalize = (value) => String(value ?? '').trim().toLowerCase();
+const getLookupPortalTarget = () =>
+  document.querySelector('.app-shell__content') || document.body;
 
 const formatRate = (rate) => {
   if (rate === null || rate === undefined || rate === '') return '0';
@@ -60,22 +62,24 @@ export default function TaxCodeLookup({
     if (!inputRef.current) return;
 
     const rect = inputRef.current.getBoundingClientRect();
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    const portalTarget = getLookupPortalTarget();
+    const hostRect = portalTarget.getBoundingClientRect();
+    const hostWidth = hostRect.width || window.innerWidth || document.documentElement.clientWidth;
     const gutter = 8;
     const preferredWidth = Math.max(rect.width, 280);
-    const width = Math.min(preferredWidth, viewportWidth - gutter * 2);
-    const left = Math.min(Math.max(rect.left, gutter), viewportWidth - width - gutter);
-    const spaceBelow = viewportHeight - rect.bottom - gutter;
-    const spaceAbove = rect.top - gutter;
+    const width = Math.min(preferredWidth, hostWidth - gutter * 2);
+    const rawLeft = rect.left - hostRect.left + portalTarget.scrollLeft;
+    const left = Math.min(Math.max(rawLeft, gutter), hostWidth - width - gutter);
+    const spaceBelow = hostRect.bottom - rect.bottom - gutter;
+    const spaceAbove = rect.top - hostRect.top - gutter;
     const maxHeight = Math.max(120, Math.min(240, Math.max(spaceBelow, spaceAbove)));
     const opensUp = spaceBelow < 160 && spaceAbove > spaceBelow;
 
     setMenuStyle({
-      position: 'fixed',
+      position: portalTarget === document.body ? 'fixed' : 'absolute',
       zIndex: 30000,
-      top: opensUp ? 'auto' : rect.bottom + 2,
-      bottom: opensUp ? viewportHeight - rect.top + 2 : 'auto',
+      top: opensUp ? 'auto' : rect.bottom - hostRect.top + portalTarget.scrollTop + 2,
+      bottom: opensUp ? hostRect.bottom - rect.top - portalTarget.scrollTop + 2 : 'auto',
       left,
       width,
       maxHeight,
@@ -250,7 +254,7 @@ export default function TaxCodeLookup({
             border: 0,
             borderBottom: '1px solid #edf1f5',
             background: options[activeIndex] === tax
-              ? '#fff8c5'
+              ? 'var(--sap-row-hover)'
               : String(tax.Code || '') === String(value || '')
                 ? '#dfeaf6'
                 : '#fff',
@@ -307,7 +311,7 @@ export default function TaxCodeLookup({
         onKeyDown={handleKeyDown}
         placeholder="Search tax code"
       />
-      {menu ? createPortal(menu, document.body) : null}
+      {menu ? createPortal(menu, getLookupPortalTarget()) : null}
     </div>
   );
 }

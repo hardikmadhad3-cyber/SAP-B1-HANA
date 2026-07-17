@@ -81,17 +81,12 @@ const getPaymentMeansAmount = (paymentMeans = {}) =>
 
 const buildPaymentMeansPayload = async ({ paymentMeans = {}, dueAmount = 0, fallbackCashAccount = "" } = {}) => {
   const totalDue = Number(dueAmount || 0);
-  const enteredAmount = getPaymentMeansAmount(paymentMeans);
-  const normalizedMeans = enteredAmount > 0
-    ? paymentMeans
-    : {
-        cash: {
-          account: fallbackCashAccount,
-          amount: totalDue,
-        },
-      };
+  const normalizedMeans = paymentMeans;
   const totalPaid = getPaymentMeansAmount(normalizedMeans);
 
+  if (totalPaid <= 0) {
+    throw new Error("Enter and confirm Payment Means before adding the incoming payment.");
+  }
   if (Math.abs(totalPaid - totalDue) > 0.01) {
     throw new Error("Payment Means paid amount must match Total Amount Due.");
   }
@@ -319,6 +314,15 @@ const assertPostableAccount = async (accountCode = "") => {
   if (account.FrozenFor === "Y") {
     throw new Error(`G/L Account ${accountCode} is frozen. Select an active posting G/L account.`);
   }
+};
+
+const getBusinessPartnerControlAccount = async (cardCode = "") => {
+  const rows = await queryRows(`
+    SELECT TOP 1 DebPayAcct
+    FROM OCRD
+    WHERE CardCode = @cardCode
+  `, { cardCode });
+  return String(rows[0]?.DebPayAcct || "").trim();
 };
 
 const lookupCashAccounts = async (query = "") => {
@@ -740,6 +744,7 @@ const createIncomingPayment = async (payload = {}) => {
   const appliedTotal = selectedInvoices.reduce((sum, invoice) => sum + invoice.appliedAmount, 0);
   const dueAmount = appliedTotal + paymentOnAccountAmount;
   const isAccountPayment = header.bpType === "Account";
+  let controlAccount = String(header.controlAccount || "").trim();
 
   if (dueAmount <= 0) {
     throw new Error("Incoming payment amount must be greater than zero.");
@@ -750,6 +755,11 @@ const createIncomingPayment = async (payload = {}) => {
   }
   if (isAccountPayment) {
     await assertPostableAccount(cardCode);
+  } else if (paymentOnAccountAmount > 0 && !controlAccount) {
+    controlAccount = await getBusinessPartnerControlAccount(cardCode);
+    if (!controlAccount) {
+      throw new Error("Control Account is required for a Payment on Account.");
+    }
   }
 
   const paymentMeansPayload = await buildPaymentMeansPayload({
@@ -765,13 +775,13 @@ const createIncomingPayment = async (payload = {}) => {
     DueDate: toSapDate(header.dueDate || header.postingDate),
     TaxDate: toSapDate(header.documentDate || header.postingDate),
     VatDate: toSapDate(header.documentDate || header.postingDate),
-    DocCurrency: isAccountPayment ? header.docCurrency || undefined : selectedInvoices.find((invoice) => invoice.currency)?.currency || undefined,
+    DocCurrency: selectedInvoices.find((invoice) => invoice.currency)?.currency || header.docCurrency || undefined,
     PaymentType: "bopt_None",
     Series: header.seriesCode && header.seriesCode !== "Manual" ? Number(header.seriesCode) : undefined,
     DocNum: header.seriesCode === "Manual" && header.documentNumber ? Number(header.documentNumber) : undefined,
     BPLID: Number(header.branch) > 0 ? Number(header.branch) : undefined,
     CounterReference: header.referenceNumber || undefined,
-    ControlAccount: !isAccountPayment ? header.controlAccount || undefined : undefined,
+    ControlAccount: !isAccountPayment ? controlAccount || undefined : undefined,
     Remarks: payload.remarks || undefined,
     JournalRemarks: payload.journalRemarks || undefined,
     ...paymentMeansPayload,
