@@ -5,6 +5,7 @@ import ProductionOrderLines from "./components/ProductionOrderLines";
 import ProductionOrderList  from "./components/ProductionOrderList";
 import ItemSearchModal       from "../bom/components/ItemSearchModal";
 import CustomerSearchModal   from "./components/CustomerSearchModal";
+import { useAuth } from "../../auth/AuthContext";
 import {
   fetchProductionOrderReferenceData,
   fetchProductionOrderByDocEntry,
@@ -19,7 +20,6 @@ import {
   fetchProdOrderWarehouses,
   fetchProdOrderDistributionRules,
   fetchProdOrderProjects,
-  fetchProdOrderBranches,
   fetchProdOrderCustomers,
   fetchProdOrderResources,
   fetchProdOrderUsers,
@@ -110,7 +110,7 @@ const EMPTY_LINE = () => ({
   project:          "",
   location:         "",
   additional_qty:   0,
-  stage_id:         0,
+  stage_id:         "",
   route_sequence:   "",
   procurement_method:"",
   component_type:   "pit_Item",
@@ -130,8 +130,130 @@ const TYPE_LABELS = {
 };
 
 const formatSummaryNumber = (value) => Number(value || 0).toFixed(2);
+const firstWarehouse = (...values) => (
+  values.map((value) => String(value || "").trim()).find(Boolean) || ""
+);
+
+const normalizeLookupText = (value) => String(value || "").trim().toLowerCase();
+const getUserId = (user) => (user?.UserID != null ? String(user.UserID) : "");
+const getUserCode = (user) => String(user?.UserCode || "").trim();
+const getUserName = (user) => String(user?.UserName || "").trim();
+const getUserDisplay = (user) => getUserCode(user) || getUserName(user);
+const getUserDetail = (user) => {
+  const code = getUserCode(user);
+  const name = getUserName(user);
+  return code && name && code !== name ? name : "";
+};
+
+const findUserById = (users = [], userId = "") => (
+  users.find((user) => getUserId(user) === String(userId || ""))
+);
+
+const findDefaultSapUser = (users = [], authUser = {}) => {
+  const candidates = [authUser?.username, authUser?.fullName]
+    .map(normalizeLookupText)
+    .filter(Boolean);
+
+  if (!candidates.length) return null;
+
+  return users.find((user) => {
+    const code = normalizeLookupText(getUserCode(user));
+    const name = normalizeLookupText(getUserName(user));
+    return candidates.some((candidate) => (
+      code === candidate ||
+      name === candidate ||
+      code.endsWith(`-${candidate}`) ||
+      name.endsWith(`-${candidate}`)
+    ));
+  }) || null;
+};
+
+function UserPicker({ users, value, displayValue, disabled, onSelect, onRefresh }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef(null);
+  const selectedUser = findUserById(users, value);
+  const currentDisplay = selectedUser ? getUserDisplay(selectedUser) : (displayValue || "--");
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = (event) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open]);
+
+  const filteredUsers = users.filter((user) => {
+    const search = normalizeLookupText(query);
+    if (!search) return true;
+    return (
+      normalizeLookupText(getUserCode(user)).includes(search) ||
+      normalizeLookupText(getUserName(user)).includes(search)
+    );
+  });
+
+  const openPicker = () => {
+    if (disabled) return;
+    setOpen(true);
+    onRefresh?.();
+  };
+
+  const chooseUser = (user) => {
+    onSelect(user);
+    setQuery("");
+    setOpen(false);
+  };
+
+  return (
+    <div className="po-user-picker" ref={wrapRef}>
+      <button
+        type="button"
+        className="po-user-picker__field"
+        onClick={openPicker}
+        disabled={disabled}
+        title={currentDisplay}
+      >
+        <span>{currentDisplay}</span>
+        <span className="po-user-picker__arrow">v</span>
+      </button>
+      {open && (
+        <div className="po-user-picker__menu">
+          <input
+            className="po-user-picker__search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Find user"
+            autoFocus
+          />
+          <div className="po-user-picker__list">
+            {filteredUsers.length ? filteredUsers.map((user) => {
+              const id = getUserId(user);
+              return (
+                <button
+                  key={id || getUserDisplay(user)}
+                  type="button"
+                  className={`po-user-picker__option${id === String(value || "") ? " is-selected" : ""}`}
+                  onClick={() => chooseUser(user)}
+                >
+                  <span className="po-user-picker__code">{getUserDisplay(user)}</span>
+                  {getUserDetail(user) && <span className="po-user-picker__name">{getUserDetail(user)}</span>}
+                </button>
+              );
+            }) : (
+              <div className="po-user-picker__empty">No users found</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ProductionOrderModule() {
+  const { user: authUser } = useAuth();
   const [mode,    setMode]    = useState(MODES.ADD);
   const [tab,     setTab]     = useState(0);
   const [header,  setHeader]  = useState(EMPTY_HEADER);
@@ -147,7 +269,6 @@ export default function ProductionOrderModule() {
   const [projects,    setProjects]    = useState([]);
   const [series,      setSeries]      = useState([]);
   const [defaultSeries, setDefaultSeries] = useState("");
-  const [branches,    setBranches]    = useState([]);
   const [routeStages, setRouteStages] = useState([]);
   const [prodTypes,   setProdTypes]   = useState([]);
   const [prodStatuses,setProdStatuses]= useState([]);
@@ -162,6 +283,16 @@ export default function ProductionOrderModule() {
   const [linkedOrderModal, setLinkedOrderModal] = useState(false);
 
   const alertTimer = useRef(null);
+
+  const loadUsersLive = useCallback(() => (
+    fetchProdOrderUsers()
+      .then((loadedUsers) => {
+        const nextUsers = Array.isArray(loadedUsers) ? loadedUsers : [];
+        setUsers(nextUsers);
+        return nextUsers;
+      })
+      .catch(() => [])
+  ), []);
 
   useEffect(() => {
     // Load reference data
@@ -179,11 +310,11 @@ export default function ProductionOrderModule() {
             prev.series ? prev : { ...prev, series: loadedDefaultSeries }
           ));
         }
-        setBranches(d.branches || []);
         setRouteStages(d.route_stages || []);
         setProdTypes(d.production_order_types || []);
         setProdStatuses(d.production_order_statuses || []);
         setUsers(d.users || []);
+        loadUsersLive();
         const loadedLinkedToOptions = d.linked_to_options || [];
         setLinkedToOptions(loadedLinkedToOptions);
         const defaultLinkedTo =
@@ -200,10 +331,24 @@ export default function ProductionOrderModule() {
         fetchProdOrderWarehouses().then(setWarehouses).catch(() => {});
         fetchProdOrderDistributionRules().then(setDistRules).catch(() => {});
         fetchProdOrderProjects().then(setProjects).catch(() => {});
-        fetchProdOrderBranches().then(setBranches).catch(() => {});
-        fetchProdOrderUsers().then(setUsers).catch(() => {});
+        loadUsersLive();
       });
-  }, []);
+  }, [loadUsersLive]);
+
+  useEffect(() => {
+    if (mode !== MODES.ADD || header.user_id || header.user || !users.length) return;
+    const defaultUser = findDefaultSapUser(users, authUser);
+    if (!defaultUser) return;
+    setHeader((prev) => (
+      prev.user_id || prev.user
+        ? prev
+        : {
+            ...prev,
+            user_id: getUserId(defaultUser),
+            user: getUserDisplay(defaultUser),
+          }
+    ));
+  }, [authUser, header.user, header.user_id, mode, users]);
 
   const showAlert = useCallback((type, msg) => {
     clearTimeout(alertTimer.current);
@@ -248,15 +393,13 @@ export default function ProductionOrderModule() {
     }
   }, []);
 
-  const handleUserChange = useCallback((e) => {
-    const userId = e.target.value;
-    const selected = users.find((u) => String(u.UserID) === String(userId));
+  const handleUserSelect = useCallback((selected) => {
     setHeader((prev) => ({
       ...prev,
-      user_id: userId,
-      user: selected?.UserCode || selected?.UserName || "",
+      user_id: getUserId(selected),
+      user: getUserDisplay(selected),
     }));
-  }, [users]);
+  }, []);
 
   // ── Item selected from modal ───────────────────────────────────────────────
   const handleItemSelect = useCallback(async (item) => {
@@ -267,7 +410,13 @@ export default function ProductionOrderModule() {
       const isSpecialOrder = header.type === "bopotSpecial";
       const selectedItemCode = item.ItemNo || item.ItemCode || item.TreeCode || item.Code || "";
       const selectedItemName = item.ItemDescription || item.ItemName || item.ProductDescription || item.Name || "";
-      const selectedWarehouse = item.BOMWarehouse || item.Warehouse || item.DefaultWarehouse || "";
+      const selectedWarehouse = firstWarehouse(
+        item.BOMWarehouse,
+        item.Warehouse,
+        item.DefaultWarehouse,
+        item.WarehouseCode,
+        item.WhsCode
+      );
       const selectedUom = item.UoMName || item.InventoryUOM || item.InventoryUOMName || "";
 
       setHeader((prev) => ({
@@ -336,6 +485,14 @@ export default function ProductionOrderModule() {
     } else {
       const currentLine = lines.find((l) => l._id === target);
       const isResource = currentLine?.component_type === "pit_Resource";
+      const selectedWarehouse = firstWarehouse(
+        item.DefaultWarehouse,
+        item.Warehouse,
+        item.WarehouseCode,
+        item.WhsCode,
+        currentLine?.warehouse,
+        header.warehouse
+      );
       setLines((prev) =>
         prev.map((l) =>
           l._id === target
@@ -347,7 +504,7 @@ export default function ProductionOrderModule() {
                 uom: isResource ? "" : item.InventoryUOM || "",
                 uom_code: isResource ? "" : item.InventoryUOM || "",
                 uom_name: isResource ? "" : item.UoMName || item.InventoryUOM || "",
-                warehouse: item.DefaultWarehouse || l.warehouse,
+                warehouse: selectedWarehouse,
                 issue_method: isResource
                   ? (item.IssueMethod === "rimBackflush" ? "im_Backflush" : "im_Manual")
                   : l.issue_method,
@@ -356,7 +513,7 @@ export default function ProductionOrderModule() {
         )
       );
     }
-  }, [itemModal, header.planned_qty, header.type, lines, showAlert]);
+  }, [itemModal, header.planned_qty, header.type, header.warehouse, lines, showAlert]);
 
   // ── Customer selected from modal ───────────────────────────────────────────
   const handleCustomerSelect = useCallback((customer) => {
@@ -810,16 +967,6 @@ export default function ProductionOrderModule() {
             </div>
 
             <div className="im-field">
-              <label className="im-field__label po-lbl">Completed Qty</label>
-              <input className="im-field__input po-readonly" value={Number(header.completed_qty).toFixed(2)} readOnly style={{ width: 100 }} />
-            </div>
-
-            <div className="im-field">
-              <label className="im-field__label po-lbl">Rejected Qty</label>
-              <input className="im-field__input po-readonly" value={Number(header.rejected_qty).toFixed(2)} readOnly style={{ width: 100 }} />
-            </div>
-
-            <div className="im-field">
               <label className="im-field__label po-lbl">Warehouse</label>
               <select className="im-field__select" name="warehouse" value={header.warehouse}
                 onChange={handleHeaderChange} disabled={isReadOnly} style={{ width: 160 }}>
@@ -930,13 +1077,14 @@ export default function ProductionOrderModule() {
 
             <div className="im-field">
               <label className="im-field__label po-lbl-r">User</label>
-              <select className="im-field__select" name="user_id" value={header.user_id}
-                onChange={handleUserChange} disabled={isReadOnly} style={{ width: 160 }}>
-                <option value="">{header.user || "--"}</option>
-                {users.map((u) => (
-                  <option key={u.UserID} value={u.UserID}>{u.UserCode || u.UserName}</option>
-                ))}
-              </select>
+              <UserPicker
+                users={users}
+                value={header.user_id}
+                displayValue={header.user}
+                disabled={isReadOnly}
+                onSelect={handleUserSelect}
+                onRefresh={loadUsersLive}
+              />
             </div>
 
             <div className="im-field">
@@ -951,17 +1099,6 @@ export default function ProductionOrderModule() {
               </div>
               <input className="im-field__input po-readonly" 
                 value={header.customer_name} readOnly style={{ flex: 1, marginLeft: 4 }} />
-            </div>
-
-            <div className="im-field">
-              <label className="im-field__label po-lbl-r">Branch</label>
-              <select className="im-field__select" name="branch" value={header.branch}
-                onChange={handleHeaderChange} disabled={isReadOnly} style={{ width: 200 }}>
-                <option value="">--</option>
-                {branches.map((b) => (
-                  <option key={b.BPLID} value={b.BPLID}>{b.BPLName}</option>
-                ))}
-              </select>
             </div>
 
             <div className="im-field">
@@ -986,11 +1123,6 @@ export default function ProductionOrderModule() {
               </select>
             </div>
 
-            <div className="im-field">
-              <label className="im-field__label po-lbl-r">Journal Remark</label>
-              <input className="im-field__input" name="journal_remark" value={header.journal_remark}
-                onChange={handleHeaderChange} readOnly={isReadOnly} style={{ flex: 1 }} />
-            </div>
           </div>
 
         </div>

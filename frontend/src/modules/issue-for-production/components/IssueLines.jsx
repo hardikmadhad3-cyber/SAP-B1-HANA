@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import SapLookupModal from "../../../components/common/SapLookupModal";
 import BatchSerialModal from "./BatchSerialModal";
 
 const numeric = (value, decimals = 2) => {
@@ -185,75 +186,23 @@ export default function IssueLines({
   );
 }
 
-function WarehouseLookupModal({ warehouses, selected, onSelect, onClose }) {
-  const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(() =>
-    Math.max(0, warehouses.findIndex((warehouse) => warehouse.WarehouseCode === selected))
-  );
-  const filtered = warehouses.filter((warehouse) => {
-    const q = query.trim().toLowerCase();
-    if (!q) return true;
-    return String(warehouse.WarehouseCode || "").toLowerCase().includes(q) ||
-      String(warehouse.WarehouseName || "").toLowerCase().includes(q);
-  });
-  const active = filtered[activeIndex] || filtered[0] || null;
-
-  const choose = () => {
-    if (active) onSelect(active.WarehouseCode);
-  };
-
+function WarehouseLookupModal({ warehouses, onSelect, onClose }) {
   return (
-    <div className="ifp-po-modal-overlay" onClick={onClose}>
-      <div className="ifp-whs-modal ifp-sap-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="ifp-sap-modal__titlebar">
-          <span>List of Warehouses</span>
-          <div className="ifp-sap-modal__controls">
-            <button type="button" disabled>-</button>
-            <button type="button" disabled>[]</button>
-            <button type="button" onClick={onClose}>x</button>
-          </div>
-        </div>
-        <div className="ifp-sap-modal__body">
-          <div className="ifp-sap-find-row">
-            <label>Find</label>
-            <input value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }} />
-          </div>
-          <div className="ifp-sap-list-wrap">
-            <table className="ifp-sap-list-table">
-              <thead>
-                <tr>
-                  <th style={{ width: 30 }}>#</th>
-                  <th style={{ width: 100 }}>Whse</th>
-                  <th style={{ width: 260 }}>Warehouse Name</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((warehouse, index) => (
-                  <tr
-                    key={warehouse.WarehouseCode}
-                    className={index === activeIndex ? "is-selected" : ""}
-                    onClick={() => setActiveIndex(index)}
-                    onDoubleClick={() => onSelect(warehouse.WarehouseCode)}
-                  >
-                    <td>{index + 1}</td>
-                    <td>{warehouse.WarehouseCode}</td>
-                    <td>{warehouse.WarehouseName}</td>
-                  </tr>
-                ))}
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="ifp-sap-empty-cell">No warehouses found.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <div className="ifp-sap-modal__footer">
-          <button type="button" className="im-btn im-btn--primary" onClick={choose} disabled={!active}>Choose</button>
-          <button type="button" className="im-btn" onClick={onClose}>Cancel</button>
-        </div>
-      </div>
-    </div>
+    <SapLookupModal
+      open
+      title="List of Warehouses"
+      columns={[
+        { key: "rowNumber", label: "#", width: 44, searchable: false, render: (_warehouse, index) => index + 1 },
+        { key: "WarehouseCode", label: "Whse", width: 100 },
+        { key: "WarehouseName", label: "Warehouse Name" },
+      ]}
+      rows={Array.isArray(warehouses) ? warehouses : []}
+      searchPlaceholder="Search warehouses"
+      emptyMessage="No warehouses found."
+      onClose={onClose}
+      onSelect={(warehouse) => onSelect(warehouse.WarehouseCode)}
+      getRowKey={(warehouse, index) => `${warehouse.WarehouseCode || "whs"}-${index}`}
+      width="min(520px, calc(100% - 40px))"
+    />
   );
 }

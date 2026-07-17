@@ -25,8 +25,9 @@ export default function TaxTab({
 
   return (
     <div className="sap-tab-panel so-tab-panel so-tax-panel">
-      <div className="sap-tab-grid">
-        <div className="sap-tab-column">
+      <div className="so-tax-b1-layout">
+        <div className="so-tax-b1-top">
+          <div className="so-tax-b1-left">
           <div className="sap-section-heading-row">
             <div className="sap-section-title">Tax Information</div>
             <button type="button" className="so-btn so-btn--primary so-tax-info-btn" onClick={onOpenTaxInfoModal} disabled={!isEditable}>...</button>
@@ -55,27 +56,21 @@ export default function TaxTab({
               ))}
             </select>
           </div>
+          </div>
+
+          <label className="sap-checkbox-row so-tax-b1-export-check">
+            <input type="checkbox" name="exportFlag" checked={Boolean(header.exportFlag)} onChange={onHeaderChange} disabled={!isEditable} />
+            <span>Export</span>
+          </label>
         </div>
 
-        <div className="sap-tab-column">
-          <div className="sap-section-title">Export</div>
+        <div className="so-tax-b1-bottom">
+          <label className="sap-checkbox-row so-tax-b1-supply-check">
+            <input type="checkbox" name="supplyCovered" checked={header.supplyCovered !== false} onChange={onHeaderChange} disabled={!isEditable} />
+            <span>Supply Covered under Sec 7 of IGST Act</span>
+          </label>
 
-          <div className="sap-form-row">
-            <label className="so-tax-label">Export</label>
-            <label className="sap-checkbox-row">
-              <input type="checkbox" name="exportFlag" checked={Boolean(header.exportFlag)} onChange={onHeaderChange} disabled={!isEditable} />
-              <span>Export</span>
-            </label>
-          </div>
-
-          <div className="sap-form-row sap-form-row--full">
-            <label className="sap-checkbox-row">
-              <input type="checkbox" name="supplyCovered" checked={header.supplyCovered !== false} onChange={onHeaderChange} disabled={!isEditable} />
-              <span>Supply Covered under Sec 7 of IGST Act</span>
-            </label>
-          </div>
-
-          <div className="sap-form-row">
+          <div className="sap-form-row so-tax-b1-rate-row">
             <label className="so-tax-label">Differential % of Tax Rate</label>
             <select className="so-field__select" name="differentialTaxRate" value={header.differentialTaxRate || '100'} onChange={onHeaderChange} disabled={!isEditable}>
               {[100, 75, 50, 25].map((value) => (

@@ -187,7 +187,7 @@
 
 .im-lookup-table__row--selected,
 .im-lookup-table__row--selected:hover {
-  background: #ffe58a !important;
+  background: var(--sap-row-hover) !important;
 }
 
 .bom-tab-panel {

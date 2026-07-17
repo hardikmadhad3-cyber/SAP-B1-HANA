@@ -28,7 +28,7 @@ export default function AccountingTab({
   };
 
   return (
-    <div className="sap-tab-panel so-tab-panel">
+    <div className="sap-tab-panel so-tab-panel so-accounting-panel">
       <div className="sap-tab-grid">
         <div className="sap-tab-column">
           <div className="sap-section-title">Accounting</div>

@@ -21,6 +21,9 @@ const toInputValue = (value) => {
 const sanitizeNumericInput = (value) => String(value || '').replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
 const clampBatchQty = (requestedQty, availableQty) =>
   Math.min(Math.max(parseBatchNumber(requestedQty), 0), parseBatchNumber(availableQty));
+const getBatchWarehouseCode = (batch = {}) =>
+  String(batch.WhsCode || batch.whsCode || batch.warehouse || '').trim();
+const getBatchRowKey = (batchNumber, whsCode) => `${String(batchNumber || '').trim()}__${String(whsCode || '').trim()}`;
 
 export default function BatchAllocationModal({
   isOpen,
@@ -44,7 +47,7 @@ export default function BatchAllocationModal({
 
     const existingAllocations = new Map(
       (Array.isArray(line?.batches) ? line.batches : []).map((batch) => [
-        String(batch.batchNumber || '').trim(),
+        getBatchRowKey(batch.batchNumber, batch.whse || batch.WhsCode),
         {
           quantity: toInputValue(batch.quantity),
           expiryDate: batch.expiryDate || '',
@@ -55,11 +58,15 @@ export default function BatchAllocationModal({
     setRows(
       (Array.isArray(availableBatches) ? availableBatches : []).map((batch) => {
         const batchNumber = String(batch.BatchNumber || '').trim();
-        const existing = existingAllocations.get(batchNumber);
+        const whsCode = getBatchWarehouseCode(batch);
+        const existing = existingAllocations.get(getBatchRowKey(batchNumber, whsCode));
         const availableQty = parseBatchNumber(batch.AvailableQty);
         const existingBaseQty = clampBatchQty(existing?.quantity, availableQty);
         return {
+          key: getBatchRowKey(batchNumber, whsCode),
           batchNumber,
+          whsCode,
+          whsName: String(batch.WhsName || batch.whsName || '').trim(),
           availableQty,
           expiryDate: batch.ExpiryDate ? String(batch.ExpiryDate).slice(0, 10) : '',
           quantity: existing?.quantity ? toInputValue(existingBaseQty) : '',
@@ -73,6 +80,11 @@ export default function BatchAllocationModal({
   }, [availableBatches, isOpen, line, uomFactor]);
 
   const assignedQty = useMemo(() => sumBatchQty(rows), [rows]);
+  const selectedWarehouse = String(line?.whse || '').trim();
+  const otherWarehouseRows = useMemo(
+    () => rows.filter((row) => row.whsCode && selectedWarehouse && row.whsCode !== selectedWarehouse),
+    [rows, selectedWarehouse]
+  );
 
   const availabilityErrors = useMemo(
     () =>
@@ -81,7 +93,7 @@ export default function BatchAllocationModal({
         .filter((row) => parseBatchNumber(row.quantity) - parseBatchNumber(row.availableQty) > BATCH_QTY_TOLERANCE)
         .map(
           (row) =>
-            `${row.batchNumber} exceeds available quantity (${parseBatchNumber(row.availableQty).toFixed(2)} ${inventoryUoM})`
+            `${row.batchNumber} (${row.whsCode || '-'}) exceeds available quantity (${parseBatchNumber(row.availableQty).toFixed(2)} ${inventoryUoM})`
         ),
     [inventoryUoM, rows]
   );
@@ -92,10 +104,10 @@ export default function BatchAllocationModal({
 
   if (!isOpen || !line) return null;
 
-  const updateQty = (batchNumber, value) => {
+  const updateQty = (rowKey, value) => {
     setRows((prev) =>
       prev.map((row) => {
-        if (row.batchNumber !== batchNumber) return row;
+        if (row.key !== rowKey) return row;
         const numericValue = sanitizeNumericInput(value);
         const cappedBaseQty = clampBatchQty(numericValue, row.availableQty);
         return {
@@ -110,10 +122,10 @@ export default function BatchAllocationModal({
     );
   };
 
-  const updateDocumentQty = (batchNumber, value) => {
+  const updateDocumentQty = (rowKey, value) => {
     setRows((prev) =>
       prev.map((row) => {
-        if (row.batchNumber !== batchNumber) return row;
+        if (row.key !== rowKey) return row;
         const numericValue = sanitizeNumericInput(value);
         const requestedBaseQty = parseBatchNumber(numericValue) * uomFactor;
         const cappedBaseQty = clampBatchQty(requestedBaseQty, row.availableQty);
@@ -143,12 +155,19 @@ export default function BatchAllocationModal({
       return;
     }
 
-    const normalized = rows
-      .filter((row) => parseBatchNumber(row.quantity) > 0)
-      .map((row) => ({
+    const selectedRows = rows.filter((row) => parseBatchNumber(row.quantity) > 0);
+    const selectedWarehouses = [...new Set(selectedRows.map((row) => row.whsCode).filter(Boolean))];
+    if (selectedWarehouses.length > 1) {
+      alert('Select batches from one warehouse only.');
+      return;
+    }
+
+    const normalized = selectedRows.map((row) => ({
         batchNumber: row.batchNumber,
         quantity: String(parseBatchNumber(row.quantity)),
         expiryDate: row.expiryDate,
+        whse: row.whsCode,
+        warehouse: row.whsCode,
       }));
     onSave(normalized);
   };
@@ -194,6 +213,11 @@ export default function BatchAllocationModal({
 
         <div className="del-modal__body">
           {error && <div className="del-alert del-alert--warning">{error}</div>}
+          {!loading && rows.length > 0 && otherWarehouseRows.length > 0 && (
+            <div className="del-alert del-alert--warning" style={{ marginBottom: '12px', fontSize: '11px' }}>
+              Selected warehouse {selectedWarehouse || '-'} has no available batch quantity. Showing available stock from other warehouses; saving will change the line warehouse to the selected batch warehouse.
+            </div>
+          )}
 
           <div style={{ fontSize: '12px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
@@ -236,6 +260,7 @@ export default function BatchAllocationModal({
                 <thead>
                   <tr>
                     <th>Batch</th>
+                    <th>Whse</th>
                     <th>Available Qty ({inventoryUoM})</th>
                     <th>Available UOM {documentUoM ? `(${documentUoM})` : ''}</th>
                     <th>Allocate Qty UOM {documentUoM ? `(${documentUoM})` : ''}</th>
@@ -245,8 +270,9 @@ export default function BatchAllocationModal({
                 </thead>
                 <tbody>
                   {rows.map((row) => (
-                    <tr key={row.batchNumber}>
+                    <tr key={row.key}>
                       <td>{row.batchNumber}</td>
+                      <td>{row.whsCode}{row.whsName ? ` - ${row.whsName}` : ''}</td>
                       <td style={{ textAlign: 'right' }}>{row.availableQty.toFixed(2)}</td>
                       <td style={{ textAlign: 'right' }}>
                         {hasDocumentUomConversion
@@ -257,7 +283,7 @@ export default function BatchAllocationModal({
                         <input
                           className="del-grid__input"
                           value={row.documentQuantity || ''}
-                          onChange={(e) => updateDocumentQty(row.batchNumber, e.target.value)}
+                          onChange={(e) => updateDocumentQty(row.key, e.target.value)}
                           placeholder="0"
                           style={{ textAlign: 'right' }}
                         />
@@ -266,7 +292,7 @@ export default function BatchAllocationModal({
                         <input
                           className="del-grid__input"
                           value={row.quantity}
-                          onChange={(e) => updateQty(row.batchNumber, e.target.value)}
+                          onChange={(e) => updateQty(row.key, e.target.value)}
                           placeholder="0"
                           style={{ textAlign: 'right' }}
                         />

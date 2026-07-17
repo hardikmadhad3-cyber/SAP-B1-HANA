@@ -254,7 +254,7 @@ function DistributionRuleAssignmentModal({
                     <tr
                       key={dimensionCode}
                       onClick={() => setActiveDimensionCode(dimensionCode)}
-                      style={{ background: isActive ? '#ffe999' : index % 2 ? 'var(--sap-row-even)' : 'var(--sap-surface)', cursor: 'pointer' }}
+                      style={{ background: isActive ? 'var(--sap-row-hover)' : index % 2 ? 'var(--sap-row-even)' : 'var(--sap-surface)', cursor: 'pointer' }}
                     >
                       <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)' }}>{index + 1}</td>
                       <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)', fontWeight: 600 }}>{getDimensionName(dimension)}</td>
@@ -300,7 +300,7 @@ function DistributionRuleAssignmentModal({
                       key={`${getRuleCode(rule)}-${index}`}
                       onClick={() => setSelectedRuleIndex(index)}
                       onDoubleClick={() => selectRule(rule)}
-                      style={{ background: selectedRuleIndex === index ? '#ffe999' : index % 2 ? 'var(--sap-row-even)' : 'var(--sap-surface)', cursor: 'pointer' }}
+                      style={{ background: selectedRuleIndex === index ? 'var(--sap-row-hover)' : index % 2 ? 'var(--sap-row-even)' : 'var(--sap-surface)', cursor: 'pointer' }}
                     >
                       <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)', fontWeight: 600 }}>{getRuleCode(rule)}</td>
                       <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)' }}>{getRuleName(rule)}</td>

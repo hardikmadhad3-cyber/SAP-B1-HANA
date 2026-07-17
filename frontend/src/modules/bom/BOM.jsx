@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import "../../modules/item-master/styles/itemMaster.css";
 import "./bom.css";
-import FindResultsModal from "../../components/FindResultsModal";
 import BOMLines from "./components/BOMLines";
 import BOMAttachments from "./components/BOMAttachments";
 import ItemSearchModal from "./components/ItemSearchModal";
@@ -11,7 +10,6 @@ import {
   createBOM,
   updateBOM,
   fetchBOMItems,
-  fetchBOMList,
   fetchBOMWarehouses,
   fetchBOMPriceLists,
   fetchBOMDistributionRules,
@@ -103,8 +101,6 @@ export default function BOMModule() {
   const [projects, setProjects] = useState([]);
 
   const [itemModal, setItemModal] = useState({ open: false, target: null });
-  const [findResults, setFindResults] = useState([]);
-  const [showFindResults, setShowFindResults] = useState(false);
 
   const alertTimer = useRef(null);
   const isProductionBOM = header.TreeType === "iProductionTree";
@@ -158,15 +154,11 @@ export default function BOMModule() {
     setAttachments([]);
     setTab(0);
     setAlert(null);
-    setFindResults([]);
-    setShowFindResults(false);
   }, []);
 
   const enterFindMode = useCallback(() => {
-    setMode(MODES.FIND);
-    resetForm();
-    setItemModal({ open: true, target: "header" });
-  }, [resetForm]);
+    navigate("/bom/find");
+  }, [navigate]);
 
   const handleHeaderChange = useCallback((e) => {
     const { name, value } = e.target;
@@ -425,23 +417,14 @@ export default function BOMModule() {
           return;
         }
 
-        const results = await fetchBOMList(query);
-        if (results.length === 0) {
-          showAlert("error", "No matching BOMs found.");
-        } else if (results.length === 1) {
-          const data = await loadExistingBOM(results[0].TreeCode);
-          showAlert("success", `BOM "${data.TreeCode}" loaded.`);
-        } else {
-          setFindResults(results);
-          setShowFindResults(true);
-        }
+        navigate("/bom/find");
       } catch (err) {
         showAlert("error", err.response?.data?.message || err.message || "BOM search failed.");
       } finally {
         setLoading(false);
       }
     },
-    [header.TreeCode, header.ProductDescription, loadExistingBOM, showAlert]
+    [header.TreeCode, header.ProductDescription, loadExistingBOM, navigate, showAlert]
   );
 
   useEffect(() => {
@@ -482,22 +465,6 @@ export default function BOMModule() {
       ignore = true;
     };
   }, [loadExistingBOM, location.pathname, location.search, location.state, navigate, showAlert]);
-
-  const handleFindResultSelect = useCallback(
-    async (row) => {
-      setShowFindResults(false);
-      setLoading(true);
-      try {
-        const data = await loadExistingBOM(row.TreeCode);
-        showAlert("success", `BOM "${data.TreeCode}" loaded.`);
-      } catch (err) {
-        showAlert("error", err.response?.data?.message || err.message || "Failed to load BOM.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [loadExistingBOM, showAlert]
-  );
 
   const loadBOM = useCallback((data) => {
     setHeader({
@@ -780,27 +747,6 @@ export default function BOMModule() {
         {tab === 1 && <BOMAttachments attachments={attachments} onChange={setAttachments} />}
       </div>
 
-      {itemModal.open && itemModal.target === "header" && mode === MODES.FIND && (
-        <ItemSearchModal
-          onSelect={(bom) => {
-            setItemModal({ open: false, target: null });
-            handleFind(bom.TreeCode);
-          }}
-          onClose={() => setItemModal({ open: false, target: null })}
-          fetchItems={fetchBOMList}
-          columns={[
-            { key: "TreeCode", label: "Product No." },
-            { key: "ProductDescription", label: "Description" },
-            {
-              key: "TreeType",
-              label: "Type",
-              render: (value) => BOM_TYPES.find((type) => type.value === value)?.label || value,
-            },
-          ]}
-          title="List of Bill of Materials"
-        />
-      )}
-
       {itemModal.open && (itemModal.target !== "header" || mode !== MODES.FIND) && (
         <ItemSearchModal
           onSelect={handleItemSelect}
@@ -827,24 +773,9 @@ export default function BOMModule() {
             },
           ]}
           title="List of Items"
-          allowNew
-          onNew={() => setItemModal({ open: false, target: null })}
         />
       )}
 
-      <FindResultsModal
-        open={showFindResults}
-        title="BOM Search Results"
-        columns={[
-          { key: "TreeCode", label: "Product No." },
-          { key: "ProductDescription", label: "Description" },
-          { key: "TreeType", label: "Type" },
-        ]}
-        rows={findResults}
-        getRowKey={(row) => row.TreeCode}
-        onClose={() => setShowFindResults(false)}
-        onSelect={handleFindResultSelect}
-      />
     </div>
   );
 }

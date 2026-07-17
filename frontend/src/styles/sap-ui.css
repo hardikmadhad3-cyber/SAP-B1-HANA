@@ -2519,3 +2519,531 @@
   background: linear-gradient(180deg, #087ec8 0%, #00619e 100%) !important;
   color: #ffffff !important;
 }
+
+/* Shared document UDF/Form Settings sidebar sizing.
+   The sidebar is a CSS Grid sibling of the document body, so stretch it to
+   the document row instead of using a viewport-height estimate. */
+.sap-document-page .sap-document-layout.is-sidebar-open,
+.sap-document-page .po-layout.is-sidebar-open,
+.sap-document-page .so-layout.is-sidebar-open,
+.sap-document-page .del-layout.is-sidebar-open {
+  align-items: stretch !important;
+}
+
+.sap-document-page .sap-header-udf-panel,
+.sap-document-page .po-layout__sidebar,
+.sap-document-page .so-layout__sidebar,
+.sap-document-page .del-layout__sidebar {
+  align-self: stretch !important;
+  display: flex !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  contain: layout size !important;
+  overflow: hidden !important;
+}
+
+.sap-document-page .sap-header-udf-panel > .po-udf-sidebar-card,
+.sap-document-page .po-layout__sidebar > .po-udf-sidebar-card,
+.sap-document-page .so-layout__sidebar > .po-udf-sidebar-card,
+.sap-document-page .del-layout__sidebar > .po-udf-sidebar-card {
+  position: static !important;
+  top: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+}
+
+.sap-document-page .sap-header-udf-panel .po-udf-sidebar-body,
+.sap-document-page .po-layout__sidebar .po-udf-sidebar-body,
+.sap-document-page .so-layout__sidebar .po-udf-sidebar-body,
+.sap-document-page .del-layout__sidebar .po-udf-sidebar-body {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+@media (max-width: 992px) {
+  .sap-document-page .sap-header-udf-panel,
+  .sap-document-page .po-layout__sidebar,
+  .sap-document-page .so-layout__sidebar,
+  .sap-document-page .del-layout__sidebar {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .sap-document-page .sap-header-udf-panel > .po-udf-sidebar-card,
+  .sap-document-page .po-layout__sidebar > .po-udf-sidebar-card,
+  .sap-document-page .so-layout__sidebar > .po-udf-sidebar-card,
+  .sap-document-page .del-layout__sidebar > .po-udf-sidebar-card {
+    height: auto !important;
+    max-height: none !important;
+  }
+}
+
+.sap-lookup-modal__overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 21000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.34);
+}
+
+.app-shell__content > .sap-lookup-modal__overlay,
+.page-window-frame .sap-lookup-modal__overlay {
+  position: absolute;
+}
+
+body > .sap-lookup-modal__overlay {
+  position: fixed;
+}
+
+.sap-lookup-modal {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  max-height: calc(100% - 48px);
+  min-height: 220px;
+  overflow: hidden;
+  border: 1px solid var(--sap-border-strong);
+  border-radius: var(--sap-radius-md);
+  background: var(--sap-surface);
+  color: var(--sap-text);
+  font-family: var(--sap-font-family);
+  box-shadow: var(--sap-shadow-modal);
+}
+
+body > .sap-lookup-modal__overlay .sap-lookup-modal {
+  max-height: calc(100vh - 48px);
+}
+
+.sap-lookup-modal__header,
+.sap-lookup-modal__footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--sap-toolbar-bg);
+}
+
+.sap-lookup-modal__header {
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 7px 10px 7px 12px;
+  border-bottom: 1px solid var(--sap-border);
+  color: var(--sap-heading);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sap-lookup-modal__close {
+  width: 28px;
+  min-width: 28px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 1px solid var(--sap-border-strong);
+  border-radius: var(--sap-radius-sm);
+  background: linear-gradient(180deg, #ffffff 0%, #e8edf2 100%);
+  color: var(--sap-text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sap-lookup-modal__filter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sap-border-soft);
+}
+
+.sap-lookup-modal__filter label {
+  min-width: 32px;
+  margin: 0;
+  color: var(--sap-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sap-lookup-modal__filter input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  border: 1px solid var(--sap-border-strong);
+  border-radius: var(--sap-radius-xs);
+  background: var(--sap-surface);
+  color: var(--sap-text);
+  font-size: 12px;
+  padding: 2px 7px;
+}
+
+.sap-lookup-modal__filter input:focus {
+  outline: none;
+  border-color: var(--sap-primary);
+  box-shadow: 0 0 0 2px var(--sap-primary-soft);
+}
+
+.sap-lookup-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 10px;
+}
+
+.sap-lookup-modal__table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--sap-text);
+  font-family: var(--sap-font-family);
+  font-size: 11px;
+}
+
+.sap-lookup-modal__table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 5px 8px;
+  border: 1px solid var(--sap-border);
+  background: var(--sap-toolbar-bg);
+  color: var(--sap-heading);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sap-lookup-modal__table td {
+  padding: 5px 8px;
+  border: 1px solid var(--sap-border-soft);
+  white-space: nowrap;
+}
+
+.sap-lookup-modal__table td.is-right {
+  text-align: right;
+}
+
+.sap-lookup-modal__table tbody tr {
+  cursor: pointer;
+}
+
+.sap-lookup-modal__table tbody tr:nth-child(even) {
+  background: var(--sap-row-even);
+}
+
+.sap-lookup-modal__table tbody tr:hover,
+.sap-lookup-modal__table tbody tr.is-selected {
+  background: var(--sap-row-hover);
+}
+
+.sap-lookup-modal__table tbody tr.is-selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--sap-primary);
+}
+
+.sap-lookup-modal__empty {
+  padding: 28px 12px;
+  color: var(--sap-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.sap-lookup-modal__footer {
+  justify-content: flex-end;
+  padding: 9px 12px;
+  border-top: 1px solid var(--sap-border);
+}
+
+.sap-lookup-modal__footer span {
+  margin-right: auto;
+  color: var(--sap-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sap-lookup-modal__footer-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  color: var(--sap-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sap-lookup-modal__btn {
+  min-width: 74px;
+  min-height: 24px;
+  padding: 3px 12px;
+  border: 1px solid var(--sap-border-strong);
+  border-radius: var(--sap-radius-sm);
+  background: linear-gradient(180deg, #ffffff 0%, #e8edf2 100%);
+  color: var(--sap-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.sap-lookup-modal__btn--primary {
+  border-color: var(--sap-primary-dark);
+  background: linear-gradient(180deg, var(--sap-primary) 0%, var(--sap-primary-dark) 100%);
+  color: #ffffff;
+}
+
+.sap-lookup-modal__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.ip-payment-means-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 100200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.34);
+}
+
+.ip-payment-means {
+  width: 632px;
+  max-width: calc(100% - 40px);
+  overflow: hidden;
+  border: 1px solid var(--sap-border-strong);
+  border-radius: var(--sap-radius-md);
+  background: var(--sap-surface);
+  color: var(--sap-text);
+  font-family: var(--sap-font-family);
+  font-size: 12px;
+  box-shadow: var(--sap-shadow-modal);
+}
+
+.ip-payment-means__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 7px 10px 7px 12px;
+  border-bottom: 1px solid var(--sap-border);
+  background: var(--sap-toolbar-bg);
+  color: var(--sap-heading);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ip-payment-means__body {
+  padding: 10px 16px;
+}
+
+.ip-payment-means__currency,
+.ip-payment-means__panel label,
+.ip-payment-means__footer-fields label {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.ip-payment-means__currency input,
+.ip-payment-means__panel input,
+.ip-payment-means__panel select,
+.ip-payment-means__footer-fields input {
+  height: 22px;
+  border: 1px solid var(--sap-border-strong);
+  border-radius: var(--sap-radius-xs);
+  background: var(--sap-surface);
+  color: var(--sap-text);
+  padding: 0 5px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.ip-payment-means__currency input:focus,
+.ip-payment-means__panel input:focus,
+.ip-payment-means__panel select:focus {
+  outline: none;
+  border-color: var(--sap-primary);
+  box-shadow: 0 0 0 2px var(--sap-primary-soft);
+}
+
+.ip-payment-means__tabs {
+  display: flex;
+  align-items: flex-end;
+  margin-top: 10px;
+  border-bottom: 1px solid var(--sap-primary);
+}
+
+.ip-payment-means__tabs button {
+  min-width: 116px;
+  height: 24px;
+  border: 1px solid var(--sap-border);
+  border-bottom: 0;
+  background: var(--sap-tab-bg);
+  color: var(--sap-text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ip-payment-means__tabs button.is-active {
+  margin-bottom: -1px;
+  border-color: var(--sap-primary);
+  background: var(--sap-surface);
+  color: var(--sap-heading);
+  font-weight: 700;
+}
+
+.ip-payment-means__panel {
+  min-height: 298px;
+  padding: 14px 8px;
+  border: 1px solid var(--sap-border);
+  border-top: 0;
+}
+
+.ip-payment-means__panel .sap-lookup {
+  width: 100%;
+}
+
+.ip-payment-means__footer-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 36px;
+  margin-top: 8px;
+}
+
+.ip-payment-means__footer-fields input {
+  text-align: right;
+}
+
+.ip-payment-means__paid {
+  grid-column: 2;
+}
+
+.ip-payment-means__error {
+  margin-top: 8px;
+  border: 1px solid #d34b4b;
+  background: #fff1f1;
+  color: var(--sap-danger);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.ip-payment-means__actions {
+  display: flex;
+  gap: 8px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--sap-border);
+  background: var(--sap-toolbar-bg);
+}
+
+.ip-payment-means .po-btn {
+  height: 24px;
+  padding: 3px 18px;
+  border: 1px solid var(--sap-border-strong);
+  border-radius: var(--sap-radius-sm);
+  background: linear-gradient(180deg, #ffffff 0%, #e8edf2 100%);
+  color: var(--sap-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ip-payment-means .po-btn--primary {
+  border-color: var(--sap-primary-dark);
+  background: linear-gradient(180deg, var(--sap-primary) 0%, var(--sap-primary-dark) 100%);
+  color: #ffffff;
+}
+
+.app-shell :is(
+  .sap-document-page,
+  .po-page,
+  .so-page,
+  .del-page,
+  .im-page,
+  .bom-page,
+  .uom-page,
+  .ip-payments-page,
+  .op-payments-page
+) :is(.po-field, .so-field, .del-field, .im-field) {
+  min-height: 26px;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.app-shell :is(
+  .sap-document-page,
+  .po-page,
+  .so-page,
+  .del-page,
+  .im-page,
+  .bom-page,
+  .uom-page,
+  .ip-payments-page,
+  .op-payments-page
+) :is(.po-field__label, .so-field__label, .del-field__label, .im-field__label) {
+  flex: 0 0 118px;
+  max-width: 118px;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.app-shell :is(
+  .sap-document-page,
+  .po-page,
+  .so-page,
+  .del-page,
+  .im-page,
+  .bom-page,
+  .uom-page,
+  .ip-payments-page,
+  .op-payments-page
+) :is(.po-field__input, .po-field__select, .so-field__input, .so-field__select, .del-field__input, .del-field__select, .im-field__input, .im-field__select) {
+  height: 22px;
+  min-height: 22px;
+}
+
+@media (max-width: 900px) {
+  .app-shell :is(
+    .sap-document-page,
+    .po-page,
+    .so-page,
+    .del-page,
+    .im-page,
+    .bom-page,
+    .uom-page,
+    .ip-payments-page,
+    .op-payments-page
+  ) :is(.po-field, .so-field, .del-field, .im-field) {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .app-shell :is(
+    .sap-document-page,
+    .po-page,
+    .so-page,
+    .del-page,
+    .im-page,
+    .bom-page,
+    .uom-page,
+    .ip-payments-page,
+    .op-payments-page
+  ) :is(.po-field__label, .so-field__label, .del-field__label, .im-field__label) {
+    flex: none;
+    max-width: none;
+    text-align: left;
+  }
+}

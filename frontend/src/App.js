@@ -18,7 +18,6 @@ import AdminLoginPage from "./pages/AdminLoginPage";
 import LoginPage from "./pages/LoginPage";
 import lazyWithRetry from "./utils/lazyWithRetry";
 import { focusFirstSapField, installSapTabNavigation } from "./utils/sapTabNavigation";
-import "./App.css";
 import "./styles/auth.css";
 import "./styles/admin-panel.css";
 import "./styles/sap-ui.css";
@@ -70,6 +69,7 @@ const NCSalesOrderList = lazyWithRetry(() => import("./pages/NCSalesOrderList"))
 const SODASalesOrder = lazyWithRetry(() => import("./pages/SODASalesOrder"));
 const SODASalesOrderList = lazyWithRetry(() => import("./pages/SODASalesOrderList"));
 const BOM = lazyWithRetry(() => import("./pages/BOM"));
+const BOMList = lazyWithRetry(() => import("./pages/BOMList"));
 const ProductionOrder = lazyWithRetry(() => import("./pages/ProductionOrder"));
 const IssueForProduction = lazyWithRetry(() => import("./pages/IssueForProduction"));
 const ReceiptFromProduction = lazyWithRetry(() => import("./pages/ReceiptFromProduction"));
@@ -90,7 +90,9 @@ const APCreditMemoList = lazyWithRetry(() => import("./pages/APCreditMemoList"))
 const ARCreditMemo = lazyWithRetry(() => import("./pages/ARCreditMemo"));
 const ARCreditMemoList = lazyWithRetry(() => import("./pages/ARCreditMemoList"));
 const IncomingPayments = lazyWithRetry(() => import("./pages/IncomingPayments"));
+const IncomingPaymentsList = lazyWithRetry(() => import("./pages/IncomingPaymentsList"));
 const OutgoingPayments = lazyWithRetry(() => import("./pages/OutgoingPayments"));
+const OutgoingPaymentsList = lazyWithRetry(() => import("./pages/OutgoingPaymentsList"));
 const JournalEntry = lazyWithRetry(() => import("./pages/JournalEntry"));
 const SalesQuotation = lazyWithRetry(() => import("./pages/SalesQuotation"));
 const SalesQuotationList = lazyWithRetry(() => import("./pages/SalesQuotationList"));
@@ -295,6 +297,7 @@ function App() {
                   <Route path="/reports/financial/financial/:reportKey" element={<FinancialStatementReportPage />} />
                   <Route path="/reports/production/bill-of-materials" element={<BillOfMaterialsReportPage />} />
                   <Route path="/bom" element={<BOM />} />
+                  <Route path="/bom/find" element={<BOMList />} />
                   <Route path="/production-order" element={<ProductionOrder />} />
                   <Route path="/issue-for-production" element={<IssueForProduction />} />
                   <Route path="/receipt-from-production" element={<ReceiptFromProduction />} />
@@ -315,7 +318,9 @@ function App() {
                   <Route path="/ap-credit-memo" element={<APCreditMemo />} />
                   <Route path="/ap-credit-memo/find" element={<APCreditMemoList />} />
                   <Route path="/incoming-payments" element={<IncomingPayments />} />
+                  <Route path="/incoming-payments/find" element={<IncomingPaymentsList />} />
                   <Route path="/outgoing-payments" element={<OutgoingPayments />} />
+                  <Route path="/outgoing-payments/find" element={<OutgoingPaymentsList />} />
                   <Route path="/journal-entry" element={<JournalEntry />} />
                 </Route>
               </Route>

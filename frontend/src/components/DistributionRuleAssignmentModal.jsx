@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import SapLookupModal from './common/SapLookupModal';
 
 const FIELD_BY_DIMENSION = {
   1: 'distributionRule',
@@ -61,8 +63,6 @@ export default function DistributionRuleAssignmentModal({
   const [draft, setDraft] = useState({});
   const [activeDimensionCode, setActiveDimensionCode] = useState('');
   const [pickerDimensionCode, setPickerDimensionCode] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRuleIndex, setSelectedRuleIndex] = useState(-1);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -75,24 +75,12 @@ export default function DistributionRuleAssignmentModal({
     setDraft(nextDraft);
     setActiveDimensionCode(dimensionRows[0] ? getDimensionCode(dimensionRows[0]) : '1');
     setPickerDimensionCode('');
-    setSearchQuery('');
-    setSelectedRuleIndex(-1);
   }, [dimensionRows, isOpen, line]);
 
   const pickerDimension = dimensionRows.find((dimension) => getDimensionCode(dimension) === pickerDimensionCode);
   const activeRules = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    return (rules || [])
-      .filter((rule) => getRuleDimensionCode(rule) === pickerDimensionCode)
-      .filter((rule) => {
-        if (!query) return true;
-        return getRuleCode(rule).toLowerCase().includes(query) || getRuleName(rule).toLowerCase().includes(query);
-      });
-  }, [pickerDimensionCode, rules, searchQuery]);
-
-  useEffect(() => {
-    setSelectedRuleIndex(-1);
-  }, [pickerDimensionCode, searchQuery]);
+    return (rules || []).filter((rule) => getRuleDimensionCode(rule) === pickerDimensionCode);
+  }, [pickerDimensionCode, rules]);
 
   if (!isOpen) return null;
 
@@ -101,22 +89,13 @@ export default function DistributionRuleAssignmentModal({
     setPickerDimensionCode('');
   };
 
-  const chooseSelectedRule = () => {
-    if (selectedRuleIndex < 0 || !activeRules[selectedRuleIndex]) return;
-    selectRule(activeRules[selectedRuleIndex]);
-  };
-
   const openRulePicker = (dimensionCode) => {
     setActiveDimensionCode(dimensionCode);
     setPickerDimensionCode(dimensionCode);
-    setSearchQuery('');
-    setSelectedRuleIndex(-1);
   };
 
   const closeRulePicker = () => {
     setPickerDimensionCode('');
-    setSearchQuery('');
-    setSelectedRuleIndex(-1);
   };
 
   const getSelectedRuleName = (dimensionCode) => {
@@ -126,9 +105,9 @@ export default function DistributionRuleAssignmentModal({
     return selectedRule ? getRuleName(selectedRule) : '';
   };
 
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15, 23, 42, 0.34)' }} onClick={onClose}>
-      <div style={{ width: 690, maxWidth: '94vw', maxHeight: '86vh', display: 'flex', flexDirection: 'column', background: 'var(--sap-surface)', border: '1px solid var(--sap-border-strong)', boxShadow: 'var(--sap-shadow-modal)' }} onClick={(event) => event.stopPropagation()}>
+  const modal = (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 21000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15, 23, 42, 0.34)' }} onClick={onClose}>
+      <div style={{ width: 690, maxWidth: 'calc(100% - 40px)', maxHeight: 'calc(100% - 48px)', display: 'flex', flexDirection: 'column', background: 'var(--sap-surface)', border: '1px solid var(--sap-border-strong)', boxShadow: 'var(--sap-shadow-modal)' }} onClick={(event) => event.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--sap-toolbar-bg)', borderBottom: '3px solid var(--sap-primary)' }}>
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Select Distr. Rule</h3>
           <button type="button" onClick={onClose} style={{ width: 24, height: 22, border: '1px solid var(--sap-border-strong)', background: '#f5f6f7', cursor: 'pointer' }}>x</button>
@@ -149,7 +128,7 @@ export default function DistributionRuleAssignmentModal({
                 const dimensionCode = getDimensionCode(dimension);
                 const isActive = dimensionCode === activeDimensionCode;
                 return (
-                  <tr key={dimensionCode} onClick={() => setActiveDimensionCode(dimensionCode)} style={{ background: isActive ? '#ffe999' : index % 2 ? 'var(--sap-row-even)' : 'var(--sap-surface)', cursor: 'pointer' }}>
+                  <tr key={dimensionCode} onClick={() => setActiveDimensionCode(dimensionCode)} style={{ background: isActive ? 'var(--sap-row-hover)' : index % 2 ? 'var(--sap-row-even)' : 'var(--sap-surface)', cursor: 'pointer' }}>
                     <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)' }}>{index + 1}</td>
                     <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)', fontWeight: 600 }}>{getDimensionName(dimension)}</td>
                     <td style={{ padding: 3, border: '1px solid var(--sap-border)' }}>
@@ -169,47 +148,28 @@ export default function DistributionRuleAssignmentModal({
           <button type="button" onClick={onClose} style={buttonStyle}>Cancel</button>
         </div>
 
-        {pickerDimensionCode ? (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15, 23, 42, 0.22)' }} onClick={closeRulePicker}>
-            <div style={{ width: 560, maxWidth: '92vw', maxHeight: '78vh', display: 'flex', flexDirection: 'column', background: 'var(--sap-surface)', border: '1px solid var(--sap-border-strong)', boxShadow: 'var(--sap-shadow-modal)' }} onClick={(event) => event.stopPropagation()}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderBottom: '3px solid var(--sap-primary)', background: 'var(--sap-toolbar-bg)', fontWeight: 600, fontSize: 13 }}>
-                <span>List of Distribution Rules</span>
-                <button type="button" onClick={closeRulePicker} style={{ width: 24, height: 22, border: '1px solid var(--sap-border-strong)', background: '#f5f6f7', cursor: 'pointer' }}>x</button>
-              </div>
-              <div style={{ padding: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <label style={{ minWidth: 32, fontSize: 12, fontWeight: 600 }}>Find</label>
-                <input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} style={{ flex: 1, height: 24, border: '1px solid var(--sap-border-strong)', padding: '2px 6px' }} />
-              </div>
-              <div style={{ padding: '0 10px 8px', fontSize: 12, color: 'var(--sap-text-muted)' }}>{pickerDimension ? getDimensionName(pickerDimension) : ''}</div>
-              <div style={{ flex: 1, minHeight: 160, overflow: 'auto', padding: '0 10px 10px' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ background: 'var(--sap-toolbar-bg)' }}>
-                      <th style={{ padding: 6, textAlign: 'left', border: '1px solid var(--sap-border)' }}>Distribution Rule</th>
-                      <th style={{ padding: 6, textAlign: 'left', border: '1px solid var(--sap-border)' }}>Distribution Rule Name</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeRules.length ? activeRules.map((rule, index) => (
-                      <tr key={`${getRuleCode(rule)}-${index}`} onClick={() => setSelectedRuleIndex(index)} onDoubleClick={() => selectRule(rule)} style={{ background: selectedRuleIndex === index ? '#ffe999' : index % 2 ? 'var(--sap-row-even)' : 'var(--sap-surface)', cursor: 'pointer' }}>
-                        <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)', fontWeight: 600 }}>{getRuleCode(rule)}</td>
-                        <td style={{ padding: '5px 6px', border: '1px solid var(--sap-border)' }}>{getRuleName(rule)}</td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={2} style={{ padding: 16, textAlign: 'center', color: 'var(--sap-text-muted)' }}>No distribution rules found</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div style={{ padding: 10, borderTop: '1px solid var(--sap-border)', display: 'flex', justifyContent: 'flex-end' }}>
-                <button type="button" onClick={chooseSelectedRule} disabled={selectedRuleIndex < 0} style={{ ...buttonStyle, opacity: selectedRuleIndex >= 0 ? 1 : 0.6 }}>Choose</button>
-              </div>
-            </div>
-          </div>
-        ) : null}
+        <SapLookupModal
+          open={Boolean(pickerDimensionCode)}
+          title="List of Distribution Rules"
+          columns={[
+            { key: 'ruleCode', label: 'Distribution Rule', width: 180, render: getRuleCode },
+            { key: 'ruleName', label: 'Distribution Rule Name', render: getRuleName },
+          ]}
+          rows={activeRules}
+          searchPlaceholder={pickerDimension ? `Search ${getDimensionName(pickerDimension)}` : 'Search distribution rules'}
+          emptyMessage="No distribution rules found"
+          onClose={closeRulePicker}
+          onSelect={selectRule}
+          getRowKey={(rule, index) => `${getRuleDimensionCode(rule)}-${getRuleCode(rule)}-${index}`}
+          width="min(620px, calc(100vw - 40px))"
+        />
       </div>
     </div>
   );
+
+  const target = typeof document !== 'undefined'
+    ? document.querySelector('.app-shell__content') || document.body
+    : null;
+
+  return target ? createPortal(modal, target) : modal;
 }

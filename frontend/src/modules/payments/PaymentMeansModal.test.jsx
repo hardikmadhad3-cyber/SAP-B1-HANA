@@ -27,4 +27,9 @@ describe("validatePaymentMeans", () => {
     const means = createDefaultPaymentMeans({ cashAccount: "100000", amount: 1000 });
     expect(validatePaymentMeans(means, 1000)).toBe("");
   });
+
+  test("accepts a paid amount as the due amount for advance payments", () => {
+    const means = createDefaultPaymentMeans({ cashAccount: "100000", amount: 1200 });
+    expect(validatePaymentMeans(means, 0, { allowPaidAsTotalDue: true })).toBe("");
+  });
 });

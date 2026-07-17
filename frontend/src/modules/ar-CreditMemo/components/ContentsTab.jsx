@@ -8,14 +8,6 @@ const MATRIX_COLS = AR_CREDIT_MEMO_WORKBOOK_COLUMNS;
 
 const INDEX_COL_WIDTH = 42;
 const ACTION_COL_WIDTH = 48;
-const SUPPRESSED_ROW_UDFS = new Set([
-  'APIVDOCKEY',
-  'APIVDOCNUM',
-  'APIVLINENUM',
-  'APINVDOCKEY',
-  'APINVDOCNUM',
-  'APINVLINENUM',
-]);
 
 const pickerButtonStyle = {
   padding: '0 6px',
@@ -66,7 +58,6 @@ export default function ContentsTab({
   onRowUdfChange,
 }) {
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
-  const standardColumnByKey = new Map(MATRIX_COLS.map((column) => [column.key, column]));
   const standardColumnOrderByKey = new Map(MATRIX_COLS.map((column, index) => [column.key, index + 1]));
   const rowUdfByNormalizedKey = new Map();
   (rowUdfFields || []).forEach((field) => {
@@ -88,52 +79,36 @@ export default function ContentsTab({
       readOnly: column.readOnly,
     };
   };
-  const hasLiveMatrixFields = Array.isArray(matrixFields) && matrixFields.length > 0;
+  const liveMatrixColumnByKey = new Map(
+    (Array.isArray(matrixFields) ? matrixFields : [])
+      .filter((field) => field?.key)
+      .map((field) => [field.key, field])
+  );
   const isVisibleBySetting = (field = {}, setting = {}) => (
     field.visible === false ? false : setting?.visible !== undefined ? setting.visible !== false : true
   );
-  const usesMetadataDrivenMatrix = hasLiveMatrixFields && matrixFields.some((field) => field?.sapControlled || field?.importedLayout);
-  const standardColumns = hasLiveMatrixFields
-    ? matrixFields
-        .map((field) => {
-          const standardColumn = standardColumnByKey.get(field.key);
-          const isUdfColumn = standardColumn ? Boolean(standardColumn.isUdf) : Boolean(field.isUdf);
-          const mergedColumn = {
-            ...(standardColumn || {}),
-            ...field,
-            isUdf: isUdfColumn,
-          };
-          const fallbackOrder = standardColumnOrderByKey.get(field.key) || 90000;
-          return {
-            ...mergedColumn,
-            order: Number.isFinite(Number(field.order)) ? Number(field.order) : fallbackOrder,
-            field: getColumnUdfField(mergedColumn),
-          };
-        })
-        .filter((column) => column.key)
-    : MATRIX_COLS.map((column, index) => ({
-        ...column,
-        order: index + 1,
-        field: getColumnUdfField(column),
-      }));
+  const standardColumns = MATRIX_COLS.map((column, index) => {
+    const liveColumn = liveMatrixColumnByKey.get(column.key);
+    const mergedColumn = {
+      ...(liveColumn || {}),
+      ...column,
+      key: column.key,
+      valueKey: column.valueKey || column.key,
+      rendererKey: column.rendererKey || column.valueKey || column.key,
+      label: column.label,
+      minWidth: column.minWidth || liveColumn?.minWidth || 125,
+      order: standardColumnOrderByKey.get(column.key) || index + 1,
+      visible: column.visible !== false,
+      isUdf: Boolean(column.isUdf),
+    };
 
-  const udfColumns = usesMetadataDrivenMatrix ? [] : rowUdfFields
-    .filter((field) => {
-      const fieldKeys = [field.key, field.sapField, field.aliasId, field.label]
-        .map(normalizeUdfKey)
-        .filter(Boolean);
-      return !fieldKeys.some((key) => SUPPRESSED_ROW_UDFS.has(key));
-    })
-    .map((field) => ({
-      key: field.key,
-      label: field.label || field.key,
-      minWidth: field.minWidth || (field.type === 'textarea' ? 180 : 125),
-      order: field.order,
-      isUdf: true,
-      field,
-    }));
+    return {
+      ...mergedColumn,
+      field: getColumnUdfField(mergedColumn),
+    };
+  });
 
-  const matrixCols = [...standardColumns, ...udfColumns]
+  const matrixCols = standardColumns
     .filter((column) => {
       if (column.isUdf) {
         return isVisibleBySetting(column, formSettings.rowUdfs?.[column.field.key] || {});

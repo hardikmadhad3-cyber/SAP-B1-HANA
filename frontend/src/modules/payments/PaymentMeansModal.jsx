@@ -66,13 +66,14 @@ const PAYMENT_SECTIONS = [
 
 const clonePaymentMeans = (value) => JSON.parse(JSON.stringify(value || createDefaultPaymentMeans()));
 
-export const validatePaymentMeans = (paymentMeans = {}, totalAmountDue = 0) => {
+export const validatePaymentMeans = (paymentMeans = {}, totalAmountDue = 0, options = {}) => {
   const due = parseAmount(totalAmountDue);
   const paid = paymentMeansTotal(paymentMeans);
+  const effectiveDue = due > 0 ? due : options.allowPaidAsTotalDue && paid > 0 ? paid : due;
 
-  if (due <= 0) return "Total Amount Due must be greater than zero.";
+  if (effectiveDue <= 0) return "Total Amount Due must be greater than zero.";
   if (paid <= 0) return "Enter at least one Payment Means amount.";
-  if (Math.abs(paid - due) > 0.01) return "Payment Means paid amount must match Total Amount Due.";
+  if (Math.abs(paid - effectiveDue) > 0.01) return "Payment Means paid amount must match Total Amount Due.";
 
   const missingAccount = PAYMENT_SECTIONS.find(([section]) =>
     parseAmount(paymentMeans[section]?.amount) > 0 && !String(paymentMeans[section]?.account || "").trim(),
@@ -84,6 +85,7 @@ export default function PaymentMeansModal({
   open,
   value,
   totalAmountDue,
+  allowPaidAsTotalDue = false,
   onChange,
   onClose,
   onConfirm,
@@ -95,7 +97,7 @@ export default function PaymentMeansModal({
   const [validationError, setValidationError] = useState("");
   const means = draft;
   const paid = useMemo(() => paymentMeansTotal(means), [means]);
-  const balanceDue = Math.max(0, parseAmount(totalAmountDue) - paid);
+  const balanceDue = parseAmount(totalAmountDue) - paid;
 
   useEffect(() => {
     if (!open) return;
@@ -125,7 +127,7 @@ export default function PaymentMeansModal({
   };
 
   const confirmPaymentMeans = () => {
-    const error = validatePaymentMeans(means, totalAmountDue);
+    const error = validatePaymentMeans(means, totalAmountDue, { allowPaidAsTotalDue });
     if (error) {
       setValidationError(error);
       return;
@@ -166,15 +168,22 @@ export default function PaymentMeansModal({
   ];
 
   return createPortal(
-    <div className="ip-payment-means-layer" onMouseDown={onClose}>
-      <div className="ip-payment-means" onMouseDown={(event) => event.stopPropagation()}>
+    <div
+      className="ip-payment-means-layer"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="ip-payment-means"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Payment Means"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="ip-payment-means__header">
           <span>Payment Means</span>
-          <div className="ip-payment-means__window-controls">
-            <button type="button" disabled>-</button>
-            <button type="button" disabled>[]</button>
-            <button type="button" onClick={onClose}>x</button>
-          </div>
+          <button type="button" className="sap-lookup-modal__close" aria-label="Close" onClick={onClose}>x</button>
         </div>
         <div className="ip-payment-means__body">
           <label className="ip-payment-means__currency">
@@ -258,6 +267,6 @@ export default function PaymentMeansModal({
         </div>
       </div>
     </div>,
-    document.body,
+    document.querySelector(".app-shell__content") || document.body,
   );
 }

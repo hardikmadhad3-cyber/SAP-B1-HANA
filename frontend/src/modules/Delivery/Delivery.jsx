@@ -10,14 +10,15 @@ import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import EWayBillModal from './components/EWayBillModal';
 import AttachmentsTab from './components/AttachmentsTab';
-import AddressModal from './components/AddressModal';
-import { mapAddressFields } from '../../utils/documentAddress';
+import ReferenceDocumentsModal from '../sales-order/components/ReferenceDocumentsModal';
+import AddressModal from '../../components/document/AddressComponentModal';
+import { formatAddressComponent, mapAddressFields, pickAddressComponentFields } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import BatchAllocationModal from './components/BatchAllocationModal';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
-import StateSelectionModal from '../sales-order/components/StateSelectionModal';
-import HSNCodeModal from './components/HSNCodeModal';
-import ItemSelectionModal from './components/ItemSelectionModal';
+import StateSelectionModal from '../../components/common/StateSelectionModal';
+import HSNCodeModal from '../../components/common/HSNCodeModal';
+import ItemSelectionModal from '../../components/common/ItemSelectionModal';
 import QualitySelectionModal from '../sales-order/components/QualitySelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
@@ -25,7 +26,7 @@ import SapGoldenArrowButton from '../../components/document/SapGoldenArrowButton
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
-import CopyFromModal from './components/CopyFromModal';
+import CopyFromModal from '../../components/document/CopyFromModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
 import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/warehouseBranch';
@@ -42,8 +43,8 @@ import {
   consumeCopyToState as consumePersistedCopyToState,
   replaceRouteStatePreservingWindow,
 } from '../../utils/copyToState';
-import { openLinkedBusinessPartner } from '../../utils/sapLinkedNavigation';
-import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
+import { openLinkedBusinessPartner, openLinkedReferenceDocument } from '../../utils/sapLinkedNavigation';
+import { buildDuplicateLines, duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   BATCH_QTY_TOLERANCE,
@@ -83,7 +84,7 @@ import {
   createDeliveryLookupValue,
   saveDeliverySalesEmployeesSetup
 } from '../../api/deliveryApi';
-import { fetchSalesOrderByDocEntry } from '../../api/salesOrderApi';
+import { fetchSalesOrderByDocEntry, fetchSalesOrderReferenceDocumentLookup } from '../../api/salesOrderApi';
 import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { deliveryCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, BASE_TYPE } from '../../api/copyFromApi';
 import {
@@ -239,6 +240,8 @@ const findWarehouse = (warehouses = [], warehouseCode = '') => {
 };
 const getWarehouseBranchValue = (warehouses = [], warehouseCode = '') =>
   normalizeSubmitBranch(getWarehouseBranchId(findWarehouse(warehouses, warehouseCode)));
+const resolveBatchWarehouseCode = (lineWarehouse = '', headerWarehouse = '') =>
+  String(headerWarehouse || lineWarehouse || '').trim();
 const alignBranchWithWarehouse = (branch, warehouseCode, warehouses = []) => {
   const normalizedBranch = normalizeSubmitBranch(branch);
   if (!normalizedBranch) return '';
@@ -479,6 +482,7 @@ const INIT_HEADER = {
   totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
   billToAddress: '', billToCode: '', shipToAddress: '',
+  shipToAddressComponents: null, billToAddressComponents: null,
   edocGenerationType: 'edocGenerateLater', edocExportFormat: '', edocStatus: '',
   languageCode: '', trackingNo: '', stampNo: '', pickAndPackRemarks: '', bpChannelCode: '', bpChannelContact: '',
   centralBankIndicator: '', projectCode: '', qrCodeSource: '', indicator: '', orderNumber: '',
@@ -486,6 +490,25 @@ const INIT_HEADER = {
   transactionCategory: '', taxFormNo: '', dutyStatus: '', exportFlag: false,
   differentialTaxRate: '100', supplyCovered: false,
 };
+
+const normalizeDeliveryReferenceDocuments = (rows = []) => (
+  (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      lineNum: row.lineNum ?? row.LineNum ?? undefined,
+      direction: row.direction || 'to',
+      transactionType: String(row.transactionType ?? row.referencedObjectType ?? row.RefObjType ?? row.RefType ?? ''),
+      docEntry: String(row.docEntry ?? row.referencedDocEntry ?? row.RefDocEntr ?? row.RefDocEntry ?? ''),
+      docNumber: String(row.docNumber ?? row.referencedDocNumber ?? row.RefDocNum ?? row.RefDocNo ?? ''),
+      extDocNumber: String(row.extDocNumber ?? row.externalDocNumber ?? row.ExtDocNum ?? ''),
+      issueDate: row.issueDate || row.IssueDate || '',
+      remark: row.remark || row.Remark || row.Comments || '',
+    }))
+    .filter((row) => String(row.transactionType || row.docNumber || row.docEntry || row.extDocNumber || '').trim())
+);
+const hasCompleteDeliveryReferenceDocument = (row = {}) => (
+  String(row.transactionType || '').trim() &&
+  String(row.docEntry || row.docNumber || row.extDocNumber || '').trim()
+);
 
 const createInitialHeader = (settings = readGeneralSettings()) => ({
   ...INIT_HEADER,
@@ -669,6 +692,9 @@ function Delivery() {
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments, setAttachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
+  const [referenceDocumentsModal, setReferenceDocumentsModal] = useState(false);
+  const [referenceDocuments, setReferenceDocuments] = useState([]);
+  const [referenceDocumentsChanged, setReferenceDocumentsChanged] = useState(false);
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
@@ -681,7 +707,7 @@ function Delivery() {
   const [refData, setRefData] = useState({
     company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
     warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [],
-    payment_terms: [], shipping_types: [], branches: [], uom_groups: [],
+    payment_terms: [], payment_methods: [], shipping_types: [], branches: [], uom_groups: [],
     distribution_rules: [], sales_employees: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
     decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
     eway_bill_formats: [],
@@ -774,6 +800,9 @@ function Delivery() {
 
     if (matchedSeries) return matchedSeries;
 
+    const sapDefaultSeries = seriesList.find((series) => series.IsDefault || series.isDefault);
+    if (sapDefaultSeries) return sapDefaultSeries;
+
     const preferredSeries = String(generalSettingsRef.current.deliverySeries || '').trim();
     const settingsSeries = preferredSeries
       ? seriesList.find((series) => String(series.Series) === preferredSeries)
@@ -803,21 +832,29 @@ function Delivery() {
     setHeader(draft.header || createInitialHeader(generalSettingsRef.current));
     setLines(Array.isArray(draft.lines) && draft.lines.length ? draft.lines : [createLine(ROW_UDF_DEFINITIONS)]);
     setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+    setReferenceDocuments(Array.isArray(draft.referenceDocuments) ? draft.referenceDocuments : []);
+    setReferenceDocumentsChanged(Boolean(draft.referenceDocumentsChanged));
     setActiveTab(draft.activeTab || 'Contents');
     setIsDirty(Boolean(draft.isDirty));
+    setReferenceDocumentsModal(Boolean(draft.referenceDocumentsModalOpen));
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.state, navigate, location.pathname]);
 
-  const buildLinkedRestoreState = useCallback(() => ({
+  const buildLinkedRestoreState = useCallback((overrides = {}) => ({
     deliveryDraft: {
       currentDocEntry,
       header,
       lines,
       headerUdfs,
+      referenceDocuments: Array.isArray(overrides.referenceDocuments)
+        ? overrides.referenceDocuments
+        : referenceDocuments,
+      referenceDocumentsChanged: overrides.referenceDocumentsChanged ?? referenceDocumentsChanged,
+      referenceDocumentsModalOpen: overrides.referenceDocumentsModalOpen ?? referenceDocumentsModal,
       activeTab,
       isDirty,
     },
-  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines]);
+  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
 
   const openBusinessPartnerLink = useCallback(() => {
     openLinkedBusinessPartner({
@@ -829,6 +866,67 @@ function Delivery() {
       upsertTask,
     });
   }, [buildLinkedRestoreState, currentDocEntry, header.docNo, header.vendor, location.pathname, navigate, upsertTask]);
+
+  const resolveReferenceDocEntry = useCallback(async (row) => {
+    const currentDocEntryValue = String(row?.docEntry || '').trim();
+    if (currentDocEntryValue) return currentDocEntryValue;
+
+    const docNumber = String(row?.docNumber || '').trim();
+    const transactionType = String(row?.transactionType || '').trim();
+    if (!docNumber || !transactionType) return '';
+
+    const response = await fetchSalesOrderReferenceDocumentLookup({
+      transactionType,
+      query: docNumber,
+      cardCode: '',
+      top: 20,
+    });
+    const exact = (response.data?.options || []).find((option) => (
+      String(option.docNumber || '') === docNumber
+    ));
+    return exact?.docEntry ? String(exact.docEntry) : '';
+  }, []);
+
+  const openReferenceDocument = useCallback(async (row, options = {}) => {
+    try {
+      const docEntry = await resolveReferenceDocEntry(row);
+      if (!docEntry) {
+        setPageState(p => ({
+          ...p,
+          success: '',
+          error: 'Referenced document was not found. Choose a document from the lookup first.',
+        }));
+        return false;
+      }
+
+      const opened = openLinkedReferenceDocument({
+        transactionType: row?.transactionType,
+        docEntry,
+        docNumber: row?.docNumber,
+        sourcePath: location.pathname,
+        sourceTitle: `Delivery${header.docNo || currentDocEntry ? ` #${header.docNo || currentDocEntry}` : ''}`,
+        sourceRestoreState: buildLinkedRestoreState(options),
+        navigate,
+        upsertTask,
+      });
+
+      if (!opened) {
+        setPageState(p => ({
+          ...p,
+          success: '',
+          error: 'This referenced document type is not configured for navigation.',
+        }));
+      }
+      return opened;
+    } catch (error) {
+      setPageState(p => ({
+        ...p,
+        success: '',
+        error: getErrMsg(error, 'Failed to open referenced document.'),
+      }));
+      return false;
+    }
+  }, [buildLinkedRestoreState, currentDocEntry, header.docNo, location.pathname, navigate, resolveReferenceDocEntry, upsertTask]);
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
@@ -955,13 +1053,21 @@ function Delivery() {
       setPageState(p => ({ ...p, error: 'Select an item before allocating batches.' }));
       return;
     }
-    if (!line?.whse) {
+    const itemNo = line.itemNo;
+    const whse = resolveBatchWarehouseCode(line.whse, header.warehouse);
+    if (!whse) {
       setPageState(p => ({ ...p, error: 'Select a warehouse before allocating batches.' }));
       return;
     }
 
-    const itemNo = line.itemNo;
-    const whse = line.whse;
+    if (String(line.whse || '').trim() !== whse) {
+      setLines(prevLines => prevLines.map((currentLine, currentIndex) => (
+        currentIndex === lineIndex
+          ? { ...currentLine, whse, batches: [], hasBatchesAvailable: false }
+          : currentLine
+      )));
+    }
+
     setBatchModal({ open: true, lineIndex, availableBatches: [], loading: true, error: '' });
     window.setTimeout(async () => {
       try {
@@ -991,7 +1097,7 @@ function Delivery() {
         ));
       }
     }, 0);
-  }, []);
+  }, [header.warehouse]);
 
   const openBatchModal = useCallback((lineIndex, lineOverride = null) => {
     openBatchModalForLine(lineIndex, lineOverride || lines[lineIndex]);
@@ -999,18 +1105,19 @@ function Delivery() {
 
   const refreshBatchAvailabilityForLines = useCallback((nextLines = []) => {
     nextLines.forEach((line, lineIndex) => {
-      if (!line?.batchManaged || !line?.itemNo || !line?.whse) return;
-      checkBatchAvailability(line.itemNo, line.whse).then(hasBatches => {
+      const whse = resolveBatchWarehouseCode(line?.whse, header.warehouse);
+      if (!line?.batchManaged || !line?.itemNo || !whse) return;
+      checkBatchAvailability(line.itemNo, whse).then(hasBatches => {
         setLines(prevLines => prevLines.map((currentLine, currentIndex) => (
           currentIndex === lineIndex &&
           currentLine.itemNo === line.itemNo &&
-          currentLine.whse === line.whse
-            ? { ...currentLine, hasBatchesAvailable: hasBatches }
+          resolveBatchWarehouseCode(currentLine.whse, header.warehouse) === whse
+            ? { ...currentLine, whse, hasBatchesAvailable: hasBatches }
             : currentLine
         )));
       });
     });
-  }, []);
+  }, [header.warehouse]);
 
   const openRequiredBatchAllocationOnAdd = useCallback(() => {
     const hydratedLines = lines.map(line => hydrateLoadedLine(line));
@@ -1060,7 +1167,7 @@ function Delivery() {
             company: '',
             vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [],
             items: [], warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [],
-            payment_terms: [], shipping_types: [], branches: [], states: [], uom_groups: [],
+            payment_terms: [], payment_methods: [], shipping_types: [], branches: [], states: [], uom_groups: [],
             distribution_rules: [], sales_employees: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
             eway_bill_formats: [],
             eway_bill_transporters: [],
@@ -1126,6 +1233,7 @@ function Delivery() {
             company_address: refDataRes.data.company_address || {},
             tax_codes: refDataRes.data.tax_codes || [],
             payment_terms: refDataRes.data.payment_terms || [],
+            payment_methods: refDataRes.data.payment_methods || [],
             shipping_types: refDataRes.data.shipping_types || [],
             sales_employees: refDataRes.data.sales_employees || [],
             branches: refDataRes.data.branches || [],
@@ -1247,6 +1355,9 @@ function Delivery() {
           : Array.isArray(so?.DocumentLines) && so.DocumentLines.length
             ? so.DocumentLines
             : [];
+        const loadedReferenceDocuments = normalizeDeliveryReferenceDocuments(
+          so.reference_documents || so.referenceDocuments || []
+        );
         const firstLineWarehouse = loadedLines.length > 0
           ? String(
               loadedLines[0]?.whse ||
@@ -1264,6 +1375,8 @@ function Delivery() {
         setCurrentDocEntry(so.doc_entry || Number(docEntry));
         setEWayBillDetails(so.eway_bill_details || {});
         setAttachments(so.attachments?.length ? so.attachments : INIT_ATTACH);
+        setReferenceDocuments(loadedReferenceDocuments);
+        setReferenceDocumentsChanged(false);
         setActiveTab('Contents');
         const savedSeriesValue = String(so.header?.series || '');
         const savedSeriesOption = savedSeriesValue
@@ -1298,9 +1411,11 @@ function Delivery() {
           warehouse: firstLineWarehouse || so.header?.warehouse || '',
           shipToCode: so.header?.shipToCode || '',
           shipToAddress: so.header?.shipToAddress || so.header?.shipTo || '',
+          shipToAddressComponents: so.header?.shipToAddressComponents || null,
           shipTo: so.header?.shipTo || so.header?.shipToAddress || '',
           billToCode: so.header?.billToCode || so.header?.payToCode || '',
           billToAddress: so.header?.billToAddress || so.header?.payTo || '',
+          billToAddressComponents: so.header?.billToAddressComponents || null,
           payToCode: so.header?.payToCode || so.header?.billToCode || '',
           payTo: so.header?.payTo || so.header?.billToAddress || '',
           docNo: so.header?.docNo || so.header?.docNum || '',
@@ -1451,6 +1566,9 @@ function Delivery() {
     setCurrentDocEntry(null);
     setEWayBillDetails({});
     setAttachments(INIT_ATTACH);
+    setReferenceDocuments([]);
+    setReferenceDocumentsChanged(false);
+    setReferenceDocumentsModal(false);
     setActiveTab('Contents');
     setSnapshotPending(false);
     setIsDirty(false);
@@ -1601,6 +1719,12 @@ function Delivery() {
   const payTermOpts = refData.payment_terms.length
     ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
     : FALLBACK_PAYMENT_TERMS;
+  const paymentMethodOpts = (refData.payment_methods || []).map(method => ({
+    value: String(method.Code || '').trim(),
+    label: method.Description
+      ? `${method.Code} - ${method.Description}`
+      : String(method.Code || '').trim(),
+  })).filter(method => method.value);
   const shipTypeOpts = refData.shipping_types.length
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
     : FALLBACK_SHIPPING;
@@ -2005,11 +2129,27 @@ function Delivery() {
     }
   };
 
+  const getDefaultJournalRemark = (code) => {
+    const normalizedCode = String(code || '').trim();
+    return normalizedCode ? `Deliveries - ${normalizedCode}` : '';
+  };
+
+  const getDefaultPaymentMethod = (bp = {}) => (
+    String(bp.PaymentMethod || bp.PymCode || bp.PeymentMethodCode || '').trim()
+  );
+
   const syncVendor = (code, hdr) => {
     const m = refData.vendors.find(v => String(v.CardCode || '') === String(code || ''));
     if (!m) return { nextHeader: hdr };
     return {
-      nextHeader: { ...hdr, name: m.CardName || hdr.name, paymentTerms: m.PayTermsGrpCode != null ? String(m.PayTermsGrpCode) : hdr.paymentTerms, contactPerson: '' },
+      nextHeader: {
+        ...hdr,
+        name: m.CardName || hdr.name,
+        journalRemark: getDefaultJournalRemark(code),
+        paymentTerms: m.PayTermsGrpCode != null ? String(m.PayTermsGrpCode) : hdr.paymentTerms,
+        paymentMethod: getDefaultPaymentMethod(m) || hdr.paymentMethod,
+        contactPerson: '',
+      },
     };
   };
 
@@ -2575,14 +2715,20 @@ function Delivery() {
       header.billToAddress || header.payTo,
     );
     const activeAddress = type === 'billTo' ? billAddress : shipAddress;
+    const activeComponents = type === 'billTo'
+      ? header.billToAddressComponents
+      : header.shipToAddressComponents;
 
     setAddressForm(
-      mapAddressToModalForm(activeAddress, {
-        shipToCode: header.shipToCode || shipAddress?.Address || '',
-        shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
-        billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
-        billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
-      }),
+      {
+        ...mapAddressToModalForm(activeAddress, {
+          shipToCode: header.shipToCode || shipAddress?.Address || '',
+          shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
+          billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
+          billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
+        }),
+        ...(activeComponents || {}),
+      },
     );
     setAddressModal({ type });
   };
@@ -2592,27 +2738,22 @@ function Delivery() {
   };
 
   const saveAddressModal = () => {
-    const formatted = [
-      [addressForm.streetPoBox, addressForm.streetNo].filter(Boolean).join(', '),
-      addressForm.buildingFloorRoom,
-      [addressForm.block, addressForm.city].filter(Boolean).join(', '),
-      [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion,
-      addressForm.addressName2,
-      addressForm.addressName3,
-    ].filter(Boolean).join('\n');
+    const formatted = formatAddressComponent(addressForm);
+    const components = pickAddressComponentFields(addressForm);
+    markDirty();
 
     if (addressModal.type === 'shipTo') {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode,
-        shipTo: formatted || addressForm.shipToAddress,
-        shipToAddress: formatted || addressForm.shipToAddress,
+        shipTo: formatted,
+        shipToAddress: formatted,
+        shipToAddressComponents: components,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
         payTo: addressForm.billToAddress || p.payTo,
-        placeOfSupply: addressForm.state || p.placeOfSupply,
+        placeOfSupply: addressForm.state || '',
       }));
     } else {
       setHeader(p => ({
@@ -2622,8 +2763,10 @@ function Delivery() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode,
         payToCode: addressForm.billToCode,
-        billToAddress: formatted || addressForm.billToAddress,
-        payTo: formatted || addressForm.billToAddress,
+        billToAddress: formatted,
+        payTo: formatted,
+        billToAddressComponents: components,
+        placeOfSupply: header.useBillToForTax ? addressForm.state || '' : p.placeOfSupply,
       }));
     }
     closeAddressModal();
@@ -2747,12 +2890,19 @@ function Delivery() {
 
       const assignedBaseQty = sumBatchQty(nextBatches);
       const uomFactor = getLineUomFactor(line);
+      const selectedBatchWarehouse = String(
+        nextBatches.find(batch => String(batch?.whse || batch?.warehouse || '').trim())?.whse
+        || nextBatches.find(batch => String(batch?.whse || batch?.warehouse || '').trim())?.warehouse
+        || ''
+      ).trim();
       const nextDocumentQty = uomFactor > 0
         ? roundTo(assignedBaseQty / uomFactor, 6)
         : roundTo(assignedBaseQty, 6);
       const updatedLine = {
         ...line,
+        whse: selectedBatchWarehouse || line.whse,
         batches: nextBatches,
+        hasBatchesAvailable: true,
         quantity: String(nextDocumentQty),
       };
 
@@ -2939,6 +3089,21 @@ function Delivery() {
     }));
 
     return createdOption;
+  };
+
+  const openReferenceDocumentsModal = () => {
+    setReferenceDocumentsModal(true);
+  };
+
+  const closeReferenceDocumentsModal = () => {
+    setReferenceDocumentsModal(false);
+  };
+
+  const saveReferenceDocumentsModal = (rows) => {
+    setReferenceDocuments(normalizeDeliveryReferenceDocuments(rows));
+    setReferenceDocumentsChanged(true);
+    markDirty();
+    setReferenceDocumentsModal(false);
   };
 
   const openItemModal = async (lineIndex) => {
@@ -3896,7 +4061,18 @@ function Delivery() {
     });
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
+    const duplicateDate = today();
+    const duplicateWarehouse = resolveBatchWarehouseCode(
+      lines.find(line => String(line.whse || '').trim())?.whse,
+      header.warehouse
+    );
+    const duplicateLines = buildDuplicateLines(lines, createLine, rowUdfDefinitions).map(line => ({
+      ...line,
+      whse: duplicateWarehouse || line.whse || '',
+      batches: [],
+      hasBatchesAvailable: false,
+    }));
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -3906,7 +4082,7 @@ function Delivery() {
       rowUdfDefinitions,
       setCurrentDocEntry,
       setHeader,
-      setLines,
+      setLines: () => setLines(duplicateLines),
       setActiveTab,
       setValErrors,
       setPageState,
@@ -3919,7 +4095,31 @@ function Delivery() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      setHeader(prev => ({
+        ...prev,
+        postingDate: duplicateDate,
+        documentDate: duplicateDate,
+        deliveryDate: duplicateDate,
+        series: '',
+        nextNumber: '',
+      }));
+      refreshBatchAvailabilityForLines(duplicateLines);
+
+      try {
+        const seriesResponse = await fetchDocumentSeries(duplicateDate);
+        const duplicateSeries = seriesResponse.data?.series || [];
+        setRefData(prev => ({ ...prev, series: duplicateSeries }));
+
+        const defaultSeries = resolvePreferredSeries(duplicateSeries, duplicateDate, '');
+        if (defaultSeries?.Series != null) {
+          await handleSeriesChange(defaultSeries.Series);
+        }
+      } catch (_error) {
+        const fallbackSeries = resolvePreferredSeries(refData.series, duplicateDate, '');
+        if (fallbackSeries?.Series != null) {
+          await handleSeriesChange(fallbackSeries.Series);
+        }
+      }
     }
   };
 
@@ -3985,6 +4185,8 @@ function Delivery() {
         freightCharges: freightModal.freightCharges,
         eway_bill_details: eWayBillDetails,
         include_document_lines: !isUpdate || documentLinesChanged,
+        reference_documents: referenceDocuments,
+        reference_documents_changed: referenceDocumentsChanged && referenceDocuments.some(hasCompleteDeliveryReferenceDocument),
         header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
       };
       const r = currentDocEntry ? await updateDelivery(currentDocEntry, payload) : await submitDelivery(payload);
@@ -3994,6 +4196,9 @@ function Delivery() {
       defaultWarehouseAppliedRef.current = false;
       const resetHeader = createInitialHeader(generalSettingsRef.current);
       setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
+      setReferenceDocuments([]);
+      setReferenceDocumentsChanged(false);
+      setReferenceDocumentsModal(false);
       setEWayBillDetails({});
       setAttachments(INIT_ATTACH);
       setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
@@ -4063,6 +4268,9 @@ function Delivery() {
     setSnapshotPending(false);
     setIsDirty(false);
     setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
+    setReferenceDocuments([]);
+    setReferenceDocumentsChanged(false);
+    setReferenceDocumentsModal(false);
     setEWayBillDetails({});
     setAttachments(INIT_ATTACH);
     setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
@@ -4515,6 +4723,9 @@ function Delivery() {
                 header={header}
                 onHeaderChange={handleHeaderChange}
                 payTermOpts={payTermOpts}
+                paymentMethodOpts={paymentMethodOpts}
+                referenceDocuments={referenceDocuments}
+                onOpenReferenceDocuments={openReferenceDocumentsModal}
                 isEditable={isDocumentEditable}
               />
             )}
@@ -4959,6 +5170,16 @@ function Delivery() {
           </div>
         </div>
       )}
+
+      <ReferenceDocumentsModal
+        isOpen={referenceDocumentsModal}
+        referenceDocuments={referenceDocuments}
+        onClose={closeReferenceDocumentsModal}
+        onSave={saveReferenceDocumentsModal}
+        isEditable={isDocumentEditable}
+        cardCode={header.vendor}
+        onOpenDocument={openReferenceDocument}
+      />
 
       {/* Freight Selection Modal */}
       <FreightChargesModal

@@ -5,9 +5,9 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
 
   return (
     <div className="del-modal-overlay" onClick={onClose}>
-      <div className="del-modal" onClick={e => e.stopPropagation()}>
+      <div className="del-modal del-tax-info-modal" onClick={e => e.stopPropagation()}>
         <div className="del-modal__header">
-          <h6 style={{ margin: 0, fontSize: '12px', fontWeight: 600 }}>Tax Information</h6>
+          <h6 className="del-tax-info-modal__title">Tax Information</h6>
           <button 
             type="button" 
             onClick={onClose}
@@ -28,9 +28,9 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
             ×
           </button>
         </div>
-        <div className="del-modal__body">
+        <div className="del-modal__body del-tax-info-modal__body">
           <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-          <div className="del-field-grid">
+          <div className="del-tax-info-modal__grid">
             <div className="del-field">
               <label className="del-field__label">P.A.N. No.</label>
               <input

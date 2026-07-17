@@ -12,15 +12,14 @@ import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import ReferenceDocumentsModal from './components/ReferenceDocumentsModal';
-import AddressModal from './components/AddressModal';
+import AddressModal from '../../components/document/AddressComponentModal';
 import { mapAddressFields } from '../../utils/documentAddress';
-import EWayBillModal from './components/EWayBillModal';
 import TaxInfoModal from './components/TaxInfoModal';
-import StateSelectionModal from './components/StateSelectionModal';
+import StateSelectionModal from '../../components/common/StateSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
-import CopyFromModal from './components/CopyFromModal';
-import HSNCodeModal from './components/HSNCodeModal';
-import ItemSelectionModal from './components/ItemSelectionModal';
+import CopyFromModal from '../../components/document/CopyFromModal';
+import HSNCodeModal from '../../components/common/HSNCodeModal';
+import ItemSelectionModal from '../../components/common/ItemSelectionModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import SapGoldenArrowButton from '../../components/document/SapGoldenArrowButton';
@@ -62,6 +61,7 @@ import {
     fetchFreightCharges,
     createSalesOrderLookupValue,
     fetchSalesOrderLookupOptions,
+    fetchSalesOrderReferenceDocumentLookup,
 } from '../../api/salesOrderApi';
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { salesOrderCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
@@ -108,6 +108,43 @@ const fmtAddr = (a) => {
     [a.City, a.County, a.State, a.ZipCode], [a.Country]]
         .map(p => p.filter(Boolean).join(', ')).filter(Boolean).join('\n');
 };
+
+const cleanAddressValue = (value) => String(value ?? '').trim();
+const joinAddressLine = (...parts) => parts.map(cleanAddressValue).filter(Boolean).join(', ');
+const pickAddressComponentFields = (form = {}) => ({
+    streetPoBox: form.streetPoBox || '',
+    streetNo: form.streetNo || '',
+    buildingFloorRoom: form.buildingFloorRoom || '',
+    block: form.block || '',
+    city: form.city || '',
+    zipCode: form.zipCode || '',
+    county: form.county || '',
+    state: form.state || '',
+    countryRegion: form.countryRegion || '',
+    addressName2: form.addressName2 || '',
+    addressName3: form.addressName3 || '',
+    gln: form.gln || '',
+    erpAddress: form.erpAddress || '',
+    contactPerson: form.contactPerson || '',
+    mobile: form.mobile || '',
+    dateOfRegistration: form.dateOfRegistration || '',
+    dateDetailsOfRegistration: form.dateDetailsOfRegistration || '',
+    addressStatus: form.addressStatus || '',
+    gstin: form.gstin || '',
+});
+const formatAddressComponent = (form = {}) => [
+    joinAddressLine(form.streetPoBox, form.streetNo),
+    cleanAddressValue(form.buildingFloorRoom),
+    cleanAddressValue(form.block),
+    cleanAddressValue(form.city),
+    cleanAddressValue(form.zipCode),
+    cleanAddressValue(form.county),
+    cleanAddressValue(form.state),
+    cleanAddressValue(form.countryRegion),
+    cleanAddressValue(form.addressName2),
+    cleanAddressValue(form.addressName3),
+].filter(Boolean).join('\n');
+
 const mapAddressToModalForm = (address, existing = {}) => ({
     shipToCode: existing.shipToCode || '',
     shipToAddress: existing.shipToAddress || '',
@@ -249,11 +286,15 @@ const INIT_HEADER = {
     docNo: '', status: 'Open', series: '', nextNumber: '',
     postingDate: today(), deliveryDate: '', documentDate: today(), contractDate: '',
     branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
-    shippingType: '', confirmed: false, journalRemark: '', paymentTerms: '',
+    shippingType: '', confirmed: true, language: '8', printPickingSheet: false,
+    procureNonDropShipItems: false, procureDropShipItems: true, allowPartialDelivery: true,
+    pickAndPackRemarks: '', bpChannelName: '', bpChannelContact: '',
+    journalRemark: '', paymentTerms: '',
     paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
     totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
     placeOfSupply: '', currency: 'INR', useBillToForTax: false,
     billToAddress: '', billToCode: '', shipToAddress: '',
+    shipToAddressComponents: null, billToAddressComponents: null,
     bpProject: '', createQrCodeFrom: '', cancellationDate: '', requiredDate: '',
     indicator: '', orderNumber: '', cashDiscountDateOffset: '', useShippedGoodsAccount: false,
     transactionCategory: '', taxFormNo: '', dutyStatus: 'Y', exportFlag: false,
@@ -350,6 +391,7 @@ function SalesOrder() {
     const handledCopyFromRef = useRef('');
     const generalSettingsRef = useRef(readGeneralSettings());
     const defaultWarehouseAppliedRef = useRef(false);
+    const restoringDraftRef = useRef(false);
     const [isCopyFromClick, setIsCopyFromClick] = useState(false);
     const [currentDocEntry, setCurrentDocEntry] = useState(null);
     const [header, setHeader] = useState(() => createInitialHeader(generalSettingsRef.current));
@@ -380,8 +422,6 @@ function SalesOrder() {
     const [snapshotPending, setSnapshotPending] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
     const [addressModal, setAddressModal] = useState(null);
-    const [eWayBillModal, setEWayBillModal] = useState(false);
-    const [eWayBillData, setEWayBillData] = useState({});
     const [referenceDocumentsModal, setReferenceDocumentsModal] = useState(false);
     const [referenceDocuments, setReferenceDocuments] = useState([]);
     const [referenceDocumentsChanged, setReferenceDocumentsChanged] = useState(false);
@@ -399,6 +439,7 @@ function SalesOrder() {
         [headerFieldDefinitions],
     );
     useValidationHighlights(valErrors, { enabled: !copyFromMode, rootRef: formRef });
+
     const [addressForm, setAddressForm] = useState({
         shipToCode: '', shipToAddress: '', billToCode: '', billToAddress: '',
         streetPoBox: '', streetNo: '', buildingFloorRoom: '', block: '', city: '', zipCode: '', county: '',
@@ -507,6 +548,7 @@ function SalesOrder() {
         const draft = location.state?.salesOrderDraft;
         if (!draft) return;
 
+        restoringDraftRef.current = true;
         setCurrentDocEntry(draft.currentDocEntry || null);
         setHeader(draft.header || createInitialHeader(generalSettingsRef.current));
         setLines(Array.isArray(draft.lines) && draft.lines.length ? draft.lines : [createLine()]);
@@ -515,21 +557,34 @@ function SalesOrder() {
         setReferenceDocumentsChanged(Boolean(draft.referenceDocumentsChanged));
         setActiveTab(draft.activeTab || 'Contents');
         setIsDirty(Boolean(draft.isDirty));
-        replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+        setReferenceDocumentsModal(Boolean(draft.referenceDocumentsModalOpen));
+
+        const clearDraftStateTimer = window.setTimeout(() => {
+            restoringDraftRef.current = false;
+            replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+        }, 0);
+
+        return () => {
+            window.clearTimeout(clearDraftStateTimer);
+            restoringDraftRef.current = false;
+        };
     }, [location.state, navigate, location.pathname]);
 
-    const buildLinkedRestoreState = useCallback(() => ({
+    const buildLinkedRestoreState = useCallback((overrides = {}) => ({
         salesOrderDraft: {
             currentDocEntry,
             header,
             lines,
             headerUdfs,
-            referenceDocuments,
-            referenceDocumentsChanged,
+            referenceDocuments: Array.isArray(overrides.referenceDocuments)
+                ? overrides.referenceDocuments
+                : referenceDocuments,
+            referenceDocumentsChanged: overrides.referenceDocumentsChanged ?? referenceDocumentsChanged,
+            referenceDocumentsModalOpen: overrides.referenceDocumentsModalOpen ?? referenceDocumentsModal,
             activeTab,
             isDirty,
         },
-    }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged]);
+    }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
 
     const openBusinessPartnerLink = useCallback(() => {
         openLinkedBusinessPartner({
@@ -542,18 +597,64 @@ function SalesOrder() {
         });
     }, [buildLinkedRestoreState, currentDocEntry, header.docNo, header.vendor, location.pathname, navigate, upsertTask]);
 
-    const openReferenceDocumentLink = useCallback((row) => {
-        openLinkedReferenceDocument({
-            transactionType: row?.transactionType,
-            docEntry: row?.docEntry,
-            docNumber: row?.docNumber,
-            sourcePath: location.pathname,
-            sourceTitle: `Sales Order${header.docNo || currentDocEntry ? ` #${header.docNo || currentDocEntry}` : ''}`,
-            sourceRestoreState: buildLinkedRestoreState(),
-            navigate,
-            upsertTask,
+    const resolveReferenceDocEntry = useCallback(async (row) => {
+        const currentDocEntryValue = String(row?.docEntry || '').trim();
+        if (currentDocEntryValue) return currentDocEntryValue;
+
+        const docNumber = String(row?.docNumber || '').trim();
+        const transactionType = String(row?.transactionType || '').trim();
+        if (!docNumber || !transactionType) return '';
+
+        const response = await fetchSalesOrderReferenceDocumentLookup({
+            transactionType,
+            query: docNumber,
+            top: 20,
         });
-    }, [buildLinkedRestoreState, currentDocEntry, header.docNo, location.pathname, navigate, upsertTask]);
+        const options = response.data?.options || [];
+        const exactMatch = options.find((option) => String(option.docNumber || '').trim() === docNumber);
+        return String((exactMatch || options[0])?.docEntry || '').trim();
+    }, []);
+
+    const openReferenceDocumentLink = useCallback(async (row, options = {}) => {
+        try {
+            const docEntry = await resolveReferenceDocEntry(row);
+            if (!docEntry) {
+                setPageState(p => ({
+                    ...p,
+                    success: '',
+                    error: 'Referenced document was not found. Choose a document from the lookup first.',
+                }));
+                return false;
+            }
+
+            const opened = openLinkedReferenceDocument({
+                transactionType: row?.transactionType,
+                docEntry,
+                docNumber: row?.docNumber,
+                sourcePath: location.pathname,
+                sourceTitle: `Sales Order${header.docNo || currentDocEntry ? ` #${header.docNo || currentDocEntry}` : ''}`,
+                sourceRestoreState: buildLinkedRestoreState(options),
+                navigate,
+                upsertTask,
+            });
+
+            if (!opened) {
+                setPageState(p => ({
+                    ...p,
+                    success: '',
+                    error: 'This referenced document type is not configured for navigation.',
+                }));
+            }
+            return opened;
+        } catch (error) {
+            setPageState(p => ({
+                ...p,
+                success: '',
+                error: getErrMsg(error, 'Failed to open referenced document.'),
+            }));
+            return false;
+        }
+    }, [buildLinkedRestoreState, currentDocEntry, header.docNo, location.pathname, navigate, resolveReferenceDocEntry, upsertTask]);
 
     useEffect(() => {
         if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
@@ -586,7 +687,10 @@ function SalesOrder() {
         const pendingRouteCopyFrom = Boolean(
             location.state?.copyFrom && isRouteStateForActiveCompany(location.state)
         );
-        const hasPendingRouteDocument = Boolean(pendingRouteDocEntry || pendingRouteCopyFrom);
+        const pendingRouteDraft = Boolean(
+            location.state?.salesOrderDraft && isRouteStateForActiveCompany(location.state)
+        );
+        const hasPendingRouteDocument = Boolean(pendingRouteDocEntry || pendingRouteCopyFrom || pendingRouteDraft || restoringDraftRef.current);
         const load = async () => {
             setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
             try {
@@ -708,6 +812,15 @@ function SalesOrder() {
                         ? normalizeUdfState(nextHeaderUdfs, prev)
                         : createUdfState(nextHeaderUdfs));
                     setLines((prev) => {
+                        if (pendingRouteDraft || restoringDraftRef.current) {
+                            return Array.isArray(prev) && prev.length
+                                ? prev.map((line) => ({
+                                    ...line,
+                                    udf: normalizeUdfState(nextRowUdfs, line.udf || {}, { preserveExtra: true }),
+                                }))
+                                : [createLine(nextRowUdfs)];
+                        }
+
                         const hasLoadedLines = hasPendingRouteDocument && (prev || []).some((line) =>
                             String(line.itemNo || '').trim() || line.lineNum !== undefined
                         );
@@ -905,8 +1018,10 @@ function SalesOrder() {
                     // Map backend address field names to frontend field names
                     shipToCode: so.header?.shipToCode || '',
                     shipToAddress: so.header?.shipTo || '',
+                    shipToAddressComponents: so.header?.shipToAddressComponents || null,
                     billToCode: so.header?.payToCode || '',
                     billToAddress: so.header?.payTo || '',
+                    billToAddressComponents: so.header?.billToAddressComponents || null,
                     // Copy all other fields from backend
                     postingDate: so.header?.postingDate || '',
                     deliveryDate: so.header?.deliveryDate || '',
@@ -917,7 +1032,11 @@ function SalesOrder() {
                     nextNumber: String(so.header?.docNum || ''),
                     status: so.header?.status || '',
                     shippingType: so.header?.shippingType || '',
-                    confirmed: so.header?.confirmed || false,
+                    confirmed: so.header?.confirmed !== false,
+                    language: so.header?.language || so.header?.languageCode || '8',
+                    pickAndPackRemarks: so.header?.pickAndPackRemarks || '',
+                    bpChannelName: so.header?.bpChannelName || so.header?.bpChannelCode || '',
+                    bpChannelContact: so.header?.bpChannelContact || '',
                     journalRemark: so.header?.journalRemark || '',
                     paymentMethod: so.header?.paymentMethod || '',
                     transactionCategory: so.header?.transactionCategory || '',
@@ -1935,14 +2054,20 @@ function SalesOrder() {
             header.billToAddress || header.payTo,
         );
         const activeAddress = type === 'billTo' ? billAddress : shipAddress;
+        const activeComponents = type === 'billTo'
+            ? header.billToAddressComponents
+            : header.shipToAddressComponents;
 
         setAddressForm(
-            mapAddressToModalForm(activeAddress, {
-                shipToCode: header.shipToCode || shipAddress?.Address || '',
-                shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
-                billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
-                billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
-            }),
+            {
+                ...mapAddressToModalForm(activeAddress, {
+                    shipToCode: header.shipToCode || shipAddress?.Address || '',
+                    shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
+                    billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
+                    billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
+                }),
+                ...(activeComponents || {}),
+            },
         );
         setAddressModal({ type });
     };
@@ -1952,27 +2077,22 @@ function SalesOrder() {
     };
 
     const saveAddressModal = () => {
-        const formatted = [
-            [addressForm.streetPoBox, addressForm.streetNo].filter(Boolean).join(', '),
-            addressForm.buildingFloorRoom,
-            [addressForm.block, addressForm.city].filter(Boolean).join(', '),
-            [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-            addressForm.countryRegion,
-            addressForm.addressName2,
-            addressForm.addressName3,
-        ].filter(Boolean).join('\n');
+        const formatted = formatAddressComponent(addressForm);
+        const components = pickAddressComponentFields(addressForm);
+        markDirty();
 
         if (addressModal.type === 'shipTo') {
             setHeader(p => ({
                 ...p,
                 shipToCode: addressForm.shipToCode || p.shipToCode,
-                shipToAddress: formatted || addressForm.shipToAddress,
-                shipTo: formatted || addressForm.shipToAddress,
+                shipToAddress: formatted,
+                shipTo: formatted,
+                shipToAddressComponents: components,
                 billToCode: addressForm.billToCode || p.billToCode,
                 payToCode: addressForm.billToCode || p.payToCode,
                 billToAddress: addressForm.billToAddress || p.billToAddress,
                 payTo: addressForm.billToAddress || p.payTo,
-                placeOfSupply: addressForm.state || p.placeOfSupply,
+                placeOfSupply: addressForm.state || '',
             }));
         } else {
             setHeader(p => ({
@@ -1982,9 +2102,10 @@ function SalesOrder() {
                 shipTo: addressForm.shipToAddress || p.shipTo,
                 billToCode: addressForm.billToCode || p.billToCode,
                 payToCode: addressForm.billToCode || p.payToCode,
-                billToAddress: formatted || addressForm.billToAddress,
-                payTo: formatted || addressForm.billToAddress,
-                placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
+                billToAddress: formatted,
+                payTo: formatted,
+                billToAddressComponents: components,
+                placeOfSupply: header.useBillToForTax ? addressForm.state || '' : p.placeOfSupply,
             }));
         }
         closeAddressModal();
@@ -1992,23 +2113,41 @@ function SalesOrder() {
 
     const handleAddressFormChange = (e) => {
         const { name, value } = e.target;
+
+        if (name === 'shipToCode') {
+            const selectedAddress = resolveSalesOrderAddress(value, vendorEffectiveShipToAddresses);
+            setAddressForm(prev => {
+                const nextState = {
+                    ...prev,
+                    shipToCode: value,
+                    shipToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.shipToAddress,
+                };
+                return addressModal?.type === 'shipTo'
+                    ? mapAddressToModalForm(selectedAddress, nextState)
+                    : nextState;
+            });
+            return;
+        }
+
+        if (name === 'billToCode') {
+            const selectedAddress = resolveSalesOrderAddress(value, vendorEffectiveBillToAddresses);
+            setAddressForm(prev => {
+                const nextState = {
+                    ...prev,
+                    billToCode: value,
+                    billToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.billToAddress,
+                };
+                return addressModal?.type === 'billTo'
+                    ? mapAddressToModalForm(selectedAddress, nextState)
+                    : nextState;
+            });
+            return;
+        }
+
         setAddressForm(p => ({ ...p, [name]: value }));
     };
 
     // ── E-Way Bill Modal handlers ──────────────────────────────────────────────
-    const openEWayBillModal = () => {
-        setEWayBillModal(true);
-    };
-
-    const closeEWayBillModal = () => {
-        setEWayBillModal(false);
-    };
-
-    const saveEWayBillModal = (data) => {
-        setEWayBillData(data);
-        console.log('E-Way Bill Data saved:', data);
-    };
-
     // ── Tax Info Modal handlers ───────────────────────────────────────────────
     const openReferenceDocumentsModal = () => {
         setReferenceDocumentsModal(true);
@@ -2790,7 +2929,7 @@ function SalesOrder() {
 
     // ── render ────────────────────────────────────────────────────────────────
     return (
-        <form ref={formRef} className={`so-page sap-document-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+        <form ref={formRef} className={`so-page sap-document-page so-sales-order-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
             {/* toolbar */}
             <div className="so-toolbar sap-document-toolbar">
@@ -3260,7 +3399,6 @@ function SalesOrder() {
                                 vendorBillToAddresses={vendorBillToAddresses}
                                 shipTypeOpts={shipTypeOpts}
                                 onOpenAddressModal={openAddressModal}
-                                onOpenEWayBillModal={openEWayBillModal}
                             />
                         )}
 
@@ -3297,7 +3435,7 @@ function SalesOrder() {
                         )}
 
                         {/* ══ TOTALS FOOTER ═════════════════════════════════════════════ */}
-                        <div className="so-header-card">
+                        <div className="so-header-card so-document-summary">
                             <div className="so-header-columns">
                                 <div className="so-header-column">
                                     <div className="so-field">
@@ -3317,14 +3455,6 @@ function SalesOrder() {
                                             ))}
                                             <option value="__DEFINE_NEW__">Define New</option>
                                         </select>
-                                        {/* Debug info */}
-                                        <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
-                                            {header.purchaser ? (
-                                                <span>Selected: {header.purchaser} | Available: {effectiveSalesEmployees.length} employees</span>
-                                            ) : (
-                                                <span>No selection | Available: {effectiveSalesEmployees.length} employees</span>
-                                            )}
-                                        </div>
                                     </div>
                                     <div className="so-field">
                                         <label className="so-field__label">Owner</label>
@@ -3342,14 +3472,6 @@ function SalesOrder() {
                                                 </option>
                                             ))}
                                         </select>
-                                        {/* Debug info */}
-                                        <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
-                                            {header.owner ? (
-                                                <span>Selected: {header.owner} | Available: {(refData.owners || []).length} owners</span>
-                                            ) : (
-                                                <span>No selection | Available: {(refData.owners || []).length} owners</span>
-                                            )}
-                                        </div>
                                     </div>
                                     <div className="so-field">
                                         <label className="so-field__label">Remarks</label>
@@ -3561,14 +3683,6 @@ function SalesOrder() {
                 addressForm={addressForm}
                 onFormChange={handleAddressFormChange}
                 states={refData.states}
-            />
-
-            {/* E-Way Bill Modal */}
-            <EWayBillModal
-                isOpen={eWayBillModal}
-                onClose={closeEWayBillModal}
-                onSave={saveEWayBillModal}
-                eWayBillData={eWayBillData}
             />
 
             {/* Tax Information Modal */}

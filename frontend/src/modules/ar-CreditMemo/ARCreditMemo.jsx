@@ -9,13 +9,13 @@ import AccountingTab from './components/AccountingTab';
 import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
-import AddressModal from './components/AddressModal';
-import { mapAddressFields } from '../../utils/documentAddress';
+import AddressModal from '../../components/document/AddressComponentModal';
+import { formatAddressComponent, mapAddressFields, pickAddressComponentFields } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
-import StateSelectionModal from '../sales-order/components/StateSelectionModal';
-import HSNCodeModal from './components/HSNCodeModal';
-import ItemSelectionModal from './components/ItemSelectionModal';
+import StateSelectionModal from '../../components/common/StateSelectionModal';
+import HSNCodeModal from '../../components/common/HSNCodeModal';
+import ItemSelectionModal from '../../components/common/ItemSelectionModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
@@ -23,11 +23,11 @@ import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
-import CopyFromModal from './components/CopyFromModal';
+import CopyFromModal from '../../components/document/CopyFromModal';
 import CopyToModal from './components/CopyToModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
-import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
@@ -73,6 +73,8 @@ import {
   normalizeUdfState,
   readSavedFormSettings,
 } from '../../config/arCreditMemoForm';
+
+const SAP_MANUAL_SERIES_VALUE = '__SAP_MANUAL__';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
@@ -135,6 +137,10 @@ const normalizeAddressText = (value) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+const normalizeBranchSelection = (value) => {
+  const normalized = String(value ?? '').trim();
+  return normalized && normalized !== '-1' && normalized !== '0' ? normalized : '';
+};
 
 // Check if batches are available for item in specific warehouse
 const checkBatchAvailability = async (itemCode, whsCode) => {
@@ -189,7 +195,17 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   loc: '', branch: '', noOfPackages: '', wTaxLiable: 'N', glAccount: '',
   distRule: '', taxLiable: 'Y', weight: '', taxAmount: '', totalLC: '',
   uomName: '', cogsDistRule: '', countryOfOrigin: '',
+  binLocationAllocation: '', itemCost: '', withoutQtyPosting: 'N',
   enableSettingCost: 'N', returnCost: '', blanketAgreementNo: '',
+  costSheet: '', packingType: '', containerType: '', grossWt: '', totalPackage: '',
+  taxCodeRepeat: '', price: '',
+  sellerBrokerage: '', buyerBrokerage: '', buyerDelivery: '', sellerDelivery: '',
+  buyerPaymentTerms: '', sellerPaymentTerms: '', buyerQuality: '', sellerQuality: '',
+  buyerPrice: '', sellerPrice: '', buyerSpecialInstruction: '', sellerSpecialInstruction: '',
+  sellerBrokerageAmtPer: '', sellerBrokeragePercent: '', stcode: '',
+  sellerItem: '', sellerQty: '', specialRebate: '', commission: '',
+  sellerBrokeragePerQty: '', fixBrokBuyer: '', fixBrockSeller: '',
+  sellerPaymentTermsRepeat: '',
   batchManaged: false,
   hasBatchesAvailable: false,
   batches: [],
@@ -202,12 +218,14 @@ const INIT_HEADER = {
   vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
   docNo: '', status: 'Open', series: '', nextNumber: '',
   postingDate: today(), deliveryDate: '', documentDate: today(), contractDate: '',
+  transactionType: 'GST Tax Invoice',
   branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
   shippingType: '', confirmed: false, journalRemark: '', paymentTerms: '',
   paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
   totalPaymentDue: '', rounding: false, roundingAmount: '', owner: '', purchaser: '', salesEmployee: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
   billToAddress: '', billToCode: '', shipToAddress: '',
+  shipToAddressComponents: null, billToAddressComponents: null,
 };
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
@@ -270,6 +288,7 @@ function ARCreditMemo() {
   useValidationHighlights(valErrors);
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const [seriesReloadToken, setSeriesReloadToken] = useState(0);
   const [addressModal, setAddressModal] = useState(null);
   const [taxInfoModal, setTaxInfoModal] = useState(false);
   const [bpModal, setBpModal] = useState(false);
@@ -351,18 +370,38 @@ function ARCreditMemo() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
   const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+  const getBranchFromWarehouseCode = useCallback((warehouseCode = '') => {
+    const code = String(warehouseCode || '').trim();
+    if (!code) return '';
+    const warehouse = (refData.warehouses || []).find((row) => (
+      String(row?.WhsCode || row?.WarehouseCode || row?.warehouse || '').trim() === code
+    ));
+    return normalizeBranchSelection(getWarehouseBranchId(warehouse));
+  }, [refData.warehouses]);
   const resolvePreferredSeries = (seriesList, postingDateValue, selectedSeries = '') => {
     if (!Array.isArray(seriesList) || !seriesList.length) return null;
 
+    const selectedBranchId = normalizeBranchSelection(header.branch);
+    const compatibleSeries = seriesList.filter((series) => {
+      const seriesBranchId = String(series?.BPLId ?? '').trim();
+      return !seriesBranchId || seriesBranchId === '0' || seriesBranchId === '-1'
+        || !selectedBranchId || seriesBranchId === selectedBranchId;
+    });
+
+    if (!compatibleSeries.length) return null;
+
     const normalizedSeries = String(selectedSeries || '').trim();
     const matchedSeries = normalizedSeries
-      ? seriesList.find((series) => String(series.Series) === normalizedSeries)
+      ? compatibleSeries.find((series) => String(series.Series) === normalizedSeries)
       : null;
 
     if (matchedSeries) return matchedSeries;
 
+    const sapDefaultSeries = compatibleSeries.find((series) => series.IsDefault || series.isDefault);
+    if (sapDefaultSeries) return sapDefaultSeries;
+
     const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
-    return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
+    return getDefaultSeriesForCurrentYear(compatibleSeries, seriesDate) || compatibleSeries[0];
   };
   const primaryActionLabel = pageState.posting
     ? 'Saving…'
@@ -470,12 +509,7 @@ function ARCreditMemo() {
                     ...((prev.rowUdfs || {})[field.key] || {}),
                   },
             }), hasSapMatrixPreferences ? nextSapDefaults.rowUdfs : nextDefaults.rowUdfs),
-            matrixColumns: hasSapMatrixPreferences
-              ? nextSapDefaults.matrixColumns
-              : {
-                  ...nextDefaults.matrixColumns,
-                  ...(prev.matrixColumns || {}),
-                },
+            matrixColumns: nextSapDefaults.matrixColumns,
           }));
           setRefData(prev => ({
             ...prev,
@@ -536,7 +570,7 @@ function ARCreditMemo() {
 
     const loadSeriesForPostingDate = async () => {
       try {
-        const seriesResponse = await fetchDocumentSeries(seriesDate);
+        const seriesResponse = await fetchDocumentSeries(seriesDate, header.transactionType || 'GST Tax Invoice', header.branch);
         const availableSeries = seriesResponse.data?.series || [];
 
         if (ignore || requestedEditDocEntry) return;
@@ -563,7 +597,7 @@ function ARCreditMemo() {
 
     loadSeriesForPostingDate();
     return () => { ignore = true; };
-  }, [currentDocEntry, requestedEditDocEntry, header.postingDate]);
+  }, [currentDocEntry, requestedEditDocEntry, header.postingDate, header.transactionType, header.branch, seriesReloadToken]);
 
   useEffect(() => {
     const docEntry = requestedEditDocEntry;
@@ -590,7 +624,11 @@ function ARCreditMemo() {
         let editSeries = [];
         try {
           const seriesDate = so?.header?.postingDate || so?.header?.documentDate || '';
-          const seriesResponse = await fetchDocumentSeries(seriesDate);
+          const seriesResponse = await fetchDocumentSeries(
+            seriesDate,
+            so?.header?.transactionType || 'GST Tax Invoice',
+            so?.header?.branch || '',
+          );
           editSeries = seriesResponse.data?.series || [];
         } catch (_seriesError) {
           editSeries = [];
@@ -628,6 +666,8 @@ function ARCreditMemo() {
           paymentTerms: so.header?.paymentTermsCode || so.header?.paymentTerms || '',
           placeOfSupply: so.header?.placeOfSupply || '',
           branch: so.header?.branch || '',
+          shipToAddressComponents: so.header?.shipToAddressComponents || null,
+          billToAddressComponents: so.header?.billToAddressComponents || null,
           docNo: so.header?.docNo || so.header?.docNum || '',
           series: so.header?.series || '',
           nextNumber: so.header?.docNo || so.header?.docNum || '',
@@ -1174,6 +1214,35 @@ function ARCreditMemo() {
       handleSeriesChange(value);
       return;
     }
+    if (name === 'branch') {
+      const nextWarehouses = filterWarehousesByBranch(effectiveWarehouses, value);
+      setHeader(p => ({
+        ...p,
+        branch: value,
+        series: '',
+        nextNumber: '',
+        warehouse: nextWarehouses.some((w) => String(w.WhsCode) === String(p.warehouse))
+          ? p.warehouse
+          : '',
+      }));
+      setSeriesReloadToken((token) => token + 1);
+      return;
+    }
+    if (name === 'warehouse') {
+      const warehouseBranch = getBranchFromWarehouseCode(value);
+      setHeader(p => ({
+        ...p,
+        warehouse: value,
+        branch: warehouseBranch || p.branch,
+        ...(warehouseBranch && warehouseBranch !== normalizeBranchSelection(p.branch)
+          ? { series: '', nextNumber: '' }
+          : {}),
+      }));
+      if (warehouseBranch && warehouseBranch !== normalizeBranchSelection(header.branch)) {
+        setSeriesReloadToken((token) => token + 1);
+      }
+      return;
+    }
     
     if (name === 'shipToCode') {
       handleShipToCodeChange(value);
@@ -1260,10 +1329,25 @@ function ARCreditMemo() {
   };
   
   const handleSeriesChange = async (seriesValue) => {
-    if (!seriesValue) return;
+    if (!seriesValue || seriesValue === SAP_MANUAL_SERIES_VALUE) {
+      setHeader(p => ({
+        ...p,
+        series: seriesValue,
+        nextNumber: '',
+      }));
+      setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+      return;
+    }
+    const selectedSeries = refData.series.find((series) => String(series.Series) === String(seriesValue));
+    const seriesBranchId = normalizeBranchSelection(selectedSeries?.BPLId);
     
     setPageState(p => ({ ...p, seriesLoading: true }));
-    setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
+    setHeader(p => ({
+      ...p,
+      series: seriesValue,
+      nextNumber: '...',
+      branch: seriesBranchId || p.branch,
+    }));
     
     try {
       const res = await fetchNextNumber(seriesValue);
@@ -1413,6 +1497,7 @@ function ARCreditMemo() {
             if (!gstState || !companyState) {
               console.warn('⚠️ Missing state information for tax determination');
               next.taxCode = '';
+              next.taxCodeRepeat = '';
               next.total = fmtDec(calcLineTotal(next), numDec.total);
               return next;
             }
@@ -1429,10 +1514,12 @@ function ARCreditMemo() {
             
             if (determinedTaxCode) {
               next.taxCode = determinedTaxCode;
+              next.taxCodeRepeat = determinedTaxCode;
               console.log(`✅ Auto-assigned tax code: ${determinedTaxCode} (${getGSTTypeLabel(companyState, gstState)})`);
             } else {
               console.warn('⚠️ Could not determine tax code automatically');
               next.taxCode = '';
+              next.taxCodeRepeat = '';
             }
             
             next.total = fmtDec(calcLineTotal(next), numDec.total);
@@ -1540,6 +1627,7 @@ function ARCreditMemo() {
       }
       if (name === 'taxCode') {
         next.taxCodeManuallyOverridden = Boolean(String(next.taxCode || '').trim());
+        next.taxCodeRepeat = value;
       }
       next.total = fmtDec(calcLineTotal(next), numDec.total);
       return next;
@@ -1709,14 +1797,20 @@ function ARCreditMemo() {
       header.billToAddress || header.payTo,
     );
     const activeAddress = type === 'billTo' ? billAddress : shipAddress;
+    const activeComponents = type === 'billTo'
+      ? header.billToAddressComponents
+      : header.shipToAddressComponents;
 
     setAddressForm(
-      mapAddressToModalForm(activeAddress, {
-        shipToCode: header.shipToCode || shipAddress?.Address || '',
-        shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
-        billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
-        billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
-      }),
+      {
+        ...mapAddressToModalForm(activeAddress, {
+          shipToCode: header.shipToCode || shipAddress?.Address || '',
+          shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
+          billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
+          billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
+        }),
+        ...(activeComponents || {}),
+      },
     );
     setAddressModal({ type });
   };
@@ -1726,27 +1820,22 @@ function ARCreditMemo() {
   };
 
   const saveAddressModal = () => {
-    const formatted = [
-      [addressForm.streetPoBox, addressForm.streetNo].filter(Boolean).join(', '),
-      addressForm.buildingFloorRoom,
-      [addressForm.block, addressForm.city].filter(Boolean).join(', '),
-      [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion,
-      addressForm.addressName2,
-      addressForm.addressName3,
-    ].filter(Boolean).join('\n');
+    const formatted = formatAddressComponent(addressForm);
+    const components = pickAddressComponentFields(addressForm);
+    markDirty();
 
     if (addressModal.type === 'shipTo') {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode || p.shipToCode,
-        shipToAddress: formatted || addressForm.shipToAddress,
-        shipTo: formatted || addressForm.shipToAddress,
+        shipToAddress: formatted,
+        shipTo: formatted,
+        shipToAddressComponents: components,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
         payTo: addressForm.billToAddress || p.payTo,
-        placeOfSupply: addressForm.state || p.placeOfSupply,
+        placeOfSupply: addressForm.state || '',
       }));
     } else {
       setHeader(p => ({
@@ -1756,9 +1845,10 @@ function ARCreditMemo() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
-        billToAddress: formatted || addressForm.billToAddress,
-        payTo: formatted || addressForm.billToAddress,
-        placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
+        billToAddress: formatted,
+        payTo: formatted,
+        billToAddressComponents: components,
+        placeOfSupply: header.useBillToForTax ? addressForm.state || '' : p.placeOfSupply,
       }));
     }
     closeAddressModal();
@@ -1766,6 +1856,37 @@ function ARCreditMemo() {
 
   const handleAddressFormChange = (e) => {
     const { name, value } = e.target;
+
+    if (name === 'shipToCode') {
+      const selectedAddress = resolveARCreditMemoAddress(value, vendorEffectiveShipToAddresses);
+      setAddressForm(prev => {
+        const nextState = {
+          ...prev,
+          shipToCode: value,
+          shipToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.shipToAddress,
+        };
+        return addressModal?.type === 'shipTo'
+          ? mapAddressToModalForm(selectedAddress, nextState)
+          : nextState;
+      });
+      return;
+    }
+
+    if (name === 'billToCode') {
+      const selectedAddress = resolveARCreditMemoAddress(value, vendorEffectiveBillToAddresses);
+      setAddressForm(prev => {
+        const nextState = {
+          ...prev,
+          billToCode: value,
+          billToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.billToAddress,
+        };
+        return addressModal?.type === 'billTo'
+          ? mapAddressToModalForm(selectedAddress, nextState)
+          : nextState;
+      });
+      return;
+    }
+
     setAddressForm(p => ({ ...p, [name]: value }));
   };
 
@@ -2315,16 +2436,34 @@ function ARCreditMemo() {
     const copySource = unwrapCopyFromDocument(data);
     const baseType = BASE_TYPE[sourceType] || 13;
     const normHeader = normaliseDocumentHeader(copySource.header);
+    const firstSourceLine = Array.isArray(copySource.lines) && copySource.lines.length ? copySource.lines[0] : {};
+    const copiedWarehouse = firstSourceLine.whse || firstSourceLine.WarehouseCode || firstSourceLine.WhsCode || normHeader.warehouse || DEFAULT_WAREHOUSE_CODE;
+    const resolvedBranch = normalizeBranchSelection(normHeader.branch)
+      || normalizeBranchSelection(firstSourceLine.branch || firstSourceLine.Branch || firstSourceLine.BPL_IDAssignedToInvoice || firstSourceLine.BPLId)
+      || getBranchFromWarehouseCode(copiedWarehouse);
+    const copyDate = today();
 
-    setHeader(prev => ({ ...prev, ...normHeader }));
+    setHeader(prev => ({
+      ...prev,
+      ...normHeader,
+      branch: resolvedBranch,
+      warehouse: normHeader.warehouse || copiedWarehouse || prev.warehouse,
+      postingDate: copyDate,
+      documentDate: copyDate,
+      deliveryDate: normHeader.deliveryDate || copyDate,
+      series: '',
+      nextNumber: '',
+    }));
+    setSeriesReloadToken((token) => token + 1);
 
     const rawLines = copySource.lines;
     const newLines = rawLines.map((line, idx) => {
-      const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch);
+      const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, resolvedBranch);
       return {
         ...createLine(rowUdfDefinitions),
         ...normalizedLine,
-        whse: normalizedLine.whse || normalizedLine.WarehouseCode || normalizedLine.WhsCode || normHeader.warehouse || DEFAULT_WAREHOUSE_CODE,
+        branch: normalizeBranchSelection(normalizedLine.branch) || resolvedBranch,
+        whse: normalizedLine.whse || normalizedLine.WarehouseCode || normalizedLine.WhsCode || copiedWarehouse || DEFAULT_WAREHOUSE_CODE,
       };
     });
     setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
@@ -2383,7 +2522,8 @@ function ARCreditMemo() {
     });
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
+    const duplicateDate = today();
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -2406,7 +2546,25 @@ function ARCreditMemo() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      setHeader(prev => ({
+        ...prev,
+        postingDate: duplicateDate,
+        documentDate: duplicateDate,
+        deliveryDate: prev.deliveryDate || duplicateDate,
+        series: '',
+        nextNumber: '',
+      }));
+      try {
+        const seriesResponse = await fetchDocumentSeries(duplicateDate, header.transactionType || 'GST Tax Invoice', header.branch);
+        const duplicateSeries = seriesResponse.data?.series || [];
+        setRefData((prev) => ({ ...prev, series: duplicateSeries }));
+        const preferredSeries = resolvePreferredSeries(duplicateSeries, duplicateDate, '');
+        if (preferredSeries?.Series != null) {
+          handleSeriesChange(preferredSeries.Series);
+        }
+      } catch (_error) {
+        refreshDuplicateSeries(refData.series, '', handleSeriesChange);
+      }
     }
   };
 
@@ -2431,7 +2589,8 @@ function ARCreditMemo() {
         ...header, 
         deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
         placeOfSupply: header.placeOfSupply,
-        branch: header.branch,
+        branch: normalizeBranchSelection(header.branch)
+          || getBranchFromWarehouseCode(header.warehouse || lines[0]?.whse || ''),
         contactPerson: header.contactPerson,
         totalPaymentDue: fmtDec(totals.total, numDec.totalPaymentDue),
         roundingAmount: fmtDec(totals.roundingAmount, numDec.totalPaymentDue),
@@ -2736,9 +2895,10 @@ function ARCreditMemo() {
                         disabled={!!currentDocEntry || pageState.seriesLoading}
                       >
                         <option value="">Select Series</option>
+                        <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
                         {Array.isArray(refData.series) && refData.series.map(s => (
                           <option key={s.Series} value={s.Series}>
-                            {s.SeriesName} ({s.Indicator})
+                            {s.DisplayName || s.RawSeriesName || s.SeriesName || s.Series}
                           </option>
                         ))}
                       </select>
