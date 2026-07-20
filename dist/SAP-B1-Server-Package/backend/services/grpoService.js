@@ -215,6 +215,16 @@ const getBatchesByItem = async (itemCode, whsCode) => {
   }
 };
 
+const getNextBatchNumber = async ({ prefix = 'JKL' } = {}) => {
+  try {
+    return await grpoDb.getNextBatchNumber({ prefix });
+  } catch (error) {
+    const normalizedPrefix = String(prefix || 'JKL').trim().toUpperCase() || 'JKL';
+    const year = String(new Date().getFullYear()).slice(-2);
+    return { prefix: normalizedPrefix, nextBatchNumber: `${normalizedPrefix}${year}0001`, previousBatchNumber: '' };
+  }
+};
+
 // ───────── SUBMIT GRPO (USING SERVICE LAYER) ─────────
 
 const submitGRPO = async (payload) => {
@@ -222,6 +232,8 @@ const submitGRPO = async (payload) => {
     const { company_id, header, lines, header_udfs } = payload;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
      
+    const lineUdfDefinitionsByKey = await getUdfDefinitionsByKey('PDN1');
+
     // Build SAP Service Layer payload
     const sapPayload = {
       CardCode: header.vendor,
@@ -231,6 +243,7 @@ const submitGRPO = async (payload) => {
       Comments: header.otherInstruction || '',
       JournalMemo: header.journalRemark || '',
       NumAtCard: header.salesContractNo || '',
+      DocCurrency: header.currency || 'INR',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
       DocumentLines: lines
@@ -248,6 +261,9 @@ const submitGRPO = async (payload) => {
             Quantity: parseFloat(l.quantity) || 0,
             WarehouseCode: l.whse || '',
           };
+          if (l.commPercent !== undefined && l.commPercent !== null && String(l.commPercent).trim() !== '') {
+            docLine.CommissionPercent = parseFloat(l.commPercent) || 0;
+          }
 
           if (hasBaseDoc) {
             docLine.BaseEntry = parseInt(l.baseEntry, 10);
@@ -269,11 +285,18 @@ const submitGRPO = async (payload) => {
           }
 
           if (l.batchManaged && l.batches && l.batches.length > 0) {
-            docLine.BatchNumbers = l.batches.map(b => ({
-              BatchNumber: b.batchNumber,
-              Quantity: parseFloat(b.quantity) || 0,
-            }));
+            docLine.BatchNumbers = l.batches.map(b => {
+              const batch = {
+                BatchNumber: b.batchNumber,
+                Quantity: parseFloat(b.quantity) || 0,
+              };
+              const supplierLotNo = String(b.supplierLotNo || '').trim();
+              if (supplierLotNo) batch.ManufacturerSerialNumber = supplierLotNo;
+              return batch;
+            });
           }
+
+          applyUdfValues(docLine, l.udf, null, lineUdfDefinitionsByKey);
 
           return docLine;
         }),
@@ -281,13 +304,22 @@ const submitGRPO = async (payload) => {
    
     // Add optional fields
     if (header.series) sapPayload.Series = parseInt(header.series);
-    if (header.branch) sapPayload.BPLId = parseInt(header.branch);
+    if (header.branch) sapPayload.BPL_IDAssignedToInvoice = parseInt(header.branch);
+    const contactPersonCode = Number(header.contactPerson);
+    if (Number.isFinite(contactPersonCode)) sapPayload.ContactPersonCode = contactPersonCode;
+    if (header.shipToCode) sapPayload.ShipToCode = header.shipToCode;
+    if (header.payToCode) sapPayload.PayToCode = header.payToCode;
+    if (header.shipToAddress || header.shipTo) sapPayload.Address = header.shipToAddress || header.shipTo;
+    if (header.payToAddress || header.payTo) sapPayload.Address2 = header.payToAddress || header.payTo;
     if (header.paymentTerms) sapPayload.PaymentGroupCode = parseInt(header.paymentTerms);
     if (header.salesEmployee !== '' && header.salesEmployee != null) sapPayload.SalesPersonCode = parseInt(header.salesEmployee, 10);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
     const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OPDN');
-    applyUdfValues(sapPayload, header_udfs, null, headerUdfDefinitionsByKey);
+    applyUdfValues(sapPayload, {
+      ...header_udfs,
+      ...(header.buyerLocation !== undefined ? { U_ShipLocation: header.buyerLocation } : {}),
+    }, null, headerUdfDefinitionsByKey);
 
    
 
@@ -329,9 +361,16 @@ const updateGRPO = async (docEntry, payload) => {
     };
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
+    if (header.shipToCode) sapPayload.ShipToCode = header.shipToCode;
+    if (header.payToCode) sapPayload.PayToCode = header.payToCode;
+    if (header.shipToAddress || header.shipTo) sapPayload.Address = header.shipToAddress || header.shipTo;
+    if (header.payToAddress || header.payTo) sapPayload.Address2 = header.payToAddress || header.payTo;
 
     const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OPDN');
-    applyUdfValues(sapPayload, header_udfs, null, headerUdfDefinitionsByKey);
+    applyUdfValues(sapPayload, {
+      ...header_udfs,
+      ...(header.buyerLocation !== undefined ? { U_ShipLocation: header.buyerLocation } : {}),
+    }, null, headerUdfDefinitionsByKey);
 
     await sapService.request({
       method: 'PATCH',
@@ -383,6 +422,7 @@ module.exports = {
   getOpenPurchaseOrders,
   getPurchaseOrderForCopy,
   getBatchesByItem,
+  getNextBatchNumber,
   getItemsForModal,
   getFreightCharges,
 };

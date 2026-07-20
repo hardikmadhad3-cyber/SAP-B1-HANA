@@ -532,7 +532,7 @@
 .ifp-page {
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 115px);
+  min-height: 0;
 }
 
 .ifp-sap-shell {
@@ -565,8 +565,8 @@
 }
 
 .ifp-tab-panel {
-  min-height: 300px;
-  height: 300px;
+  min-height: 150px;
+  height: clamp(150px, 22vh, 230px);
   background: #fff;
 }
 
@@ -679,14 +679,15 @@
 }
 
 .ifp-form-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 8px 10px 2px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(330px, 1fr);
+  gap: 28px;
+  margin: 0 12px 12px;
+  padding: 8px 10px 10px;
   background: #f4f6f8;
-  border-left: 1px solid #b8c2cc;
-  border-right: 1px solid #b8c2cc;
-  border-bottom: 1px solid #b8c2cc;
+  border: 1px solid #b8c2cc;
+  border-top: 0;
+  box-sizing: border-box;
 }
 
 .ifp-footer-left,
@@ -697,27 +698,43 @@
 }
 
 .ifp-footer-left {
-  min-width: 360px;
+  min-width: 0;
 }
 
 .ifp-footer-right {
-  align-items: flex-end;
-  min-width: 330px;
-  margin-left: auto;
+  min-width: 0;
+  align-items: stretch;
 }
 
 .ifp-footer-field {
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: 140px minmax(0, 330px);
+  align-items: start;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
 }
 
 .ifp-footer-field > .im-field__label {
-  flex: 0 0 110px;
-  text-align: left;
+  width: auto;
+  min-width: 0;
+  text-align: right;
   padding-top: 3px;
 }
 
+.ifp-footer-right .ifp-footer-field {
+  grid-template-columns: minmax(140px, 1fr) minmax(130px, 176px);
+}
+
+.ifp-footer-textarea,
+.ifp-footer-input,
+.ifp-qr-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
 .ifp-footer-textarea {
-  width: 130px;
   height: 38px;
   border: 1px solid #aeb8c2;
   resize: none;
@@ -726,7 +743,6 @@
 }
 
 .ifp-qr-input {
-  width: 130px;
   height: 38px !important;
   background: #fff !important;
 }
@@ -1060,9 +1076,13 @@
 }
 
 @media (max-width: 900px) {
-  .ifp-header-layout,
-  .ifp-form-footer {
+  .ifp-header-layout {
     flex-direction: column;
+  }
+
+  .ifp-form-footer {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
   }
 
   .ifp-header-left,
@@ -1077,6 +1097,10 @@
   }
 
   .ifp-footer-right {
-    align-items: flex-start;
+    align-items: stretch;
+  }
+
+  .ifp-footer-right .ifp-footer-field {
+    grid-template-columns: 140px minmax(0, 330px);
   }
 }

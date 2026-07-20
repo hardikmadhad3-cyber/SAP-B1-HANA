@@ -460,24 +460,28 @@ function renderField(field = {}, value, disabled, onChange, onLookup) {
 
   if (fieldType === 'select') {
     return (
-      <select
-        className="form-control form-control-sm"
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {(field.options || []).map((option) => {
-          const normalizedOption = typeof option === 'object'
-            ? option
-            : { value: option, label: option };
+      <div className={`po-udf-select-control${disabled ? ' is-disabled' : ''}`}>
+        <select
+          className="form-control form-control-sm po-udf-select-control__select"
+          value={value ?? ''}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          <option value=""></option>
+          {(field.options || []).map((option) => {
+            const normalizedOption = typeof option === 'object'
+              ? option
+              : { value: option, label: option };
+            if (String(normalizedOption.value ?? '') === '') return null;
 
-          return (
-            <option key={normalizedOption.value} value={normalizedOption.value}>
-              {normalizedOption.label}
-            </option>
-          );
-        })}
-      </select>
+            return (
+              <option key={normalizedOption.value} value={normalizedOption.value}>
+                {normalizedOption.label}
+              </option>
+            );
+          })}
+        </select>
+      </div>
     );
   }
 
@@ -636,8 +640,8 @@ function SellerAddressModal({
             alignItems: 'center',
             justifyContent: 'space-between',
             padding: '6px 10px',
-            background: 'linear-gradient(to bottom, #f0f0f0, #d0d0d0)',
-            borderBottom: '2px solid #e8a000',
+            background: 'linear-gradient(to bottom, #f0f3f7, #e3ebf3)',
+            borderBottom: '1px solid #c8d2dc',
           }}
         >
           <h6 className="mb-0" style={{ fontSize: 12, fontWeight: 700 }}>
@@ -664,7 +668,7 @@ function SellerAddressModal({
               setSearchTerm(event.target.value);
               setSelectedRow(null);
             }}
-            style={{ maxWidth: 340, fontSize: 11, background: '#ffffcc' }}
+            style={{ maxWidth: 340, fontSize: 11, background: '#fff' }}
             autoFocus
           />
         </div>
@@ -702,7 +706,7 @@ function SellerAddressModal({
                         onDoubleClick={() => chooseAddress(address)}
                         style={{
                           cursor: 'pointer',
-                          backgroundColor: selected ? '#fff8c5' : index % 2 === 0 ? '#fff' : '#f3f3f3',
+                          backgroundColor: selected ? '#e7f2fb' : index % 2 === 0 ? '#fff' : '#f3f3f3',
                         }}
                       >
                         <td style={{ width: 48, padding: '5px 8px', color: '#666' }}>{index + 1}</td>
@@ -729,7 +733,8 @@ function SellerAddressModal({
               minWidth: 82,
               fontSize: 11,
               border: '1px solid #999',
-              background: selectedRow !== null ? 'linear-gradient(to bottom, #ffe066, #e8a000)' : '#e0e0e0',
+              background: selectedRow !== null ? 'linear-gradient(180deg, #006fb8 0%, #00558f 100%)' : '#e0e6ed',
+              color: selectedRow !== null ? '#fff' : '#172334',
             }}
           >
             Choose
@@ -738,7 +743,7 @@ function SellerAddressModal({
             type="button"
             className="btn btn-sm"
             onClick={onClose}
-            style={{ minWidth: 82, fontSize: 11, border: '1px solid #999', background: 'linear-gradient(to bottom, #ffe066, #e8a000)' }}
+            style={{ minWidth: 82, fontSize: 11, border: '1px solid #999', background: 'linear-gradient(180deg, #fff 0%, #e8edf2 100%)' }}
           >
             Cancel
           </button>
@@ -765,6 +770,7 @@ function HeaderUdfSidebar({
   billToPartyName = '',
   loadBillToPartyDetails,
   loadToVendorDetails,
+  onLoadLookupOptions,
 }) {
   const [sellerLookupOpen, setSellerLookupOpen] = useState(false);
   const [sellerPartners, setSellerPartners] = useState([]);
@@ -794,6 +800,13 @@ function HeaderUdfSidebar({
   const [termsLookupOptions, setTermsLookupOptions] = useState([]);
   const [termsLookupLoading, setTermsLookupLoading] = useState(false);
   const [termsLookupError, setTermsLookupError] = useState('');
+  const [dynamicLookup, setDynamicLookup] = useState({
+    open: false,
+    field: null,
+    options: [],
+    loading: false,
+    error: '',
+  });
   const valuesRef = useRef(values || {});
   const onFieldChangeRef = useRef(onFieldChange);
   const loadBillToPartyDetailsRef = useRef(loadBillToPartyDetails);
@@ -848,9 +861,48 @@ function HeaderUdfSidebar({
   const safeFields = Array.isArray(fields) ? fields.filter((field) => field && field.key) : [];
   const containerClass = orientation === 'horizontal'
     ? 'po-udf-sidebar-horizontal'
-    : 'col-xl-3 col-lg-4 align-self-start';
+    : 'col-xl-3 col-lg-4';
 
-  const rootClassName = [containerClass, className].filter(Boolean).join(' ');
+  const rootClassName = [
+    containerClass,
+    orientation === 'horizontal' ? '' : 'sap-header-udf-panel',
+    className,
+  ].filter(Boolean).join(' ');
+  const isVerticalSidebar = orientation !== 'horizontal';
+  const sidebarFrameStyle = isVerticalSidebar
+    ? {
+        alignSelf: 'stretch',
+        display: 'flex',
+        height: 'auto',
+        minHeight: 0,
+        maxHeight: 'none',
+        overflow: 'hidden',
+        width: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
+        ...(style || {}),
+      }
+    : (style || {});
+  const sidebarCardStyle = isVerticalSidebar
+    ? {
+        position: 'static',
+        top: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 0,
+        maxHeight: '100%',
+        overflow: 'hidden',
+      }
+    : {};
+  const sidebarBodyStyle = isVerticalSidebar
+    ? {
+        flex: '1 1 auto',
+        minHeight: 0,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+      }
+    : undefined;
   const showClose = typeof onClose === 'function';
   const orderedFields = sortHeaderUdfFields(safeFields);
   const sellerContactPersonField = orderedFields.find(isSellerContactPersonField);
@@ -1201,6 +1253,42 @@ function HeaderUdfSidebar({
     return createdOption;
   };
 
+  const openDynamicUdfLookup = async (field) => {
+    if (!field?.lookupSource || typeof onLoadLookupOptions !== 'function') return;
+
+    setDynamicLookup({
+      open: true,
+      field,
+      options: [],
+      loading: true,
+      error: '',
+    });
+
+    try {
+      const options = await onLoadLookupOptions(field.lookupSource, field);
+      setDynamicLookup({
+        open: true,
+        field,
+        options: Array.isArray(options) ? options : [],
+        loading: false,
+        error: '',
+      });
+    } catch (error) {
+      setDynamicLookup({
+        open: true,
+        field,
+        options: [],
+        loading: false,
+        error: error?.response?.data?.detail || error?.message || 'Failed to load lookup values.',
+      });
+    }
+  };
+
+  const handleDynamicLookupSelect = (option) => {
+    if (!dynamicLookup.field?.key) return;
+    changeField(dynamicLookup.field.key, option?.value || '');
+  };
+
   const applySellerAddress = (seller) => {
     const selectedAddress = selectSellerAddress(seller?.BPAddresses, seller);
     changeField(SELLER_ADDRESS_ID_KEY, getAddressId(selectedAddress));
@@ -1479,9 +1567,10 @@ function HeaderUdfSidebar({
 
   return (
     <>
-      <div className={rootClassName} style={style}>
+      <div className={rootClassName} style={{ ...sidebarFrameStyle, ...style, width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}>
         <div
           className={`card p-3 po-udf-sidebar-card ${orientation === 'horizontal' ? 'po-udf-sidebar-card-horizontal' : ''}`}
+          style={sidebarCardStyle}
         >
           <div className="po-udf-sidebar-header">
             <div>
@@ -1501,13 +1590,17 @@ function HeaderUdfSidebar({
             ) : null}
           </div>
 
-          <div className="po-udf-sidebar-body">
-            {orderedFields.map((field) => {
+          <div className="po-udf-sidebar-body" style={sidebarBodyStyle}>
+            {orderedFields.filter((field) => field && field.key).map((field) => {
               const termsOfSupplyField = isTermsOfSupplyField(field);
               const fieldValue = values[field.key];
+              const fieldSetting = formSettings.headerUdfs?.[field.key] || {};
+              const fieldActive = fieldSetting.active !== undefined
+                ? fieldSetting.active !== false
+                : field.active !== false;
               const fieldDisabled = disabled ||
                 (!termsOfSupplyField && field.readOnly) ||
-                formSettings.headerUdfs?.[field.key]?.active === false;
+                !fieldActive;
               const currentToVendorAddressId = String(fieldValue || '');
               const currentBillToPartyAddressId = String(fieldValue || '');
               const fieldLookup = termsOfSupplyField
@@ -1524,7 +1617,9 @@ function HeaderUdfSidebar({
                         ? openToVendorAddressLookup
                         : isBillToPartyAddressIdField(field)
                           ? openBillToPartyAddressLookup
-                          : undefined;
+                          : field.lookupSource
+                            ? () => openDynamicUdfLookup(field)
+                            : undefined;
               const fieldControl = isToVendorAddressIdField(field)
                 ? renderLookupInputControl(
                   currentToVendorAddressId,
@@ -1570,7 +1665,7 @@ function HeaderUdfSidebar({
               return (
                 <div
                   key={field.key}
-                  className={`mb-3 po-udf-sidebar-field po-udf-sidebar-field--${field.type || 'text'}`}
+                  className={`mb-3 po-udf-sidebar-field po-udf-sidebar-field--${field?.type || 'text'}`}
                 >
                   <label className="form-label mb-1">
                     {field.label}{field.required ? ' *' : ''}
@@ -1655,6 +1750,16 @@ function HeaderUdfSidebar({
         columns={PREDEFINED_TEXT_COLUMNS}
         createValueLabel="Text Code"
         createDescriptionLabel="Text"
+      />
+      <LineValueLookupModal
+        isOpen={dynamicLookup.open}
+        onClose={() => setDynamicLookup((prev) => ({ ...prev, open: false }))}
+        onSelect={handleDynamicLookupSelect}
+        options={dynamicLookup.options}
+        title={`List of ${dynamicLookup.field?.label || 'Values'}`}
+        searchPlaceholder="Search values"
+        emptyMessage={dynamicLookup.loading ? 'Loading values...' : (dynamicLookup.error || 'No values found')}
+        allowCreate={false}
       />
     </>
   );

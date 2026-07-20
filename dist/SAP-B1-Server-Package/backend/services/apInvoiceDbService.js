@@ -12,6 +12,149 @@ const safe = async (promise) => {
   }
 };
 
+const getTableColumns = async (tableName) => {
+  const rows = await safe(db.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+  `, { tableName }));
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '').trim()));
+};
+
+const optionalColumn = (columns, tableAlias, columnName, alias, fallback = 'NULL') => (
+  columns.has(columnName)
+    ? `${tableAlias}.${columnName} AS ${alias}`
+    : `${fallback} AS ${alias}`
+);
+
+const parseSeriesDate = (value) => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  const text = String(value || '').trim();
+  if (!text) return new Date();
+
+  const ymd = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymd) return new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
+
+  const dmy = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (dmy) return new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
+const normalizeSeriesText = (value) =>
+  String(value || '').toUpperCase().replace(/FY/g, '').replace(/[-/\s]/g, '');
+
+const getFinancialYearTokens = (docDate) => {
+  const year = docDate.getFullYear();
+  const fyStartYear = docDate.getMonth() + 1 >= 4 ? year : year - 1;
+  const fyEndYear = fyStartYear + 1;
+  const fyStartShort = String(fyStartYear).slice(-2);
+  const fyEndShort = String(fyEndYear).slice(-2);
+  return [
+    `${fyStartShort}${fyEndShort}`,
+    `${fyStartYear}${fyEndShort}`,
+    `${fyStartYear}${fyEndYear}`,
+  ];
+};
+
+const isDateBetween = (date, fromDate, toDate) => {
+  const from = fromDate instanceof Date ? fromDate : new Date(fromDate);
+  const to = toDate instanceof Date ? toDate : new Date(toDate);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return false;
+  return date >= from && date <= to;
+};
+
+const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = '' } = {}) => {
+  const docDate = parseSeriesDate(date);
+  const branchId = String(branch || '').trim() === '' ? null : Number.parseInt(branch, 10);
+  const normalizedBranchId = Number.isInteger(branchId) ? branchId : null;
+  const fyTokens = getFinancialYearTokens(docDate);
+  const nnm1Columns = await getTableColumns('NNM1');
+  const hasBranchColumn = nnm1Columns.has('BPLId');
+  const branchSelect = hasBranchColumn ? 'T0.BPLId,' : 'NULL AS BPLId,';
+  const branchFilter = hasBranchColumn && normalizedBranchId != null
+    ? 'AND (T0.BPLId IS NULL OR T0.BPLId IN (-1, 0, @branchId))'
+    : '';
+
+  const rows = await safe(db.query(`
+    SELECT
+      T0.Series,
+      T0.SeriesName,
+      T0.Indicator,
+      T0.NextNumber,
+      ${branchSelect}
+      FY.FinancialYear,
+      FY.FromDate,
+      FY.ToDate,
+      CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault
+    FROM NNM1 T0
+    LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
+    LEFT JOIN (
+      SELECT
+        Indicator,
+        MAX(Name) AS FinancialYear,
+        MIN(F_RefDate) AS FromDate,
+        MAX(T_RefDate) AS ToDate
+      FROM OFPR
+      GROUP BY Indicator
+    ) FY ON FY.Indicator = T0.Indicator
+    WHERE T0.ObjectCode = @objectCode
+      AND COALESCE(T0.Locked, 'N') <> 'Y'
+      ${branchFilter}
+  `, {
+    objectCode,
+    branchId: normalizedBranchId,
+  }));
+
+  const ranked = rows.map((row) => {
+    const rowText = normalizeSeriesText(`${row.SeriesName || ''} ${row.Indicator || ''}`);
+    return {
+      ...row,
+      IsManual: Number(row.Series) === -1 || String(row.SeriesName || '').trim().toUpperCase() === 'MANUAL' ? 1 : 0,
+      IsDateMatch: isDateBetween(docDate, row.FromDate, row.ToDate) ? 1 : 0,
+      IsYearNameMatch: fyTokens.some((token) => rowText.includes(token)) ? 1 : 0,
+      BranchPreference: hasBranchColumn && normalizedBranchId != null && Number(row.BPLId) === normalizedBranchId ? 0 : 1,
+    };
+  });
+
+  const hasYearMatchedRows = ranked.some((row) => row.IsYearNameMatch === 1);
+  const hasExactBranchRows = hasBranchColumn && normalizedBranchId != null
+    ? ranked.some((row) => Number(row.BPLId) === normalizedBranchId)
+    : false;
+  const bySeriesNameAndIndicator = new Map();
+
+  [...ranked]
+    .sort((left, right) =>
+      left.BranchPreference - right.BranchPreference ||
+      Number(right.IsDefault || 0) - Number(left.IsDefault || 0) ||
+      Number(left.Series || 0) - Number(right.Series || 0))
+    .forEach((row) => {
+      const key = `${String(row.SeriesName || '').trim().toUpperCase()}|${String(row.Indicator || '').trim().toUpperCase()}`;
+      if (!bySeriesNameAndIndicator.has(key)) bySeriesNameAndIndicator.set(key, row);
+    });
+
+  const series = [...bySeriesNameAndIndicator.values()]
+    .filter((row) => (
+      row.IsManual === 1 ||
+      (hasYearMatchedRows && row.IsYearNameMatch === 1) ||
+      (!hasYearMatchedRows && row.IsDateMatch === 1)
+    ))
+    .filter((row) => (
+      !hasBranchColumn ||
+      normalizedBranchId == null ||
+      !hasExactBranchRows ||
+      Number(row.BPLId) === normalizedBranchId ||
+      row.IsManual === 1
+    ))
+    .sort((left, right) =>
+      left.IsManual - right.IsManual ||
+      Number(right.IsDefault || 0) - Number(left.IsDefault || 0) ||
+      String(left.SeriesName || '').localeCompare(String(right.SeriesName || '')));
+
+  return { series };
+};
+
 const getVendors = () => safe(db.query(`
   SELECT CardCode, CardName, CardType, Currency,
          VatGroup, GroupNum AS PayTermsGrpCode
@@ -59,7 +202,7 @@ const getItemsForModal = () => safe(db.query(`
 
 const getWarehouses = () => safe(db.query(`
   SELECT WhsCode, WhsName, Street, Block,
-         City, County, State, ZipCode, Country, BPLId AS BranchID
+         City, County, State, ZipCode, Country, BPLid AS BranchID
   FROM   OWHS
   WHERE  Inactive <> 'Y'
   ORDER  BY WhsCode
@@ -101,6 +244,7 @@ const getStates = () => safe(db.query(`
 const getTaxCodes = () => masterDataDbService.searchDocumentTaxCodes('', 'purchase', 500, 0);
 
 const getWithholdingTaxCodes = () => masterDataDbService.lookupWithholdingTaxCodes('');
+const getGLAccounts = () => masterDataDbService.lookupGLAccounts('', 5000);
 
 const getUomGroups = () => safe(db.query(`
   SELECT g.UgpEntry AS AbsEntry,
@@ -115,11 +259,11 @@ const getUomGroups = () => safe(db.query(`
 
 const getDecimalSettings = () => safe(db.query(`
   SELECT TOP 1
-    PriceDP AS PriceDec,
-    QuantityDP AS QtyDec,
-    RateDP AS RateDec,
-    PercentDP AS PercentDec,
-    SumDP AS SumDec
+    PriceDec,
+    QtyDec,
+    RateDec,
+    PercentDec,
+    SumDec
   FROM OADM
 `));
 
@@ -127,7 +271,8 @@ const getCompanyInfo = () => safe(db.query(`
   SELECT TOP 1
     CompnyName,
     CompnyAddr AS Address,
-    State
+    State,
+    MainCurncy
   FROM OADM
 `));
 
@@ -147,7 +292,7 @@ const getContactsByVendor = async (cardCode) => safe(db.query(`
 `, { cardCode }));
 
 const getAddressesByVendor = async (cardCode) => safe(db.query(`
-  SELECT 
+  SELECT T0.*,
     T0.CardCode,
     T0.Address,
     T0.AdresType,
@@ -279,6 +424,7 @@ const getGRPOForCopy = async (docEntry) => {
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue
     FROM OPDN T0
+    LEFT JOIN OSLP T1 ON T1.SlpCode = T0.SlpCode
     WHERE T0.DocEntry = @docEntry
   `, { docEntry }));
 
@@ -287,7 +433,9 @@ const getGRPOForCopy = async (docEntry) => {
   }
 
   const header = headerRows[0];
+  const lineUdfsByLineNum = await getLineUdfValues({ tableId: 'PDN1', keyValue: docEntry });
 
+  const lineColumns = await getTableColumns('PDN1');
   const lineRows = await safe(db.query(`
     SELECT 
       T0.LineNum,
@@ -298,10 +446,16 @@ const getGRPOForCopy = async (docEntry) => {
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
-      T0.WTLiable,
+      ${optionalColumn(lineColumns, 'T0', 'WTLiable', 'WTLiable', "'N'")},
       T0.LineTotal,
       T0.WhsCode AS Warehouse,
-      T0.unitMsr AS UoMCode
+      ${optionalColumn(lineColumns, 'T0', 'AcctCode', 'GLAccount', "''")},
+      T0.unitMsr AS UoMCode,
+      ${optionalColumn(lineColumns, 'T0', 'StockPrice', 'ItemCost', '0')},
+      ${optionalColumn(lineColumns, 'T0', 'OcrCode', 'DistributionRule', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'CountryOrg', 'CountryOfOrigin', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'LocCode', 'LocationCode', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'AgrNo', 'BlanketAgreementNo', "''")}
     FROM PDN1 T0
     WHERE T0.DocEntry = @docEntry
       AND T0.LineStatus = 'O'
@@ -356,12 +510,19 @@ const getGRPOForCopy = async (docEntry) => {
         unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
         stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
         taxCode: l.TaxCode || '',
+        wtaxLiable: String(l.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
         total: l.LineTotal != null ? String(l.LineTotal) : '',
         whse: l.Warehouse || '',
+        glAccount: l.GLAccount || '',
         uomCode: l.UoMCode || '',
+        itemCost: l.ItemCost != null ? String(l.ItemCost) : '',
+        distRule: l.DistributionRule || '',
+        countryOfOrigin: l.CountryOfOrigin || '',
+        loc: l.LocationCode != null ? String(l.LocationCode) : '',
+        blanketAgreementNo: l.BlanketAgreementNo ? String(l.BlanketAgreementNo) : '',
         batchManaged: itemInfo.batchManaged,
         batches: [],
-        udf: {},
+        udf: lineUdfsByLineNum[l.LineNum] || {},
       };
     }),
   };
@@ -391,7 +552,18 @@ const getAPInvoiceList = async ({
     status,
     postingDateFrom,
     postingDateTo,
+  }, {
+    additionalQueryClauses: [
+      'T0.NumAtCard LIKE @query',
+      `EXISTS (
+        SELECT 1
+        FROM PCH1 Q1
+        WHERE Q1.DocEntry = T0.DocEntry
+          AND (Q1.ItemCode LIKE @query OR Q1.Dscription LIKE @query)
+      )`,
+    ],
   });
+  whereClauses.push("ISNULL(T0.DocType, 'I') = 'I'");
 
   const countRows = await safe(db.query(`
     SELECT COUNT(*) AS total_count
@@ -458,6 +630,8 @@ const getAPInvoice = async (docEntry) => {
       T0.CardCode,
       T0.CardName,
       T0.CntctCode AS ContactPersonCode,
+      T0.SlpCode AS SalesEmployeeCode,
+      T1.SlpName AS SalesEmployeeName,
       T0.NumAtCard AS VendorRefNo,
       T0.DocDate AS PostingDate,
       T0.DocDueDate AS DeliveryDate,
@@ -491,6 +665,7 @@ const getAPInvoice = async (docEntry) => {
     getLineUdfValues({ tableId: 'PCH1', keyValue: docEntry }),
   ]);
 
+  const lineColumns = await getTableColumns('PCH1');
   const lineRows = await safe(db.query(`
     SELECT 
       T0.LineNum,
@@ -500,9 +675,16 @@ const getAPInvoice = async (docEntry) => {
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
+      ${optionalColumn(lineColumns, 'T0', 'WTLiable', 'WTLiable', "'N'")},
       T0.LineTotal,
       T0.WhsCode AS Warehouse,
+      ${optionalColumn(lineColumns, 'T0', 'AcctCode', 'GLAccount', "''")},
       T0.unitMsr AS UoMCode,
+      ${optionalColumn(lineColumns, 'T0', 'StockPrice', 'ItemCost', '0')},
+      ${optionalColumn(lineColumns, 'T0', 'OcrCode', 'DistributionRule', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'CountryOrg', 'CountryOfOrigin', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'LocCode', 'LocationCode', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'AgrNo', 'BlanketAgreementNo', "''")},
       T0.BaseEntry,
       T0.BaseType,
       T0.BaseLine
@@ -542,13 +724,14 @@ const getAPInvoice = async (docEntry) => {
         vendor: header.CardCode,
         name: header.CardName,
         contactPerson: header.ContactPersonCode ? String(header.ContactPersonCode) : '',
-        salesEmployee: header.SalesEmployeeCode ? String(header.SalesEmployeeCode) : '',
+        salesEmployee: header.SalesEmployeeCode != null ? String(header.SalesEmployeeCode) : '',
         purchaser: header.SalesEmployeeName || '',
         salesContractNo: header.VendorRefNo || '',
         branch: header.Branch ? String(header.Branch) : '',
         docNo: header.DocNum ? String(header.DocNum) : '',
         status: header.DocumentStatus || 'Open',
-        series: header.Series ? String(header.Series) : '',
+        series: header.Series != null ? String(header.Series) : '',
+        currency: header.Currency || '',
         postingDate: header.PostingDate ? header.PostingDate.toISOString().split('T')[0] : '',
         deliveryDate: header.DeliveryDate ? header.DeliveryDate.toISOString().split('T')[0] : '',
         documentDate: header.DocumentDate ? header.DocumentDate.toISOString().split('T')[0] : '',
@@ -576,7 +759,13 @@ const getAPInvoice = async (docEntry) => {
           wtaxLiable: String(l.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
           total: l.LineTotal != null ? String(l.LineTotal) : '',
           whse: l.Warehouse || '',
+          glAccount: l.GLAccount || '',
           uomCode: l.UoMCode || '',
+          itemCost: l.ItemCost != null ? String(l.ItemCost) : '',
+          distRule: l.DistributionRule || '',
+          countryOfOrigin: l.CountryOfOrigin || '',
+          loc: l.LocationCode != null ? String(l.LocationCode) : '',
+          blanketAgreementNo: l.BlanketAgreementNo ? String(l.BlanketAgreementNo) : '',
           batchManaged: itemInfo.batchManaged,
           batches: [],
           udf: lineUdfsByLineNum[l.LineNum] || {},
@@ -587,26 +776,8 @@ const getAPInvoice = async (docEntry) => {
   };
 };
 
-const getDocumentSeries = async () => {
-  const result = await safe(db.query(`
-     SELECT 
-    T0.Series,
-    T0.SeriesName,
-    T0.Indicator,
-    T0.NextNumber,
-    T1.Name AS FinancialYear,
-    T1.F_RefDate AS FromDate,
-    T1.T_RefDate AS ToDate
-FROM NNM1 T0
-INNER JOIN OFPR T1 
-    ON T0.Indicator = T1.Indicator
-WHERE T0.ObjectCode = '18'
-    AND T0.Locked = 'N'
-    AND GETDATE() BETWEEN T1.F_RefDate AND T1.T_RefDate
-ORDER BY T0.SeriesName
-  `));
-
-  return { series: result };
+const getDocumentSeries = async ({ date = null, branch = '' } = {}) => {
+  return getMarketingDocumentSeries({ objectCode: '18', date, branch });
 };
 
 const getNextNumber = async (series) => {
@@ -630,7 +801,17 @@ const getStateFromWarehouse = async (whsCode) => {
   return { state: result.length ? (result[0].State || '') : '' };
 };
 
+const loadReferencePart = async (label, loader, fallback, warnings) => {
+  try {
+    return await loader();
+  } catch (error) {
+    warnings.push(`${label}: ${error.message || 'failed to load'}`);
+    return fallback;
+  }
+};
+
 const getReferenceData = async () => {
+  const warnings = [];
   const [
     vendors,
     items,
@@ -646,21 +827,32 @@ const getReferenceData = async () => {
     companyRows,
     udfMetadata,
     withholdingTaxCodes,
+    distributionRules,
+    glAccounts,
+    businessPartners,
   ] = await Promise.all([
-    getVendors(),
-    getItems(),
-    getWarehouses(),
-    getPaymentTerms(),
-    getSalesEmployees(),
-    getShippingTypes(),
-    getBranches(),
-    getStates(),
-    getTaxCodes(),
-    getUomGroups(),
-    getDecimalSettings(),
-    getCompanyInfo(),
-    getMarketingDocumentUdfs({ headerTable: 'OPCH', lineTable: 'PCH1' }),
-    getWithholdingTaxCodes(),
+    loadReferencePart('Vendors', getVendors, [], warnings),
+    loadReferencePart('Items', getItems, [], warnings),
+    loadReferencePart('Warehouses', getWarehouses, [], warnings),
+    loadReferencePart('Payment terms', getPaymentTerms, [], warnings),
+    loadReferencePart('Sales employees', getSalesEmployees, [], warnings),
+    loadReferencePart('Shipping types', getShippingTypes, [], warnings),
+    loadReferencePart('Branches', getBranches, [], warnings),
+    loadReferencePart('States', getStates, [], warnings),
+    loadReferencePart('Tax codes', getTaxCodes, [], warnings),
+    loadReferencePart('UoM groups', getUomGroups, [], warnings),
+    loadReferencePart('Decimal settings', getDecimalSettings, [], warnings),
+    loadReferencePart('Company info', getCompanyInfo, [], warnings),
+    loadReferencePart(
+      'UDF metadata',
+      () => getMarketingDocumentUdfs({ headerTable: 'OPCH', lineTable: 'PCH1' }),
+      { header: [], rows: [] },
+      warnings
+    ),
+    loadReferencePart('Withholding tax codes', getWithholdingTaxCodes, [], warnings),
+    loadReferencePart('Distribution rules', () => masterDataDbService.lookupDistributionRules(), [], warnings),
+    loadReferencePart('GL accounts', getGLAccounts, [], warnings),
+    loadReferencePart('Business partners', () => masterDataDbService.searchBP('', '', 5000, 0), [], warnings),
   ]);
 
   const uomGroupMap = {};
@@ -691,15 +883,19 @@ const getReferenceData = async () => {
     name: companyRows[0].CompnyName || 'SAP B1',
     address: companyRows[0].Address || '',
     state: companyRows[0].State || '',
+    localCurrency: companyRows[0].MainCurncy || '',
   } : {
     name: 'SAP B1',
     address: '',
     state: '',
+    localCurrency: '',
   };
 
   return {
     company: companyInfo.name,
     company_state: companyInfo.state,
+    company_currency: companyInfo.localCurrency,
+    default_branch: branches.length === 1 ? String(branches[0].BPLId || '') : '',
     vendors,
     contacts: [],
     pay_to_addresses: [],
@@ -711,6 +907,9 @@ const getReferenceData = async () => {
     company_address: { State: companyInfo.state },
     tax_codes: taxCodes,
     withholding_tax_codes: withholdingTaxCodes,
+    gl_accounts: glAccounts,
+    distribution_rules: distributionRules,
+    business_partners: businessPartners,
     payment_terms: paymentTerms,
     sales_employees: salesEmployees.map((e) => ({ SlpCode: e.SlpCode, SlpName: e.SlpName, Memo: e.Memo, Commission: e.Commission, Active: e.Active })),
     shipping_types: shippingTypes,
@@ -719,7 +918,7 @@ const getReferenceData = async () => {
     uom_groups: Object.values(uomGroupMap),
     decimal_settings: decimalSettings,
     udf_metadata: udfMetadata,
-    warnings: [],
+    warnings,
   };
 };
 
@@ -769,14 +968,19 @@ const getVendorValidation = async (cardCode) => {
       GST.State,
       GST.GSTIN
     FROM OCRD T0
-    OUTER APPLY (
-      SELECT TOP 1
+    LEFT JOIN (
+      SELECT
+        T1.CardCode,
         T1.GSTRegnNo AS GSTIN,
-        T1.State
+        T1.State,
+        ROW_NUMBER() OVER (
+          PARTITION BY T1.CardCode
+          ORDER BY CASE WHEN T1.AdresType = 'B' THEN 0 ELSE 1 END, T1.Address
+        ) AS AddressRank
       FROM CRD1 T1
-      WHERE T1.CardCode = T0.CardCode
-      ORDER BY CASE WHEN T1.AdresType = 'B' THEN 0 ELSE 1 END, T1.Address
     ) GST
+      ON GST.CardCode = T0.CardCode
+     AND GST.AddressRank = 1
     WHERE T0.CardCode = @cardCode
   `, { cardCode }));
 
@@ -841,24 +1045,7 @@ const getItemValidation = async (itemCode) => {
   return rows[0] || null;
 };
 
-const getTaxCodeValidation = async (code) => {
-  const rows = await safe(db.query(`
-    SELECT TOP 1
-      T0.Code,
-      T0.Name,
-      SUM(T1.Rate) AS Rate,
-      CASE 
-        WHEN COUNT(DISTINCT T1.TaxType) = 2 THEN 'INTRASTATE'
-        WHEN MAX(T1.TaxType) = 'I' THEN 'INTERSTATE'
-        ELSE 'OTHER'
-      END AS GSTType
-    FROM OVTG T0
-    INNER JOIN VTG1 T1 ON T0.Code = T1.Code
-    WHERE T0.Code = @code
-    GROUP BY T0.Code, T0.Name
-  `, { code }));
-  return rows[0] || null;
-};
+const getTaxCodeValidation = async (code) => masterDataDbService.getTaxCode(code);
 
 const getGRPOOpenLineValidation = async (docEntry, lineNum) => {
   const rows = await safe(db.query(`

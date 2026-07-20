@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 
 const AdminLoginPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { adminLogin, isAdminAuthenticated } = useAuth();
-  const [form, setForm] = useState({ username: '', password: '' });
+  const [form, setForm] = useState({ username: 'manager', password: 'Admin@123' });
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [error, setError] = useState('');
 
@@ -84,7 +84,6 @@ const AdminLoginPage = () => {
             ) : null}
 
             <div className="sap-login__actions">
-              <Link className="sap-button" to="/login">User Login</Link>
               <button
                 className="sap-button sap-button--primary"
                 type="submit"

@@ -7,6 +7,10 @@ const masterDataDbService = require('./masterDataDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const { createMarketingDocumentLineLookupRepository } = require('./marketingDocumentLineLookupDbService');
 const {
+  buildAddressExtensionSelectFields,
+  buildDocumentAddressComponents,
+} = require('./documentAddressDbUtils');
+const {
   escapeLike,
   normalizeTopLimit,
   buildMarketingDocumentListFilterQuery,
@@ -909,6 +913,13 @@ const getSalesQuotationList = async ({
 
 const getSalesQuotation = async (docEntry) => {
   const lineFieldMetadata = await getTableFieldMetadata('QUT1');
+  const addressExtensionFieldMetadata = await getTableFieldMetadata('QUT12');
+  const addressExtensionSelectFields = buildAddressExtensionSelectFields({
+    fieldMetadata: addressExtensionFieldMetadata,
+    tableAlias: 'T12',
+    quoteIdentifier: sqlAlias,
+    quoteAlias: sqlAlias,
+  });
   const lineField = (columnName, alias, fallback = "NULL") => (
     hasTableField(lineFieldMetadata, columnName)
       ? `T1.${columnName} AS ${sqlAlias(alias)}`
@@ -932,6 +943,7 @@ const getSalesQuotation = async (docEntry) => {
       T0.NumAtCard, T0.Comments AS Remarks, T0.DocTotal, T0.DocCur,
       T0.CntctCode, T0.BPLId, T0.GroupNum,
       T0.ShipToCode, T0.PayToCode, T0.Address, T0.Address2,
+      ${addressExtensionSelectFields.join(',\n      ')},
       T0.TrnspCode, T0.Confirmed, T0.JrnlMemo, T0.Series, NNM.SeriesName, NNM.Indicator AS SeriesIndicator, T0.DiscPrcnt,
       T0.SlpCode,
       SLP.SlpName AS SalesEmployeeName,
@@ -959,6 +971,7 @@ const getSalesQuotation = async (docEntry) => {
       ${lineField('U_PackingType', 'U_PackingType')},
       CHP.ChapterID AS HSNCode
     FROM OQUT T0
+    LEFT JOIN QUT12 T12 ON T12.DocEntry = T0.DocEntry
     INNER JOIN QUT1 T1 ON T0.DocEntry = T1.DocEntry
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '23' AND NNM.Series = T0.Series
@@ -989,6 +1002,8 @@ const getSalesQuotation = async (docEntry) => {
   if (!rows.length) throw new Error(`Sales Quotation ${docEntry} not found`);
 
   const header = rows[0];
+  const shipToAddressComponents = buildDocumentAddressComponents(header, 'ShipTo');
+  const billToAddressComponents = buildDocumentAddressComponents(header, 'BillTo');
   const [metadataHeaderUdfs, metadataLineUdfs, physicalHeaderUdfs, physicalLineUdfs] = await Promise.all([
     getHeaderUdfValues({ tableId: 'OQUT', keyValue: docEntry }),
     getLineUdfValues({ tableId: 'QUT1', keyValue: docEntry }),
@@ -1075,6 +1090,8 @@ const getSalesQuotation = async (docEntry) => {
         payToCode: header.PayToCode || '',
         shipTo: header.Address || '',
         payTo: header.Address2 || '',
+        shipToAddressComponents,
+        billToAddressComponents,
         shippingType: String(header.TrnspCode || ''),
         confirmed: header.Confirmed === 'Y',
         journalRemark: header.JrnlMemo || '',

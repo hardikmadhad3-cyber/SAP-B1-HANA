@@ -1,43 +1,36 @@
 import React from 'react';
 
-export default function ElectronicDocumentsTab() {
+function ReadOnlyField({ label, value = '' }) {
   return (
-    <div className="so-tab-panel">
-      <h6 className="so-section-title">E-Way Bill</h6>
-      <div className="so-field-grid">
-        <div className="so-field">
-          <label className="so-field__label">eDoc Generation Type</label>
-          <select className="so-field__select">
-            <option value="Not Relevant">Not Relevant</option>
-            <option value="Manual">Manual</option>
-            <option value="Automatic">Automatic</option>
-          </select>
+    <div className="po-field">
+      <label className="po-field__label">{label}</label>
+      <input className="po-field__input" value={value} readOnly />
+    </div>
+  );
+}
+
+export default function ElectronicDocumentsTab({ isEditable = true }) {
+  return (
+    <div className="po-tab-panel po-sapb1-tab-panel po-sapb1-edoc-tab">
+      <div className="po-sapb1-tab-surface">
+        <div className="po-sapb1-edoc-section">
+          <h6 className="po-sapb1-section-heading">E-Way Bill</h6>
+          <ReadOnlyField label="eDoc Generation Type" value="Not Relevant" />
+          <ReadOnlyField label="eDoc Format" />
+          <ReadOnlyField label="Documents Mapping Determination" value="Double-click to open" />
+          <ReadOnlyField label="Document Status" />
+          <div className="po-field">
+            <label className="po-field__label">E-Way Bill Details</label>
+            <button type="button" className="po-btn po-sapb1-ellipsis-btn" disabled={!isEditable}>...</button>
+          </div>
         </div>
-        <div className="so-field">
-          <label className="so-field__label">eDoc Format</label>
-          <select className="so-field__select">
-            <option value="">— Select —</option>
-            <option>JSON</option>
-            <option>XML</option>
-          </select>
-        </div>
-        <div className="so-field">
-          <label className="so-field__label">Documents Mapping Determination</label>
-          <input
-            className="so-field__input"
-            value="Double-click to open"
-            readOnly
-            style={{ background: '#f5f5f5' }}
-          />
-        </div>
-        <div className="so-field">
-          <label className="so-field__label">Document Status</label>
-          <input className="so-field__input" readOnly style={{ background: '#f5f5f5' }} />
-        </div>
-        <div className="so-field" style={{ gridColumn: '1 / -1' }}>
-          <button type="button" className="so-btn so-btn--primary">
-            E-Way Bill Details ...
-          </button>
+
+        <div className="po-sapb1-edoc-section po-sapb1-edoc-generic">
+          <h6 className="po-sapb1-section-heading">Generic eDoc Protocol</h6>
+          <ReadOnlyField label="eDoc Format" />
+          <ReadOnlyField label="Document Status" />
+          <ReadOnlyField label="Total of Imported Document" value="0.00000 INR" />
+          <ReadOnlyField label="Date Received" />
         </div>
       </div>
     </div>

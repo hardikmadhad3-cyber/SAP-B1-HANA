@@ -27,7 +27,7 @@ const loadBusinessPartnerPayload = async (header = {}) => {
 
   const bpResponse = await sapService.request({
     method: 'GET',
-    url: `/BusinessPartners('${encodeURIComponent(cardCode)}')`,
+    url: sapService.buildStringKeyPath('BusinessPartners', cardCode),
   });
   const businessPartner = bpResponse.data || {};
   const documentBranch = String(header.fromBranch || '').trim();
@@ -72,8 +72,9 @@ const loadBusinessPartnerPayload = async (header = {}) => {
     partnerPayload.Address = shipToAddress;
   }
 
-  if (header.priceList) {
-    partnerPayload.PriceList = Number(header.priceList);
+  const selectedPriceList = Number(header.priceList);
+  if (Number.isFinite(selectedPriceList) && selectedPriceList > 0) {
+    partnerPayload.PriceList = selectedPriceList;
   } else if (businessPartner.PriceListNum != null) {
     partnerPayload.PriceList = Number(businessPartner.PriceListNum);
   }

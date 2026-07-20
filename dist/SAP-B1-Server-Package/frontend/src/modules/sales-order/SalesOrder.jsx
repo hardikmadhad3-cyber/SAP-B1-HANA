@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import '../../modules/item-master/styles/itemMaster.css';
 import './styles/salesOrder.css';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../auth/AuthContext';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import ContentsTab from './components/ContentsTab';
@@ -10,8 +11,9 @@ import AccountingTab from './components/AccountingTab';
 import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
+import ReferenceDocumentsModal from './components/ReferenceDocumentsModal';
 import AddressModal from './components/AddressModal';
-import EWayBillModal from './components/EWayBillModal';
+import { mapAddressFields } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import StateSelectionModal from './components/StateSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
@@ -20,6 +22,7 @@ import HSNCodeModal from './components/HSNCodeModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
+import SapGoldenArrowButton from '../../components/document/SapGoldenArrowButton';
 import PrintSalesOrderActions from './components/PrintSalesOrderActions';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -31,9 +34,12 @@ import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
+import { normalizeLineUdfAliases } from '../../utils/workbookLineHydration';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
+import { getCalculatedForRate } from '../../utils/lineTotals';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import { openLinkedBusinessPartner, openLinkedReferenceDocument } from '../../utils/sapLinkedNavigation';
 import { isRouteStateForActiveCompany } from '../../utils/companyStorageScope';
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
@@ -41,6 +47,8 @@ import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
 import {
     fetchSalesOrderByDocEntry,
     fetchSalesOrderCustomerDetails,
@@ -52,9 +60,10 @@ import {
     fetchItemsForModal,
     fetchFreightCharges,
     createSalesOrderLookupValue,
+    fetchSalesOrderLookupOptions,
+    fetchSalesOrderReferenceDocumentLookup,
 } from '../../api/salesOrderApi';
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
-import { SALES_ORDER_COMPANY_ID } from '../../config/appConfig';
 import { salesOrderCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
     FORM_SETTINGS_STORAGE_KEY,
@@ -66,13 +75,19 @@ import {
     normalizeUdfState,
     readSavedFormSettings,
 } from '../../config/salesOrderForm';
+import {
+    buildSalesOrderMatrixColumnsFromLayout,
+    SALES_ORDER_LAYOUT_DOCUMENT_TYPE,
+} from './documentLayout';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
-    const d = e?.response?.data?.detail;
+    const body = e?.response?.data || {};
+    const d = body.detail || body.details;
     if (typeof d === 'string' && d.trim()) return d;
     if (d?.error?.message) return d.error.message;
     if (d?.message) return d.message;
+    if (body.message) return d?.hint ? `${body.message} ${d.hint}` : body.message;
     return e?.message || fb;
 };
 
@@ -93,6 +108,43 @@ const fmtAddr = (a) => {
     [a.City, a.County, a.State, a.ZipCode], [a.Country]]
         .map(p => p.filter(Boolean).join(', ')).filter(Boolean).join('\n');
 };
+
+const cleanAddressValue = (value) => String(value ?? '').trim();
+const joinAddressLine = (...parts) => parts.map(cleanAddressValue).filter(Boolean).join(', ');
+const pickAddressComponentFields = (form = {}) => ({
+    streetPoBox: form.streetPoBox || '',
+    streetNo: form.streetNo || '',
+    buildingFloorRoom: form.buildingFloorRoom || '',
+    block: form.block || '',
+    city: form.city || '',
+    zipCode: form.zipCode || '',
+    county: form.county || '',
+    state: form.state || '',
+    countryRegion: form.countryRegion || '',
+    addressName2: form.addressName2 || '',
+    addressName3: form.addressName3 || '',
+    gln: form.gln || '',
+    erpAddress: form.erpAddress || '',
+    contactPerson: form.contactPerson || '',
+    mobile: form.mobile || '',
+    dateOfRegistration: form.dateOfRegistration || '',
+    dateDetailsOfRegistration: form.dateDetailsOfRegistration || '',
+    addressStatus: form.addressStatus || '',
+    gstin: form.gstin || '',
+});
+const formatAddressComponent = (form = {}) => [
+    joinAddressLine(form.streetPoBox, form.streetNo),
+    cleanAddressValue(form.buildingFloorRoom),
+    cleanAddressValue(form.block),
+    cleanAddressValue(form.city),
+    cleanAddressValue(form.zipCode),
+    cleanAddressValue(form.county),
+    cleanAddressValue(form.state),
+    cleanAddressValue(form.countryRegion),
+    cleanAddressValue(form.addressName2),
+    cleanAddressValue(form.addressName3),
+].filter(Boolean).join('\n');
+
 const mapAddressToModalForm = (address, existing = {}) => ({
     shipToCode: existing.shipToCode || '',
     shipToAddress: existing.shipToAddress || '',
@@ -100,17 +152,24 @@ const mapAddressToModalForm = (address, existing = {}) => ({
     billToAddress: existing.billToAddress || '',
     streetPoBox: address?.Street || '',
     streetNo: address?.StreetNo || '',
-    buildingFloorRoom: address?.Building || '',
+    buildingFloorRoom: address?.BuildingFloorRoom || address?.Building || '',
     block: address?.Block || '',
     city: address?.City || '',
     zipCode: address?.ZipCode || '',
     county: address?.County || '',
     state: address?.State || '',
     countryRegion: address?.Country || '',
-    addressName2: address?.Address2 || '',
-    addressName3: address?.Address3 || '',
-    gln: address?.GLN || '',
-    gstin: address?.GSTIN || '',
+    addressName2: address?.AddressName2 || address?.Address2 || '',
+    addressName3: address?.AddressName3 || address?.Address3 || '',
+    gln: address?.GlobalLocationNumber || address?.GlblLocNum || address?.GLN || '',
+    erpAddress: address?.U_ERPAddress || address?.U_ERP_Address || address?.ERPAddress || '',
+    contactPerson: address?.U_ContactPerson || address?.U_CONTACT_PERSON || address?.ContactPerson || '',
+    mobile: address?.U_Mobile || address?.U_MOBILE || address?.Mobile || address?.MobilePhone || '',
+    dateOfRegistration: address?.U_DateOfRegistration || address?.U_Date_Of_Registration || address?.DateOfRegistration || '',
+    dateDetailsOfRegistration: address?.U_DateDetlOfReg || address?.U_Date_Detl_Of_Reg || address?.DateDetlOfReg || '',
+    addressStatus: address?.U_Status || address?.AddressStatus || address?.Status || '',
+    gstin: address?.GSTRegnNo || address?.GSTIN || address?.U_GSTIN_No || address?.U_GSTINNo || '',
+    ...mapAddressFields(address),
 });
 const normalizeAddressText = (value) =>
     String(value || '')
@@ -120,7 +179,64 @@ const normalizeAddressText = (value) =>
         .replace(/\s+/g, ' ')
         .trim();
 
+const normalizeSalesOrderReferenceDocuments = (rows = []) => (
+    Array.isArray(rows)
+        ? rows.map((row) => ({
+            direction: row.direction || row.Direction || 'to',
+            transactionType: String(row.transactionType ?? row.referencedObjectType ?? row.RefObjType ?? row.RefType ?? ''),
+            docEntry: String(row.docEntry ?? row.referencedDocEntry ?? row.RefDocEntr ?? row.RefDocEntry ?? ''),
+            docNumber: String(row.docNumber ?? row.referencedDocNumber ?? row.RefDocNum ?? row.RefDocNo ?? ''),
+            extDocNumber: String(row.extDocNumber ?? row.externalDocNumber ?? row.ExtDocNum ?? row.ExtDocNo ?? ''),
+            issueDate: row.issueDate || row.IssueDate || '',
+            remark: row.remark || row.Remark || '',
+        })).filter((row) => (
+            String(row.transactionType || row.docEntry || row.docNumber || row.extDocNumber || '').trim()
+        ))
+        : []
+);
+
 // ─── static fallbacks ────────────────────────────────────────────────────────
+const normalizeTaxInfoAlias = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+const TAX_INFO_UDF_ALIASES = {
+    panNo: ['U_PANNo', 'U_PAN_No', 'U_PAN'],
+    panCircleNo: ['U_PANCircleNo', 'U_PAN_Circle_No'],
+    panWardNo: ['U_PANWardNo', 'U_PAN_Ward_No'],
+    panAssessingOfficer: ['U_PANAssessingOfficer', 'U_PAN_Assessing_Officer'],
+    deducteeRefNo: ['U_DeducteeRefNo', 'U_Deductee_Ref_No'],
+    lstVatNo: ['U_LSTVATNo', 'U_LST_VAT_No', 'U_LSTVAT'],
+    cstNo: ['U_CSTNo', 'U_CST_No'],
+    tanNo: ['U_TANNo', 'U_TAN_No'],
+    serviceTaxNo: ['U_ServiceTaxNo', 'U_Service_Tax_No'],
+    companyType: ['U_CompanyType', 'U_Company_Type'],
+    natureOfBusiness: ['U_NatureOfBusiness', 'U_Nature_Business'],
+    assesseeType: ['U_AssesseeType', 'U_Assessee_Type'],
+    tinNo: ['U_TINNo', 'U_TIN_No'],
+    itrFiling: ['U_ITRFiling', 'U_ITR_Filing'],
+    gstType: ['U_GSTType', 'U_GST_Type'],
+    gstin: ['U_GSTIN', 'U_GSTINNo', 'U_GSTIN_No'],
+};
+
+const getTaxInfoUdfValue = (values = {}, aliases = []) => {
+    const entries = Object.entries(values || {});
+    for (const alias of aliases) {
+        const normalizedAlias = normalizeTaxInfoAlias(alias);
+        const match = entries.find(([key]) => normalizeTaxInfoAlias(key) === normalizedAlias);
+        if (match && match[1] !== undefined && match[1] !== null && String(match[1]).trim() !== '') {
+            return String(match[1]);
+        }
+    }
+    return '';
+};
+
+const buildTaxInfoFormFromUdfs = (values = {}, fallback = {}) => (
+    Object.entries(TAX_INFO_UDF_ALIASES).reduce((next, [field, aliases]) => {
+        const value = getTaxInfoUdfValue(values, aliases);
+        if (value !== '') next[field] = value;
+        return next;
+    }, { ...fallback })
+);
+
 const FALLBACK_PAYMENT_TERMS = [
     { value: '0', label: 'Immediate' },
     { value: '1', label: 'Net 30' },
@@ -147,6 +263,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
     itemNo: '', itemDescription: '',
     sellerQuality: '', buyerQuality: '',
     hsnCode: '', quantity: '', unitPrice: '',
+    forRate: '',
     sellerPrice: '', buyerPrice: '',
     sellerDelivery: '', buyerDelivery: '',
     sellerBrokerageAmtPer: '', sellerBrokeragePercent: '',
@@ -169,11 +286,19 @@ const INIT_HEADER = {
     docNo: '', status: 'Open', series: '', nextNumber: '',
     postingDate: today(), deliveryDate: '', documentDate: today(), contractDate: '',
     branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
-    shippingType: '', confirmed: false, journalRemark: '', paymentTerms: '',
+    shippingType: '', confirmed: true, language: '8', printPickingSheet: false,
+    procureNonDropShipItems: false, procureDropShipItems: true, allowPartialDelivery: true,
+    pickAndPackRemarks: '', bpChannelName: '', bpChannelContact: '',
+    journalRemark: '', paymentTerms: '',
     paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
     totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
     placeOfSupply: '', currency: 'INR', useBillToForTax: false,
     billToAddress: '', billToCode: '', shipToAddress: '',
+    shipToAddressComponents: null, billToAddressComponents: null,
+    bpProject: '', createQrCodeFrom: '', cancellationDate: '', requiredDate: '',
+    indicator: '', orderNumber: '', cashDiscountDateOffset: '', useShippedGoodsAccount: false,
+    transactionCategory: '', taxFormNo: '', dutyStatus: 'Y', exportFlag: false,
+    differentialTaxRate: '100', supplyCovered: true,
 };
 
 const createInitialHeader = (settings = readGeneralSettings()) => ({
@@ -189,30 +314,96 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
     freeText: '', copyToTargetDocument: '', documentType: '', atchDocDate: '', alert: '',
 }));
 
+const INIT_TAX_INFO_FORM = {
+    panNo: '',
+    panCircleNo: '',
+    panWardNo: '',
+    panAssessingOfficer: '',
+    deducteeRefNo: '',
+    lstVatNo: '',
+    cstNo: '',
+    tanNo: '',
+    serviceTaxNo: '',
+    companyType: '',
+    natureOfBusiness: '',
+    assesseeType: '',
+    tinNo: '',
+    itrFiling: '',
+    gstType: '',
+    gstin: '',
+};
+
+const getBpGstTypeLabel = (value) => ({
+    1: 'Regular/TDS/ISD',
+    2: 'Composition',
+    3: 'Casual Taxable Person',
+    4: 'Government Department',
+    5: 'Non-Resident Taxable Person',
+    6: 'OIDAR',
+    7: 'TDS',
+    8: 'TCS',
+    9: 'UN Embassy/Body',
+})[String(value || '')] || String(value || '');
+
 const closeDocumentDropdowns = () => {
     if (typeof document === 'undefined') return;
     document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
+};
+
+const buildHeaderFieldMap = (fields = []) =>
+    (fields || []).reduce((acc, field) => {
+        if (field?.key) acc[field.key] = field;
+        return acc;
+    }, {});
+
+const getHeaderFieldLabel = (fieldMap, key, fallback, forceRequired = false) => {
+    const field = fieldMap[key] || {};
+    const label = field.label || fallback;
+    return (forceRequired || field.required) ? `${label} *` : label;
+};
+
+const resolveFormSettingFlag = (field = {}, setting = {}, prop = 'visible') => (
+    setting?.[prop] !== undefined ? setting[prop] !== false : field[prop] !== false
+);
+
+const buildVisibleHeaderUdfPayload = (definitions = [], values = {}, settings = {}) => {
+    const normalized = normalizeUdfState(definitions, values);
+    return (definitions || []).reduce((acc, field) => {
+        const key = field.key;
+        if (!key) return acc;
+        const fieldSettings = settings?.headerUdfs?.[key] || {};
+        const visible = resolveFormSettingFlag(field, fieldSettings, 'visible');
+        const active = resolveFormSettingFlag(field, fieldSettings, 'active');
+        if (visible && active) acc[key] = normalized[key];
+        return acc;
+    }, {});
 };
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 function SalesOrder() {
     const location = useLocation();
     const navigate = useNavigate();
+    const { company } = useAuth();
+    const activeCompanyId = company?.companyId || '';
+    const activeCompanyDb = company?.dbName || '';
     const { removeTask, upsertTask } = useSapWindowTaskbarActions();
     const formRef = useRef(null);
     const handledCopyFromRef = useRef('');
     const generalSettingsRef = useRef(readGeneralSettings());
     const defaultWarehouseAppliedRef = useRef(false);
+    const restoringDraftRef = useRef(false);
     const [isCopyFromClick, setIsCopyFromClick] = useState(false);
     const [currentDocEntry, setCurrentDocEntry] = useState(null);
     const [header, setHeader] = useState(() => createInitialHeader(generalSettingsRef.current));
     const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
     const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+    const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(BASE_MATRIX_COLUMNS);
+    const [headerFieldDefinitions, setHeaderFieldDefinitions] = useState([]);
     const [lines, setLines] = useState([createLine()]);
     const [attachments] = useState(INIT_ATTACH);
     const [activeTab, setActiveTab] = useState('Contents');
     const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
-    const [formSettings, setFormSettings] = useCompanyScopedFormSettings(
+    const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
         FORM_SETTINGS_STORAGE_KEY,
         readSavedFormSettings,
     );
@@ -221,17 +412,19 @@ function SalesOrder() {
     const [refData, setRefData] = useState({
         company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
         warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
-        payment_terms: [], shipping_types: [], branches: [], uom_groups: [], sales_employees: [], owners: [],
+        payment_terms: [], payment_methods: [], shipping_types: [], branches: [], branches_enabled: false, uom_groups: [], sales_employees: [], owners: [],
         countries: [], distribution_rules: [], distribution_dimensions: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
         decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
+        header_field_metadata: { fields: [] }, line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} }, lookup_sources: {},
     });
     const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
     const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
     const [snapshotPending, setSnapshotPending] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
     const [addressModal, setAddressModal] = useState(null);
-    const [eWayBillModal, setEWayBillModal] = useState(false);
-    const [eWayBillData, setEWayBillData] = useState({});
+    const [referenceDocumentsModal, setReferenceDocumentsModal] = useState(false);
+    const [referenceDocuments, setReferenceDocuments] = useState([]);
+    const [referenceDocumentsChanged, setReferenceDocumentsChanged] = useState(false);
     const [taxInfoModal, setTaxInfoModal] = useState(false);
     const [stateModal, setStateModal] = useState(false);
     const [bpModal, setBpModal] = useState(false);
@@ -241,17 +434,18 @@ function SalesOrder() {
     const [copyFromModal, setCopyFromModal] = useState(false);
     const [copyFromMode, setCopyFromMode] = useState(false);
     const [copyFromDocType, setCopyFromDocType] = useState('quotation'); // 'quotation' or 'blanket'
+    const headerFieldMap = useMemo(
+        () => buildHeaderFieldMap(headerFieldDefinitions),
+        [headerFieldDefinitions],
+    );
     useValidationHighlights(valErrors, { enabled: !copyFromMode, rootRef: formRef });
+
     const [addressForm, setAddressForm] = useState({
         shipToCode: '', shipToAddress: '', billToCode: '', billToAddress: '',
         streetPoBox: '', streetNo: '', buildingFloorRoom: '', block: '', city: '', zipCode: '', county: '',
         state: '', countryRegion: '', addressName2: '', addressName3: '', gln: '', gstin: ''
     });
-    const [taxInfoForm, setTaxInfoForm] = useState({
-        panNo: '', panCircleNo: '', panWardNo: '', panAssessingOfficer: '', deducteeRefNo: '',
-        lstVatNo: '', cstNo: '', tanNo: '', serviceTaxNo: '', companyType: '', natureOfBusiness: '',
-        assesseeType: '', tinNo: '', itrFiling: '', gstType: '', gstin: ''
-    });
+    const [taxInfoForm, setTaxInfoForm] = useState(INIT_TAX_INFO_FORM);
     const {
         lineLookupModal,
         openQualityModal,
@@ -351,6 +545,118 @@ function SalesOrder() {
             : 'Add & New';
 
     useEffect(() => {
+        const draft = location.state?.salesOrderDraft;
+        if (!draft) return;
+
+        restoringDraftRef.current = true;
+        setCurrentDocEntry(draft.currentDocEntry || null);
+        setHeader(draft.header || createInitialHeader(generalSettingsRef.current));
+        setLines(Array.isArray(draft.lines) && draft.lines.length ? draft.lines : [createLine()]);
+        setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+        setReferenceDocuments(Array.isArray(draft.referenceDocuments) ? draft.referenceDocuments : []);
+        setReferenceDocumentsChanged(Boolean(draft.referenceDocumentsChanged));
+        setActiveTab(draft.activeTab || 'Contents');
+        setIsDirty(Boolean(draft.isDirty));
+        setReferenceDocumentsModal(Boolean(draft.referenceDocumentsModalOpen));
+
+        const clearDraftStateTimer = window.setTimeout(() => {
+            restoringDraftRef.current = false;
+            replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+        }, 0);
+
+        return () => {
+            window.clearTimeout(clearDraftStateTimer);
+            restoringDraftRef.current = false;
+        };
+    }, [location.state, navigate, location.pathname]);
+
+    const buildLinkedRestoreState = useCallback((overrides = {}) => ({
+        salesOrderDraft: {
+            currentDocEntry,
+            header,
+            lines,
+            headerUdfs,
+            referenceDocuments: Array.isArray(overrides.referenceDocuments)
+                ? overrides.referenceDocuments
+                : referenceDocuments,
+            referenceDocumentsChanged: overrides.referenceDocumentsChanged ?? referenceDocumentsChanged,
+            referenceDocumentsModalOpen: overrides.referenceDocumentsModalOpen ?? referenceDocumentsModal,
+            activeTab,
+            isDirty,
+        },
+    }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
+
+    const openBusinessPartnerLink = useCallback(() => {
+        openLinkedBusinessPartner({
+            cardCode: header.vendor,
+            sourcePath: location.pathname,
+            sourceTitle: `Sales Order${header.docNo || currentDocEntry ? ` #${header.docNo || currentDocEntry}` : ''}`,
+            sourceRestoreState: buildLinkedRestoreState(),
+            navigate,
+            upsertTask,
+        });
+    }, [buildLinkedRestoreState, currentDocEntry, header.docNo, header.vendor, location.pathname, navigate, upsertTask]);
+
+    const resolveReferenceDocEntry = useCallback(async (row) => {
+        const currentDocEntryValue = String(row?.docEntry || '').trim();
+        if (currentDocEntryValue) return currentDocEntryValue;
+
+        const docNumber = String(row?.docNumber || '').trim();
+        const transactionType = String(row?.transactionType || '').trim();
+        if (!docNumber || !transactionType) return '';
+
+        const response = await fetchSalesOrderReferenceDocumentLookup({
+            transactionType,
+            query: docNumber,
+            top: 20,
+        });
+        const options = response.data?.options || [];
+        const exactMatch = options.find((option) => String(option.docNumber || '').trim() === docNumber);
+        return String((exactMatch || options[0])?.docEntry || '').trim();
+    }, []);
+
+    const openReferenceDocumentLink = useCallback(async (row, options = {}) => {
+        try {
+            const docEntry = await resolveReferenceDocEntry(row);
+            if (!docEntry) {
+                setPageState(p => ({
+                    ...p,
+                    success: '',
+                    error: 'Referenced document was not found. Choose a document from the lookup first.',
+                }));
+                return false;
+            }
+
+            const opened = openLinkedReferenceDocument({
+                transactionType: row?.transactionType,
+                docEntry,
+                docNumber: row?.docNumber,
+                sourcePath: location.pathname,
+                sourceTitle: `Sales Order${header.docNo || currentDocEntry ? ` #${header.docNo || currentDocEntry}` : ''}`,
+                sourceRestoreState: buildLinkedRestoreState(options),
+                navigate,
+                upsertTask,
+            });
+
+            if (!opened) {
+                setPageState(p => ({
+                    ...p,
+                    success: '',
+                    error: 'This referenced document type is not configured for navigation.',
+                }));
+            }
+            return opened;
+        } catch (error) {
+            setPageState(p => ({
+                ...p,
+                success: '',
+                error: getErrMsg(error, 'Failed to open referenced document.'),
+            }));
+            return false;
+        }
+    }, [buildLinkedRestoreState, currentDocEntry, header.docNo, location.pathname, navigate, resolveReferenceDocEntry, upsertTask]);
+
+    useEffect(() => {
         if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
         setSnapshotPending(false);
     }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
@@ -362,17 +668,83 @@ function SalesOrder() {
         }
     }, [currentDocEntry]);
 
+    const loadDynamicUdfLookupOptions = useCallback(async (source) => {
+        if (!source) return [];
+        const response = await fetchSalesOrderLookupOptions(source, { limit: 200 });
+        return response.data?.options || [];
+    }, []);
+
     // Continue in next part...
 
     // ── load reference data ───────────────────────────────────────────────────
     useEffect(() => {
         let ignore = false;
+        const pendingRouteDocEntry =
+            location.state?.salesOrderDocEntry ||
+            location.state?.docEntry ||
+            location.state?.document?.docEntry ||
+            location.state?.document?.DocEntry;
+        const pendingRouteCopyFrom = Boolean(
+            location.state?.copyFrom && isRouteStateForActiveCompany(location.state)
+        );
+        const pendingRouteDraft = Boolean(
+            location.state?.salesOrderDraft && isRouteStateForActiveCompany(location.state)
+        );
+        const hasPendingRouteDocument = Boolean(pendingRouteDocEntry || pendingRouteCopyFrom || pendingRouteDraft || restoringDraftRef.current);
         const load = async () => {
             setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
             try {
-                const [refDataRes, hsnRes] = await Promise.all([
-                    fetchSalesOrderReferenceData(SALES_ORDER_COMPANY_ID),
+                if (!activeCompanyId) {
+                    setHeaderUdfDefinitions([]);
+                    setRowUdfDefinitions([]);
+                    setMatrixColumnDefinitions(BASE_MATRIX_COLUMNS);
+                    setHeaderFieldDefinitions([]);
+                    setHeaderUdfs({});
+                    setLines([createLine([])]);
+                    defaultWarehouseAppliedRef.current = false;
+                    setRefData(prev => ({
+                        ...prev,
+                        company: '',
+                        vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [],
+                        items: [], warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
+                        payment_terms: [], payment_methods: [], shipping_types: [], branches: [], branches_enabled: false, uom_groups: [], sales_employees: [], owners: [],
+                        countries: [], distribution_rules: [], distribution_dimensions: [], quality_options: { buyer: [], seller: [] },
+                        price_options: { buyer: [], seller: [] }, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
+                        header_field_metadata: { fields: [] }, line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
+                        lookup_sources: {},
+                    }));
+                    return;
+                }
+
+                setMatrixColumnDefinitions([]);
+
+                if (!hasPendingRouteDocument) {
+                    const resetHeader = createInitialHeader(generalSettingsRef.current);
+                    setCurrentDocEntry(null);
+                    setSnapshotPending(false);
+                    setIsDirty(false);
+                    defaultWarehouseAppliedRef.current = false;
+                    setHeader(resetHeader);
+                    setHeaderUdfs({});
+                    setLines([createLine([])]);
+                    setFreightModal({ open: false, freightCharges: [], loading: false });
+                    setValErrors({ header: {}, lines: {}, form: '' });
+                }
+
+                const [refDataRes, hsnRes, layoutRes] = await Promise.all([
+                    fetchSalesOrderReferenceData(activeCompanyId),
                     fetchHSNCodes(),
+                    getDocumentLayout({
+                        companyDb: activeCompanyDb || undefined,
+                        documentType: SALES_ORDER_LAYOUT_DOCUMENT_TYPE,
+                        objectType: '17',
+                    }).catch((error) => ({
+                        data: {
+                            success: false,
+                            columns: [],
+                            warning: getErrMsg(error, 'Failed to load SAP layout.'),
+                        },
+                    })),
                 ]);
 
                 // ═══ LOGGING: Reference Data ═══
@@ -383,6 +755,7 @@ function SalesOrder() {
                 console.log('  - Tax Codes:', refDataRes.data.tax_codes?.length || 0);
                 console.log('  - Warehouses:', refDataRes.data.warehouses?.length || 0);
                 console.log('  - Payment Terms:', refDataRes.data.payment_terms?.length || 0);
+                console.log('  - Payment Methods:', refDataRes.data.payment_methods?.length || 0);
                 console.log('  - Shipping Types:', refDataRes.data.shipping_types?.length || 0);
                 console.log('  - Branches:', refDataRes.data.branches?.length || 0);
                 console.log('  - States:', refDataRes.data.states?.length || 0);
@@ -414,37 +787,64 @@ function SalesOrder() {
 
                 if (!ignore) {
                     const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
-                    const nextRowUdfs = filterSalesOrderRowUdfDefinitions(refDataRes.data.udf_metadata?.rows || []);
+                    const usesSapMatrixOrder = Boolean(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows);
+                    const nextRowUdfs = usesSapMatrixOrder
+                        ? (refDataRes.data.udf_metadata?.rows || [])
+                        : filterSalesOrderRowUdfDefinitions(refDataRes.data.udf_metadata?.rows || []);
+                    const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+                        ? refDataRes.data.line_field_metadata.matrix_columns
+                        : BASE_MATRIX_COLUMNS;
+                    const nextMatrixColumns = buildSalesOrderMatrixColumnsFromLayout({
+                        layoutColumns: layoutRes?.data?.columns || [],
+                        liveMatrixColumns,
+                        rowUdfFields: nextRowUdfs,
+                    });
+                    const nextHeaderFields = refDataRes.data.header_field_metadata?.fields || [];
                     const nextUdfMetadata = {
                         ...(refDataRes.data.udf_metadata || {}),
                         rows: nextRowUdfs,
                     };
                     setHeaderUdfDefinitions(nextHeaderUdfs);
                     setRowUdfDefinitions(nextRowUdfs);
-                    setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
-                    setLines((prev) => prev.map((line) => ({
-                        ...line,
-                        udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
-                    })));
-                    setFormSettings((prev) => ({
-                        ...prev,
-                        headerUdfs: {
-                            ...nextHeaderUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
-                            ...(prev.headerUdfs || {}),
-                        },
-                        rowUdfs: {
-                            ...nextRowUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
-                            ...(prev.rowUdfs || {}),
-                        },
-                    }));
+                    setMatrixColumnDefinitions(nextMatrixColumns);
+                    setHeaderFieldDefinitions(nextHeaderFields);
+                    setHeaderUdfs((prev) => hasPendingRouteDocument
+                        ? normalizeUdfState(nextHeaderUdfs, prev)
+                        : createUdfState(nextHeaderUdfs));
+                    setLines((prev) => {
+                        if (pendingRouteDraft || restoringDraftRef.current) {
+                            return Array.isArray(prev) && prev.length
+                                ? prev.map((line) => ({
+                                    ...line,
+                                    udf: normalizeUdfState(nextRowUdfs, line.udf || {}, { preserveExtra: true }),
+                                }))
+                                : [createLine(nextRowUdfs)];
+                        }
+
+                        const hasLoadedLines = hasPendingRouteDocument && (prev || []).some((line) =>
+                            String(line.itemNo || '').trim() || line.lineNum !== undefined
+                        );
+                        return hasLoadedLines
+                            ? prev.map((line) => ({
+                                ...line,
+                                udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
+                            }))
+                            : [createLine(nextRowUdfs)];
+                    });
+                    setFormSettings(readSavedFormSettings(
+                        nextHeaderUdfs,
+                        nextRowUdfs,
+                        nextMatrixColumns,
+                        formSettingsStorageKey,
+                    ));
                     setRefData(prev => ({
                         ...prev,
                         company: refDataRes.data.company || '',
                         vendors: refDataRes.data.vendors || [],
-                        contacts: prev.contacts?.length ? prev.contacts : (refDataRes.data.contacts || []),
-                        pay_to_addresses: prev.pay_to_addresses?.length ? prev.pay_to_addresses : (refDataRes.data.pay_to_addresses || []),
-                        ship_to_addresses: prev.ship_to_addresses?.length ? prev.ship_to_addresses : (refDataRes.data.ship_to_addresses || []),
-                        bill_to_addresses: prev.bill_to_addresses?.length ? prev.bill_to_addresses : (refDataRes.data.bill_to_addresses || []),
+                        contacts: refDataRes.data.contacts || [],
+                        pay_to_addresses: refDataRes.data.pay_to_addresses || [],
+                        ship_to_addresses: refDataRes.data.ship_to_addresses || [],
+                        bill_to_addresses: refDataRes.data.bill_to_addresses || [],
                         items: refDataRes.data.items || [],
                         warehouses: refDataRes.data.warehouses || [],
                         warehouse_addresses: refDataRes.data.warehouse_addresses || [],
@@ -452,8 +852,10 @@ function SalesOrder() {
                         tax_codes: refDataRes.data.tax_codes || [],
                         hsn_codes: hsnRes.data || [],
                         payment_terms: refDataRes.data.payment_terms || [],
+                        payment_methods: refDataRes.data.payment_methods || [],
                         shipping_types: refDataRes.data.shipping_types || [],
                         branches: refDataRes.data.branches || [],
+                        branches_enabled: Boolean(refDataRes.data.branches_enabled ?? (refDataRes.data.branches || []).length > 0),
                         states: refDataRes.data.states || [],
                         uom_groups: refDataRes.data.uom_groups || [],
                         sales_employees: refDataRes.data.sales_employees || [],
@@ -464,8 +866,18 @@ function SalesOrder() {
                         quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
                         price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
                         decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
-                        warnings: refDataRes.data.warnings || [],
+                        warnings: [
+                            ...(refDataRes.data.warnings || []),
+                            ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+                        ],
                         udf_metadata: nextUdfMetadata,
+                        header_field_metadata: refDataRes.data.header_field_metadata || { fields: nextHeaderFields },
+                        line_field_metadata: {
+                            ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+                            matrix_columns: nextMatrixColumns,
+                            imported_layout: layoutRes?.data || null,
+                        },
+                        lookup_sources: refDataRes.data.lookup_sources || {},
                     }));
                 }
             } catch (e) {
@@ -477,7 +889,7 @@ function SalesOrder() {
         };
         load();
         return () => { ignore = true; };
-    }, []);
+    }, [activeCompanyDb, activeCompanyId, formSettingsStorageKey]);
 
     // ── load existing order ───────────────────────────────────────────────────
     useEffect(() => {
@@ -562,6 +974,9 @@ function SalesOrder() {
 
                 // Get warehouse from first line if available
                 const firstLineWarehouse = so.lines && so.lines.length > 0 ? so.lines[0].whse : '';
+                const loadedReferenceDocuments = normalizeSalesOrderReferenceDocuments(
+                    so.reference_documents || so.referenceDocuments || []
+                );
 
                 console.log('📥 EDIT DATA - Sales Employee:', so.header?.salesEmployee, 'Code:', so.header?.salesEmployee);
                 console.log('📥 EDIT DATA - Purchaser:', so.header?.purchaser);
@@ -603,8 +1018,10 @@ function SalesOrder() {
                     // Map backend address field names to frontend field names
                     shipToCode: so.header?.shipToCode || '',
                     shipToAddress: so.header?.shipTo || '',
+                    shipToAddressComponents: so.header?.shipToAddressComponents || null,
                     billToCode: so.header?.payToCode || '',
                     billToAddress: so.header?.payTo || '',
+                    billToAddressComponents: so.header?.billToAddressComponents || null,
                     // Copy all other fields from backend
                     postingDate: so.header?.postingDate || '',
                     deliveryDate: so.header?.deliveryDate || '',
@@ -615,13 +1032,26 @@ function SalesOrder() {
                     nextNumber: String(so.header?.docNum || ''),
                     status: so.header?.status || '',
                     shippingType: so.header?.shippingType || '',
-                    confirmed: so.header?.confirmed || false,
+                    confirmed: so.header?.confirmed !== false,
+                    language: so.header?.language || so.header?.languageCode || '8',
+                    pickAndPackRemarks: so.header?.pickAndPackRemarks || '',
+                    bpChannelName: so.header?.bpChannelName || so.header?.bpChannelCode || '',
+                    bpChannelContact: so.header?.bpChannelContact || '',
                     journalRemark: so.header?.journalRemark || '',
+                    paymentMethod: so.header?.paymentMethod || '',
+                    transactionCategory: so.header?.transactionCategory || '',
+                    taxFormNo: so.header?.taxFormNo || '',
+                    dutyStatus: so.header?.dutyStatus || 'Y',
+                    exportFlag: Boolean(so.header?.exportFlag),
+                    differentialTaxRate: so.header?.differentialTaxRate || '100',
+                    supplyCovered: so.header?.supplyCovered !== false,
                     currency: so.header?.currency || 'INR',
                 };
 
                 console.log('📥 Final header state:', newHeader);
                 setHeader(newHeader);
+                setReferenceDocuments(loadedReferenceDocuments);
+                setReferenceDocumentsChanged(false);
                 setFreightModal({ open: false, freightCharges: [], loading: false });
 
                 setLines(
@@ -641,21 +1071,32 @@ function SalesOrder() {
                                 ...l,
                                 lineNum: l.lineNum ?? l.LineNum ?? index,
                                 hsnCode: hsnCode,
-                                stcode: l.stcode || l.taxCode || '',
+                                stcode: l.stcode || '',
+                                taxCodeManuallyOverridden: Boolean(String(l.taxCode || l.TaxCode || l.VatGroup || '').trim()),
                                 uomName: l.uomName || l.uomCode || '',
                                 documentCreated: l.documentCreated || so.header?.documentCreated || '',
                                 loc: l.loc || resolveLineLocation(l.whse, l.branch || so.header?.branch || header.branch),
-                                udf: normalizeUdfState(rowUdfDefinitions, l.udf || {})
+                                udf: normalizeLineUdfAliases(
+                                    normalizeUdfState(rowUdfDefinitions, l.udf || {}, { preserveExtra: true }),
+                                    l
+                                )
                             };
                         })
                         : [createLine(rowUdfDefinitions)]
                 );
-                setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
+                const loadedHeaderUdfs = so.header_udfs || {};
+                const applyLoadedTaxInfo = () => setTaxInfoForm(current => buildTaxInfoFormFromUdfs(loadedHeaderUdfs, current));
+                setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, loadedHeaderUdfs));
+                applyLoadedTaxInfo();
                 setSnapshotPending(true);
                 setIsDirty(false);
 
                 if (so.header?.customerCode) {
-                    loadVendorDetails(so.header.customerCode);
+                    loadVendorDetails(so.header.customerCode, {
+                        billToCode: newHeader.billToCode || newHeader.payToCode,
+                    }).then(() => {
+                        if (!ignore) applyLoadedTaxInfo();
+                    });
                 }
                 setPageState(p => ({ ...p, success: so.doc_num ? `Sales order ${so.doc_num} loaded.` : 'Sales order loaded.' }));
             } catch (e) {
@@ -718,7 +1159,10 @@ function SalesOrder() {
     const vendorBillToAddresses = refData.bill_to_addresses.filter(a => String(a.CardCode || '') === String(header.vendor || ''));
     const vendorEffectiveShipToAddresses = vendorShipToAddresses.length ? vendorShipToAddresses : vendorPayToAddresses;
     const vendorEffectiveBillToAddresses = vendorBillToAddresses.length ? vendorBillToAddresses : vendorPayToAddresses;
-    const selectedBranch = refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''));
+    const branchesEnabled = Boolean(refData.branches_enabled ?? (refData.branches || []).length > 0);
+    const selectedBranch = branchesEnabled
+        ? refData.branches.find(b => String(b.BPLId || '') === String(header.branch || ''))
+        : null;
     const uomGroupMap = (refData.uom_groups || []).reduce((acc, g) => { acc[g.AbsEntry] = g.uomCodes || []; return acc; }, {});
 
     const effectiveTaxCodes = refData.tax_codes || [];
@@ -726,7 +1170,26 @@ function SalesOrder() {
     const freightTotals = summarizeFreightRows(freightModal.freightCharges, effectiveTaxCodes);
 
     // Filter warehouses by selected branch
-    const branchFilteredWarehouses = filterWarehousesByBranch(effectiveWarehouses, header.branch);
+    const branchFilteredWarehouses = branchesEnabled
+        ? filterWarehousesByBranch(effectiveWarehouses, header.branch)
+        : effectiveWarehouses;
+
+    useEffect(() => {
+        if (branchesEnabled || !header.branch) return;
+        setHeader((prev) => prev.branch ? { ...prev, branch: '' } : prev);
+        setLines((prev) => prev.map((line) => (
+            line.branch ? { ...line, branch: '', loc: resolveLineLocation(line.whse || header.warehouse, '') } : line
+        )));
+    }, [branchesEnabled, header.branch, header.warehouse]);
+
+    useEffect(() => {
+        if (!branchesEnabled) return;
+        if (currentDocEntry || copyFromMode || isCopyFromClick || header.branch) return;
+        if ((refData.branches || []).length !== 1) return;
+        const onlyBranch = refData.branches[0];
+        if (!onlyBranch?.BPLId && onlyBranch?.BPLId !== 0) return;
+        setHeader((prev) => prev.branch ? prev : { ...prev, branch: String(onlyBranch.BPLId) });
+    }, [branchesEnabled, copyFromMode, currentDocEntry, header.branch, isCopyFromClick, refData.branches]);
 
     useEffect(() => {
         if (currentDocEntry || copyFromMode || isCopyFromClick || defaultWarehouseAppliedRef.current) return;
@@ -749,14 +1212,22 @@ function SalesOrder() {
             return {
                 ...prev,
                 warehouse: prev.warehouse || defaultWarehouse,
-                branch: prev.branch || (warehouseBranch !== '' ? String(warehouseBranch) : ''),
+                branch: branchesEnabled
+                    ? prev.branch || (warehouseBranch !== '' ? String(warehouseBranch) : '')
+                    : '',
             };
         });
-    }, [copyFromMode, currentDocEntry, effectiveWarehouses, isCopyFromClick]);
+    }, [branchesEnabled, copyFromMode, currentDocEntry, effectiveWarehouses, isCopyFromClick]);
 
     const payTermOpts = refData.payment_terms.length
         ? refData.payment_terms.map(t => ({ value: String(t.GroupNum), label: t.PymntGroup }))
         : FALLBACK_PAYMENT_TERMS;
+    const paymentMethodOpts = (refData.payment_methods || []).map(method => ({
+        value: String(method.Code || '').trim(),
+        label: method.Description
+            ? `${method.Code} - ${method.Description}`
+            : String(method.Code || '').trim(),
+    })).filter(method => method.value);
     const shipTypeOpts = refData.shipping_types.length
         ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
         : FALLBACK_SHIPPING;
@@ -862,6 +1333,13 @@ function SalesOrder() {
     };
 
     const totals = calcTotals();
+    useRelationshipMapRegistration({
+        enabled: Boolean(currentDocEntry),
+        objectType: 17,
+        docEntry: currentDocEntry,
+        header,
+        total: totals.total,
+    });
 
     // ── GST determination logic ───────────────────────────────────────────────
     const determineGSTType = (gstState) => {
@@ -1061,7 +1539,7 @@ function SalesOrder() {
         // Update tax codes for all lines that have items
         setLines(prevLines =>
             prevLines.map(line => {
-                if (!line.itemNo) return line; // Skip empty lines
+                if (!line.itemNo || line.taxCodeManuallyOverridden) return line; // Skip empty or preserved lines
 
                 // Get item's default tax rate (assume 18% if not specified)
                 const item = refData.items.find(it => String(it.ItemCode || '') === String(line.itemNo || ''));
@@ -1078,9 +1556,31 @@ function SalesOrder() {
     }, [currentDocEntry, header.placeOfSupply, header.vendor]);
 
     // ── vendor details ────────────────────────────────────────────────────────
-    const loadVendorDetails = async (code) => {
+    const updateTaxInfoFromAddress = useCallback((address = null) => {
+        if (!address) {
+            setTaxInfoForm((current) => ({
+                ...current,
+                panNo: '',
+                gstType: '',
+                gstin: '',
+            }));
+            return;
+        }
+
+        const gstin = String(address.GSTIN || address.GSTRegnNo || '').trim();
+        const gstType = getBpGstTypeLabel(address.GSTType || address.GstType || address.gstType);
+        setTaxInfoForm((current) => ({
+            ...current,
+            panNo: gstin.length >= 12 ? gstin.slice(2, 12) : '',
+            gstType: gstType || '',
+            gstin,
+        }));
+    }, []);
+
+    const loadVendorDetails = async (code, options = {}) => {
         if (!code) {
             setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
+            updateTaxInfoFromAddress(null);
             return;
         }
 
@@ -1090,13 +1590,22 @@ function SalesOrder() {
             const r = await fetchSalesOrderCustomerDetails(code);
 
             const contacts = r.data.contacts || [];
+            const payToAddresses = r.data.pay_to_addresses || [];
+            const shipToAddresses = r.data.ship_to_addresses || [];
+            const billToAddresses = r.data.bill_to_addresses || [];
             setRefData(p => ({
                 ...p,
                 contacts: contacts,
-                pay_to_addresses: r.data.pay_to_addresses || [],
-                ship_to_addresses: r.data.ship_to_addresses || [],
-                bill_to_addresses: r.data.bill_to_addresses || []
+                pay_to_addresses: payToAddresses,
+                ship_to_addresses: shipToAddresses,
+                bill_to_addresses: billToAddresses
             }));
+
+            const selectedBillToCode = options.billToCode || header.billToCode || header.payToCode || '';
+            const selectedTaxAddress = billToAddresses.find((address) => (
+                String(address.Address || '') === String(selectedBillToCode)
+            )) || billToAddresses[0] || payToAddresses[0] || shipToAddresses[0] || null;
+            updateTaxInfoFromAddress(selectedTaxAddress);
 
             if (contacts.length > 0) {
                 setHeader(prev => ({
@@ -1114,11 +1623,27 @@ function SalesOrder() {
         }
     };
 
+    const getDefaultJournalRemark = (code) => {
+        const normalizedCode = String(code || '').trim();
+        return normalizedCode ? `Sales Orders - ${normalizedCode}` : '';
+    };
+
+    const getDefaultPaymentMethod = (bp = {}) => (
+        String(bp.PaymentMethod || bp.PymCode || bp.PeymentMethodCode || '').trim()
+    );
+
     const syncVendor = (code, hdr) => {
         const m = refData.vendors.find(v => String(v.CardCode || '') === String(code || ''));
         if (!m) return { nextHeader: hdr };
         return {
-            nextHeader: { ...hdr, name: m.CardName || hdr.name, paymentTerms: m.PayTermsGrpCode != null ? String(m.PayTermsGrpCode) : hdr.paymentTerms, contactPerson: '' },
+            nextHeader: {
+                ...hdr,
+                name: m.CardName || hdr.name,
+                journalRemark: getDefaultJournalRemark(code),
+                paymentTerms: m.PayTermsGrpCode != null ? String(m.PayTermsGrpCode) : hdr.paymentTerms,
+                paymentMethod: getDefaultPaymentMethod(m) || hdr.paymentMethod,
+                contactPerson: '',
+            },
         };
     };
 
@@ -1226,6 +1751,7 @@ function SalesOrder() {
         const addr = vendorEffectiveBillToAddresses.find(a => String(a.Address || '') === addressCode)
             || vendorEffectiveShipToAddresses.find(a => String(a.Address || '') === addressCode);
         if (addr) {
+            updateTaxInfoFromAddress(addr);
             setHeader(p => ({
                 ...p,
                 billToCode: addressCode,
@@ -1277,11 +1803,10 @@ function SalesOrder() {
 
                     setLines(prev => prev.map((line, idx) => {
                         if (idx !== i) return line;
-                        const next = { ...line, itemNo: value };
+                        const next = { ...line, itemNo: value, forRate: '', taxCodeManuallyOverridden: false };
 
                         // Step 1: Set Item Details
                         next.itemDescription = item.ItemName || next.itemDescription;
-                        next.sellerItem = next.sellerItem || value;
                         next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
                         next.uomName = next.uomName || next.uomCode;
                         next.countryOfOrigin = item.ItemCountryOrg || next.countryOfOrigin || '';
@@ -1313,7 +1838,7 @@ function SalesOrder() {
                         if (!gstState || !companyState) {
                             console.warn('⚠️ Missing state information for tax determination');
                             next.taxCode = '';
-                            next.stcode = baseTaxCode || '';
+                            next.stcode = next.stcode || '';
                         } else {
                             // Step 6: Determine Tax Code using Tax Engine
                             const determinedTaxCode = determineTaxCode(
@@ -1327,7 +1852,7 @@ function SalesOrder() {
 
                             if (determinedTaxCode) {
                                 next.taxCode = determinedTaxCode;
-                                next.stcode = determinedTaxCode;
+                                next.stcode = next.stcode || '';
                                 console.log('✅ Tax Code Auto-Selected:', {
                                     gstType: getGSTTypeLabel(companyState, gstState),
                                     taxCode: determinedTaxCode
@@ -1335,7 +1860,7 @@ function SalesOrder() {
                             } else {
                                 console.warn('⚠️ Could not determine tax code');
                                 next.taxCode = '';
-                                next.stcode = baseTaxCode || '';
+                                next.stcode = next.stcode || '';
                             }
                         }
 
@@ -1348,11 +1873,10 @@ function SalesOrder() {
                 // Fallback to reference data if API fails
                 setLines(prev => prev.map((line, idx) => {
                     if (idx !== i) return line;
-                    const next = { ...line, itemNo: value };
+                    const next = { ...line, itemNo: value, forRate: '', taxCodeManuallyOverridden: false };
                     const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
                     if (item) {
                         next.itemDescription = item.ItemName || next.itemDescription;
-                        next.sellerItem = next.sellerItem || value;
                         next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
                         next.uomName = next.uomName || next.uomCode;
                         next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
@@ -1361,7 +1885,7 @@ function SalesOrder() {
                         next.distRule = next.distRule || item.DistributionRule || '';
                         next.whse = next.whse || item.DefaultWarehouse || header.warehouse || '';
                         next.loc = resolveLineLocation(next.whse, next.branch || header.branch);
-                        next.stcode = next.stcode || item.TaxCodeAR || item.SalTaxCode || next.taxCode || '';
+                        next.stcode = next.stcode || '';
                     }
                     next.total = fmtDec(calcLineTotal(next), numDec.total);
                     return next;
@@ -1372,10 +1896,12 @@ function SalesOrder() {
             setLines(prev => prev.map((line, idx) => {
                 if (idx !== i) return line;
                 const next = { ...line, [name]: numDec[name] !== undefined ? sanitize(value, numDec[name]) : value };
-                if (name === 'quantity' && !String(next.sellerQty || '').trim()) next.sellerQty = next.quantity;
-                if (name === 'unitPrice') next.unitPriceUdf = next.unitPrice;
+                if (['unitPrice', 'stdDiscount', 'taxCode'].includes(name)) next.forRate = '';
                 if (name === 'uomCode') next.uomName = value;
-                if (name === 'taxCode') next.stcode = String(next.taxCode || '');
+                if (name === 'taxCode') {
+                    next.stcode = next.stcode || '';
+                    next.taxCodeManuallyOverridden = Boolean(String(next.taxCode || '').trim());
+                }
                 if (name === 'whse') next.loc = resolveLineLocation(next.whse, next.branch || header.branch);
                 next.total = fmtDec(calcLineTotal(next), numDec.total);
                 return next;
@@ -1502,7 +2028,10 @@ function SalesOrder() {
         setHeaderUdfs(p => ({ ...p, [k]: v }));
     };
     const handleRowUdfChange = (i, k, v) => setLines(p => p.map((l, idx) => idx === i ? { ...l, udf: { ...(l.udf || {}), [k]: v } } : l));
-    const updateFormSetting = (g, k, prop, val) => setFormSettings(p => ({ ...p, [g]: { ...(p[g] || {}), [k]: { ...((p[g] || {})[k] || {}), [prop]: val } } }));
+    const updateFormSetting = (g, k, prop, val) => setFormSettings((p) => {
+        const current = ((p[g] || {})[k] || {});
+        return { ...p, [g]: { ...(p[g] || {}), [k]: { ...current, [prop]: val } } };
+    });
     const toggleHeaderUdfs = () => {
         setFormSettingsOpen(false);
         setSidebarOpen(p => !p);
@@ -1525,14 +2054,20 @@ function SalesOrder() {
             header.billToAddress || header.payTo,
         );
         const activeAddress = type === 'billTo' ? billAddress : shipAddress;
+        const activeComponents = type === 'billTo'
+            ? header.billToAddressComponents
+            : header.shipToAddressComponents;
 
         setAddressForm(
-            mapAddressToModalForm(activeAddress, {
-                shipToCode: header.shipToCode || shipAddress?.Address || '',
-                shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
-                billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
-                billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
-            }),
+            {
+                ...mapAddressToModalForm(activeAddress, {
+                    shipToCode: header.shipToCode || shipAddress?.Address || '',
+                    shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
+                    billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
+                    billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
+                }),
+                ...(activeComponents || {}),
+            },
         );
         setAddressModal({ type });
     };
@@ -1542,27 +2077,22 @@ function SalesOrder() {
     };
 
     const saveAddressModal = () => {
-        const formatted = [
-            [addressForm.streetPoBox, addressForm.streetNo].filter(Boolean).join(', '),
-            addressForm.buildingFloorRoom,
-            [addressForm.block, addressForm.city].filter(Boolean).join(', '),
-            [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-            addressForm.countryRegion,
-            addressForm.addressName2,
-            addressForm.addressName3,
-        ].filter(Boolean).join('\n');
+        const formatted = formatAddressComponent(addressForm);
+        const components = pickAddressComponentFields(addressForm);
+        markDirty();
 
         if (addressModal.type === 'shipTo') {
             setHeader(p => ({
                 ...p,
                 shipToCode: addressForm.shipToCode || p.shipToCode,
-                shipToAddress: formatted || addressForm.shipToAddress,
-                shipTo: formatted || addressForm.shipToAddress,
+                shipToAddress: formatted,
+                shipTo: formatted,
+                shipToAddressComponents: components,
                 billToCode: addressForm.billToCode || p.billToCode,
                 payToCode: addressForm.billToCode || p.payToCode,
                 billToAddress: addressForm.billToAddress || p.billToAddress,
                 payTo: addressForm.billToAddress || p.payTo,
-                placeOfSupply: addressForm.state || p.placeOfSupply,
+                placeOfSupply: addressForm.state || '',
             }));
         } else {
             setHeader(p => ({
@@ -1572,9 +2102,10 @@ function SalesOrder() {
                 shipTo: addressForm.shipToAddress || p.shipTo,
                 billToCode: addressForm.billToCode || p.billToCode,
                 payToCode: addressForm.billToCode || p.payToCode,
-                billToAddress: formatted || addressForm.billToAddress,
-                payTo: formatted || addressForm.billToAddress,
-                placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
+                billToAddress: formatted,
+                payTo: formatted,
+                billToAddressComponents: components,
+                placeOfSupply: header.useBillToForTax ? addressForm.state || '' : p.placeOfSupply,
             }));
         }
         closeAddressModal();
@@ -1582,24 +2113,57 @@ function SalesOrder() {
 
     const handleAddressFormChange = (e) => {
         const { name, value } = e.target;
+
+        if (name === 'shipToCode') {
+            const selectedAddress = resolveSalesOrderAddress(value, vendorEffectiveShipToAddresses);
+            setAddressForm(prev => {
+                const nextState = {
+                    ...prev,
+                    shipToCode: value,
+                    shipToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.shipToAddress,
+                };
+                return addressModal?.type === 'shipTo'
+                    ? mapAddressToModalForm(selectedAddress, nextState)
+                    : nextState;
+            });
+            return;
+        }
+
+        if (name === 'billToCode') {
+            const selectedAddress = resolveSalesOrderAddress(value, vendorEffectiveBillToAddresses);
+            setAddressForm(prev => {
+                const nextState = {
+                    ...prev,
+                    billToCode: value,
+                    billToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.billToAddress,
+                };
+                return addressModal?.type === 'billTo'
+                    ? mapAddressToModalForm(selectedAddress, nextState)
+                    : nextState;
+            });
+            return;
+        }
+
         setAddressForm(p => ({ ...p, [name]: value }));
     };
 
     // ── E-Way Bill Modal handlers ──────────────────────────────────────────────
-    const openEWayBillModal = () => {
-        setEWayBillModal(true);
-    };
-
-    const closeEWayBillModal = () => {
-        setEWayBillModal(false);
-    };
-
-    const saveEWayBillModal = (data) => {
-        setEWayBillData(data);
-        console.log('E-Way Bill Data saved:', data);
-    };
-
     // ── Tax Info Modal handlers ───────────────────────────────────────────────
+    const openReferenceDocumentsModal = () => {
+        setReferenceDocumentsModal(true);
+    };
+
+    const closeReferenceDocumentsModal = () => {
+        setReferenceDocumentsModal(false);
+    };
+
+    const saveReferenceDocumentsModal = (rows) => {
+        setReferenceDocuments(normalizeSalesOrderReferenceDocuments(rows));
+        setReferenceDocumentsChanged(true);
+        if (currentDocEntry) setIsDirty(true);
+        setReferenceDocumentsModal(false);
+    };
+
     const openTaxInfoModal = () => {
         setTaxInfoModal(true);
     };
@@ -1609,6 +2173,7 @@ function SalesOrder() {
     };
 
     const saveTaxInfoModal = () => {
+        setIsDirty(true);
         closeTaxInfoModal();
     };
 
@@ -1756,12 +2321,12 @@ function SalesOrder() {
 
                     if (determinedTaxCode) {
                         next.taxCode = determinedTaxCode;
-                        next.stcode = determinedTaxCode;
+                        next.stcode = next.stcode || '';
                     }
                 }
 
                 if (!next.stcode) {
-                    next.stcode = mergedItem.TaxCodeAR || mergedItem.SalTaxCode || next.taxCode || '';
+                    next.stcode = next.stcode || '';
                 }
 
                 next.total = fmtDec(calcLineTotal(next), numDec.total);
@@ -1852,7 +2417,8 @@ function SalesOrder() {
         const copiedLines = rawLines.map((line, idx) => ({
             ...createLine(rowUdfDefinitions),
             ...normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch),
-            stcode: line.STCODE || line.STACode || line.stcode || line.TaxCode || line.VatGroup || line.taxCode || '',
+            stcode: line.STCODE || line.STACode || line.stcode || '',
+            taxCodeManuallyOverridden: Boolean(String(line.TaxCode || line.VatGroup || line.taxCode || '').trim()),
             documentCreated: line.DocumentCreated || line.documentCreated || copySource.header.DocumentCreated || normHeader.documentCreated || '',
             loc: line.loc || resolveLineLocation(line.WarehouseCode || line.WhsCode || line.whse || '', normHeader.branch),
         }));
@@ -2061,7 +2627,12 @@ function SalesOrder() {
             }
         }
 
-        // Validate Warehouse (always required)
+        if (branchesEnabled && !String(header.branch || '').trim()) {
+            e.header.branch = 'Branch is required.';
+            e.form = 'Please correct the highlighted fields.';
+            return e;
+        }
+
         if (!String(header.warehouse || '').trim()) {
             e.header.warehouse = 'Warehouse is required.';
             e.form = 'Please correct the highlighted fields.';
@@ -2210,6 +2781,7 @@ function SalesOrder() {
                 hsnCode: line.hsnCode,
                 quantity: line.quantity,
                 unitPrice: line.unitPrice,
+                forRate: line.forRate || getCalculatedForRate(line, effectiveTaxCodes),
                 sellerPrice: line.sellerPrice,
                 buyerPrice: line.buyerPrice,
                 sellerDelivery: line.sellerDelivery,
@@ -2260,11 +2832,14 @@ function SalesOrder() {
             }));
 
             const payload = {
-                company_id: SALES_ORDER_COMPANY_ID,
+                company_id: activeCompanyId,
                 header: prep,
                 lines: cleanedLines,
                 freightCharges: freightModal.freightCharges,
-                header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
+                header_udfs: buildVisibleHeaderUdfPayload(headerUdfDefinitions, headerUdfs, formSettings),
+                tax_info: taxInfoForm,
+                reference_documents: referenceDocuments,
+                reference_documents_changed: referenceDocumentsChanged || (!currentDocEntry && referenceDocuments.length > 0),
             };
 
             // ═══ LOGGING: Payload Before Submit ═══
@@ -2282,7 +2857,10 @@ function SalesOrder() {
             setSnapshotPending(false);
             setIsDirty(false);
             setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
+            setReferenceDocuments([]);
+            setReferenceDocumentsChanged(false);
             setFreightModal({ open: false, freightCharges: [], loading: false });
+            setTaxInfoForm(INIT_TAX_INFO_FORM);
             setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
             setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [] }));
             setValErrors({ header: {}, lines: {}, form: '' });
@@ -2308,7 +2886,10 @@ function SalesOrder() {
         setSnapshotPending(false);
         setIsDirty(false);
         setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
+        setReferenceDocuments([]);
+        setReferenceDocumentsChanged(false);
         setFreightModal({ open: false, freightCharges: [], loading: false });
+        setTaxInfoForm(INIT_TAX_INFO_FORM);
         setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
         setValErrors({ header: {}, lines: {}, form: '' });
         setPageState(p => ({ ...p, error: '', success: '' }));
@@ -2319,8 +2900,12 @@ function SalesOrder() {
         }
     };
 
-    const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
-    const visibleRowUdfs = rowUdfDefinitions.filter(f => formSettings.rowUdfs?.[f.key]?.visible !== false);
+    const visHdrUdfs = headerUdfDefinitions.filter((field) => (
+        resolveFormSettingFlag(field, formSettings.headerUdfs?.[field.key] || {}, 'visible')
+    ));
+    const visibleRowUdfs = rowUdfDefinitions.filter((field) => (
+        resolveFormSettingFlag(field, formSettings.rowUdfs?.[field.key] || {}, 'visible')
+    ));
     const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
 
     useEffect(() => {
@@ -2344,7 +2929,7 @@ function SalesOrder() {
 
     // ── render ────────────────────────────────────────────────────────────────
     return (
-        <form ref={formRef} className={`so-page sap-document-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+        <form ref={formRef} className={`so-page sap-document-page so-sales-order-page${isRightSidebarOpen ? ' so-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
             {/* toolbar */}
             <div className="so-toolbar sap-document-toolbar">
@@ -2503,20 +3088,20 @@ function SalesOrder() {
             )}
 
             <fieldset className="so-fieldset" disabled={!isDocumentEditable} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-            <div className={`so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`}>
-                <div className="so-layout__main">
+            <div className={`sap-document-layout so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ' sap-document-layout--no-udf'}`}>
+                <div className="sap-document-main so-layout__main">
 
                         {/* ══ HEADER CARD ══════════════════════════════════════════════ */}
                         <div className="so-header-card">
-                            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' }}>
+                            <div className="so-header-columns">
                                 {/* LEFT COLUMN */}
-                                <div style={{ flex: '1 1 45%', minWidth: '300px', maxWidth: '100%' }}>
-                                    <div className="so-field-grid" style={{ gridTemplateColumns: '1fr' }}>
+                                <div className="so-header-column">
+                                    <div className="so-field-grid so-field-grid--single">
 
                                         {/* Buyer's Code */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Buyer's Code *</label>
-                                            <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'vendor', "Buyer's Code", true)}</label>
+                                            <div className="sap-input-group">
                                                 <input
                                                     name="vendor"
                                                     className={`so-field__input${valErrors.header.vendor ? ' so-field__input--error' : ''}`}
@@ -2524,20 +3109,17 @@ function SalesOrder() {
                                                     onChange={handleHeaderChange}
                                                     disabled={!!currentDocEntry}
                                                     placeholder="Customer code"
-                                                    style={{ flex: 1 }}
+                                                />
+                                                <SapGoldenArrowButton
+                                                    onClick={openBusinessPartnerLink}
+                                                    disabled={!header.vendor}
+                                                    title="Open Business Partner"
                                                 />
                                                 <button
                                                     type="button"
-                                                    className="btn btn-sm"
+                                                    className="so-btn so-btn--lookup"
                                                     onClick={openBpModal}
                                                     disabled={!!currentDocEntry}
-                                                    style={{
-                                                        padding: '0 8px',
-                                                        fontSize: 11,
-                                                        border: '1px solid #a0aab4',
-                                                        background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                                                        minWidth: '28px'
-                                                    }}
                                                     title="Select Business Partner"
                                                 >
                                                     ...
@@ -2547,7 +3129,7 @@ function SalesOrder() {
 
                                         {/* Buyer's Name */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Buyer's Name</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'name', "Buyer's Name")}</label>
                                             <input name="name" className="so-field__input" value={header.name} readOnly />
                                         </div>
 
@@ -2558,7 +3140,7 @@ function SalesOrder() {
                                         >
                                         {/* Contact Person */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Contact Person</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'contactPerson', 'Contact Person')}</label>
                                             <select
                                                 name="contactPerson"
                                                 className="so-field__select"
@@ -2585,27 +3167,19 @@ function SalesOrder() {
 
                                         {/* Place of Supply */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Place of Supply *</label>
-                                            <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'placeOfSupply', 'Place of Supply', true)}</label>
+                                            <div className="sap-input-group">
                                                 <input
                                                     name="placeOfSupply"
                                                     className={`so-field__input${valErrors.header.placeOfSupply ? ' so-field__input--error' : ''}`}
                                                     value={getStateDisplayName(header.placeOfSupply, refData.states)}
                                                     onChange={handleHeaderChange}
                                                     placeholder="State code"
-                                                    style={{ flex: 1 }}
                                                 />
                                                 <button
                                                     type="button"
-                                                    className="btn btn-sm"
+                                                    className="so-btn so-btn--lookup"
                                                     onClick={openStateModal}
-                                                    style={{
-                                                        padding: '0 8px',
-                                                        fontSize: 11,
-                                                        border: '1px solid #a0aab4',
-                                                        background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                                                        minWidth: '28px'
-                                                    }}
                                                     title="Select State"
                                                 >
                                                     ...
@@ -2615,7 +3189,7 @@ function SalesOrder() {
 
                                         {/* Payment Terms */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Payment Terms</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'paymentTerms', 'Payment Terms')}</label>
                                             <select name="paymentTerms" className="so-field__select" value={header.paymentTerms} onChange={handleHeaderChange}>
                                                 <option value="">Select</option>
                                                 {payTermOpts.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
@@ -2623,37 +3197,41 @@ function SalesOrder() {
                                         </div>
 
                                         {/* Branch */}
-                                        <div className="so-field">
-                                            <label className="so-field__label">Branch</label>
-                                            <select
-                                                name="branch"
-                                                className="so-field__select"
-                                                value={header.branch || ''}
-                                                onChange={handleHeaderChange}
-                                                style={{ border: (!copyFromMode && valErrors.header.branch) ? '1px solid #c00' : undefined }}
-                                            >
-                                                <option value="">Select Branch</option>
-                                                {refData.branches.map(b => (
-                                                    <option key={b.BPLId} value={b.BPLId}>
-                                                        {b.BPLName}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            {!copyFromMode && valErrors.header.branch && (
-                                                <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.header.branch}</div>
-                                            )}
-                                        </div>
+                                        {branchesEnabled && (
+                                            <div className="so-field">
+                                                <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'branch', 'Branch', true)}</label>
+                                                <select
+                                                    name="branch"
+                                                    className="so-field__select"
+                                                    value={header.branch || ''}
+                                                    onChange={handleHeaderChange}
+                                                    style={{ border: (!copyFromMode && valErrors.header.branch) ? '1px solid #c00' : undefined }}
+                                                >
+                                                    <option value="">Select Branch</option>
+                                                    {refData.branches.map(b => (
+                                                        <option key={b.BPLId} value={b.BPLId}>
+                                                            {b.BPLName}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                                {!copyFromMode && valErrors.header.branch && (
+                                                    <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.header.branch}</div>
+                                                )}
+                                            </div>
+                                        )}
 
                                         {/* Warehouse */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Warehouse *</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'warehouse', 'Warehouse', true)}</label>
                                             <select
                                                 name="warehouse"
                                                 className="so-field__select"
                                                 value={header.warehouse || ''}
                                                 onChange={handleHeaderChange}
                                                 style={{ border: (!copyFromMode && valErrors.header.warehouse) ? '1px solid #c00' : undefined }}
-                                                title={header.branch ? `Showing warehouses for selected branch` : 'Select a branch first to filter warehouses'}
+                                                title={branchesEnabled
+                                                    ? (header.branch ? 'Showing warehouses for selected branch' : 'Select a branch first to filter warehouses')
+                                                    : 'Showing warehouses for selected company'}
                                             >
                                                 <option value="">Select Warehouse</option>
                                                 {branchFilteredWarehouses.map(w => (
@@ -2674,16 +3252,16 @@ function SalesOrder() {
                                 </div>
 
                                 {/* RIGHT COLUMN */}
-                                <div style={{ flex: '1 1 45%', minWidth: '300px', maxWidth: '100%' }}>
+                                <div className="so-header-column">
                                     <fieldset
                                         className="so-fieldset"
                                         style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
                                     >
-                                    <div className="so-field-grid" style={{ gridTemplateColumns: '1fr' }}>
+                                    <div className="so-field-grid so-field-grid--single">
 
                                         {/* Series */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Series</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'series', 'Series')}</label>
                                             <select
                                                 name="series"
                                                 className="so-field__select"
@@ -2702,7 +3280,7 @@ function SalesOrder() {
 
                                         {/* Auto Number */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Number</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'nextNumber', 'Number')}</label>
                                             <input
                                                 name="nextNumber"
                                                 className="so-field__input"
@@ -2714,31 +3292,31 @@ function SalesOrder() {
 
                                         {/* Customer Ref. No. */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Customer Ref. No.</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'customerRefNo', 'Customer Ref. No.')}</label>
                                             <input name="customerRefNo" className="so-field__input" value={header.customerRefNo || header.salesContractNo || ''} onChange={handleHeaderChange} />
                                         </div>
 
                                         {/* Status */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Status</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'status', 'Status')}</label>
                                             <input name="status" className="so-field__input" value={header.status} readOnly style={{ background: '#f0f2f5', color: header.status === 'Open' ? '#1a7a30' : '#c00', fontWeight: 600 }} />
                                         </div>
 
                                         {/* Posting Date */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Posting Date *</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'postingDate', 'Posting Date', true)}</label>
                                             <input type="date" name="postingDate" className="so-field__input" value={header.postingDate} onChange={handleHeaderChange} />
                                         </div>
 
                                         {/* Delivery Date */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Delivery Date</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'deliveryDate', 'Delivery Date')}</label>
                                             <input type="date" name="deliveryDate" className="so-field__input" value={header.deliveryDate} onChange={handleHeaderChange} />
                                         </div>
 
                                         {/* Document Date */}
                                         <div className="so-field">
-                                            <label className="so-field__label">Document Date *</label>
+                                            <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'documentDate', 'Document Date', true)}</label>
                                             <input
                                                 type="date"
                                                 name="documentDate"
@@ -2791,6 +3369,7 @@ function SalesOrder() {
                                 effectiveWarehouses={branchFilteredWarehouses}
                                 fmtTaxLabel={fmtTaxLabel}
                                 valErrors={valErrors}
+                                loading={pageState.loading}
                                 branches={refData.branches}
                                 distributionRules={refData.distribution_rules || []}
                                 distributionDimensions={refData.distribution_dimensions || []}
@@ -2803,8 +3382,11 @@ function SalesOrder() {
                                 getBranchName={getBranchName}
                                 copyFromMode={copyFromMode}
                                 formSettings={formSettings}
+                                matrixFields={matrixColumnDefinitions}
+                                useSapMatrixOrder={Boolean(refData.line_field_metadata?.sap_form?.preferenceRows)}
                                 rowUdfFields={visibleRowUdfs}
                                 onRowUdfChange={handleRowUdfChange}
+                                onLoadLookupOptions={loadDynamicUdfLookupOptions}
                             />
                         )}
 
@@ -2817,7 +3399,6 @@ function SalesOrder() {
                                 vendorBillToAddresses={vendorBillToAddresses}
                                 shipTypeOpts={shipTypeOpts}
                                 onOpenAddressModal={openAddressModal}
-                                onOpenEWayBillModal={openEWayBillModal}
                             />
                         )}
 
@@ -2826,11 +3407,20 @@ function SalesOrder() {
                                 header={header}
                                 onHeaderChange={handleHeaderChange}
                                 payTermOpts={payTermOpts}
+                                paymentMethodOpts={paymentMethodOpts}
+                                referenceDocuments={referenceDocuments}
+                                onOpenReferenceDocuments={openReferenceDocumentsModal}
+                                isEditable={isDocumentEditable}
                             />
                         )}
 
                         {activeTab === 'Tax' && (
-                            <TaxTab onOpenTaxInfoModal={openTaxInfoModal} />
+                            <TaxTab
+                                header={header}
+                                onHeaderChange={handleHeaderChange}
+                                onOpenTaxInfoModal={openTaxInfoModal}
+                                isEditable={isDocumentEditable}
+                            />
                         )}
 
                         {activeTab === 'Electronic Documents' && (
@@ -2845,9 +3435,9 @@ function SalesOrder() {
                         )}
 
                         {/* ══ TOTALS FOOTER ═════════════════════════════════════════════ */}
-                        <div className="so-header-card">
-                            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' }}>
-                                <div style={{ flex: '1 1 45%', minWidth: '300px', maxWidth: '100%' }}>
+                        <div className="so-header-card so-document-summary">
+                            <div className="so-header-columns">
+                                <div className="so-header-column">
                                     <div className="so-field">
                                         <label className="so-field__label">Sales Employee</label>
                                         <select
@@ -2865,14 +3455,6 @@ function SalesOrder() {
                                             ))}
                                             <option value="__DEFINE_NEW__">Define New</option>
                                         </select>
-                                        {/* Debug info */}
-                                        <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
-                                            {header.purchaser ? (
-                                                <span>Selected: {header.purchaser} | Available: {effectiveSalesEmployees.length} employees</span>
-                                            ) : (
-                                                <span>No selection | Available: {effectiveSalesEmployees.length} employees</span>
-                                            )}
-                                        </div>
                                     </div>
                                     <div className="so-field">
                                         <label className="so-field__label">Owner</label>
@@ -2890,21 +3472,13 @@ function SalesOrder() {
                                                 </option>
                                             ))}
                                         </select>
-                                        {/* Debug info */}
-                                        <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
-                                            {header.owner ? (
-                                                <span>Selected: {header.owner} | Available: {(refData.owners || []).length} owners</span>
-                                            ) : (
-                                                <span>No selection | Available: {(refData.owners || []).length} owners</span>
-                                            )}
-                                        </div>
                                     </div>
                                     <div className="so-field">
                                         <label className="so-field__label">Remarks</label>
                                         <textarea className="so-textarea" rows={3} name="otherInstruction" value={header.otherInstruction || ''} onChange={handleHeaderChange} />
                                     </div>
                                 </div>
-                                <div style={{ flex: '1 1 45%', minWidth: '300px', maxWidth: '100%' }}>
+                                <div className="so-header-column">
                                     <div className="so-section-title">Tax Summary</div>
                                     {totals.taxBreakdown.length > 0 && (
                                         <div style={{ marginBottom: '12px' }}>
@@ -3075,25 +3649,27 @@ function SalesOrder() {
                     </div>
 
                     <HeaderUdfSidebar
-                        className="so-layout__sidebar"
+                        className="sap-header-udf-panel so-layout__sidebar"
                         isOpen={sidebarOpen}
                         fields={visHdrUdfs}
                         formSettings={formSettings}
                         values={headerUdfs}
                         disabled={!hasBuyerCode}
                         onFieldChange={handleHeaderUdfChange}
+                        onLoadLookupOptions={loadDynamicUdfLookupOptions}
                         onClose={() => setSidebarOpen(false)}
                     />
                     <FormSettingsPanel
                         variant="sidebar"
-                        className="so-layout__sidebar"
+                        className="sap-header-udf-panel so-layout__sidebar"
                         isOpen={formSettingsOpen}
                         onClose={() => setFormSettingsOpen(false)}
-                        matrixFields={BASE_MATRIX_COLUMNS}
+                        matrixFields={matrixColumnDefinitions}
                         headerUdfFields={headerUdfDefinitions}
                         rowUdfFields={rowUdfDefinitions}
                         formSettings={formSettings}
                         onSettingChange={updateFormSetting}
+                        editableSapControlledGroups={['matrixColumns']}
                     />
                 </div>
 
@@ -3107,14 +3683,6 @@ function SalesOrder() {
                 addressForm={addressForm}
                 onFormChange={handleAddressFormChange}
                 states={refData.states}
-            />
-
-            {/* E-Way Bill Modal */}
-            <EWayBillModal
-                isOpen={eWayBillModal}
-                onClose={closeEWayBillModal}
-                onSave={saveEWayBillModal}
-                eWayBillData={eWayBillData}
             />
 
             {/* Tax Information Modal */}
@@ -3195,6 +3763,16 @@ function SalesOrder() {
                 onClose={closeSalesEmployeeSetup}
                 onSave={saveSalesEmployeeSetup}
                 onUpdateRow={updateSalesEmployeeSetupRow}
+            />
+
+            <ReferenceDocumentsModal
+                isOpen={referenceDocumentsModal}
+                referenceDocuments={referenceDocuments}
+                onClose={closeReferenceDocumentsModal}
+                onSave={saveReferenceDocumentsModal}
+                isEditable={isDocumentEditable}
+                cardCode={header.vendor}
+                onOpenDocument={openReferenceDocumentLink}
             />
 
             {/* Freight Charges Modal */}

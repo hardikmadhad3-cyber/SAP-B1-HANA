@@ -24,8 +24,8 @@ export const fetchAPInvoiceByDocEntry = (docEntry) =>
   apiClient.get(`/ap-invoice/${docEntry}`);
 
 // Series
-export const fetchAPInvoiceSeries = () =>
-  apiClient.get('/ap-invoice/series');
+export const fetchAPInvoiceSeries = (params = {}) =>
+  apiClient.get('/ap-invoice/series', { params });
 
 export const fetchNextNumber = (series) =>
   apiClient.get(`/ap-invoice/series/${series}/next-number`);

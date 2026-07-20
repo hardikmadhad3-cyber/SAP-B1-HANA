@@ -18,6 +18,7 @@ import CopyFromModal from '../purchase-order/components/CopyFromModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
@@ -30,6 +31,8 @@ import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useValidationHighlights from '../../utils/useValidationHighlights';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
+import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
 import {
   fetchPurchaseQuotationByDocEntry,
   fetchPurchaseQuotationReferenceData,
@@ -133,16 +136,23 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   unitPriceUdf: '',
   stdDiscount: '',
   taxCode: '',
+  taxCodeRepeat: '',
   taxAmount: '',
   totalBeforeTax: '',
   totalLC: '',
   total: '',
+  price: '',
   whse: '',
   distRule: '',
   countryOfOrigin: '',
   loc: '',
   branch: '',
   blanketAgreementNo: '',
+  U_Cost_Sheet: '',
+  U_PackingType: '',
+  U_ContainerType: '',
+  U_GrossWt: '',
+  U_TotalPackage: '',
   saudaNodeRef: '',
   apInvDocKey: '',
   apInvDocNum: '',
@@ -170,6 +180,8 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   sellerSpecialInstruction: '',
   sellerBrokerageAmtPer: '',
   sellerBrokeragePercent: '',
+  U_Fix_Brock_B: '',
+  U_Fix_Brock_S: '',
   buyerBillDiscount: '',
   sellerBillDiscount: '',
   stcode: '',
@@ -294,6 +306,7 @@ function PurchaseOrder() {
   const [header, setHeader] = useState(INIT_HEADER);
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(BASE_MATRIX_COLUMNS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
@@ -301,7 +314,7 @@ function PurchaseOrder() {
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
-    [headerUdfDefinitions, rowUdfDefinitions],
+    [headerUdfDefinitions, rowUdfDefinitions, matrixColumnDefinitions],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
@@ -395,6 +408,7 @@ function PurchaseOrder() {
     sellerBrokeragePerQty: Number(dec.PriceDec),
     unitPrice: Number(dec.PriceDec),
     unitPriceUdf: Number(dec.PriceDec),
+    price: Number(dec.PriceDec),
     assessableValue: Number(dec.SumDec),
     bedRate: Number(dec.PercentDec),
     bedAmount: Number(dec.SumDec),
@@ -403,6 +417,10 @@ function PurchaseOrder() {
     sellerBrokerage: Number(dec.SumDec),
     buyerBrokerage: Number(dec.SumDec),
     sellerBrokeragePercent: Number(dec.PercentDec),
+    U_GrossWt: Number(dec.SumDec),
+    U_TotalPackage: Number(dec.QtyDec),
+    U_Fix_Brock_B: Number(dec.SumDec),
+    U_Fix_Brock_S: Number(dec.SumDec),
     buyerBillDiscount: Number(dec.PercentDec),
     sellerBillDiscount: Number(dec.PercentDec),
     freightPurchase: Number(dec.SumDec),
@@ -463,34 +481,46 @@ function PurchaseOrder() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const [refDataRes, hsnRes] = await Promise.all([
+        const [refDataRes, hsnRes, layoutRes] = await Promise.all([
           fetchPurchaseQuotationReferenceData(PURCHASE_ORDER_COMPANY_ID),
           fetchHSNCodes(),
+          getDocumentLayout({ documentType: 'PURCHASE_QUOTATION' }).catch((error) => ({
+            data: {
+              success: false,
+              columns: [],
+              warning: getErrMsg(error, 'Failed to load SAP layout.'),
+            },
+          })),
         ]);
 
         if (!ignore) {
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
           const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+            ? refDataRes.data.line_field_metadata.matrix_columns
+            : BASE_MATRIX_COLUMNS;
+          const sapLayoutColumns = layoutRes?.data?.source === 'fallback'
+            ? []
+            : (layoutRes?.data?.columns || []);
+          const nextMatrixColumns = buildMatrixColumnsFromSapLayout({
+            baseColumns: liveMatrixColumns,
+            layoutColumns: sapLayoutColumns,
+            fallbackColumns: BASE_MATRIX_COLUMNS,
+          });
+          const hasSapMatrixPreferences = Boolean(
+            Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) ||
+            sapLayoutColumns.length
+          );
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
+          setMatrixColumnDefinitions(nextMatrixColumns);
           setHeaderUdfs((prev) => createUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
             ...line,
             udf: createUdfState(nextRowUdfs, line.udf || {}),
           })));
-          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, formSettingsStorageKey);
-          setFormSettings((prev) => ({
-            ...nextDefaults,
-            ...prev,
-            headerUdfs: {
-              ...nextDefaults.headerUdfs,
-              ...(prev.headerUdfs || {}),
-            },
-            rowUdfs: {
-              ...nextDefaults.rowUdfs,
-              ...(prev.rowUdfs || {}),
-            },
-          }));
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
+          setFormSettings((prev) => mergeLiveMatrixSettings(nextDefaults, prev, hasSapMatrixPreferences));
 
           setRefData({
             company: refDataRes.data.company || '',
@@ -512,7 +542,15 @@ function PurchaseOrder() {
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
-            warnings: refDataRes.data.warnings || [],
+            line_field_metadata: {
+              ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+              matrix_columns: nextMatrixColumns,
+              imported_layout: layoutRes?.data || null,
+            },
+            warnings: [
+              ...(refDataRes.data.warnings || []),
+              ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+            ],
             series: [],
           });
 
@@ -722,6 +760,13 @@ function PurchaseOrder() {
   };
 
   const totals = calcTotals();
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 540000006,
+    docEntry: currentDocEntry,
+    header,
+    total: totals.total,
+  });
 
   useEffect(() => {
     if (!derivedGstType) return;
@@ -1027,6 +1072,11 @@ function PurchaseOrder() {
 
       if (name === 'taxCode') {
         next.taxCodeManuallyOverridden = true;
+        next.taxCodeRepeat = value;
+      }
+
+      if (name === 'unitPrice' && !String(line.price || '').trim()) {
+        next.price = next.unitPrice;
       }
 
       if (name === 'itemNo') {
@@ -1046,6 +1096,13 @@ function PurchaseOrder() {
           if (preferredTaxCode) {
             next.taxCode = preferredTaxCode;
           }
+        }
+
+        if (!String(next.taxCodeRepeat || '').trim()) {
+          next.taxCodeRepeat = next.taxCode || '';
+        }
+        if (!String(next.price || '').trim()) {
+          next.price = next.unitPrice || '';
         }
       }
       
@@ -1725,9 +1782,9 @@ function PurchaseOrder() {
 
             {/* ══ HEADER CARD ══════════════════════════════════════════════ */}
             <div className="po-header-card">
-              <div className="row g-2">
+              <div className="po-document-header-grid">
                 {/* LEFT COLUMN */}
-                <div className="col-md-6">
+                <div className="po-document-header-column">
                   <div className="po-field-grid" style={{ gridTemplateColumns: '1fr' }}>
                     
                     {/* Vendor Code */}
@@ -1874,7 +1931,7 @@ function PurchaseOrder() {
                 </div>
 
                 {/* RIGHT COLUMN */}
-                <div className="col-md-6">
+                <div className="po-document-header-column">
                   <div className="po-field-grid" style={{ gridTemplateColumns: '1fr' }}>
 
                     {/* Series */}
@@ -1985,6 +2042,7 @@ function PurchaseOrder() {
                 branches={refData.branches || []}
                 hsnCodes={refData.hsn_codes || []}
                 formSettings={formSettings}
+                matrixFields={matrixColumnDefinitions}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
                 valErrors={valErrors}
@@ -2194,7 +2252,7 @@ function PurchaseOrder() {
             className="po-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
-            matrixFields={BASE_MATRIX_COLUMNS}
+            matrixFields={matrixColumnDefinitions}
             headerUdfFields={headerUdfDefinitions}
             rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}

@@ -1,8 +1,9 @@
 const sapService = require('./sapService');
 const salesQuotationDb = require('./salesQuotationDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { buildMarketingDocumentAddressPayload } = require('./documentAddressPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
-const { normalizeUdfValue, normalizeUdfValues } = require('./udfPayloadUtils');
+const { normalizeUdfValue, normalizeUdfValues, applyUdfsRobust } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
@@ -27,7 +28,7 @@ const SALES_QUOTATION_LINE_UDF_MAPPINGS = [
   { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
   { sapField: 'U_COMPRC', getValue: (line) => line.commission },
   { sapField: 'U_S_BrokPerQty', getValue: (line) => line.sellerBrokeragePerQty },
-  { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf ?? line.unitPrice },
+  { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf },
   { sapField: 'U_Brok_Seller', getValue: (line) => line.sellerBrokerage },
   { sapField: 'U_Brok_Buyer', getValue: (line) => line.buyerBrokerage },
   { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
@@ -47,12 +48,13 @@ const SALES_QUOTATION_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Seller_Bill_Disc', getValue: (line) => line.sellerBillDiscount },
   { sapField: 'U_SELLTCODE', getValue: (line) => line.stcode },
   { sapField: 'U_S_Item', getValue: (line) => line.sellerItem },
-  { sapField: 'U_S_Qty', getValue: (line) => line.sellerQty ?? line.quantity },
+  { sapField: 'U_S_Qty', getValue: (line) => line.sellerQty },
   { sapField: 'U_Freight_pur', getValue: (line) => line.freightPurchase },
   { sapField: 'U_Freight_sales', getValue: (line) => line.freightSales },
   { sapField: 'U_Fr_trans', getValue: (line) => line.freightProvider },
   { sapField: 'U_Fr_trans_name', getValue: (line) => line.freightProviderName },
   { sapField: 'U_BDNum', getValue: (line) => line.brokerageNumber },
+  { sapField: 'U_PackingType', getValue: (line) => line.udf?.U_PackingType ?? line.udf?.U_PACKINGTYPE ?? line.udf?.U_Packing_Type ?? line.U_PackingType ?? line.packingType },
 ];
 
 const SALES_QUOTATION_LABEL_UDF_MAPPINGS = [
@@ -70,7 +72,7 @@ const SALES_QUOTATION_LABEL_UDF_MAPPINGS = [
   { labels: ['RG23DNo', 'RG23DNO'], getValue: (line) => line.rg23dNo },
   { labels: ['HSN'], getValue: (line) => line.hsnCode },
   { labels: ['SAC'], getValue: (line) => line.sacCode },
-  { labels: ['Unit Price'], getValue: (line) => line.unitPriceUdf ?? line.unitPrice },
+  { labels: ['Unit Price'], getValue: (line) => line.unitPriceUdf },
   { labels: ['Seller - Terms of Payment'], getValue: (line) => line.sellerPaymentTerms },
   { labels: ['Document Created'], getValue: (line) => line.documentCreated },
 ];
@@ -79,8 +81,13 @@ const compactLabel = (value) => String(value || '').trim().toUpperCase().replace
 
 const getSalesQuotationLineUdfMetadata = async () => {
   const definitions = await getUdfDefinitions('QUT1');
+  const keys = new Set(definitions.map((field) => String(field.key || '').trim()));
+  if (keys.has('U_PACKINGTYPE') || keys.has('U_PACKING_TYPE')) {
+    keys.add('U_PackingType');
+  }
+
   return {
-    keys: new Set(definitions.map((field) => String(field.key || '').trim())),
+    keys,
     labelToKey: definitions.reduce((acc, field) => {
       const key = compactLabel(field.label || field.key);
       if (key && field.key) acc[key] = field.key;
@@ -118,18 +125,20 @@ const buildValidatedLineUdfs = (line, udfMetadata) => {
   return udfs;
 };
 
-const buildDocumentLines = async (lines = []) => {
+const buildDocumentLines = async (lines = [], includeLineNum = false) => {
   const udfMetadata = await getSalesQuotationLineUdfMetadata();
   return lines
     .filter((line) => String(line.itemNo || '').trim())
     .map((line) => {
+      const lineNum = line.lineNum ?? line.LineNum;
       const documentLine = {
+        ...(includeLineNum && lineNum !== undefined && lineNum !== null && lineNum !== '' ? { LineNum: Number(lineNum) } : {}),
         ItemCode: line.itemNo,
         Quantity: toNumberOrUndefined(line.quantity),
         Price: toNumberOrUndefined(line.unitPrice),
         UnitPrice: toNumberOrUndefined(line.unitPrice),
         WarehouseCode: line.whse || '01',
-        TaxCode: line.taxCode || undefined,
+        TaxCode: line.taxCode || line.stcode || undefined,
         MeasureUnit: line.uomCode || undefined,
         UoMCode: line.uomCode || undefined,
         DiscountPercent: toNumberOrUndefined(line.stdDiscount),
@@ -360,6 +369,7 @@ const submitSalesQuotation = async (payload) => {
       DocDueDate: payload.header.deliveryDate,
       TaxDate: payload.header.documentDate,
       ContactPersonCode: payload.header.contactPerson ? Number(payload.header.contactPerson) : undefined,
+      DocCurrency: payload.header.currency || undefined,
       BPLId: normalizeBranchId(payload.header.branch),
       BPL_IDAssignedToInvoice: normalizeBranchId(payload.header.branch),
       PaymentGroupCode: payload.header.paymentTerms ? Number(payload.header.paymentTerms) : undefined,
@@ -368,6 +378,7 @@ const submitSalesQuotation = async (payload) => {
       ...(Remarks ? { Comments: Remarks } : {}),
       ...(Freight > 0 ? { TotalExpenses: Freight } : {}),
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(payload.header),
       NumAtCard: payload.header.customerRefNo || undefined,
       DocumentLines: documentLines,
     };
@@ -378,8 +389,14 @@ const submitSalesQuotation = async (payload) => {
 
     // Add header UDFs if any
     if (payload.header_udfs && Object.keys(payload.header_udfs).length > 0) {
-      const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OQUT');
-      Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
+      try {
+        const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OQUT');
+        applyUdfsRobust(sapPayload, payload.header_udfs, headerUdfDefinitionsByKey, false);
+        console.log('[Sales Quotation] Header UDFs applied successfully');
+      } catch (error) {
+        console.error('[Sales Quotation] Error applying header UDFs:', error.message);
+        // Continue even if UDF processing fails - don't block document creation
+      }
     }
 
     console.log('🔥 SAP Quotation Payload:', JSON.stringify(sapPayload, null, 2));
@@ -398,13 +415,28 @@ const submitSalesQuotation = async (payload) => {
       DocEntry: response.data?.DocEntry,
     };
   } catch (error) {
-    console.error('❌ SAP Quotation Error:', error.response?.data || error.message);
+    // Log comprehensive error information for debugging
+    console.error('❌ SAP Quotation Error:', {
+      message: error.message,
+      sapErrorData: error.response?.data,
+      statusCode: error.response?.status,
+      errorStack: error.stack,
+    });
+
+    // Extract meaningful error message
     let errorMessage = 'Sales quotation submission failed.';
-    if (error.response?.data?.error?.message?.value) errorMessage = error.response.data.error.message.value;
-    else if (error.response?.data?.error?.message) errorMessage = error.response.data.error.message;
-    else if (error.message) errorMessage = error.message;
+    if (error.response?.data?.error?.message?.value) {
+      errorMessage = error.response.data.error.message.value;
+    } else if (error.response?.data?.error?.message) {
+      errorMessage = error.response.data.error.message;
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+
+    // Create enriched error for client
     const sapError = new Error(errorMessage);
     sapError.response = error.response;
+    sapError.statusCode = error.response?.status || 500;
     throw sapError;
   }
 };
@@ -427,7 +459,7 @@ const updateSalesQuotation = async (docEntry, payload) => {
     const Remarks = payload.header.otherInstruction || payload.header.remarks || '';
     const Freight = Number(payload.header.freight) || 0;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const documentLines = await buildDocumentLines(payload.lines);
+    const documentLines = await buildDocumentLines(payload.lines, true);
 
     const sapPayload = {
       CardCode: payload.header.vendor?.trim(),
@@ -442,6 +474,7 @@ const updateSalesQuotation = async (docEntry, payload) => {
       ...(Remarks && { Comments: Remarks }),
       ...(Freight > 0 && { TotalExpenses: Freight }),
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(payload.header),
       DocumentLines: documentLines,
     };
 
@@ -451,8 +484,14 @@ const updateSalesQuotation = async (docEntry, payload) => {
 
     // Add header UDFs if any
     if (payload.header_udfs && Object.keys(payload.header_udfs).length > 0) {
-      const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OQUT');
-      Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
+      try {
+        const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('OQUT');
+        applyUdfsRobust(sapPayload, payload.header_udfs, headerUdfDefinitionsByKey, false);
+        console.log('[Sales Quotation Update] Header UDFs applied successfully');
+      } catch (error) {
+        console.error('[Sales Quotation Update] Error applying header UDFs:', error.message);
+        // Continue even if UDF processing fails - don't block document update
+      }
     }
 
     await sapService.request({
@@ -463,8 +502,28 @@ const updateSalesQuotation = async (docEntry, payload) => {
 
     return { message: 'Sales quotation updated successfully', doc_entry: docEntry };
   } catch (error) {
-    console.error('❌ SAP Quotation Update Error:', error.response?.data || error.message);
-    throw error;
+    console.error('❌ SAP Quotation Update Error:', {
+      message: error.message,
+      sapErrorData: error.response?.data,
+      statusCode: error.response?.status,
+      errorStack: error.stack,
+    });
+
+    // Extract meaningful error message
+    let errorMessage = 'Sales quotation update failed.';
+    if (error.response?.data?.error?.message?.value) {
+      errorMessage = error.response.data.error.message.value;
+    } else if (error.response?.data?.error?.message) {
+      errorMessage = error.response.data.error.message;
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+
+    // Create enriched error for client
+    const sapError = new Error(errorMessage);
+    sapError.response = error.response;
+    sapError.statusCode = error.response?.status || 500;
+    throw sapError;
   }
 };
 

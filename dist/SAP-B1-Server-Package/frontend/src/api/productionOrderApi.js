@@ -28,11 +28,14 @@ export const explodeBOM = (itemCode, qty = 1) =>
 export const fetchProdOrderItems = (query = '') =>
   apiClient.get('/production-order/lookup/items', { params: { query } }).then((r) => r.data);
 
+export const fetchProdOrderFinishItems = (query = '') =>
+  apiClient.get('/production-order/lookup/finish-items', { params: { query } }).then((r) => r.data);
+
 export const fetchProdOrderComponentItems = (query = '') =>
   apiClient.get('/production-order/lookup/component-items', { params: { query } }).then((r) => r.data);
 
 export const fetchProdOrderResources = (query = '') =>
-  apiClient.get('/production-order/lookup/resources', { params: { query } }).then((r) => r.data);
+  apiClient.get('/production-order/lookup/resources', { params: { query, top: 500 } }).then((r) => r.data);
 
 export const fetchProdOrderRouteStages = (query = '') =>
   apiClient.get('/production-order/lookup/route-stages', { params: { query } }).then((r) => r.data);
@@ -53,7 +56,7 @@ export const fetchProdOrderCustomers = (query = '') =>
   apiClient.get('/production-order/lookup/customers', { params: { query } }).then((r) => r.data);
 
 export const fetchProdOrderUsers = () =>
-  apiClient.get('/production-order/lookup/users').then((r) => r.data);
+  apiClient.get('/production-order/lookup/users', { params: { _: Date.now() } }).then((r) => r.data);
 
 export const fetchProdOrderLinkedOrders = (linkedTo = '', query = '') =>
   apiClient.get('/production-order/lookup/linked-orders', { params: { linkedTo, query } }).then((r) => r.data);

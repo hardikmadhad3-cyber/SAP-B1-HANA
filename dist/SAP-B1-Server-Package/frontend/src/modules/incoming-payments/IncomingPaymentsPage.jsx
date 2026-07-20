@@ -10,6 +10,12 @@ import {
   searchIncomingPaymentControlAccounts,
   submitIncomingPayment,
 } from "../../api/incomingPaymentsApi";
+import { useRelationshipMapRegistration } from "../../components/relationship-map/RelationshipMapHost";
+import PaymentMeansModal, {
+  createDefaultPaymentMeans,
+  paymentMeansTotal,
+  validatePaymentMeans,
+} from "../payments/PaymentMeansModal";
 import "./incomingPayments.css";
 
 const today = new Date().toISOString().slice(0, 10);
@@ -32,8 +38,11 @@ const parseAmount = (value) => {
 };
 
 const clampPayment = (value, balanceDue) => {
-  const amount = Math.max(0, parseAmount(value));
-  return Math.min(amount, parseAmount(balanceDue));
+  const balance = parseAmount(balanceDue);
+  const amount = parseAmount(value);
+  if (balance < 0) return Math.max(balance, Math.min(0, amount));
+  if (balance > 0) return Math.min(Math.max(0, amount), balance);
+  return 0;
 };
 
 const normalizePercent = (value) => {
@@ -71,24 +80,57 @@ function SapLookupField({
   buttonLabel = "...",
   triggerOpen = 0,
   onBlur = () => {},
+  paginated = false,
+  pageSize = 100,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ page: 1, pageSize, totalCount: 0, totalPages: 1 });
   const searchRef = useRef(null);
+  const allRowsRef = useRef([]);
+  const requestRef = useRef(0);
 
-  const load = async (nextQuery = "") => {
+  const load = async (nextQuery = "", nextPage = 1) => {
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
     setLoading(true);
     try {
-      const data = await fetchOptions(nextQuery);
-      setRows(data || []);
+      const data = await fetchOptions(nextQuery, nextPage, pageSize);
+      if (requestId !== requestRef.current) return;
+      const nextRows = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
+      if (paginated) {
+        setRows(nextRows);
+        setPage(data?.pagination?.page || nextPage);
+        setPagination(data?.pagination || { page: nextPage, pageSize, totalCount: nextRows.length, totalPages: 1 });
+        setSelectedIndex(0);
+        return;
+      }
+      const term = String(nextQuery || "").trim().toLowerCase();
+      if (!term) {
+        allRowsRef.current = nextRows;
+        setRows(nextRows);
+      } else if (nextRows.length) {
+        setRows(nextRows);
+      } else {
+        setRows(allRowsRef.current.filter((row) =>
+          Object.values(row || {}).some((value) => String(value ?? "").toLowerCase().includes(term)),
+        ));
+      }
       setSelectedIndex(0);
     } catch (_error) {
-      setRows([]);
+      if (requestId !== requestRef.current) return;
+      const term = String(nextQuery || "").trim().toLowerCase();
+      setRows(term
+        ? allRowsRef.current.filter((row) =>
+          Object.values(row || {}).some((value) => String(value ?? "").toLowerCase().includes(term)),
+        )
+        : []);
     } finally {
-      setLoading(false);
+      if (requestId === requestRef.current) setLoading(false);
     }
   };
 
@@ -96,7 +138,8 @@ function SapLookupField({
     if (readOnly) return;
     setOpen(true);
     setQuery("");
-    load("");
+    setPage(1);
+    load("", 1);
   };
 
   useEffect(() => {
@@ -107,6 +150,14 @@ function SapLookupField({
     if (triggerOpen > 0) openModal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerOpen]);
+
+  useEffect(() => {
+    if (!open || !paginated) return undefined;
+    const timer = window.setInterval(() => load(query, page), 15000);
+    return () => window.clearInterval(timer);
+    // Refresh live SAP master data while the lookup remains open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, paginated, query, page]);
 
   const pick = (row) => {
     if (!row) return;
@@ -128,7 +179,10 @@ function SapLookupField({
           className="modal show d-block ip-lookup-modal-layer"
           tabIndex="-1"
           role="dialog"
-          onMouseDown={() => setOpen(false)}
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            setOpen(false);
+          }}
         >
           <div className="modal-dialog modal-xl ip-lookup-dialog" role="document" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-content ip-lookup-content">
@@ -148,7 +202,8 @@ function SapLookupField({
                     value={query}
                     onChange={(event) => {
                       setQuery(event.target.value);
-                      load(event.target.value);
+                      setPage(1);
+                      load(event.target.value, 1);
                     }}
                   />
                 </div>
@@ -179,7 +234,7 @@ function SapLookupField({
                             onClick={() => setSelectedIndex(index)}
                             onDoubleClick={() => pick(row)}
                           >
-                            <td>{index + 1}</td>
+                            <td>{paginated ? ((page - 1) * pagination.pageSize) + index + 1 : index + 1}</td>
                             {columns.map((column) => (
                               <td
                                 key={column.key}
@@ -199,6 +254,15 @@ function SapLookupField({
                 </div>
               </div>
               <div className="modal-footer ip-lookup-footer">
+                {paginated ? (
+                  <div className="ip-lookup-pagination">
+                    <span>{pagination.totalCount ? `Showing ${((page - 1) * pagination.pageSize) + 1}-${Math.min(page * pagination.pageSize, pagination.totalCount)} of ${pagination.totalCount}` : "Showing 0"}</span>
+                    <button type="button" className="po-btn" onClick={() => load(query, page)} disabled={loading}>Refresh</button>
+                    <button type="button" className="po-btn" onClick={() => load(query, page - 1)} disabled={loading || page <= 1}>Previous</button>
+                    <span>Page {page} of {pagination.totalPages}</span>
+                    <button type="button" className="po-btn" onClick={() => load(query, page + 1)} disabled={loading || page >= pagination.totalPages}>Next</button>
+                  </div>
+                ) : null}
                 <button type="button" className="po-btn po-btn--primary" onClick={() => pick(rows[selectedIndex])} disabled={!rows.length}>Choose</button>
                 <button type="button" className="po-btn" onClick={() => setOpen(false)}>Cancel</button>
               </div>
@@ -319,6 +383,8 @@ export default function IncomingPaymentsPage() {
   const [journalRemarks, setJournalRemarks] = useState("");
   const [bpLookupTrigger, setBpLookupTrigger] = useState(0);
   const [documentFindTrigger, setDocumentFindTrigger] = useState(0);
+  const [paymentMeansOpen, setPaymentMeansOpen] = useState(false);
+  const [paymentMeans, setPaymentMeans] = useState(() => createDefaultPaymentMeans());
   const routedDocumentRef = useRef(0);
 
   useEffect(() => {
@@ -333,6 +399,7 @@ export default function IncomingPaymentsPage() {
           seriesRows[0] ||
           null;
         const branchRows = data.branches || [];
+        const defaultCashAccount = data.defaultCashAccount || "";
         setBranches(branchRows);
         setDocumentSeries(seriesRows);
         setDistributionRules(normalizeDistributionRules(data.distributionRules || data.distribution_rules || []));
@@ -347,9 +414,17 @@ export default function IncomingPaymentsPage() {
             transactionNumber: data.nextTransactionNumber || current.transactionNumber,
             branch: selectedBranch,
             branchRegNo: getBranchRegNo(branchRows, selectedBranch),
-            cashAccount: data.defaultCashAccount || current.cashAccount,
+            cashAccount: current.cashAccount || defaultCashAccount,
           };
         });
+        setPaymentMeans((current) => ({
+          ...current,
+          currency: current.currency || "INR",
+          cash: {
+            ...(current.cash || {}),
+            account: current.cash?.account || defaultCashAccount,
+          },
+        }));
       })
       .catch(() => {
         if (mounted) setLoadError("Reference data could not be loaded.");
@@ -379,11 +454,18 @@ export default function IncomingPaymentsPage() {
     ? accountRowsTotal
     : selectedTotal + paymentOnAccountDue;
   const openBalance = Math.max(0, paymentOnAccountDue);
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 24,
+    docEntry: currentDocEntry,
+    header,
+    total: totalAmountDue,
+  });
 
   const getPayableInvoiceTotal = (rows = invoices) =>
     rows.reduce((sum, invoice) => {
+      if (!invoice.selected) return sum;
       const payment = clampPayment(invoice.totalPayment, invoice.balanceDue);
-      if (!invoice.selected && payment <= 0) return sum;
       return sum + payment;
     }, 0);
 
@@ -416,7 +498,12 @@ export default function IncomingPaymentsPage() {
   };
 
   const normalizeInvoices = (rows = []) =>
-    rows.map((row) => ({ ...row, selected: false, cashDiscountPercent: "0.00" }));
+    rows.map((row) => ({
+      ...row,
+      selected: false,
+      cashDiscountPercent: "0.00",
+      totalPayment: money(parseAmount(row.totalPayment ?? row.balanceDue)),
+    }));
 
   const changeBpType = (bpType) => {
     if (isFoundDocument) return;
@@ -426,6 +513,7 @@ export default function IncomingPaymentsPage() {
     setAccountRows([]);
     setPaymentOnAccount(bpType === "Account");
     setPaymentOnAccountAmount("0.00");
+    setPaymentMeans(createDefaultPaymentMeans({ currency: header.docCurrency || "INR" }));
     setAccountDistributionRule("");
     setAccountLocation("");
     setHeader((current) => ({
@@ -490,6 +578,7 @@ export default function IncomingPaymentsPage() {
     if (isFoundDocument) return;
     setLoadError("");
     setSuccessMessage("");
+    const partnerCurrency = row.currency && row.currency !== "##" ? row.currency : header.docCurrency || "INR";
     setHeader((current) => ({
       ...current,
       businessPartnerCode: row.code,
@@ -498,6 +587,13 @@ export default function IncomingPaymentsPage() {
       billToAddress: row.billToAddress || "",
       contactPerson: row.contactPerson || "",
       controlAccount: row.controlAccount || current.controlAccount,
+      docCurrency: partnerCurrency,
+    }));
+    setPaymentOnAccount(false);
+    setPaymentOnAccountAmount("0.00");
+    setPaymentMeans(createDefaultPaymentMeans({
+      currency: partnerCurrency,
+      cashAccount: header.cashAccount || paymentMeans.cash?.account || "",
     }));
     setJournalRemarks(`Incoming Payments - ${row.code}`);
     if (header.bpType === "Customer") {
@@ -586,7 +682,7 @@ export default function IncomingPaymentsPage() {
               ...invoice,
               selected,
               cashDiscountPercent: selected ? normalizePercent(invoice.cashDiscountPercent).toFixed(2) : invoice.cashDiscountPercent,
-              totalPayment: selected ? calculateDiscountedPayment(invoice) : invoice.totalPayment,
+              totalPayment: selected ? calculateDiscountedPayment(invoice) : "0.00",
             }
           : invoice,
       ),
@@ -601,7 +697,7 @@ export default function IncomingPaymentsPage() {
         invoice.id === id
           ? {
               ...invoice,
-              selected: parseAmount(value) > 0 ? true : invoice.selected,
+              selected: Math.abs(parseAmount(value)) > 0 ? true : invoice.selected,
               totalPayment: value,
             }
           : invoice,
@@ -691,7 +787,7 @@ export default function IncomingPaymentsPage() {
   const deselectAll = () => {
     if (isFoundDocument) return;
     setSuccessMessage("");
-    setInvoices((current) => current.map((invoice) => ({ ...invoice, selected: false })));
+    setInvoices((current) => current.map((invoice) => ({ ...invoice, selected: false, totalPayment: "0.00" })));
   };
 
   const openBusinessPartnerLookup = ({ clearMessages = true } = {}) => {
@@ -723,6 +819,7 @@ export default function IncomingPaymentsPage() {
         businessPartnerCode: payment.businessPartnerCode || "",
         businessPartnerName: payment.businessPartnerName || "",
         bpType: postedAccountRows.length ? "Account" : current.bpType,
+        billToCode: payment.billToCode || current.billToCode,
         billToAddress: payment.billToAddress || "",
         postingDate: payment.postingDate || current.postingDate,
         dueDate: payment.dueDate || payment.postingDate || current.dueDate,
@@ -776,6 +873,7 @@ export default function IncomingPaymentsPage() {
     setCurrentDocEntry(null);
     setPaymentOnAccount(false);
     setPaymentOnAccountAmount("0.00");
+    setPaymentMeans(createDefaultPaymentMeans({ currency: header.docCurrency || "INR" }));
     setAccountDistributionRule("");
     setAccountLocation("");
     setWtTaxAmount("");
@@ -842,6 +940,29 @@ export default function IncomingPaymentsPage() {
     return fallback;
   };
 
+  const openPaymentMeans = () => {
+    if (isFoundDocument) return;
+    setPaymentMeans((current) => ({
+      ...current,
+      currency: header.docCurrency || current.currency || "INR",
+      cash: {
+        ...(current.cash || {}),
+        account: current.cash?.account || header.cashAccount || "",
+      },
+    }));
+    setPaymentMeansOpen(true);
+  };
+
+  const getPostingPaymentMeans = (payableTotal) => {
+    const error = validatePaymentMeans(paymentMeans, payableTotal);
+    if (error) {
+      setLoadError(error);
+      setPaymentMeansOpen(true);
+      return null;
+    }
+    return paymentMeans;
+  };
+
   const handleOk = async () => {
     setLoadError("");
     setSuccessMessage("");
@@ -884,19 +1005,23 @@ export default function IncomingPaymentsPage() {
       return;
     }
 
+    const postingPaymentMeans = getPostingPaymentMeans(payableTotal);
+    if (!postingPaymentMeans) return;
+
     const invalidPayment = invoices.some(
-      (invoice) => invoice.selected && clampPayment(invoice.totalPayment, invoice.balanceDue) <= 0,
+      (invoice) => invoice.selected && Math.abs(clampPayment(invoice.totalPayment, invoice.balanceDue)) <= 0.01,
     );
 
     if (invalidPayment) {
-      setLoadError("Selected documents must have a Total Payment amount greater than zero.");
+      setLoadError("Selected documents must have a Total Payment amount.");
       return;
     }
 
     const payableInvoices = invoices
+      .filter((invoice) => invoice.selected)
       .map((invoice) => {
         const payment = clampPayment(invoice.totalPayment, invoice.balanceDue);
-        return payment > 0
+        return Math.abs(payment) > 0.01
           ? {
               ...invoice,
               selected: true,
@@ -905,7 +1030,7 @@ export default function IncomingPaymentsPage() {
             }
           : invoice;
       })
-      .filter((invoice) => invoice.selected && clampPayment(invoice.totalPayment, invoice.balanceDue) > 0);
+      .filter((invoice) => Math.abs(clampPayment(invoice.totalPayment, invoice.balanceDue)) > 0.01);
 
     setInvoices((current) =>
       current.map((invoice) => {
@@ -925,6 +1050,7 @@ export default function IncomingPaymentsPage() {
         location: accountLocation,
       },
       wtTaxAmount,
+      paymentMeans: postingPaymentMeans,
       remarks,
       journalRemarks,
     };
@@ -977,9 +1103,33 @@ export default function IncomingPaymentsPage() {
   const showAccountContentGrid = isAccount;
   const partnerLookupTitle = isVendor ? "Vendors" : isAccount ? "G/L Accounts" : "Business Partners";
   const partnerAddressLabel = isVendor ? "Pay To" : "Bill To";
+  const changePaymentOnAccount = (checked) => {
+    if (isFoundDocument || isAccount) return;
+    setLoadError("");
+    setSuccessMessage("");
+    setPaymentOnAccount(checked);
+    if (!checked) setPaymentOnAccountAmount("0.00");
+  };
+
+  const confirmPaymentMeans = (means) => {
+    const paid = paymentMeansTotal(means);
+    const shouldCreateAdvance =
+      header.bpType === "Customer" &&
+      !paymentOnAccount &&
+      Math.abs(selectedTotal) <= 0.01 &&
+      paid > 0;
+
+    if (shouldCreateAdvance) {
+      setPaymentOnAccount(true);
+      setPaymentOnAccountAmount(money(paid));
+    }
+
+    setLoadError("");
+    setPaymentMeansOpen(false);
+  };
 
   return (
-    <div className="po-page ip-payments-page">
+    <div className="po-page sap-document-page ip-payments-page">
       <div className="po-toolbar">
         <span className="po-toolbar__title">Incoming Payments{isFoundDocument ? ` - #${header.documentNumber}` : ""}</span>
         <button type="button" className="po-btn" onClick={openFind}>Find</button>
@@ -1025,10 +1175,11 @@ export default function IncomingPaymentsPage() {
                         value={header.businessPartnerCode}
                         onChange={(value) => updateHeader("businessPartnerCode", value)}
                         onSelect={handleBusinessPartnerSelect}
-                        fetchOptions={(query) => searchIncomingPaymentBusinessPartners(query, header.bpType)}
+                        fetchOptions={(query, page, pageSize) => searchIncomingPaymentBusinessPartners(query, header.bpType, page, pageSize)}
                         title={partnerLookupTitle}
                         columns={sapBusinessPartnerLookupColumns}
                         triggerOpen={bpLookupTrigger}
+                        paginated
                       />
                     </FieldRow>
                     <FieldRow label="Name">
@@ -1299,7 +1450,7 @@ export default function IncomingPaymentsPage() {
                       <span className="sap-link-cell">{invoice.documentNo}</span>
                     </td>
                     <td className="sap-cell--readonly">{invoice.installment || "1 of 1"}</td>
-                    <td className="sap-cell--readonly">{invoice.documentType === "A/R Invoice" ? "IN" : invoice.documentType}</td>
+                    <td className="sap-cell--readonly">{invoice.documentTypeCode || (invoice.documentType === "A/R Invoice" ? "IN" : invoice.documentType)}</td>
                     <td className="sap-cell--readonly">{formatSapDate(invoice.date)}</td>
                     <td className="sap-cell--readonly">{formatSapDate(invoice.dueDate)}</td>
                     <td className="sap-cell--readonly">*</td>
@@ -1366,14 +1517,26 @@ export default function IncomingPaymentsPage() {
         <div className="sap-payment-row">
           <div className="sap-payment-on-account">
             <label>
-              <input type="checkbox" checked={isAccount || paymentOnAccount} disabled={isAccount} onChange={(event) => setPaymentOnAccount(event.target.checked)} />
+              <input type="checkbox" checked={isAccount || paymentOnAccount} disabled={isAccount || isFoundDocument} onChange={(event) => changePaymentOnAccount(event.target.checked)} />
               <span>Payment on Account</span>
             </label>
             <input
               value={paymentOnAccountAmount}
-              disabled={!isAccount && !paymentOnAccount}
-              onChange={(event) => setPaymentOnAccountAmount(event.target.value)}
-              onBlur={() => setPaymentOnAccountAmount(money(parseAmount(paymentOnAccountAmount)))}
+              inputMode="decimal"
+              aria-label="Payment on Account amount"
+              disabled={isFoundDocument}
+              onChange={(event) => {
+                setLoadError("");
+                if (!isAccount && parseAmount(event.target.value) > 0) {
+                  setPaymentOnAccount(true);
+                }
+                setPaymentOnAccountAmount(event.target.value);
+              }}
+              onBlur={() => {
+                const amount = parseAmount(paymentOnAccountAmount);
+                if (!isAccount && amount <= 0) setPaymentOnAccount(false);
+                setPaymentOnAccountAmount(money(amount));
+              }}
             />
           </div>
         </div>
@@ -1386,7 +1549,7 @@ export default function IncomingPaymentsPage() {
             <FieldRow label="Journal Remarks">
               <input value={journalRemarks} onChange={(event) => setJournalRemarks(event.target.value)} />
             </FieldRow>
-            {paymentOnAccount ? (
+            {isAccount || paymentOnAccount ? (
               <FieldRow label="Control Account">
                 <SapLookupField
                   value={header.controlAccount}
@@ -1411,7 +1574,10 @@ export default function IncomingPaymentsPage() {
               <input value={wtTaxAmount} onChange={(event) => setWtTaxAmount(event.target.value)} onBlur={() => setWtTaxAmount(money(parseAmount(wtTaxAmount)))} />
             </FieldRow>
             <FieldRow label="Total Amount Due">
-              <input value={`INR ${money(totalAmountDue)}`} readOnly />
+              <div className="sap-amount-with-button">
+                <input value={`INR ${money(totalAmountDue)}`} readOnly />
+                <button type="button" onClick={openPaymentMeans} disabled={isFoundDocument}>...</button>
+              </div>
             </FieldRow>
             <FieldRow label="Open Balance">
               <input value={openBalance ? `INR ${money(openBalance)}` : ""} readOnly />
@@ -1419,6 +1585,17 @@ export default function IncomingPaymentsPage() {
           </div>
         </div>
       </fieldset>
+      <PaymentMeansModal
+        open={paymentMeansOpen}
+        value={paymentMeans}
+        totalAmountDue={totalAmountDue}
+        allowPaidAsTotalDue={header.bpType === "Customer"}
+        onChange={setPaymentMeans}
+        onClose={() => setPaymentMeansOpen(false)}
+        onConfirm={confirmPaymentMeans}
+        lookupAccounts={searchIncomingPaymentControlAccounts}
+        AccountLookupField={SapLookupField}
+      />
     </div>
   );
 }

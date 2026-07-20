@@ -16,7 +16,95 @@ const getUdfDefinitionsByKey = async (tableId) => {
   return new Map(definitions.map((field) => [field.key, field]));
 };
 
+const validateRequiredBranchAndWarehouse = (payload = {}, options = {}) => {
+  const header = payload.header || {};
+  if (options.branchesEnabled && !String(header.branch || '').trim()) {
+    throw new Error('Branch is required.');
+  }
+
+  if (!String(header.warehouse || '').trim()) {
+    throw new Error('Warehouse is required.');
+  }
+
+  const lines = (payload.lines || []).filter((line) => String(line.itemNo || '').trim());
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!String(lines[index].whse || header.warehouse || '').trim()) {
+      throw new Error(`Line ${index + 1}: Warehouse is required.`);
+    }
+  }
+};
+
 // ───────── HELPERS ─────────
+
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
+const firstPresent = (...values) => values.find((value) => value !== undefined && value !== null);
+const toSapString = (value) => (value === undefined || value === null ? undefined : String(value));
+const addIfPresent = (target, key, value) => {
+  if (value === undefined || value === null) return;
+  target[key] = String(value);
+};
+
+const ADDRESS_EXTENSION_FIELDS = {
+  ShipTo: {
+    streetPoBox: 'ShipToStreet',
+    streetNo: 'ShipToStreetNo',
+    buildingFloorRoom: 'ShipToBuilding',
+    block: 'ShipToBlock',
+    city: 'ShipToCity',
+    zipCode: 'ShipToZipCode',
+    county: 'ShipToCounty',
+    state: 'ShipToState',
+    countryRegion: 'ShipToCountry',
+    addressName2: 'ShipToAddress2',
+    addressName3: 'ShipToAddress3',
+    gln: 'ShipToGlobalLocationNumber',
+  },
+  BillTo: {
+    streetPoBox: 'BillToStreet',
+    streetNo: 'BillToStreetNo',
+    buildingFloorRoom: 'BillToBuilding',
+    block: 'BillToBlock',
+    city: 'BillToCity',
+    zipCode: 'BillToZipCode',
+    county: 'BillToCounty',
+    state: 'BillToState',
+    countryRegion: 'BillToCountry',
+    addressName2: 'BillToAddress2',
+    addressName3: 'BillToAddress3',
+    gln: 'BillToGlobalLocationNumber',
+  },
+};
+
+const addAddressExtensionFields = (target, prefix, components = {}) => {
+  const fieldMap = ADDRESS_EXTENSION_FIELDS[prefix] || {};
+  Object.entries(fieldMap).forEach(([sourceKey, sapKey]) => {
+    if (hasOwn(components, sourceKey)) {
+      target[sapKey] = String(components[sourceKey] ?? '');
+    }
+  });
+};
+
+const buildSalesOrderAddressPayload = (header = {}) => {
+  const addressPayload = {};
+  const shipToCode = firstPresent(header.shipToCode);
+  const payToCode = firstPresent(header.billToCode, header.payToCode);
+  const shipToAddress = firstPresent(header.shipToAddress, header.shipTo);
+  const billToAddress = firstPresent(header.billToAddress, header.payTo);
+
+  addIfPresent(addressPayload, 'ShipToCode', shipToCode);
+  addIfPresent(addressPayload, 'PayToCode', payToCode);
+  if (shipToAddress !== undefined) addressPayload.Address = toSapString(shipToAddress);
+  if (billToAddress !== undefined) addressPayload.Address2 = toSapString(billToAddress);
+
+  const addressExtension = {};
+  addAddressExtensionFields(addressExtension, 'ShipTo', header.shipToAddressComponents);
+  addAddressExtensionFields(addressExtension, 'BillTo', header.billToAddressComponents);
+  if (Object.keys(addressExtension).length) {
+    addressPayload.AddressExtension = addressExtension;
+  }
+
+  return addressPayload;
+};
 
 /**
  * Convert Sales Employee name to code using ODBC data
@@ -24,6 +112,70 @@ const getUdfDefinitionsByKey = async (tableId) => {
  * @param {Array} salesEmployees - Sales employees from ODBC
  * @returns {Promise<number|null>} SlpCode or null if ignored
  */
+const DOCUMENT_REFERENCE_TYPES = [
+  { value: '22', label: 'Purchase Order', serviceLayer: 'rot_PurchaseOrder' },
+  { value: '17', label: 'Sales Order', serviceLayer: 'rot_SalesOrder' },
+  { value: '15', label: 'Delivery', serviceLayer: 'rot_DeliveryNotes' },
+  { value: '13', label: 'A/R Invoice', serviceLayer: 'rot_SalesInvoice' },
+  { value: '14', label: 'A/R Credit Memo', serviceLayer: 'rot_SalesCreditNote' },
+  { value: '23', label: 'Sales Quotation', serviceLayer: 'rot_SalesQuotation' },
+  { value: '20', label: 'Goods Receipt PO', serviceLayer: 'rot_PurchaseDeliveryNotes' },
+  { value: '18', label: 'A/P Invoice', serviceLayer: 'rot_PurchaseInvoice' },
+  { value: '19', label: 'A/P Credit Memo', serviceLayer: 'rot_PurchaseCreditNote' },
+  { value: '1470000113', label: 'Purchase Request', serviceLayer: 'rot_PurchaseRequest' },
+  { value: '540000006', label: 'Purchase Quotation', serviceLayer: 'rot_PurchaseQuotation' },
+];
+
+const normalizeReferenceDocType = (value) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  if (normalized.startsWith('rot_')) return normalized;
+  const match = DOCUMENT_REFERENCE_TYPES.find((type) => (
+    type.value === normalized ||
+    type.label.toLowerCase() === normalized.toLowerCase() ||
+    type.serviceLayer.toLowerCase() === normalized.toLowerCase()
+  ));
+  return match?.serviceLayer || normalized;
+};
+
+const toOptionalReferenceNumber = (value) => {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) return undefined;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const buildDocumentReferencesPayload = (references = []) => {
+  if (!Array.isArray(references)) return [];
+
+  return references
+    .filter((row) => String(row?.direction || 'to').toLowerCase() !== 'by')
+    .map((row) => {
+      const referencedObjectType = normalizeReferenceDocType(
+        row.transactionType || row.referencedObjectType || row.RefObjType
+      );
+      const referencedDocEntry = toOptionalReferenceNumber(row.docEntry || row.referencedDocEntry || row.RefDocEntr);
+      const referencedDocNumber = toOptionalReferenceNumber(row.docNumber || row.referencedDocNumber || row.RefDocNum);
+      const externalReferencedDocNumber = String(
+        row.extDocNumber || row.externalDocNumber || row.ExtDocNum || ''
+      ).trim();
+
+      if (!referencedObjectType || (!referencedDocEntry && !referencedDocNumber && !externalReferencedDocNumber)) {
+        return null;
+      }
+
+      return {
+        ReferencedObjectType: referencedObjectType,
+        ...(referencedDocEntry !== undefined ? { ReferencedDocEntry: referencedDocEntry } : {}),
+        ...(referencedDocNumber !== undefined ? { ReferencedDocNumber: referencedDocNumber } : {}),
+        ...(externalReferencedDocNumber ? { ExternalReferencedDocNumber: externalReferencedDocNumber } : {}),
+        ...(row.issueDate ? { IssueDate: row.issueDate } : {}),
+        ...(row.remark ? { Remark: row.remark } : {}),
+      };
+    })
+    .filter(Boolean);
+};
+
 const convertSalesEmployeeToCode = async (input, salesEmployees = []) => {
   console.log('🔍 convertSalesEmployeeToCode called with input:', input, 'Type:', typeof input);
   
@@ -186,9 +338,12 @@ const formatDocumentStatus = (value) => {
 const hasValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
 
 const toOptionalNumber = (value) => {
+  if (!hasValue(value)) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 };
+
+const toSapYesNo = (value) => (value ? 'tYES' : 'tNO');
 
 const toRequiredNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -284,12 +439,28 @@ const hasLineDiscountValue = (line = {}) => [
   line.DiscPrcnt,
 ].some(hasValue);
 
+const getLineForRate = (line = {}) => (
+  line.forRate ??
+  line.ForRate ??
+  line.FORRate ??
+  line.U_ForRate ??
+  line.U_FORRATE ??
+  line.U_FOR_RATE ??
+  line.udf?.U_ForRate ??
+  line.udf?.U_FORRATE ??
+  line.udf?.U_FOR_RATE
+);
+
 const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
   { sapField: 'U_COMPRC', getValue: (line) => line.commission },
   { sapField: 'U_S_BrokPerQty', getValue: (line) => line.sellerBrokeragePerQty },
-  { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf ?? line.unitPrice },
+  { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf },
   { sapField: 'U_Rate', getValue: (line) => (hasLineDiscountValue(line) ? getLineDiscountAmount(line) : undefined) },
+  { sapField: 'U_ForRate', getValue: getLineForRate },
+  { sapField: 'U_FORRATE', getValue: getLineForRate },
+  { sapField: 'U_FOR_RATE', getValue: getLineForRate },
+  { sapField: 'U_For_Rate', getValue: getLineForRate },
   { sapField: 'U_Brok_Seller', getValue: (line) => line.sellerBrokerage },
   { sapField: 'U_Brok_Buyer', getValue: (line) => line.buyerBrokerage },
   { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
@@ -308,7 +479,7 @@ const SALES_ORDER_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Seller_Bill_Disc', getValue: (line) => line.sellerBillDiscount },
   { sapField: 'U_SELLTCODE', getValue: (line) => line.stcode },
   { sapField: 'U_S_Item', getValue: (line) => line.sellerItem },
-  { sapField: 'U_S_Qty', getValue: (line) => line.sellerQty ?? line.quantity },
+  { sapField: 'U_S_Qty', getValue: (line) => line.sellerQty },
   { sapField: 'U_Freight_pur', getValue: (line) => line.freightPurchase },
   { sapField: 'U_Freight_sales', getValue: (line) => line.freightSales },
   { sapField: 'U_Fr_trans', getValue: (line) => line.freightProvider },
@@ -364,6 +535,62 @@ const setOptionalNumber = (target, field, value) => {
   }
 };
 
+const firstAllowedUdfKey = (allowedHeaderUdfKeys = new Set(), aliases = []) => {
+  const allowedKeys = Array.from(allowedHeaderUdfKeys || []);
+  for (const alias of aliases) {
+    if (allowedHeaderUdfKeys.has(alias)) return alias;
+
+    const normalizedAlias = compactSapUdfFieldName(alias);
+    const matchedKey = allowedKeys.find((key) => compactSapUdfFieldName(key) === normalizedAlias);
+    if (matchedKey) return matchedKey;
+  }
+  return '';
+};
+
+const setOptionalHeaderUdf = (target, allowedHeaderUdfKeys, aliases, value) => {
+  const field = firstAllowedUdfKey(allowedHeaderUdfKeys, aliases);
+  if (!field || !hasValue(value)) return;
+  target[field] = value;
+};
+
+const buildSalesOrderTaxHeaderUdfs = (header = {}, allowedHeaderUdfKeys = new Set()) => {
+  const values = {};
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_TransCat', 'U_TransactionCategory'], header.transactionCategory);
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_FormNo', 'U_TaxFormNo'], header.taxFormNo);
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_DutyStatus'], header.dutyStatus);
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_Export', 'U_IsExport', 'U_Exported'], header.exportFlag ? 'Y' : 'N');
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_DiffPercent', 'U_DifferentialTaxRate', 'U_DiffTaxRate'], header.differentialTaxRate || '100');
+  setOptionalHeaderUdf(values, allowedHeaderUdfKeys, ['U_SupplySec7', 'U_SupplUnSec', 'U_SupplyCovered'], header.supplyCovered === false ? 'N' : 'Y');
+  return values;
+};
+
+const SALES_ORDER_TAX_INFO_UDF_ALIASES = {
+  panNo: ['U_PANNo', 'U_PAN_No', 'U_PAN'],
+  panCircleNo: ['U_PANCircleNo', 'U_PAN_Circle_No'],
+  panWardNo: ['U_PANWardNo', 'U_PAN_Ward_No'],
+  panAssessingOfficer: ['U_PANAssessingOfficer', 'U_PAN_Assessing_Officer'],
+  deducteeRefNo: ['U_DeducteeRefNo', 'U_Deductee_Ref_No'],
+  lstVatNo: ['U_LSTVATNo', 'U_LST_VAT_No', 'U_LSTVAT'],
+  cstNo: ['U_CSTNo', 'U_CST_No'],
+  tanNo: ['U_TANNo', 'U_TAN_No'],
+  serviceTaxNo: ['U_ServiceTaxNo', 'U_Service_Tax_No'],
+  companyType: ['U_CompanyType', 'U_Company_Type'],
+  natureOfBusiness: ['U_NatureOfBusiness', 'U_Nature_Business'],
+  assesseeType: ['U_AssesseeType', 'U_Assessee_Type'],
+  tinNo: ['U_TINNo', 'U_TIN_No'],
+  itrFiling: ['U_ITRFiling', 'U_ITR_Filing'],
+  gstType: ['U_GSTType', 'U_GST_Type'],
+  gstin: ['U_GSTIN', 'U_GSTINNo', 'U_GSTIN_No'],
+};
+
+const buildSalesOrderTaxInfoHeaderUdfs = (taxInfo = {}, allowedHeaderUdfKeys = new Set()) => {
+  const values = {};
+  Object.entries(SALES_ORDER_TAX_INFO_UDF_ALIASES).forEach(([key, aliases]) => {
+    setOptionalHeaderUdf(values, allowedHeaderUdfKeys, aliases, taxInfo[key]);
+  });
+  return values;
+};
+
 const coerceValueForSqlType = (value, sqlDataType) => {
   if (!hasValue(value)) return undefined;
 
@@ -380,25 +607,33 @@ const coerceValueForSqlType = (value, sqlDataType) => {
   return String(value).trim();
 };
 
+const resolveMetadataFieldName = (fieldMetadata = {}, fieldName) => {
+  if (fieldMetadata?.[fieldName]) return fieldName;
+  const normalizedFieldName = compactSapUdfFieldName(fieldName);
+  return Object.keys(fieldMetadata || {}).find((candidate) => compactSapUdfFieldName(candidate) === normalizedFieldName) || '';
+};
+
 const setValidatedRdr1Field = (target, fieldMetadata, fieldName, value) => {
-  const sqlDataType = fieldMetadata?.[fieldName];
+  const resolvedFieldName = resolveMetadataFieldName(fieldMetadata, fieldName);
+  const sqlDataType = fieldMetadata?.[resolvedFieldName];
   if (!sqlDataType) return;
 
   const coercedValue = coerceValueForSqlType(value, sqlDataType);
   if (coercedValue !== undefined) {
-    target[fieldName] = coercedValue;
+    target[resolvedFieldName] = coercedValue;
   }
 };
 
 const setValidatedRdr1Udf = (target, fieldMetadata, fieldName, value) => {
-  if (!fieldMetadata?.[fieldName]) return;
+  const resolvedFieldName = resolveMetadataFieldName(fieldMetadata, fieldName);
+  if (!resolvedFieldName) return;
 
   if (isBlankUdfValue(value)) {
-    target[fieldName] = null;
+    target[resolvedFieldName] = null;
     return;
   }
 
-  setValidatedRdr1Field(target, fieldMetadata, fieldName, value);
+  setValidatedRdr1Field(target, fieldMetadata, resolvedFieldName, value);
 };
 
 const buildDocumentLinePayload = async (line = {}, context = {}) => {
@@ -687,8 +922,10 @@ const getReferenceData = async (companyId) => {
       warehouses: [],
       warehouse_addresses: [],
       payment_terms: [],
+      payment_methods: [],
       shipping_types: [],
       branches: [],
+      branches_enabled: false,
       countries: [],
       distribution_rules: [],
       tax_codes: [],
@@ -850,6 +1087,25 @@ const getSalesOrderFilterOptions = async ({
 
 // ───────── GET SINGLE ORDER (USING ODBC) ─────────
 
+const getReferenceDocumentLookup = async ({
+  transactionType = '',
+  query = '',
+  cardCode = '',
+  top,
+} = {}) => {
+  try {
+    return await salesOrderDb.getReferenceDocumentLookup({
+      transactionType,
+      query,
+      cardCode,
+      top,
+    });
+  } catch (error) {
+    console.error('[Sales Order Service] Failed to load reference document lookup:', error);
+    return { label: '', options: [] };
+  }
+};
+
 const getSalesOrder = async (docEntry) => {
   try {
     // Use ODBC for reading single order
@@ -865,6 +1121,10 @@ const getSalesOrder = async (docEntry) => {
 
 const submitSalesOrder = async (payload) => {
   try {
+    const refData = await salesOrderDb.getReferenceData();
+    const branchesEnabled = Boolean(refData.branches_enabled ?? (refData.branches || []).length > 0);
+    validateRequiredBranchAndWarehouse(payload, { branchesEnabled });
+
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 CREATE - RECEIVED PAYLOAD FROM FRONTEND:");
     console.log("  salesEmployee:", payload.header.salesEmployee);
@@ -875,7 +1135,6 @@ const submitSalesOrder = async (payload) => {
     // ═══════════════════════════════════════════════════════════════
     // STEP 1: Load ODBC Master Data
     // ═══════════════════════════════════════════════════════════════
-    const refData = await salesOrderDb.getReferenceData();
     const salesEmployees = refData.sales_employees || [];
     const owners = refData.owners || [];
     
@@ -915,9 +1174,13 @@ const submitSalesOrder = async (payload) => {
     // STEP 5: Extract Remarks and Freight
     // ═══════════════════════════════════════════════════════════════
     const Remarks = payload.header.otherInstruction || payload.header.remarks || '';
+    const JournalRemark = payload.header.journalRemark || '';
     const Freight = payload.header.freight ? Number(payload.header.freight) : 0;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const documentLines = await buildDocumentLinesPayload(payload.lines);
+    const documentReferences = payload.reference_documents_changed
+      ? buildDocumentReferencesPayload(payload.reference_documents)
+      : [];
     await logSalesOrderSaveTaxDiagnostics({
       mode: 'create',
       payload,
@@ -950,10 +1213,17 @@ const submitSalesOrder = async (payload) => {
       ContactPersonCode: payload.header.contactPerson ? Number(payload.header.contactPerson) : undefined,
       
       // ✅ Branch mapping - try multiple field names
-      BPLId: normalizeBranchId(payload.header.branch),
-      BPL_IDAssignedToInvoice: normalizeBranchId(payload.header.branch),
+      ...(branchesEnabled && payload.header.branch ? {
+        BPLId: normalizeBranchId(payload.header.branch),
+        BPL_IDAssignedToInvoice: normalizeBranchId(payload.header.branch),
+      } : {}),
 
       PaymentGroupCode: payload.header.paymentTerms ? Number(payload.header.paymentTerms) : undefined,
+      ...(payload.header.paymentMethod ? { PaymentMethod: payload.header.paymentMethod } : {}),
+      ...(JournalRemark ? { JournalMemo: JournalRemark } : {}),
+      ...(toOptionalNumber(payload.header.shippingType) !== undefined ? { TransportationCode: toOptionalNumber(payload.header.shippingType) } : {}),
+      ...(toOptionalNumber(payload.header.language) !== undefined ? { LanguageCode: toOptionalNumber(payload.header.language) } : {}),
+      ...(hasOwn(payload.header, 'confirmed') ? { Confirmed: toSapYesNo(payload.header.confirmed) } : {}),
 
       // ✅ Add Sales Employee if present (converted from name to code)
       ...(SlpCode !== null && SlpCode !== undefined ? { SalesPersonCode: SlpCode } : {}),
@@ -966,6 +1236,8 @@ const submitSalesOrder = async (payload) => {
 
       // ✅ Add Freight
       ...(documentAdditionalExpenses.length > 0 ? { DocumentAdditionalExpenses: documentAdditionalExpenses } : {}),
+      ...(payload.reference_documents_changed ? { DocumentReferences: documentReferences } : {}),
+      ...buildSalesOrderAddressPayload(payload.header),
 
       // ✅ Add NumAtCard for customer reference
       NumAtCard: payload.header.customerRefNo || payload.header.salesContractNo || undefined,
@@ -974,12 +1246,17 @@ const submitSalesOrder = async (payload) => {
     };
 
     // ✅ Only add U_PlaceOfSupply if it has a value (optional UDF)
-    if (payload.header.placeOfSupply) {
+    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
+    const allowedHeaderUdfKeys = new Set(headerUdfDefinitionsByKey.keys());
+    if (payload.header.placeOfSupply && allowedHeaderUdfKeys.has('U_PlaceOfSupply')) {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
-    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
+    Object.assign(sapPayload, normalizeUdfValues({
+      ...(payload.header_udfs || {}),
+      ...buildSalesOrderTaxHeaderUdfs(payload.header, allowedHeaderUdfKeys),
+      ...buildSalesOrderTaxInfoHeaderUdfs(payload.tax_info || payload.taxInfoForm || {}, allowedHeaderUdfKeys),
+    }, allowedHeaderUdfKeys, headerUdfDefinitionsByKey));
 
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 SAP PAYLOAD TO BE SENT:");
@@ -1034,6 +1311,10 @@ const submitSalesOrder = async (payload) => {
 
 const updateSalesOrder = async (docEntry, payload) => {
   try {
+    const refData = await salesOrderDb.getReferenceData();
+    const branchesEnabled = Boolean(refData.branches_enabled ?? (refData.branches || []).length > 0);
+    validateRequiredBranchAndWarehouse(payload, { branchesEnabled });
+
     console.log("═══════════════════════════════════════════════════");
     console.log("🔥 UPDATE - RECEIVED PAYLOAD FROM FRONTEND:");
     console.log("  DocEntry:", docEntry);
@@ -1045,7 +1326,6 @@ const updateSalesOrder = async (docEntry, payload) => {
     // ═══════════════════════════════════════════════════════════════
     // STEP 1: Load ODBC Master Data
     // ═══════════════════════════════════════════════════════════════
-    const refData = await salesOrderDb.getReferenceData();
     const salesEmployees = refData.sales_employees || [];
     const owners = refData.owners || [];
     
@@ -1085,11 +1365,15 @@ const updateSalesOrder = async (docEntry, payload) => {
     // STEP 5: Extract Remarks and Freight
     // ═══════════════════════════════════════════════════════════════
     const Remarks = payload.header.otherInstruction || payload.header.remarks || '';
+    const JournalRemark = payload.header.journalRemark || '';
     const Freight = Number(payload.header.freight) || 0;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const documentLines = await buildDocumentLinesPayload(payload.lines, true, {
       docEntry,
     });
+    const documentReferences = payload.reference_documents_changed
+      ? buildDocumentReferencesPayload(payload.reference_documents)
+      : [];
     await logSalesOrderSaveTaxDiagnostics({
       mode: 'update',
       docEntry,
@@ -1123,18 +1407,25 @@ const updateSalesOrder = async (docEntry, payload) => {
         ? Number(payload.header.contactPerson)
         : undefined,
 
-      BPL_IDAssignedToInvoice: payload.header.branch
-        ? Number(payload.header.branch)
-        : undefined,
+      ...(branchesEnabled && payload.header.branch
+        ? { BPL_IDAssignedToInvoice: Number(payload.header.branch) }
+        : {}),
 
       PaymentGroupCode: payload.header.paymentTerms
         ? Number(payload.header.paymentTerms)
         : undefined,
+      ...(payload.header.paymentMethod ? { PaymentMethod: payload.header.paymentMethod } : {}),
+      ...(JournalRemark ? { JournalMemo: JournalRemark } : {}),
+      ...(toOptionalNumber(payload.header.shippingType) !== undefined ? { TransportationCode: toOptionalNumber(payload.header.shippingType) } : {}),
+      ...(toOptionalNumber(payload.header.language) !== undefined ? { LanguageCode: toOptionalNumber(payload.header.language) } : {}),
+      ...(hasOwn(payload.header, 'confirmed') ? { Confirmed: toSapYesNo(payload.header.confirmed) } : {}),
 
       ...(SlpCode !== null && SlpCode !== undefined && { SalesPersonCode: SlpCode }),
       ...(OwnerCode !== null && OwnerCode !== undefined && { DocumentsOwner: OwnerCode }),
       ...(Remarks && { Comments: Remarks }),
       ...(documentAdditionalExpenses.length > 0 ? { DocumentAdditionalExpenses: documentAdditionalExpenses } : {}),
+      ...(payload.reference_documents_changed ? { DocumentReferences: documentReferences } : {}),
+      ...buildSalesOrderAddressPayload(payload.header),
       NumAtCard: payload.header.customerRefNo || payload.header.salesContractNo || undefined,
 
       DocumentLines: documentLines
@@ -1143,12 +1434,17 @@ const updateSalesOrder = async (docEntry, payload) => {
     // =========================
     // ✅ OPTIONAL UDF
     // =========================
-    if (payload.header.placeOfSupply) {
+    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
+    const allowedHeaderUdfKeys = new Set(headerUdfDefinitionsByKey.keys());
+    if (payload.header.placeOfSupply && allowedHeaderUdfKeys.has('U_PlaceOfSupply')) {
       sapPayload.U_PlaceOfSupply = payload.header.placeOfSupply;
     }
 
-    const headerUdfDefinitionsByKey = await getUdfDefinitionsByKey('ORDR');
-    Object.assign(sapPayload, normalizeUdfValues(payload.header_udfs, null, headerUdfDefinitionsByKey));
+    Object.assign(sapPayload, normalizeUdfValues({
+      ...(payload.header_udfs || {}),
+      ...buildSalesOrderTaxHeaderUdfs(payload.header, allowedHeaderUdfKeys),
+      ...buildSalesOrderTaxInfoHeaderUdfs(payload.tax_info || payload.taxInfoForm || {}, allowedHeaderUdfKeys),
+    }, allowedHeaderUdfKeys, headerUdfDefinitionsByKey));
 
     console.log("🔥 FINAL SAP PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
@@ -1262,12 +1558,22 @@ const createLookupValue = async ({ field, value, description }) => {
   return { option, options };
 };
 
+const getLookupOptions = async (source, { query = '', limit = 50 } = {}) => {
+  try {
+    return await salesOrderDb.getUdfLinkedTableLookupOptions(source, query, limit);
+  } catch (error) {
+    console.error('[Sales Order Service] Failed to load lookup options:', error);
+    return { options: [] };
+  }
+};
+
 module.exports = {
   getReferenceData,
   getCustomerDetails,
   getCustomerFilterOptions,
   getSalesOrderList,
   getSalesOrderFilterOptions,
+  getReferenceDocumentLookup,
   getSalesOrder,
   submitSalesOrder,
   updateSalesOrder,
@@ -1278,6 +1584,7 @@ module.exports = {
   getFreightCharges,
   getSalesOrderPrintLayouts,
   createLookupValue,
+  getLookupOptions,
   getOpenSalesOrders:          async (customerCode = '') => { try { return { documents: await salesOrderDb.getOpenSalesOrders(customerCode) }; } catch(e) { return { documents: [] }; } },
   getSalesOrderForCopy:        async (d) => salesOrderDb.getSalesOrderForCopy(d),
   getOpenSalesQuotations:      async (customerCode = '') => { try { const sq = require('./salesQuotationDbService'); return { documents: await sq.getOpenSalesQuotations(customerCode) }; } catch(e) { return { documents: [] }; } },

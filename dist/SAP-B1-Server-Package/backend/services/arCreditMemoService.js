@@ -2,12 +2,88 @@ const sapService = require('./sapService');
 const arCreditMemoDb = require('./arCreditMemoDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { buildMarketingDocumentAddressPayload } = require('./documentAddressPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { applyUdfValues } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
-  return normalized === '' ? -1 : Number(normalized);
+  const branchId = Number(normalized);
+  return Number.isInteger(branchId) && branchId > 0 ? branchId : undefined;
+};
+
+const getSapErrorMessage = (error, fallback = '') => {
+  if (error?.response?.data?.error?.message?.value) return error.response.data.error.message.value;
+  if (error?.response?.data?.error?.message) return error.response.data.error.message;
+  return error?.message || fallback;
+};
+
+const isNumberingSeriesError = (error) => String(getSapErrorMessage(error)).includes('10000521');
+const isManualSeriesSelection = (series) => String(series || '').trim().toLowerCase() === '__sap_manual__';
+
+const resolveARCreditMemoSeries = async (header = {}, lines = [], options = {}) => {
+  const selectedSeries = Number(header.series);
+  const preferSubmittedSeries = options.preferSubmittedSeries !== false;
+  let requestedBranchId = normalizeBranchId(header.branch);
+
+  if (!requestedBranchId) {
+    const firstLine = Array.isArray(lines) ? lines[0] || {} : {};
+    const warehouseCode = String(
+      header.warehouse || firstLine.whse || firstLine.warehouse || firstLine.WarehouseCode || '',
+    ).trim();
+    if (warehouseCode) {
+      const warehouseBranch = await arCreditMemoDb.getWarehouseBranch(warehouseCode);
+      requestedBranchId = normalizeBranchId(warehouseBranch?.branchId);
+    }
+  }
+
+  if (isManualSeriesSelection(header.series)) {
+    return {
+      series: undefined,
+      branchId: requestedBranchId,
+    };
+  }
+
+  try {
+    const seriesRows = await arCreditMemoDb.getDocumentSeries(
+      header.postingDate || header.documentDate || null,
+      header.transactionType || 'GST Tax Invoice',
+      requestedBranchId || '',
+    );
+
+    if (!Array.isArray(seriesRows) || !seriesRows.length) {
+      return {
+        series: Number.isFinite(selectedSeries) && selectedSeries > 0 ? selectedSeries : undefined,
+        branchId: requestedBranchId,
+      };
+    }
+
+    const selectedRow = preferSubmittedSeries && Number.isFinite(selectedSeries) && selectedSeries > 0
+      ? seriesRows.find((row) => Number(row.Series) === selectedSeries)
+      : null;
+    const defaultRow = seriesRows.find((row) => row.IsDefault) || seriesRows[0];
+    const resolvedRow = selectedRow || defaultRow;
+    const resolved = Number(resolvedRow?.Series);
+    const seriesBranchId = normalizeBranchId(resolvedRow?.BPLId);
+
+    if (requestedBranchId && seriesBranchId && requestedBranchId !== seriesBranchId) {
+      const mismatchError = new Error('The selected A/R Credit Memo numbering series belongs to a different branch. Select a matching series or branch.');
+      mismatchError.code = 'AR_CREDIT_MEMO_SERIES_BRANCH_MISMATCH';
+      throw mismatchError;
+    }
+
+    return {
+      series: Number.isFinite(resolved) && resolved > 0 ? resolved : undefined,
+      branchId: requestedBranchId || seriesBranchId,
+    };
+  } catch (error) {
+    if (error.code === 'AR_CREDIT_MEMO_SERIES_BRANCH_MISMATCH') throw error;
+    console.warn('[ARCreditMemoService] Could not validate credit memo series; using submitted value.', error.message);
+    return {
+      series: Number.isFinite(selectedSeries) && selectedSeries > 0 ? selectedSeries : undefined,
+      branchId: requestedBranchId,
+    };
+  }
 };
 
 const getAllowedUdfKeys = async (tableId) => {
@@ -18,6 +94,65 @@ const getAllowedUdfKeys = async (tableId) => {
 const getUdfDefinitionsByKey = async (tableId) => {
   const definitions = await getUdfDefinitions(tableId);
   return new Map(definitions.map((field) => [field.key, field]));
+};
+
+const hasValue = (value) => (
+  value !== undefined &&
+  value !== null &&
+  !(typeof value === 'string' && value.trim() === '')
+);
+
+const firstPresent = (...values) => values.find(hasValue);
+
+const yesNo = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['y', 'yes', 'true', '1', 'tyes'].includes(normalized) ? 'tYES' : 'tNO';
+};
+
+const AR_CREDIT_MEMO_LINE_UDF_MAPPINGS = [
+  { aliases: ['U_Cost_Sheet'], getValue: (line) => line.udf?.U_Cost_Sheet ?? line.U_Cost_Sheet ?? line.costSheet },
+  { aliases: ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'U_PackingStatus'], getValue: (line) => line.udf?.U_PackingType ?? line.udf?.U_PACKINGTYPE ?? line.U_PackingType ?? line.packingType },
+  { aliases: ['U_ContainerType', 'U_CONTAINERTYPE', 'U_Container_Type'], getValue: (line) => line.udf?.U_ContainerType ?? line.U_ContainerType ?? line.containerType },
+  { aliases: ['U_GrossWt', 'U_GROSSWT', 'U_Gross_Wt'], getValue: (line) => line.udf?.U_GrossWt ?? line.U_GrossWt ?? line.grossWt },
+  { aliases: ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_Total_Package'], getValue: (line) => line.udf?.U_TotalPackage ?? line.U_TotalPackage ?? line.totalPackage },
+  { aliases: ['U_TAXCODE', 'U_TaxCode'], getValue: (line) => firstPresent(line.taxCodeRepeat, line.udf?.U_TAXCODE, line.udf?.U_TaxCode, line.taxCode) },
+  { aliases: ['U_PRICE', 'U_Price'], getValue: (line) => firstPresent(line.price, line.udf?.U_PRICE, line.udf?.U_Price) },
+  { aliases: ['U_SPLRBT', 'U_SpecialRebate'], getValue: (line) => line.specialRebate },
+  { aliases: ['U_COMPRC', 'U_Commision', 'U_Commission'], getValue: (line) => line.commission },
+  { aliases: ['U_S_BrokPerQty', 'U_S_BROKPERQTY'], getValue: (line) => line.sellerBrokeragePerQty },
+  { aliases: ['U_Brok_Seller', 'U_BROK_SELLER'], getValue: (line) => line.sellerBrokerage },
+  { aliases: ['U_Brok_Buyer', 'U_BROK_BUYER'], getValue: (line) => line.buyerBrokerage },
+  { aliases: ['U_Buyer_Delivery', 'U_BUYER_DELIVERY'], getValue: (line) => line.buyerDelivery },
+  { aliases: ['U_Seller_Delivery', 'U_SELLER_DELIVERY'], getValue: (line) => line.sellerDelivery },
+  { aliases: ['U_Buyer_Payment_Terms', 'U_BUYER_PAYMENT_TERMS'], getValue: (line) => line.buyerPaymentTerms },
+  { aliases: ['U_Seller_Payment_Term', 'U_Seller_Payment_Terms', 'U_SELLER_PAYMENT_TERM', 'U_SELLER_PAYMENT_TERMS'], getValue: (line) => firstPresent(line.sellerPaymentTermsRepeat, line.sellerPaymentTerms) },
+  { aliases: ['U_Buyer_Quality', 'U_BUYER_QUALITY'], getValue: (line) => line.buyerQuality },
+  { aliases: ['U_Seller_Quality', 'U_SELLER_QUALITY'], getValue: (line) => line.sellerQuality },
+  { aliases: ['U_Buyer_Price', 'U_BUYER_PRICE'], getValue: (line) => line.buyerPrice },
+  { aliases: ['U_Seller_Price', 'U_SELLER_PRICE'], getValue: (line) => line.sellerPrice },
+  { aliases: ['U_Buyer_SPINS', 'U_BUYER_SPINS'], getValue: (line) => line.buyerSpecialInstruction },
+  { aliases: ['U_Seller_SPINS', 'U_SELLER_SPINS'], getValue: (line) => line.sellerSpecialInstruction },
+  { aliases: ['U_Sel_Brok_AP', 'U_SEL_BROK_AP'], getValue: (line) => firstPresent(line.sellerBrokerageAmountPer, line.sellerBrokerageAmtPer) },
+  { aliases: ['U_Seller_Brok_Per', 'U_SELLER_BROK_PER'], getValue: (line) => firstPresent(line.sellerBrokeragePercentage, line.sellerBrokeragePercent) },
+  { aliases: ['U_SELLTCODE', 'U_STCODE'], getValue: (line) => line.stcode },
+  { aliases: ['U_S_Item', 'U_S_ITEM'], getValue: (line) => line.sellerItem },
+  { aliases: ['U_S_Qty', 'U_S_QTY'], getValue: (line) => line.sellerQty },
+  { aliases: ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER'], getValue: (line) => firstPresent(line.fixBrokBuyer, line.udf?.U_Fix_Brock_B, line.U_Fix_Brock_B) },
+  { aliases: ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller'], getValue: (line) => firstPresent(line.fixBrockSeller, line.udf?.U_Fix_Brock_S, line.U_Fix_Brock_S) },
+];
+
+const setAllowedLineUdf = (target, allowedLineUdfs, aliases, value) => {
+  if (!hasValue(value)) return;
+  const key = aliases.find((alias) => allowedLineUdfs.has(alias));
+  if (key) target[key] = value;
+};
+
+const buildLineUdfPayload = (line = {}, allowedLineUdfs = new Set()) => {
+  const udfs = { ...(line.udf || {}) };
+  AR_CREDIT_MEMO_LINE_UDF_MAPPINGS.forEach((mapping) => {
+    setAllowedLineUdf(udfs, allowedLineUdfs, mapping.aliases, mapping.getValue(line));
+  });
+  return udfs;
 };
 
 // ───────── REFERENCE DATA (USING ODBC) ─────────
@@ -196,6 +331,8 @@ const getARCreditMemo = async (docEntry) => {
 // ───────── CREATE CREDIT MEMO (USING SERVICE LAYER) ─────────
 
 const submitARCreditMemo = async (payload) => {
+  let lastSapPayload = null;
+
   try {
     console.log("🔥 [ARCreditMemoService] RECEIVED AR CREDIT MEMO PAYLOAD:", JSON.stringify(payload, null, 2));
 
@@ -216,6 +353,7 @@ const submitARCreditMemo = async (payload) => {
     
     console.log("🔍 [ARCreditMemoService] Using customer code:", customerCode);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
+    const resolvedSeries = await resolveARCreditMemoSeries(payload.header, payload.lines);
     const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('ORIN'),
       getAllowedUdfKeys('RIN1'),
@@ -227,7 +365,7 @@ const submitARCreditMemo = async (payload) => {
       CardCode: String(customerCode).trim(),
 
       // Series for auto-numbering - only include if explicitly provided and valid
-      ...(payload.header.series && Number(payload.header.series) > 0 ? { Series: Number(payload.header.series) } : {}),
+      ...(resolvedSeries.series ? { Series: resolvedSeries.series } : {}),
 
       DocDate: payload.header.postingDate || payload.header.documentDate,
       DocDueDate: payload.header.deliveryDate || payload.header.dueDate,
@@ -242,8 +380,10 @@ const submitARCreditMemo = async (payload) => {
           : undefined,
 
       // Branch mapping
-      BPLId: normalizeBranchId(payload.header.branch),
-      BPL_IDAssignedToInvoice: normalizeBranchId(payload.header.branch),
+      ...(resolvedSeries.branchId ? {
+        BPLId: resolvedSeries.branchId,
+        BPL_IDAssignedToInvoice: resolvedSeries.branchId,
+      } : {}),
 
       PaymentGroupCode: payload.header.paymentTerms ? Number(payload.header.paymentTerms) : undefined,
 
@@ -253,6 +393,8 @@ const submitARCreditMemo = async (payload) => {
       // Comments
       Comments: payload.header.otherInstruction || payload.header.comments || undefined,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: yesNo(payload.header.rounding),
+      ...buildMarketingDocumentAddressPayload(payload.header),
 
       DocumentLines: payload.lines.map((l, index) => {
         console.log(`🔍 [ARCreditMemoService] Processing line ${index}:`, l);
@@ -264,6 +406,11 @@ const submitARCreditMemo = async (payload) => {
           WarehouseCode: l.whse || l.warehouse || "01",
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
+          WTLiable: yesNo(l.wTaxLiable ?? l.wtaxLiable),
+          AccountCode: l.glAccount || undefined,
+          CostingCode: l.distRule || undefined,
+          COGSCostingCode: l.cogsDistRule || l.distRule || undefined,
+          CountryOrg: l.countryOfOrigin || undefined,
         };
 
         // Add discount if present
@@ -281,21 +428,53 @@ const submitARCreditMemo = async (payload) => {
         }
 
         console.log(`🔍 [ARCreditMemoService] Transformed line ${index}:`, line);
-        applyUdfValues(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, buildLineUdfPayload(l, allowedLineUdfs), allowedLineUdfs);
         return line;
       })
     };
+    lastSapPayload = sapPayload;
 
     console.log("🔥 [ARCreditMemoService] SAP AR CREDIT MEMO PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
     applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
 
-    // Use Service Layer for POST operations - Credit Memos endpoint
-    const response = await sapService.request({
-      method: 'post',
-      url: '/CreditNotes',
-      data: sapPayload,
-    });
+    let response;
+    try {
+      response = await sapService.request({
+        method: 'post',
+        url: '/CreditNotes',
+        data: sapPayload,
+      });
+    } catch (postError) {
+      if (!isNumberingSeriesError(postError)) throw postError;
+
+      const fallbackSeries = await resolveARCreditMemoSeries(
+        { ...payload.header, series: '' },
+        payload.lines,
+        { preferSubmittedSeries: false },
+      );
+
+      if (!fallbackSeries.series || fallbackSeries.series === sapPayload.Series) throw postError;
+
+      sapPayload.Series = fallbackSeries.series;
+      if (fallbackSeries.branchId) {
+        sapPayload.BPLId = fallbackSeries.branchId;
+        sapPayload.BPL_IDAssignedToInvoice = fallbackSeries.branchId;
+      } else {
+        delete sapPayload.BPLId;
+        delete sapPayload.BPL_IDAssignedToInvoice;
+      }
+      lastSapPayload = sapPayload;
+      console.warn(
+        '[ARCreditMemoService] Retrying A/R Credit Memo with default numbering series after SAP rejected submitted series.',
+        { series: sapPayload.Series, branchId: sapPayload.BPLId || '' },
+      );
+      response = await sapService.request({
+        method: 'post',
+        url: '/CreditNotes',
+        data: sapPayload,
+      });
+    }
 
     console.log("✅ [ARCreditMemoService] SAP AR CREDIT MEMO RESPONSE:", JSON.stringify(response.data, null, 2));
 
@@ -313,12 +492,16 @@ const submitARCreditMemo = async (payload) => {
 
     // Extract meaningful error message from SAP
     let errorMessage = 'AR Credit Memo submission failed.';
-    if (error.response?.data?.error?.message?.value) {
-      errorMessage = error.response.data.error.message.value;
-    } else if (error.response?.data?.error?.message) {
-      errorMessage = error.response.data.error.message;
-    } else if (error.message) {
-      errorMessage = error.message;
+    errorMessage = getSapErrorMessage(error, errorMessage);
+
+    if (String(errorMessage).includes('10000521') && lastSapPayload) {
+      const submittedContext = [
+        lastSapPayload.Series ? `Series=${lastSapPayload.Series}` : '',
+        lastSapPayload.BPLId ? `BPLId=${lastSapPayload.BPLId}` : '',
+      ].filter(Boolean).join(', ');
+      if (submittedContext) {
+        errorMessage = `${errorMessage} (submitted ${submittedContext})`;
+      }
     }
 
     // Create a new error with the SAP message
@@ -360,21 +543,30 @@ const updateARCreditMemo = async (docEntry, payload) => {
       NumAtCard: payload.header.salesContractNo || payload.header.customerRefNo || undefined,
       Comments: payload.header.otherInstruction || payload.header.comments || undefined,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: yesNo(payload.header.rounding),
+      ...buildMarketingDocumentAddressPayload(payload.header),
 
       DocumentLines: payload.lines.map((l) => {
+        const lineNum = l.lineNum ?? l.LineNum;
         const line = {
+          ...(lineNum !== undefined && lineNum !== null && lineNum !== '' ? { LineNum: Number(lineNum) } : {}),
           ItemCode: l.itemNo,
           Quantity: Number(l.quantity),
           UnitPrice: Number(l.unitPrice),
           WarehouseCode: l.whse || l.warehouse || "01",
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
+          WTLiable: yesNo(l.wTaxLiable ?? l.wtaxLiable),
+          AccountCode: l.glAccount || undefined,
+          CostingCode: l.distRule || undefined,
+          COGSCostingCode: l.cogsDistRule || l.distRule || undefined,
+          CountryOrg: l.countryOfOrigin || undefined,
           DiscountPercent: l.stdDiscount ? Number(l.stdDiscount) : (l.discountPercent ? Number(l.discountPercent) : 0),
           BaseType: l.baseType ? Number(l.baseType) : undefined,
           BaseEntry: l.baseEntry ? Number(l.baseEntry) : undefined,
           BaseLine: l.baseLine !== undefined ? Number(l.baseLine) : undefined,
         };
-        applyUdfValues(line, l.udf, allowedLineUdfs);
+        applyUdfValues(line, buildLineUdfPayload(l, allowedLineUdfs), allowedLineUdfs);
         return line;
       })
     };
@@ -404,9 +596,9 @@ const updateARCreditMemo = async (docEntry, payload) => {
 
 // ───────── DOCUMENT SERIES ─────────
 
-const getDocumentSeries = async (targetDate = null) => {
+const getDocumentSeries = async (targetDate = null, transactionType = '', branch = '') => {
   try {
-    const result = await arCreditMemoDb.getDocumentSeries(targetDate);
+    const result = await arCreditMemoDb.getDocumentSeries(targetDate, transactionType || 'GST Tax Invoice', branch);
     return { series: result };
   } catch (error) {
     console.error('[AR Credit Memo Service] Failed to load document series:', error);

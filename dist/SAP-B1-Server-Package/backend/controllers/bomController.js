@@ -184,6 +184,7 @@ function _normalizeServiceLayerNextLink(nextLink) {
 
 function _buildPayload(body) {
   const opt = (v) => v !== "" && v != null;
+  const validStageId = (v) => opt(v) && Number.isInteger(Number(v)) && Number(v) > 0;
   const p = {};
 
   p.TreeCode = body.TreeCode;
@@ -218,8 +219,11 @@ function _buildPayload(body) {
         if (opt(l.DistributionRule)) line.DistributionRule = l.DistributionRule;
         if (opt(l.Project))          line.Project          = l.Project;
         if (opt(l.AdditionalQuantity)) line.AdditionalQuantity = Number(l.AdditionalQuantity);
-        if (opt(l.StageID))          line.StageID          = Number(l.StageID);
-        if (!opt(l.StageID) && opt(l.RouteSequence)) line.StageID = Number(l.RouteSequence);
+        if (validStageId(l.StageID)) {
+          line.StageID = Number(l.StageID);
+        } else if (validStageId(l.RouteSequence)) {
+          line.StageID = Number(l.RouteSequence);
+        }
         return line;
       });
   }

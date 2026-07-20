@@ -6,9 +6,10 @@
   background: #f0f2f5;
   min-height: 100vh;
   box-sizing: border-box;
-  overflow-x: auto !important;
+  overflow-x: hidden !important;
   overflow-y: auto;
   width: 100%;
+  max-width: 100%;
 }
 
 .del-page fieldset {
@@ -173,6 +174,9 @@
   background: #e8edf2;
   border-bottom: 1px solid #c8d0da;
   flex-wrap: wrap;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .del-toolbar__title {
@@ -233,7 +237,8 @@
   background: rgba(255, 255, 255, 0.7);
 }
 
-.del-btn {
+.del-btn,
+.so-btn {
   padding: 4px 14px;
   font-size: 12px;
   border: 1px solid #a0aab4;
@@ -243,13 +248,21 @@
   cursor: pointer;
   white-space: nowrap;
 }
-.del-btn:hover { background: linear-gradient(180deg, #f0f4f8 0%, #dde3ea 100%); }
-.del-btn--primary {
+.del-btn:hover,
+.so-btn:hover { background: linear-gradient(180deg, #f0f4f8 0%, #dde3ea 100%); }
+.del-btn:disabled,
+.so-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.del-btn--primary,
+.so-btn--primary {
   background: linear-gradient(180deg, #0070c0 0%, #005a9e 100%);
   color: #fff;
   border-color: #004a80;
 }
-.del-btn--primary:hover { background: linear-gradient(180deg, #0080d0 0%, #0060aa 100%); }
+.del-btn--primary:hover,
+.so-btn--primary:hover { background: linear-gradient(180deg, #0080d0 0%, #0060aa 100%); }
 .del-btn--danger { color: #c00; }
 
 /* ── Mode badge ── */
@@ -283,36 +296,76 @@
   border: 1px solid #c8d0da;
   border-radius: 3px;
   padding: 8px 10px;
-}
-
-.del-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  padding: 0 12px;
   min-width: 0;
-  align-items: start;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
-.del-layout.is-sidebar-open {
-  grid-template-columns: minmax(0, 1fr) minmax(250px, 320px);
-  gap: 12px;
-}
-
-.del-layout__main,
-.del-layout__sidebar {
+.del-header-card > .row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 8px 18px;
+  margin: 0;
   min-width: 0;
   max-width: 100%;
 }
 
+.del-header-card > .row > [class*="col-"] {
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+}
+
+.sap-document-layout,
+.del-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  padding: 0 12px 12px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  align-items: stretch;
+  box-sizing: border-box;
+}
+
+.sap-document-layout.is-sidebar-open,
+.del-layout.is-sidebar-open {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+}
+
+.sap-document-layout.sap-document-layout--no-udf {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.sap-document-main,
+.del-layout__main,
+.del-layout__sidebar {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sap-document-main,
 .del-layout__main {
-  overflow: visible;
+  overflow: hidden;
 }
 
 .del-layout__sidebar {
   width: 100%;
   min-height: 0;
   overflow: visible;
+}
+
+.sap-header-udf-panel {
+  width: 100%;
+  max-width: 320px;
+  min-width: 0;
+  position: relative;
+  box-sizing: border-box;
 }
 
 .del-layout__sidebar.col-xl-3,
@@ -325,9 +378,12 @@
 
 .del-layout__sidebar .po-udf-sidebar-card {
   position: sticky;
-  top: 12px;
-  max-height: calc(100vh - 24px);
-  overflow-y: auto;
+  top: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 180px);
+  min-height: 0;
+  overflow: hidden;
   overflow-x: hidden;
   scrollbar-gutter: stable;
   word-wrap: break-word;
@@ -344,7 +400,10 @@
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  overflow: visible;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .del-layout__sidebar .po-udf-sidebar-card .form-label {
@@ -422,6 +481,72 @@
   margin-bottom: 12px;
 }
 
+@media (max-width: 1200px) {
+  .sap-document-layout.is-sidebar-open,
+  .del-layout.is-sidebar-open {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 280px);
+    gap: 12px;
+  }
+
+  .del-field-grid {
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+  }
+
+  .del-header-card > .row {
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+  }
+
+  .sap-tab-grid {
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+    column-gap: 18px;
+  }
+
+  .sap-form-row {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 992px) {
+  .sap-document-layout.is-sidebar-open,
+  .del-layout.is-sidebar-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sap-header-udf-panel,
+  .del-layout__sidebar {
+    order: 2;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .del-layout__sidebar .po-udf-sidebar-card {
+    max-height: min(420px, calc(100vh - 180px));
+  }
+
+  .del-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .del-field-grid--summary,
+  .del-header-card > .row {
+    grid-template-columns: 1fr;
+  }
+
+  .sap-tab-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .del-toolbar,
+  .del-header-card {
+    margin-left: 8px;
+    margin-right: 8px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
 /* ── Horizontal UDF sidebar mode ── */
 .po-udf-sidebar-horizontal {
   width: 100%;
@@ -448,40 +573,317 @@
 
 .del-field-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 6px 10px;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 8px 18px;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.del-field-grid--single {
+  grid-template-columns: 1fr;
+}
+
+.del-field-grid--summary {
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+}
+
+.sap-tab-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  column-gap: 28px;
+  row-gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  align-items: start;
+}
+
+.sap-tab-column {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.sap-tab-section {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  box-sizing: border-box;
+}
+
+.sap-tab-section--full {
+  grid-column: 1 / -1;
+}
+
+.sap-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #003366;
+  margin: 0 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e0e6ed;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sap-section-heading-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sap-form-row {
+  display: grid;
+  grid-template-columns: 135px minmax(0, 1fr);
+  gap: 6px;
   align-items: center;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-bottom: 6px;
+  box-sizing: border-box;
+}
+
+.sap-form-row--full {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.sap-form-row--stacked {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.sap-form-row--stacked .del-field__label,
+.sap-form-row--stacked .so-field__label,
+.sap-form-row--stacked .im-field__label {
+  text-align: left;
+  white-space: normal;
+}
+
+.sap-form-row--stacked textarea,
+.sap-form-row--stacked .del-textarea,
+.sap-form-row--stacked .so-field__textarea,
+.sap-form-row--stacked .im-textarea {
+  width: 100%;
+}
+
+.sap-form-row label,
+.sap-form-row .del-field__label,
+.sap-form-row .so-field__label,
+.sap-form-row .so-tax-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
+  text-align: right;
+}
+
+.sap-form-row input,
+.sap-form-row select,
+.sap-form-row textarea,
+.sap-form-row .del-field__input,
+.sap-form-row .del-field__select,
+.sap-form-row .del-textarea,
+.sap-form-row .so-field__input,
+.sap-form-row .so-field__select,
+.sap-form-row .so-field__textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.sap-form-row textarea,
+.sap-form-row .del-textarea,
+.sap-form-row .so-field__textarea,
+.sap-form-row .so-textarea {
+  resize: vertical;
+  min-height: 54px;
+  white-space: normal;
+}
+
+.sap-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+
+.sap-input-group--currency {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(64px, 92px);
+}
+
+.sap-input-group--currency select:last-child {
+  grid-column: 1 / -1;
+}
+
+.sap-input-group--currency input[readonly] {
+  background: #f7f9fb;
+}
+
+.sap-input-group--compact {
+  justify-content: flex-start;
+}
+
+.sap-input-group--wrap {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.sap-input-group > * {
+  min-width: 0;
+}
+
+.sap-input-group input,
+.sap-input-group select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sap-input-group button {
+  flex: 0 0 auto;
+}
+
+.sap-input-group .del-btn,
+.sap-input-group .so-btn,
+.del-btn--lookup,
+.so-btn--lookup {
+  min-width: 28px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 20px;
+}
+
+.so-btn--lookup-wide,
+.del-btn--lookup-wide {
+  min-width: 80px;
+}
+
+.sap-input-group--wrap .so-field__input,
+.sap-input-group--wrap .del-field__input,
+.sap-input-group--wrap .im-field__input,
+.sap-input-group--wrap .so-field__select,
+.sap-input-group--wrap .del-field__select,
+.sap-input-group--wrap .im-field__select {
+  flex: 0 1 110px;
+  min-width: 70px;
+}
+
+.sap-input-group--wrap input[type="radio"],
+.sap-input-group--wrap input[type="checkbox"] {
+  flex: 0 0 auto;
+}
+
+.sap-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.sap-inline-row > * {
+  min-width: 0;
+}
+
+.sap-inline-label {
+  margin: 0;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.sap-inline-control {
+  flex: 1 1 120px;
+}
+
+.sap-inline-control--short {
+  flex: 0 1 96px;
+}
+
+.sap-inline-control--date {
+  flex: 0 1 160px;
+}
+
+.sap-inline-control--mode {
+  flex: 0 1 130px;
+}
+
+.sap-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-bottom: 6px;
+  text-align: left;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.sap-checkbox-row input {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.sap-checkbox-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sap-due-date-section {
+  border-top: 1px solid #d7dde3;
+  margin-top: 4px;
+  padding-top: 10px;
 }
 
 .del-field {
   min-width: 0;
-}
-
-.del-field__label {
-  flex: 0 0 100px;
-  font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.del-field {
-  display: flex;
-  align-items: center;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
   gap: 6px;
+  align-items: center;
   min-height: 26px;
+  margin-bottom: 6px;
 }
 
 .del-field__label {
-  flex: 0 0 110px;
   font-size: 12px;
   color: #444;
   text-align: right;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .del-field__input {
-  flex: 1;
+  flex: 1 1 auto;
   height: 22px;
   padding: 0 5px;
   font-size: 12px;
@@ -490,6 +892,8 @@
   background: #fff;
   color: #1a1a1a;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .del-field__input:focus {
   outline: none;
@@ -505,7 +909,7 @@
 }
 
 .del-field__select {
-  flex: 1;
+  flex: 1 1 auto;
   height: 22px;
   padding: 0 4px;
   font-size: 12px;
@@ -513,6 +917,8 @@
   border-radius: 2px;
   background: #fff;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .del-field__select:focus { outline: none; border-color: #0070c0; }
 .del-field__select--error {
@@ -538,17 +944,50 @@
   user-select: none;
 }
 
+@media (max-width: 1100px) {
+  .sap-tab-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sap-form-row {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .sap-form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sap-form-row label,
+  .sap-form-row .del-field__label,
+  .sap-form-row .so-field__label,
+  .sap-form-row .so-tax-label {
+    white-space: normal;
+    text-align: left;
+  }
+}
+
 /* ── Tabs ── */
 .del-tabs {
   margin: 10px 12px 0;
   border-bottom: 2px solid #0070c0;
   display: flex;
   gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
 }
 
 .del-tab {
+  display: inline-flex;
+  align-items: center;
   padding: 5px 14px;
   font-size: 12px;
+  font-family: inherit;
   border: 1px solid #c8d0da;
   border-bottom: none;
   border-radius: 3px 3px 0 0;
@@ -558,6 +997,10 @@
   white-space: nowrap;
 }
 .del-tab:hover { background: #d8e2ec; }
+.del-tab:focus-visible {
+  outline: 2px solid #0070c0;
+  outline-offset: -2px;
+}
 .del-tab--active {
   background: #fff;
   color: #003366;
@@ -577,8 +1020,8 @@
   padding: 10px;
   min-height: 260px;
   min-width: 0;
-  max-width: none;
-  overflow: visible;
+  max-width: 100%;
+  overflow: hidden;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -586,15 +1029,15 @@
 
 .del-tab-panel > * {
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
 }
 
 /* ── Data grids ── */
 .del-grid-wrap {
   width: 100%;
   min-width: 0;
-  max-width: none;
-  overflow: visible;
+  max-width: 100%;
+  overflow: hidden;
   box-sizing: border-box;
 }
 
@@ -605,16 +1048,16 @@
   border: 1px solid #d7dde5;
   width: 100%;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
   box-sizing: border-box;
   position: relative;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .del-grid-wrap__scroller {
   width: 100%;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
   overflow-y: auto;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -787,6 +1230,53 @@
   gap: 8px;
 }
 
+.del-tax-info-modal {
+  width: min(760px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 44px);
+  overflow: hidden;
+}
+
+.del-tax-info-modal__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.del-tax-info-modal__body {
+  overflow: auto;
+  overflow-x: hidden;
+  padding: 14px 16px;
+}
+
+.del-tax-info-modal__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 8px 22px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.del-tax-info-modal__grid .del-field {
+  grid-template-columns: 124px minmax(0, 1fr);
+  margin-bottom: 0;
+}
+
+.del-tax-info-modal__grid .del-field__label {
+  text-align: left;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.del-tax-info-modal__grid .del-field__input,
+.del-tax-info-modal__grid .del-field__select {
+  width: 100%;
+  min-width: 0;
+}
+
 /* ── Textarea ── */
 .del-textarea {
   width: 100%;
@@ -876,10 +1366,12 @@
 
 /* ── Force horizontal scroll for Contents tab ── */
 .del-grid-wrap--contents {
-  overflow-x: auto !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
 }
 
 .del-grid-wrap__scroller--contents {
+  max-width: 100% !important;
   overflow-x: auto !important;
   overflow-y: auto !important;
 }
@@ -887,4 +1379,606 @@
 /* Ensure table can expand beyond container */
 .del-grid--contents {
   min-width: 3900px !important;
+}
+
+/* SAP B1 Electronic Documents / E-Way Bill */
+.del-edoc-tab {
+  align-items: flex-start;
+  gap: 28px;
+  padding: 18px 16px;
+}
+
+.del-edoc-section {
+  width: min(650px, 100%);
+}
+
+.del-edoc-row {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(220px, 1.15fr);
+  min-height: 24px;
+  align-items: center;
+}
+
+.del-edoc-row > label {
+  font-size: 11px;
+  color: #222;
+}
+
+.del-edoc-row .del-field__input,
+.del-edoc-row .del-field__select {
+  height: 22px;
+  padding: 1px 5px;
+  border-radius: 0;
+  font-size: 11px;
+}
+
+.del-edoc-row .del-field__input[readonly] {
+  background: #eef1f4;
+}
+
+.del-edoc-details-button {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  box-sizing: border-box;
+  border: 1px solid #9da9b5;
+  background: #eef1f4;
+  text-align: left;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.del-edoc-details-button.is-read-only {
+  background: #eef1f4;
+  color: #555;
+}
+
+.del-edoc-details-button:focus-visible {
+  outline: 2px solid #0070c0;
+  outline-offset: -2px;
+}
+
+.del-edoc-details-button:hover {
+  border-color: #006bb4;
+  background: #e3edf6;
+}
+
+.del-ewb-modal {
+  position: relative;
+  width: min(1340px, calc(100% - 24px));
+  max-width: calc(100% - 24px);
+  height: min(720px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+}
+
+.del-ewb-modal > .del-modal__header,
+.del-ewb-modal > .del-modal__footer {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+}
+
+.del-ewb-workspace-overlay {
+  box-sizing: border-box;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.del-ewb-modal__body {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(255px, 1fr));
+  gap: 20px;
+  padding: 16px 18px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.del-ewb-modal__body section h6 {
+  margin: 0 0 7px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid #7e8d9b;
+  color: #003366;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.del-ewb-modal__body section h6:not(:first-child) {
+  margin-top: 18px;
+}
+
+.del-ewb-field {
+  display: grid;
+  grid-template-columns: minmax(118px, .9fr) minmax(115px, 1.35fr);
+  min-height: 25px;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.del-ewb-field input,
+.del-ewb-field select {
+  width: 100%;
+  height: 21px;
+  min-width: 0;
+  padding: 1px 4px;
+  border: 1px solid #a9b3bd;
+  border-radius: 0;
+  background: #fff;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.del-ewb-field input[readonly] {
+  background: #f1f3f5;
+  color: #333;
+}
+
+.del-ewb-lookup-input {
+  display: flex;
+  min-width: 0;
+}
+
+.del-ewb-lookup-input input {
+  flex: 1 1 auto;
+}
+
+.del-ewb-lookup-input button {
+  flex: 0 0 25px;
+  height: 21px;
+  margin-left: 2px;
+  padding: 0;
+  border: 1px solid #8797a6;
+  border-radius: 2px;
+  background: #edf1f5;
+  color: #003b68;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.del-ewb-lookup-input button:hover {
+  border-color: #006bb4;
+  background: #e1edf7;
+}
+
+.del-ewb-lookup-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, .32);
+  box-sizing: border-box;
+}
+
+.del-ewb-lookup-dialog {
+  width: min(760px, 100%);
+  max-height: 86%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #8f9dab;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .28);
+}
+
+.del-ewb-lookup-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+}
+
+.del-ewb-lookup-search input {
+  flex: 1;
+  height: 24px;
+  border: 1px solid #9ba8b5;
+}
+
+.del-ewb-lookup-grid {
+  position: relative;
+  min-height: 160px;
+  overflow: auto;
+  margin: 0 12px;
+  border: 1px solid #bac4ce;
+}
+
+.del-ewb-lookup-grid .del-grid {
+  min-width: 100%;
+}
+
+.del-ewb-lookup-grid tbody tr {
+  cursor: pointer;
+}
+
+.del-ewb-lookup-grid tbody tr.is-selected td {
+  background: #cfe6fa;
+}
+
+.del-ewb-lookup-empty {
+  padding: 24px;
+  color: #5d6873;
+  text-align: center;
+}
+
+.del-ewb-modal__message {
+  margin: 0 14px 8px;
+  padding: 6px 8px;
+  color: #176b2c;
+  background: #eef8f0;
+  border: 1px solid #b9ddc1;
+  font-size: 11px;
+}
+
+.del-ewb-modal__message.is-error {
+  color: #a12622;
+  background: #fff1f0;
+  border-color: #e5b5b2;
+}
+
+@media (max-width: 1450px) {
+  .del-ewb-modal__body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .del-edoc-row { grid-template-columns: 1fr; gap: 2px; margin-bottom: 7px; }
+  .del-ewb-modal__body { grid-template-columns: 1fr; }
+}
+
+/* SAP B1 style Reference Information modal */
+.so-reference-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 1300;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 95px 16px 24px 360px;
+  box-sizing: border-box;
+}
+
+.so-reference-modal {
+  position: relative;
+  width: 790px;
+  max-width: 100%;
+  background: #fff;
+  border: 1px solid #2b5375;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  color: #111;
+}
+
+.so-reference-modal__titlebar {
+  height: 43px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 16px;
+  background: #285170;
+  border-top: 3px solid #e0a318;
+  color: #fff;
+  font-size: 18px;
+}
+
+.so-reference-modal__titlebar span { flex: 1; }
+
+.so-reference-modal__window-btn,
+.so-reference-modal__close {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.so-reference-modal__body {
+  margin: 20px 20px 0;
+  border: 1px solid #d4d4d4;
+  padding: 12px 16px;
+}
+
+.so-reference-modal__tabs {
+  display: flex;
+  margin: 0 8px 16px;
+}
+
+.so-reference-modal__tab {
+  min-width: 292px;
+  height: 21px;
+  border: 1px solid #c3c3c3;
+  border-bottom: 0;
+  background: #e7ecef;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.so-reference-modal__tab.is-active {
+  background: #fff;
+  position: relative;
+  z-index: 1;
+}
+
+.so-reference-modal__grid-wrap {
+  height: 225px;
+  overflow: auto;
+  border: 1px solid #c7c7c7;
+}
+
+.so-reference-modal__grid {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.so-reference-modal__grid th {
+  background: #e2e6e9;
+  border: 1px solid #c7c7c7;
+  padding: 3px 6px;
+  text-align: left;
+  font-weight: 400;
+}
+
+.so-reference-modal__grid td {
+  height: 18px;
+  border: 1px solid #d5d5d5;
+  padding: 0;
+  overflow: visible;
+}
+
+.so-reference-modal__grid select,
+.so-reference-modal__grid input {
+  width: 100%;
+  height: 21px;
+  border: 0;
+  background: #fff;
+  font-size: 12px;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+
+.so-reference-modal__grid select:disabled,
+.so-reference-modal__grid input:disabled {
+  color: #111;
+  background: #edf1f4;
+}
+
+.so-reference-modal__type-cell {
+  position: relative;
+  z-index: 1;
+}
+
+.so-reference-modal__type-cell:focus-within { z-index: 30; }
+
+.so-reference-modal__type-combo {
+  width: 100%;
+  height: 21px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  border: 0;
+  background: #fff;
+  padding: 0 0 0 4px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.so-reference-modal__type-combo span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.so-reference-modal__type-arrow {
+  text-align: center;
+  font-size: 13px;
+}
+
+.so-reference-modal__type-combo:disabled {
+  color: #111;
+  background: #edf1f4;
+  cursor: not-allowed;
+}
+
+.so-reference-modal__type-menu {
+  position: absolute;
+  top: 21px;
+  left: 0;
+  width: 100%;
+  max-height: 150px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #aeb7c0;
+  box-shadow: 2px 4px 10px rgba(0, 0, 0, 0.18);
+  z-index: 40;
+}
+
+.so-reference-modal__type-option {
+  display: block;
+  width: 100%;
+  height: 24px;
+  border: 0;
+  background: #fff;
+  padding: 2px 10px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.so-reference-modal__type-option:hover { background: #d7e8ff; }
+
+.so-reference-modal__rowno {
+  text-align: center;
+  background: #f3f3f3;
+}
+
+.so-reference-modal__checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 36px;
+  font-size: 12px;
+}
+
+.so-reference-modal__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px 16px;
+}
+
+.so-reference-modal__lookup-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px 22px;
+  gap: 2px;
+  align-items: stretch;
+  height: 21px;
+}
+
+.so-reference-modal__lookup-cell input { min-width: 0; }
+
+.so-reference-modal__lookup-btn {
+  height: 21px;
+  border: 0;
+  border-left: 1px solid #c7c7c7;
+  background: #eef3f8;
+  color: #003366;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.so-reference-modal__lookup-btn:disabled {
+  cursor: not-allowed;
+  color: #888;
+}
+
+.so-reference-lookup {
+  position: absolute;
+  left: 44px;
+  top: 118px;
+  width: 700px;
+  max-width: calc(100% - 88px);
+  background: #fff;
+  border: 1px solid #2b5375;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+  z-index: 2;
+}
+
+.so-reference-lookup__titlebar {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 12px;
+  background: #285170;
+  color: #fff;
+}
+
+.so-reference-lookup__titlebar span {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.so-reference-lookup__body { padding: 10px 12px 12px; }
+
+.so-reference-lookup__search {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.so-reference-lookup__search input {
+  height: 24px;
+  border: 1px solid #9fb0c0;
+  padding: 0 6px;
+}
+
+.so-reference-lookup__table-wrap {
+  max-height: 250px;
+  overflow: auto;
+  border: 1px solid #c7c7c7;
+}
+
+.so-reference-lookup__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.so-reference-lookup__table th {
+  background: #e2e6e9;
+  border: 1px solid #c7c7c7;
+  padding: 4px 6px;
+  text-align: left;
+  font-weight: 700;
+  color: #003366;
+}
+
+.so-reference-lookup__table td {
+  border: 1px solid #d5d5d5;
+  padding: 3px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.so-reference-lookup__table tr:hover td { background: #eaf3ff; }
+
+.so-reference-lookup__link {
+  border: 0;
+  background: transparent;
+  color: #005a9e;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+.so-reference-lookup__doc-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.so-reference-lookup__message {
+  padding: 16px;
+  color: #8a4d00;
+  background: #fff8e6;
+  border: 1px solid #e0c078;
+}
+
+.so-reference-lookup__footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+@media (max-width: 1100px) {
+  .so-reference-modal-overlay {
+    padding-left: 16px;
+  }
+}
+
+@media (max-width: 780px) {
+  .del-tax-info-modal__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .del-tax-info-modal__grid .del-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

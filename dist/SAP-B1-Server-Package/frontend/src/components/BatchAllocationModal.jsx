@@ -1,5 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  BATCH_QTY_TOLERANCE,
+  getBatchInventoryUom,
+  getDocumentUomLabel,
+  getLineUomFactor,
+  getRequiredBatchQty,
+  parseBatchNumber,
+  sumBatchQty,
+} from '../utils/batchQuantity';
 
 const createBatchRow = () => ({
   batchNumber: '',
@@ -7,10 +16,18 @@ const createBatchRow = () => ({
   expiryDate: '',
 });
 
-const parseNum = (value) => {
+const sanitizeNumericInput = (value) =>
+  String(value || '').replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
+
+const toInputValue = (value) => {
+  if (value === '' || value == null) return '';
   const num = Number(value);
-  return Number.isFinite(num) ? num : 0;
+  if (!Number.isFinite(num)) return '';
+  const rounded = Math.round((num + Number.EPSILON) * 1000000) / 1000000;
+  return String(rounded);
 };
+
+const normalizeExpiryDate = (value) => (value ? String(value).slice(0, 10) : '');
 
 export default function BatchAllocationModal({
   isOpen,
@@ -19,38 +36,70 @@ export default function BatchAllocationModal({
   availableBatches = [],
   loading = false,
   error = '',
+  onGenerateBatchNumber,
   onClose,
   onSave,
 }) {
   const [rows, setRows] = useState([createBatchRow()]);
+  const [generatingRow, setGeneratingRow] = useState(null);
   const isIssueMode = mode === 'issue';
   const batchOptions = Array.isArray(availableBatches) ? availableBatches : [];
-  const itemLabel = line?.itemNo || line?.itemCode || 'Item';
-  const warehouseLabel = line?.whse || line?.warehouse || '-';
 
   useEffect(() => {
     if (!isOpen) return;
-    const nextRows = Array.isArray(line?.batches) && line.batches.length
-      ? line.batches.map((batch) => ({
-        batchNumber: batch.batchNumber || '',
-        quantity: batch.quantity || '',
-        expiryDate: batch.expiryDate || '',
-      }))
-      : [createBatchRow()];
+    const nextRows =
+      Array.isArray(line?.batches) && line.batches.length
+        ? line.batches.map((batch) => ({
+            batchNumber: batch.batchNumber || '',
+            quantity: toInputValue(batch.quantity),
+            expiryDate: normalizeExpiryDate(batch.expiryDate),
+          }))
+        : [createBatchRow()];
     setRows(nextRows);
   }, [isOpen, line]);
 
-  const assignedQty = useMemo(
-    () => rows.reduce((sum, row) => sum + parseNum(row.quantity), 0),
-    [rows]
-  );
+  const assignedQty = useMemo(() => sumBatchQty(rows), [rows]);
+  const lineQty = parseBatchNumber(line?.quantity);
+  const uomFactor = getLineUomFactor(line);
+  const requiredQty = getRequiredBatchQty(line);
+  const documentUoM = getDocumentUomLabel(line);
+  const inventoryUoM = getBatchInventoryUom(line) || documentUoM || 'Qty';
+  const qtyMismatch = Math.abs(assignedQty - requiredQty) > BATCH_QTY_TOLERANCE;
+
+  const availabilityErrors = useMemo(() => {
+    if (!isIssueMode) return [];
+
+    const availableByBatch = new Map(
+      batchOptions.map((batch) => [
+        String(batch.BatchNumber || '').trim(),
+        parseBatchNumber(batch.AvailableQty),
+      ])
+    );
+
+    return rows
+      .filter((row) => String(row.batchNumber || '').trim() && parseBatchNumber(row.quantity) > 0)
+      .filter((row) => {
+        const batchNumber = String(row.batchNumber || '').trim();
+        return parseBatchNumber(row.quantity) - (availableByBatch.get(batchNumber) || 0) > BATCH_QTY_TOLERANCE;
+      })
+      .map((row) => {
+        const batchNumber = String(row.batchNumber || '').trim();
+        return `${batchNumber} exceeds available quantity (${(availableByBatch.get(batchNumber) || 0).toFixed(2)} ${inventoryUoM})`;
+      });
+  }, [batchOptions, inventoryUoM, isIssueMode, rows]);
 
   if (!isOpen || !line) return null;
 
+  const itemLabel = line.itemNo || line.itemCode || 'Item';
+  const warehouseLabel = line.whse || line.warehouse || '-';
+  const title = isIssueMode ? 'Allocate Issue Batches' : 'Allocate Receipt Batches';
+  const canSave = assignedQty > 0 && !qtyMismatch && availabilityErrors.length === 0;
+
   const updateRow = (index, key, value) => {
-    setRows((prev) => prev.map((row, rowIndex) => (
-      rowIndex === index ? { ...row, [key]: value } : row
-    )));
+    const nextValue = key === 'quantity' ? sanitizeNumericInput(value) : value;
+    setRows((prev) =>
+      prev.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: nextValue } : row))
+    );
   };
 
   const addRow = (preset = {}) => {
@@ -58,84 +107,185 @@ export default function BatchAllocationModal({
   };
 
   const removeRow = (index) => {
-    setRows((prev) => (prev.length === 1 ? [createBatchRow()] : prev.filter((_, rowIndex) => rowIndex !== index)));
+    setRows((prev) =>
+      prev.length === 1 ? [createBatchRow()] : prev.filter((_, rowIndex) => rowIndex !== index)
+    );
+  };
+
+  const applyWarehouseBatch = (batch) => {
+    const batchNumber = String(batch.BatchNumber || '');
+    const expiryDate = normalizeExpiryDate(batch.ExpiryDate);
+
+    setRows((prev) => {
+      const emptyIndex = prev.findIndex((row) => !String(row.batchNumber || '').trim());
+      if (emptyIndex >= 0) {
+        return prev.map((row, index) =>
+          index === emptyIndex ? { ...row, batchNumber, expiryDate } : row
+        );
+      }
+      return [...prev, { ...createBatchRow(), batchNumber, expiryDate }];
+    });
+  };
+
+  const incrementBatchNumber = (batchNumber) => {
+    const match = String(batchNumber || '').trim().match(/^([A-Za-z]*)(\d+)$/);
+    if (!match) return batchNumber;
+    const [, prefix, numericPart] = match;
+    return `${prefix}${String(Number(numericPart) + 1).padStart(numericPart.length, '0')}`;
+  };
+
+  const getUniqueBatchNumber = (candidate, currentIndex) => {
+    const used = new Set(
+      rows
+        .filter((_, index) => index !== currentIndex)
+        .map((row) => String(row.batchNumber || '').trim())
+        .filter(Boolean)
+    );
+    let next = String(candidate || '').trim();
+    while (next && used.has(next)) {
+      next = incrementBatchNumber(next);
+    }
+    return next;
+  };
+
+  const generateBatchNumber = async (index) => {
+    if (typeof onGenerateBatchNumber !== 'function') return;
+    setGeneratingRow(index);
+    try {
+      const response = await onGenerateBatchNumber();
+      const candidate = response?.data?.nextBatchNumber || response?.nextBatchNumber || '';
+      const nextBatchNumber = getUniqueBatchNumber(candidate, index);
+      if (nextBatchNumber) updateRow(index, 'batchNumber', nextBatchNumber);
+    } catch (err) {
+      alert(err?.response?.data?.message || err?.message || 'Failed to generate batch number.');
+    } finally {
+      setGeneratingRow(null);
+    }
   };
 
   const handleSave = () => {
-    const validBatchNumbers = new Set(batchOptions.map((batch) => String(batch.BatchNumber || '').trim()));
     const normalized = rows
       .map((row) => ({
         batchNumber: String(row.batchNumber || '').trim(),
-        quantity: String(row.quantity || '').trim(),
+        quantity: String(parseBatchNumber(row.quantity)),
         expiryDate: String(row.expiryDate || '').trim(),
       }))
-      .filter((row) => {
-        if (!row.batchNumber || parseNum(row.quantity) <= 0) return false;
-        return !isIssueMode || validBatchNumbers.has(row.batchNumber);
-      });
+      .filter((row) => row.batchNumber && parseBatchNumber(row.quantity) > 0);
+
+    if (!normalized.length) {
+      alert('Please allocate at least one batch');
+      return;
+    }
+
+    if (qtyMismatch) {
+      alert(
+        `Allocated batch quantity must match the required quantity in base UoM.\n\nRequired: ${requiredQty.toFixed(2)} ${inventoryUoM}\nAllocated: ${assignedQty.toFixed(2)} ${inventoryUoM}`
+      );
+      return;
+    }
+
+    if (availabilityErrors.length > 0) {
+      alert(availabilityErrors.join('\n'));
+      return;
+    }
+
     onSave(normalized);
   };
 
-  return createPortal((
+  return createPortal(
     <div
+      className="del-modal-overlay sap-batch-modal-overlay"
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(15, 23, 42, 0.45)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 1060,
         padding: 16,
       }}
+      onClick={onClose}
     >
-      <div className="card shadow" style={{ width: 'min(980px, 100%)', maxHeight: '90vh', overflow: 'auto' }}>
-        <div className="card-header d-flex justify-content-between align-items-center">
+      <div
+        className="del-modal grpo-batch-modal sap-batch-modal"
+        style={{
+          width: 'min(980px, calc(100vw - 32px))',
+          maxHeight: '90vh',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="del-modal__header">
           <div>
-            <div style={{ fontWeight: 700 }}>Assign Batch</div>
-            <div className="text-muted" style={{ fontSize: 12 }}>
-              {itemLabel} | Qty: {line.quantity || '0'} | Whse: {warehouseLabel}
+            <h6 style={{ margin: '0 0 6px 0', fontSize: 12, fontWeight: 600 }}>{title}</h6>
+            <div style={{ fontSize: 11, color: '#666' }}>
+              {itemLabel} | Document Qty: {line.quantity || '0'}
+              {documentUoM ? ` ${documentUoM}` : ''} | Whse: {warehouseLabel}
+              <span style={{ marginLeft: 8, color: '#0066cc' }}>
+                (Required Batch Qty: {requiredQty.toFixed(2)} {inventoryUoM})
+              </span>
             </div>
+            {uomFactor !== 1 && inventoryUoM ? (
+              <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
+                Calculation: {lineQty.toFixed(2)} x {uomFactor} = {requiredQty.toFixed(2)} {inventoryUoM}
+              </div>
+            ) : null}
           </div>
-          <button type="button" className="btn btn-outline-secondary btn-sm" onClick={onClose}>Close</button>
+          <button type="button" className="del-modal__close" onClick={onClose}>
+            x
+          </button>
         </div>
 
-        <div className="card-body">
-          {error ? <div className="alert alert-warning py-2">{error}</div> : null}
-          <div className="d-flex justify-content-between align-items-center mb-3">
-            <div style={{ fontSize: 13 }}>
-              Assigned Qty: <strong>{assignedQty}</strong> / {line.quantity || '0'}
+        <div className="del-modal__body" style={{ overflowY: 'auto' }}>
+          {error ? <div className="del-alert del-alert--warning">{error}</div> : null}
+          {availabilityErrors.length > 0 ? (
+            <div className="del-alert del-alert--warning">
+              <strong>Available quantity exceeded:</strong> {availabilityErrors.join(', ')}
+            </div>
+          ) : null}
+          {qtyMismatch && assignedQty > 0 ? (
+            <div className="del-alert del-alert--warning">
+              <strong>SAP B1 Standard:</strong> Batch quantity ({assignedQty.toFixed(2)} {inventoryUoM}) must exactly match required base quantity ({requiredQty.toFixed(2)} {inventoryUoM}).
+            </div>
+          ) : null}
+
+          <div className="grpo-batch-modal__summary" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+            <div style={{ fontSize: 12 }}>
+              <strong>Assigned Qty:</strong>{' '}
+              <strong style={{ color: qtyMismatch ? '#cc7a00' : '#1a7a30' }}>{assignedQty.toFixed(2)}</strong>
+              {' '} / {requiredQty.toFixed(2)} {inventoryUoM}
             </div>
             {!isIssueMode ? (
-              <button type="button" className="btn btn-outline-primary btn-sm" onClick={() => addRow()}>
+              <button type="button" className="del-btn del-btn--primary" onClick={() => addRow()}>
                 + Add Batch
               </button>
             ) : (
-              <span className="text-muted" style={{ fontSize: 12 }}>
-                Delivery can only allocate existing warehouse batches.
+              <span style={{ fontSize: 11, color: '#666' }}>
+                Select from available warehouse batches
               </span>
             )}
           </div>
 
-          <div className="table-responsive mb-3">
-            <table className="table table-bordered table-sm align-middle">
-              <thead className="table-light">
+          <div style={{ overflowX: 'auto', marginBottom: 14 }}>
+            <table className="del-grid grpo-batch-modal__grid" style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
                 <tr>
-                  <th style={{ width: '45%' }}>Batch Number</th>
-                  <th style={{ width: '25%' }}>Quantity</th>
-                    {mode === 'receipt' ? <th style={{ width: '20%' }}>Expiry Date</th> : null}
-                    <th style={{ width: '10%' }}></th>
-                  </tr>
-                </thead>
+                  <th>{isIssueMode ? 'Batch Number' : 'JKL Lot No.'}</th>
+                  <th>Quantity ({inventoryUoM})</th>
+                  {!isIssueMode ? <th>Expiry Date</th> : null}
+                  <th></th>
+                </tr>
+              </thead>
               <tbody>
                 {rows.map((row, index) => (
                   <tr key={index}>
                     <td>
                       {isIssueMode ? (
                         <select
-                          className="form-control form-control-sm"
+                          className="del-grid__input"
                           value={row.batchNumber}
-                          onChange={(e) => updateRow(index, 'batchNumber', e.target.value)}
+                          onChange={(event) => updateRow(index, 'batchNumber', event.target.value)}
                         >
                           <option value="">Select batch</option>
                           {batchOptions.map((batch) => (
@@ -145,34 +295,49 @@ export default function BatchAllocationModal({
                           ))}
                         </select>
                       ) : (
-                        <input
-                          className="form-control form-control-sm"
-                          value={row.batchNumber}
-                          onChange={(e) => updateRow(index, 'batchNumber', e.target.value)}
-                          placeholder="Enter batch number"
-                        />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <input
+                            className="del-grid__input"
+                            value={row.batchNumber}
+                            onChange={(event) => updateRow(index, 'batchNumber', event.target.value)}
+                            placeholder="JKL Lot No."
+                          />
+                          {typeof onGenerateBatchNumber === 'function' ? (
+                            <button
+                              type="button"
+                              className="del-btn"
+                              onClick={() => generateBatchNumber(index)}
+                              disabled={generatingRow === index}
+                              title="Auto number"
+                              style={{ minWidth: 28, padding: '2px 7px' }}
+                            >
+                              {generatingRow === index ? '...' : '#'}
+                            </button>
+                          ) : null}
+                        </div>
                       )}
                     </td>
                     <td>
                       <input
-                        className="form-control form-control-sm"
+                        className="del-grid__input"
                         value={row.quantity}
-                        onChange={(e) => updateRow(index, 'quantity', e.target.value)}
+                        onChange={(event) => updateRow(index, 'quantity', event.target.value)}
                         placeholder="0"
+                        style={{ textAlign: 'right' }}
                       />
                     </td>
-                    {mode === 'receipt' ? (
+                    {!isIssueMode ? (
                       <td>
                         <input
                           type="date"
-                          className="form-control form-control-sm"
+                          className="del-grid__input"
                           value={row.expiryDate}
-                          onChange={(e) => updateRow(index, 'expiryDate', e.target.value)}
+                          onChange={(event) => updateRow(index, 'expiryDate', event.target.value)}
                         />
                       </td>
                     ) : null}
                     <td>
-                      <button type="button" className="btn btn-outline-danger btn-sm" onClick={() => removeRow(index)}>
+                      <button type="button" className="del-btn del-btn--danger" onClick={() => removeRow(index)}>
                         x
                       </button>
                     </td>
@@ -182,84 +347,71 @@ export default function BatchAllocationModal({
             </table>
           </div>
 
-          <div className="row g-3">
-            <div className="col-md-12">
-              <div className="border rounded p-2" style={{ background: '#f8fafc' }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
-                  {isIssueMode ? 'Available Warehouse Batches' : 'Existing Warehouse Batches'}
-                </div>
-                {loading ? (
-                  <div className="text-muted" style={{ fontSize: 12 }}>Loading batches...</div>
-                ) : batchOptions.length ? (
-                  <div className="table-responsive">
-                    <table className="table table-sm mb-0">
-                      <thead>
-                        <tr>
-                          <th>Batch</th>
-                          <th>Available Qty</th>
-                          <th>Expiry</th>
-                          {isIssueMode ? <th></th> : null}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {batchOptions.map((batch) => (
-                          <tr key={`${batch.BatchNumber}-${batch.ExpiryDate || ''}`}>
-                            <td>{batch.BatchNumber}</td>
-                            <td>{batch.AvailableQty}</td>
-                            <td>{batch.ExpiryDate ? String(batch.ExpiryDate).slice(0, 10) : '-'}</td>
-                            {isIssueMode ? (
-                              <td>
-                                <button
-                                  type="button"
-                                  className="btn btn-outline-primary btn-sm"
-                                  onClick={() => {
-                                    const batchNumber = String(batch.BatchNumber || '');
-                                    setRows((prev) => {
-                                      const emptyIndex = prev.findIndex((row) => !String(row.batchNumber || '').trim());
-                                      if (emptyIndex >= 0) {
-                                        return prev.map((row, index) => (
-                                          index === emptyIndex
-                                            ? {
-                                              ...row,
-                                              batchNumber,
-                                              expiryDate: batch.ExpiryDate ? String(batch.ExpiryDate).slice(0, 10) : '',
-                                            }
-                                            : row
-                                        ));
-                                      }
-                                      return [
-                                        ...prev,
-                                        {
-                                          ...createBatchRow(),
-                                          batchNumber,
-                                          expiryDate: batch.ExpiryDate ? String(batch.ExpiryDate).slice(0, 10) : '',
-                                        },
-                                      ];
-                                    });
-                                  }}
-                                >
-                                  Use
-                                </button>
-                              </td>
-                            ) : null}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="text-muted" style={{ fontSize: 12 }}>No warehouse batches found.</div>
-                )}
-              </div>
+          <div className="grpo-batch-modal__existing" style={{ border: '1px solid #d7dde5', borderRadius: 4, padding: 10, background: '#f8fafc' }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
+              {isIssueMode ? 'Available Warehouse Batches' : 'Existing Warehouse Batches'}
             </div>
+            {loading ? (
+              <div style={{ fontSize: 12, color: '#666' }}>Loading batches...</div>
+            ) : batchOptions.length ? (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="del-grid" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th>Batch</th>
+                      <th>Available Qty ({inventoryUoM})</th>
+                      <th>Expiry</th>
+                      {isIssueMode ? <th></th> : null}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchOptions.map((batch) => (
+                      <tr key={`${batch.BatchNumber}-${batch.ExpiryDate || ''}`}>
+                        <td>{batch.BatchNumber}</td>
+                        <td style={{ textAlign: 'right' }}>{parseBatchNumber(batch.AvailableQty).toFixed(2)}</td>
+                        <td>{batch.ExpiryDate ? String(batch.ExpiryDate).slice(0, 10) : '-'}</td>
+                        {isIssueMode ? (
+                          <td>
+                            <button type="button" className="del-btn" onClick={() => applyWarehouseBatch(batch)}>
+                              Use
+                            </button>
+                          </td>
+                        ) : null}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: '#666' }}>No warehouse batches found.</div>
+            )}
           </div>
         </div>
 
-        <div className="card-footer d-flex justify-content-end gap-2">
-          <button type="button" className="btn btn-outline-secondary btn-sm" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary btn-sm" onClick={handleSave}>Save Batches</button>
+        <div className="del-modal__footer">
+          <button type="button" className="del-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="del-btn del-btn--primary"
+            onClick={handleSave}
+            disabled={!canSave}
+            title={
+              qtyMismatch
+                ? `Batch quantity must match base quantity (${requiredQty.toFixed(2)} ${inventoryUoM})`
+                : assignedQty === 0
+                  ? 'Allocate at least one batch'
+                  : availabilityErrors.length > 0
+                    ? availabilityErrors.join(', ')
+                    : 'Save batch allocations'
+            }
+          >
+            Save Batches
+          </button>
         </div>
       </div>
-    </div>
-  ), document.body);
+    </div>,
+    document.body
+  );
 }

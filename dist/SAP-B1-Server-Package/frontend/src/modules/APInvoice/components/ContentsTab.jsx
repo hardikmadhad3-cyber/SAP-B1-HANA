@@ -91,25 +91,83 @@ const normalizeSapPairDropdownOption = (field, option) => {
 const DIRECT_LINE_FIELDS = new Set([
   'itemNo',
   'itemDescription',
+  'hsnCode',
+  'sac',
+  'sacCode',
   'quantity',
   'unitPrice',
   'stdDiscount',
   'rate',
   'taxCode',
+  'wtaxLiable',
   'grossPriceAfterDisc',
   'total',
+  'binLocationAllocation',
   'whse',
   'glAccount',
+  'itemCost',
   'distRule',
   'priceSource',
   'taxAmountLC',
   'uomCode',
   'countryOfOrigin',
   'loc',
+  'withoutQtyPosting',
   'blanketAgreementNo',
+  'costSheet',
+  'packingType',
+  'containerType',
+  'grossWt',
+  'totalPackage',
+  'taxCodeRepeat',
+  'price',
+  'sellerBrokerage',
+  'buyerBrokerage',
+  'buyerDelivery',
+  'sellerDelivery',
+  'buyerPaymentTerms',
+  'sellerPaymentTerms',
+  'buyerQuality',
+  'sellerQuality',
+  'buyerPrice',
+  'sellerPrice',
+  'buyerSpecialInstruction',
+  'sellerSpecialInstruction',
+  'sellerBrokerageAmtPer',
+  'sellerBrokeragePercent',
+  'stcode',
+  'sellerItem',
+  'sellerQty',
+  'specialRebate',
+  'commission',
+  'sellerBrokeragePerQty',
+  'fixBrokBuyer',
+  'fixBrockSeller',
+  'sellerTermsOfPaymentRepeat',
 ]);
 
-const NUMERIC_LINE_FIELDS = new Set(['quantity', 'unitPrice', 'stdDiscount']);
+const NUMERIC_LINE_FIELDS = new Set([
+  'quantity',
+  'unitPrice',
+  'stdDiscount',
+  'grossWt',
+  'totalPackage',
+  'price',
+  'sellerBrokerage',
+  'buyerBrokerage',
+  'sellerBrokeragePercent',
+  'sellerQty',
+  'specialRebate',
+  'commission',
+  'sellerBrokeragePerQty',
+  'sellerBrokerageAmountPer',
+  'sellerBrokeragePercentage',
+  'sellerQuantity',
+  'brokPerQty',
+  'commision',
+  'fixBrokBuyer',
+  'fixBrockSeller',
+]);
 
 const normalizeIdentity = (value) =>
   String(value || '')
@@ -372,11 +430,11 @@ export default function ContentsTab({
         options: column.options || column.udfField.options,
       };
 
-      if (column.key === 'sac') {
+      if (column.key === 'sac' || column.key === 'sacCode') {
         return renderUdfLookupCell(mergedField, line, rowIndex, 'sac', 'Select SAC');
       }
 
-      if (column.key === 'freight1TaxCode' || column.key === 'stcode') {
+      if (column.key === 'freight1TaxCode') {
         return renderUdfTaxCodeCell(mergedField, line, rowIndex);
       }
 
@@ -462,14 +520,14 @@ export default function ContentsTab({
       );
     }
 
-    if (column.key === 'sac') {
+    if (column.key === 'sac' || column.key === 'sacCode') {
       return (
         <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           <input
             className="po-grid__input"
             style={{ flex: 1, textAlign: 'left' }}
-            name="sac"
-            value={line.sac || ''}
+            name={column.key}
+            value={line[column.key] || ''}
             onChange={(event) => onLineChange(rowIndex, event)}
             placeholder="SAC"
             disabled={disabled}
@@ -511,7 +569,7 @@ export default function ContentsTab({
       );
     }
 
-    if (column.key === 'taxCode' || column.key === 'freight1TaxCode' || column.key === 'stcode') {
+    if (column.key === 'taxCode' || column.key === 'freight1TaxCode') {
       return (
         <TaxCodeLookup
           className="po-grid__input"
@@ -558,9 +616,23 @@ export default function ContentsTab({
           onChange={(event) => onLineChange(rowIndex, event)}
           disabled={disabled}
         >
-          <option value=""></option>
-          <option value="Y">Y</option>
           <option value="N">N</option>
+          <option value="Y">Y</option>
+        </select>
+      );
+    }
+
+    if (column.key === 'withoutQtyPosting' || column.type === 'yesNo') {
+      return (
+        <select
+          className="po-grid__input"
+          name={column.key}
+          value={['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(line[column.key] || '').trim().toUpperCase()) ? 'Y' : 'N'}
+          onChange={(event) => onLineChange(rowIndex, event)}
+          disabled={disabled}
+        >
+          <option value="N">No</option>
+          <option value="Y">Yes</option>
         </select>
       );
     }

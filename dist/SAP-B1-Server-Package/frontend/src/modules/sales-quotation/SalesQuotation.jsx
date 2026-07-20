@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import './styles/SalesQuotation.css';
 import '../../modules/item-master/styles/itemMaster.css';
+import './styles/SalesQuotation.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel';
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
@@ -12,6 +12,7 @@ import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import TransportTab from './components/TransportTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import AddressModal from './components/AddressModal';
+import { formatAddressComponent, mapAddressFields, pickAddressComponentFields } from '../../utils/documentAddress';
 import EWayBillModal from './components/EWayBillModal';
 import TaxInfoModal from './components/TaxInfoModal';
 import StateSelectionModal from './components/StateSelectionModal';
@@ -41,6 +42,14 @@ import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
+import { useAuth } from '../../auth/AuthContext';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
+import {
+  SALES_QUOTATION_LAYOUT_DOCUMENT_TYPE,
+  buildSalesOrderMatrixColumnsFromLayout,
+} from '../sales-order/documentLayout';
+import { hydrateWorkbookDocumentLine } from '../../utils/workbookLineHydration';
 import {
   fetchSalesQuotationByDocEntry,
   fetchSalesQuotationCustomerDetails,
@@ -57,7 +66,6 @@ import {
 } from '../../api/salesQuotationApi';
 import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
-import { SALES_ORDER_COMPANY_ID } from '../../config/appConfig';
 import {
   BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
@@ -70,10 +78,12 @@ import {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
-  const d = e?.response?.data?.detail;
+  const body = e?.response?.data || {};
+  const d = body.detail || body.details;
   if (typeof d === 'string' && d.trim()) return d;
   if (d?.error?.message) return d.error.message;
   if (d?.message) return d.message;
+  if (body.message) return d?.hint ? `${body.message} ${d.hint}` : body.message;
   return e?.message || fb;
 };
 const today = () => new Date().toISOString().split('T')[0];
@@ -100,17 +110,24 @@ const mapAddressToModalForm = (address, existing = {}) => ({
   billToAddress: existing.billToAddress || '',
   streetPoBox: address?.Street || '',
   streetNo: address?.StreetNo || '',
-  buildingFloorRoom: address?.Building || '',
+  buildingFloorRoom: address?.BuildingFloorRoom || address?.Building || '',
   block: address?.Block || '',
   city: address?.City || '',
   zipCode: address?.ZipCode || '',
   county: address?.County || '',
   state: address?.State || '',
   countryRegion: address?.Country || '',
-  addressName2: address?.Address2 || '',
-  addressName3: address?.Address3 || '',
-  gln: address?.GLN || '',
-  gstin: address?.GSTIN || '',
+  addressName2: address?.AddressName2 || address?.Address2 || '',
+  addressName3: address?.AddressName3 || address?.Address3 || '',
+  gln: address?.GlobalLocationNumber || address?.GlblLocNum || address?.GLN || '',
+  erpAddress: address?.U_ERPAddress || address?.U_ERP_Address || address?.ERPAddress || '',
+  contactPerson: address?.U_ContactPerson || address?.U_CONTACT_PERSON || address?.ContactPerson || '',
+  mobile: address?.U_Mobile || address?.U_MOBILE || address?.Mobile || address?.MobilePhone || '',
+  dateOfRegistration: address?.U_DateOfRegistration || address?.U_Date_Of_Registration || address?.DateOfRegistration || '',
+  dateDetailsOfRegistration: address?.U_DateDetlOfReg || address?.U_Date_Detl_Of_Reg || address?.DateDetlOfReg || '',
+  addressStatus: address?.U_Status || address?.AddressStatus || address?.Status || '',
+  gstin: address?.GSTRegnNo || address?.GSTIN || address?.U_GSTIN_No || address?.U_GSTINNo || '',
+  ...mapAddressFields(address),
 });
 const normalizeAddressText = (value) =>
   String(value || '')
@@ -154,6 +171,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', quantity: '', unitPrice: '',
   requiredDate: '', quotedDate: '', requiredQty: '',
   sacCode: '', uomCode: '', stdDiscount: '', taxCode: '', total: '', totalLC: '', whse: '',
+  taxCodeManuallyOverridden: false,
   distRule: '', cogsDistRule: '', countryOfOrigin: '', loc: '', branch: '',
   blanketAgreementNo: '', allowProcurementDoc: false,
   saudaNodeRef: '', apInvDocKey: '', apInvDocNum: '', apInvLineNum: '',
@@ -184,6 +202,69 @@ const INIT_HEADER = {
   totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
   billToAddress: '', billToCode: '', shipToAddress: '',
+  shipToAddressComponents: null, billToAddressComponents: null,
+};
+
+const resolveCurrencyCode = (currency, fallback = 'INR') => {
+  const normalized = String(currency || '').trim();
+  return normalized && normalized !== '##' ? normalized : fallback;
+};
+
+const isUomNameColumn = (column = {}) => {
+  const tokens = [
+    column.key,
+    column.valueKey,
+    column.rendererKey,
+    column.sapField,
+    column.fieldName,
+    column.layoutFieldName,
+    column.label,
+  ].map((value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, ''));
+
+  return tokens.some((token) => ['UOMNAME', 'UNITMSR'].includes(token));
+};
+
+const ensureSalesQuotationMatrixColumns = (columns = []) => {
+  const safeColumns = Array.isArray(columns) ? columns.filter(Boolean) : [];
+  const nextColumns = safeColumns.map((column) => ({
+    ...column,
+    sapControlled: true,
+  }));
+
+  if (nextColumns.some(isUomNameColumn)) return nextColumns;
+
+  const quantityIndex = nextColumns.findIndex((column) => (
+    String(column.key || column.valueKey || column.rendererKey || '').trim() === 'quantity'
+  ));
+  const orderBase = quantityIndex >= 0
+    ? Number(nextColumns[quantityIndex].order || nextColumns[quantityIndex].columnOrder || quantityIndex + 1)
+    : 4;
+  const uomNameColumn = {
+    key: 'uomName',
+    valueKey: 'uomName',
+    rendererKey: 'uomName',
+    sapField: 'unitMsr',
+    fieldName: 'unitMsr',
+    layoutFieldName: 'unitMsr',
+    label: 'UoM Name',
+    visible: true,
+    active: false,
+    readOnly: true,
+    minWidth: 120,
+    width: 120,
+    order: orderBase + 0.1,
+    columnOrder: orderBase + 0.1,
+    sapControlled: true,
+    importedLayout: true,
+    source: 'sales-quotation-required-column',
+    type: 'text',
+  };
+
+  return [
+    ...nextColumns.slice(0, quantityIndex >= 0 ? quantityIndex + 1 : nextColumns.length),
+    uomNameColumn,
+    ...nextColumns.slice(quantityIndex >= 0 ? quantityIndex + 1 : nextColumns.length),
+  ];
 };
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
@@ -200,6 +281,9 @@ const closeDocumentDropdowns = () => {
 function SalesQuotation() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { company } = useAuth();
+  const activeCompanyId = company?.companyId || '';
+  const activeCompanyDb = company?.dbName || '';
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const requestedEditDocEntry = location.state?.salesQuotationDocEntry || location.state?.salesOrderDocEntry;
   const formRef = useRef(null);
@@ -208,13 +292,15 @@ function SalesQuotation() {
   const [header, setHeader] = useState(INIT_HEADER);
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
+  const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(BASE_MATRIX_COLUMNS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
-  const [formSettings, setFormSettings] = useCompanyScopedFormSettings(
+  const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
+    [headerUdfDefinitions, rowUdfDefinitions, matrixColumnDefinitions],
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [formSettingsOpen, setFormSettingsOpen] = useState(false);
@@ -223,7 +309,9 @@ function SalesQuotation() {
     warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
     payment_terms: [], shipping_types: [], branches: [], uom_groups: [], sales_employees: [], owners: [],
     countries: [], distribution_rules: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
+    company_currencies: { localCurrency: 'INR', systemCurrency: 'INR' },
     decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
+    line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
@@ -388,9 +476,42 @@ function SalesQuotation() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const [refDataRes, hsnRes] = await Promise.all([
-          fetchSalesQuotationReferenceData(SALES_ORDER_COMPANY_ID),
+        if (!activeCompanyId) {
+          setHeaderUdfDefinitions([]);
+          setRowUdfDefinitions([]);
+          setMatrixColumnDefinitions(BASE_MATRIX_COLUMNS);
+          setHeaderUdfs({});
+          setLines([createLine([])]);
+          setRefData(prev => ({
+            ...prev,
+            company: '',
+            vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [],
+            items: [], warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
+            payment_terms: [], shipping_types: [], branches: [], states: [], uom_groups: [], sales_employees: [], owners: [],
+            countries: [], distribution_rules: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
+            company_currencies: { localCurrency: 'INR', systemCurrency: 'INR' },
+            udf_metadata: { header: [], rows: [] },
+            line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
+          }));
+          return;
+        }
+
+        setMatrixColumnDefinitions([]);
+
+        const [refDataRes, hsnRes, layoutRes] = await Promise.all([
+          fetchSalesQuotationReferenceData(activeCompanyId),
           fetchHSNCodes(),
+          getDocumentLayout({
+            companyDb: activeCompanyDb || undefined,
+            documentType: SALES_QUOTATION_LAYOUT_DOCUMENT_TYPE,
+            objectType: '23',
+          }).catch((error) => ({
+            data: {
+              success: false,
+              columns: [],
+              warning: getErrMsg(error, 'Failed to load SAP layout.'),
+            },
+          })),
         ]);
         
         // ═══ LOGGING: Reference Data ═══
@@ -434,31 +555,24 @@ function SalesQuotation() {
         if (!ignore) {
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
           const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
+          const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
+            ? refDataRes.data.line_field_metadata.matrix_columns
+            : BASE_MATRIX_COLUMNS;
+          const nextMatrixColumns = ensureSalesQuotationMatrixColumns(buildSalesOrderMatrixColumnsFromLayout({
+            layoutColumns: layoutRes?.data?.columns || [],
+            liveMatrixColumns,
+            rowUdfFields: nextRowUdfs,
+            includeLineNumber: false,
+          }));
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
+          setMatrixColumnDefinitions(nextMatrixColumns);
           setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
             ...line,
             udf: normalizeUdfState(nextRowUdfs, line.udf || {}),
           })));
-          setFormSettings((prev) => ({
-            ...prev,
-            matrixColumns: {
-              ...BASE_MATRIX_COLUMNS.reduce((acc, field) => ({
-                ...acc,
-                [field.key]: { visible: field.visible !== undefined ? field.visible : true, active: true },
-              }), {}),
-              ...(prev.matrixColumns || {}),
-            },
-            headerUdfs: {
-              ...nextHeaderUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
-              ...(prev.headerUdfs || {}),
-            },
-            rowUdfs: {
-              ...nextRowUdfs.reduce((acc, field) => ({ ...acc, [field.key]: { visible: true, active: true } }), {}),
-              ...(prev.rowUdfs || {}),
-            },
-          }));
+          setFormSettings(readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey));
           setRefData(prev => ({
             ...prev,
             company: refDataRes.data.company || '',
@@ -484,9 +598,18 @@ function SalesQuotation() {
             distribution_rules: refDataRes.data.distribution_rules || [],
             quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
             price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
+            company_currencies: refDataRes.data.company_currencies || { localCurrency: 'INR', systemCurrency: 'INR' },
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
-            warnings: refDataRes.data.warnings || [],
+            warnings: [
+              ...(refDataRes.data.warnings || []),
+              ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+            ],
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
+            line_field_metadata: {
+              ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+              matrix_columns: nextMatrixColumns,
+              imported_layout: layoutRes?.data || null,
+            },
             series: Array.isArray(prev.series) ? prev.series : [],
           }));
         }
@@ -499,7 +622,7 @@ function SalesQuotation() {
     };
     load();
     return () => { ignore = true; };
-  }, []);
+  }, [activeCompanyDb, activeCompanyId, formSettingsStorageKey]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -614,8 +737,10 @@ function SalesQuotation() {
           // Map backend address field names to frontend field names
           shipToCode: so.header?.shipToCode || '',
           shipToAddress: so.header?.shipTo || '',
+          shipToAddressComponents: so.header?.shipToAddressComponents || null,
           billToCode: so.header?.payToCode || '',
           billToAddress: so.header?.payTo || '',
+          billToAddressComponents: so.header?.billToAddressComponents || null,
           // Copy all other fields from backend
           postingDate: so.header?.postingDate || '',
           deliveryDate: so.header?.deliveryDate || '',
@@ -634,21 +759,28 @@ function SalesQuotation() {
         setHeader(newHeader);
         setLines(
           Array.isArray(so.lines) && so.lines.length
-            ? so.lines.map((l, index) => {
-                // If HSN is empty, try to get it from item master
-                let hsnCode = l.hsnCode || '';
-                if (!hsnCode && l.itemNo) {
-                  const item = refData.items.find(it => String(it.ItemCode) === String(l.itemNo));
-                  if (item) {
-                    hsnCode = item.SWW || item.HSNCode || '';
-                  }
-                }
-                
-                return { 
-                  ...createLine(rowUdfDefinitions), 
-                  ...l, 
-                  hsnCode: hsnCode,
-                  udf: normalizeUdfState(rowUdfDefinitions, l.udf || {})
+            ? so.lines.map((line) => {
+                const hydratedLine = hydrateWorkbookDocumentLine({
+                  line,
+                  createLine,
+                  rowUdfDefinitions,
+                  normalizeUdfState,
+                  items: refData.items,
+                });
+                const savedTaxCode = String(
+                  hydratedLine.taxCode ||
+                  hydratedLine.taxCodeRepeat ||
+                  line.taxCode ||
+                  line.taxCodeRepeat ||
+                  line.TaxCode ||
+                  line.VatGroup ||
+                  ''
+                ).trim();
+                return {
+                  ...hydratedLine,
+                  taxCode: savedTaxCode,
+                  taxCodeRepeat: savedTaxCode,
+                  taxCodeManuallyOverridden: Boolean(savedTaxCode),
                 };
               })
             : [createLine(rowUdfDefinitions)]
@@ -815,6 +947,13 @@ function SalesQuotation() {
   };
 
   const totals = calcTotals();
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 23,
+    docEntry: currentDocEntry,
+    header,
+    total: totals.total,
+  });
 
   // ── GST determination logic ───────────────────────────────────────────────
   const determineGSTType = (gstState) => {
@@ -919,6 +1058,7 @@ function SalesQuotation() {
 
   // ── Recalculate Tax Codes on State/Address Changes ────────────────────────
   useEffect(() => {
+    if (currentDocEntry) return;
     if (!header.vendor || !header.placeOfSupply) return;
 
     const companyState = refData.company_address?.State || selectedBranch?.State || '';
@@ -936,7 +1076,7 @@ function SalesQuotation() {
     });
 
     // Recalculate tax codes for all lines with items
-    const updatedLines = recalculateAllTaxCodes(
+    const recalculatedLines = recalculateAllTaxCodes(
       lines,
       refData.items,
       header.placeOfSupply,  // shipToState
@@ -945,9 +1085,12 @@ function SalesQuotation() {
       companyState,
       effectiveTaxCodes
     );
+    const updatedLines = recalculatedLines.map((line, index) => (
+      lines[index]?.taxCodeManuallyOverridden ? lines[index] : line
+    ));
 
     setLines(updatedLines);
-  }, [header.placeOfSupply, header.vendor, refData.company_address, selectedBranch]);
+  }, [currentDocEntry, header.placeOfSupply, header.vendor, refData.company_address, selectedBranch]);
 
   useEffect(() => {
     if (!header.vendor) return;
@@ -998,6 +1141,7 @@ function SalesQuotation() {
 
   // Update GST when addresses or place of supply changes
   useEffect(() => {
+    if (currentDocEntry) return;
     if (!header.vendor || !header.placeOfSupply) return;
 
     const gstType = determineGSTType();
@@ -1006,7 +1150,7 @@ function SalesQuotation() {
     // Update tax codes for all lines that have items
     setLines(prevLines =>
       prevLines.map(line => {
-        if (!line.itemNo) return line; // Skip empty lines
+        if (!line.itemNo || line.taxCodeManuallyOverridden) return line; // Skip empty or preserved lines
         
         // Get item's default tax rate (assume 18% if not specified)
         const item = refData.items.find(it => String(it.ItemCode || '') === String(line.itemNo || ''));
@@ -1020,7 +1164,7 @@ function SalesQuotation() {
         };
       })
     );
-  }, [header.placeOfSupply, header.vendor]);
+  }, [currentDocEntry, header.placeOfSupply, header.vendor]);
 
   // ── vendor details ────────────────────────────────────────────────────────
   const loadVendorDetails = async (code) => {
@@ -1062,8 +1206,15 @@ function SalesQuotation() {
   const syncVendor = (code, hdr) => {
     const m = refData.vendors.find(v => String(v.CardCode || '') === String(code || ''));
     if (!m) return { nextHeader: hdr };
+    const localCurrency = refData.company_currencies?.localCurrency || hdr.currency || 'INR';
     return {
-      nextHeader: { ...hdr, name: m.CardName || hdr.name, paymentTerms: m.PayTermsGrpCode != null ? String(m.PayTermsGrpCode) : hdr.paymentTerms, contactPerson: '' },
+      nextHeader: {
+        ...hdr,
+        name: m.CardName || hdr.name,
+        paymentTerms: m.PayTermsGrpCode != null ? String(m.PayTermsGrpCode) : hdr.paymentTerms,
+        contactPerson: '',
+        currency: resolveCurrencyCode(m.Currency, localCurrency),
+      },
     };
   };
 
@@ -1222,6 +1373,7 @@ function SalesQuotation() {
             // Step 1: Set Item Details
             next.itemDescription = item.ItemName || next.itemDescription;
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
+            next.uomName = next.uomCode || next.uomName || '';
             
             // Step 2: Set HSN Code from API response (OCHP.ChapterID via JOIN)
             next.hsnCode = hsnData.hsnCode || hsnData.hsn_sww || '';
@@ -1242,7 +1394,9 @@ function SalesQuotation() {
             const companyState = refData.company_address?.State || selectedBranch?.State || '';
             
             // Step 5: Validate States
-            if (!gstState || !companyState) {
+            if (next.taxCodeManuallyOverridden) {
+              // Keep the tax code loaded from find mode or explicitly chosen by the user.
+            } else if (!gstState || !companyState) {
               console.warn('⚠️ Missing state information for tax determination');
               next.taxCode = '';
             } else {
@@ -1282,6 +1436,7 @@ function SalesQuotation() {
           if (item) {
             next.itemDescription = item.ItemName || next.itemDescription;
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
+            next.uomName = next.uomCode || next.uomName || '';
             next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
           }
           next.total = fmtDec(calcLineTotal(next), numDec.total);
@@ -1293,6 +1448,8 @@ function SalesQuotation() {
       setLines(prev => prev.map((line, idx) => {
         if (idx !== i) return line;
         const next = { ...line, [name]: numDec[name] !== undefined ? sanitize(value, numDec[name]) : value };
+        if (name === 'taxCode') next.taxCodeManuallyOverridden = true;
+        if (name === 'uomCode') next.uomName = value;
         next.total = fmtDec(calcLineTotal(next), numDec.total);
         return next;
       }));
@@ -1418,14 +1575,20 @@ function SalesQuotation() {
       header.billToAddress || header.payTo,
     );
     const activeAddress = type === 'billTo' ? billAddress : shipAddress;
+    const activeComponents = type === 'billTo'
+      ? header.billToAddressComponents
+      : header.shipToAddressComponents;
 
     setAddressForm(
-      mapAddressToModalForm(activeAddress, {
-        shipToCode: header.shipToCode || shipAddress?.Address || '',
-        shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
-        billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
-        billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
-      }),
+      {
+        ...mapAddressToModalForm(activeAddress, {
+          shipToCode: header.shipToCode || shipAddress?.Address || '',
+          shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
+          billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
+          billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
+        }),
+        ...(activeComponents || {}),
+      },
     );
     setAddressModal({ type });
   };
@@ -1435,27 +1598,22 @@ function SalesQuotation() {
   };
 
   const saveAddressModal = () => {
-    const formatted = [
-      [addressForm.streetPoBox, addressForm.streetNo].filter(Boolean).join(', '),
-      addressForm.buildingFloorRoom,
-      [addressForm.block, addressForm.city].filter(Boolean).join(', '),
-      [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion,
-      addressForm.addressName2,
-      addressForm.addressName3,
-    ].filter(Boolean).join('\n');
+    const formatted = formatAddressComponent(addressForm);
+    const components = pickAddressComponentFields(addressForm);
+    markDirty();
 
     if (addressModal.type === 'shipTo') {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode || p.shipToCode,
-        shipToAddress: formatted || addressForm.shipToAddress,
-        shipTo: formatted || addressForm.shipToAddress,
+        shipToAddress: formatted,
+        shipTo: formatted,
+        shipToAddressComponents: components,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
         payTo: addressForm.billToAddress || p.payTo,
-        placeOfSupply: addressForm.state || p.placeOfSupply,
+        placeOfSupply: addressForm.state || '',
       }));
     } else {
       setHeader(p => ({
@@ -1465,9 +1623,10 @@ function SalesQuotation() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
-        billToAddress: formatted || addressForm.billToAddress,
-        payTo: formatted || addressForm.billToAddress,
-        placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
+        billToAddress: formatted,
+        payTo: formatted,
+        billToAddressComponents: components,
+        placeOfSupply: header.useBillToForTax ? addressForm.state || '' : p.placeOfSupply,
       }));
     }
     closeAddressModal();
@@ -1475,6 +1634,37 @@ function SalesQuotation() {
 
   const handleAddressFormChange = (e) => {
     const { name, value } = e.target;
+
+    if (name === 'shipToCode') {
+      const selectedAddress = resolveSalesQuotationAddress(value, vendorEffectiveShipToAddresses);
+      setAddressForm(prev => {
+        const nextState = {
+          ...prev,
+          shipToCode: value,
+          shipToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.shipToAddress,
+        };
+        return addressModal?.type === 'shipTo'
+          ? mapAddressToModalForm(selectedAddress, nextState)
+          : nextState;
+      });
+      return;
+    }
+
+    if (name === 'billToCode') {
+      const selectedAddress = resolveSalesQuotationAddress(value, vendorEffectiveBillToAddresses);
+      setAddressForm(prev => {
+        const nextState = {
+          ...prev,
+          billToCode: value,
+          billToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.billToAddress,
+        };
+        return addressModal?.type === 'billTo'
+          ? mapAddressToModalForm(selectedAddress, nextState)
+          : nextState;
+      });
+      return;
+    }
+
     setAddressForm(p => ({ ...p, [name]: value }));
   };
 
@@ -1572,26 +1762,38 @@ function SalesQuotation() {
   // ── Item Selection Modal handlers ─────────────────────────────────────────
   const openItemModal = async (lineIndex) => {
     console.log('🔍 Opening item modal for line:', lineIndex);
-    setItemModal({ open: true, lineIndex, items: [], loading: true });
+    const fallbackItems = Array.isArray(refData.items) ? refData.items : [];
+    setItemModal({
+      open: true,
+      lineIndex,
+      items: fallbackItems,
+      loading: fallbackItems.length === 0,
+    });
     
     try {
       console.log('📡 Fetching items from API...');
       const response = await fetchItemsForModal();
-      console.log('✅ Items received:', response.data);
-      console.log('📊 Items count:', response.data.items?.length || 0);
+      const payload = response?.data;
+      const normalizedItems = Array.isArray(payload?.items)
+        ? payload.items
+        : Array.isArray(payload)
+          ? payload
+          : [];
+      console.log('✅ Items received:', payload);
+      console.log('📊 Items count:', normalizedItems.length);
       
-      setItemModal(prev => ({
+      setItemModal((prev) => ({
         ...prev,
-        items: response.data.items || [],
-        loading: false
+        items: normalizedItems.length > 0 ? normalizedItems : fallbackItems,
+        loading: false,
       }));
     } catch (error) {
       console.error('❌ Failed to load items:', error);
       console.error('Error details:', error.response?.data || error.message);
-      setItemModal(prev => ({
+      setItemModal((prev) => ({
         ...prev,
-        items: [],
-        loading: false
+        items: prev.items.length > 0 ? prev.items : fallbackItems,
+        loading: false,
       }));
     }
   };
@@ -1618,17 +1820,19 @@ function SalesQuotation() {
           side: 'sales',
           hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
           fallbackWarehouse: header.warehouse,
+          syncUnitPriceUdf: false,
           calcLineTotal,
           formatTotal: (value) => fmtDec(value, numDec.total),
         });
+        next.uomName = next.uomCode || mergedItem.SalesUnit || mergedItem.InventoryUOM || next.uomName || '';
         
         // Auto-determine tax code
         const gstState = header.placeOfSupply;
         const companyState = refData.company_address?.State || selectedBranch?.State || '';
         
-        if (gstState && companyState) {
+        if (!next.taxCodeManuallyOverridden && gstState && companyState) {
           const determinedTaxCode = determineTaxCode(
-            item,
+            mergedItem,
             gstState,
             gstState,
             false,
@@ -1651,13 +1855,16 @@ function SalesQuotation() {
       // Still set basic item info even if HSN fetch fails
       setLines(prev => prev.map((line, idx) => {
         if (idx !== lineIndex) return line;
-        return hydrateDocumentLineFromItem(line, mergedItem, {
+        const next = hydrateDocumentLineFromItem(line, mergedItem, {
           side: 'sales',
           hsnCode: mergedItem.HSNCode || '',
           fallbackWarehouse: header.warehouse,
+          syncUnitPriceUdf: false,
           calcLineTotal,
           formatTotal: (value) => fmtDec(value, numDec.total),
         });
+        next.uomName = next.uomCode || mergedItem.SalesUnit || mergedItem.InventoryUOM || next.uomName || '';
+        return next;
       }));
       closeItemModal();
     }
@@ -1826,7 +2033,10 @@ function SalesQuotation() {
       currentDocEntry,
       header,
       initialHeader: INIT_HEADER,
-      lines,
+      lines: lines.map((line) => ({
+        ...line,
+        taxCodeManuallyOverridden: Boolean(String(line.taxCode || '').trim()),
+      })),
       createLine,
       rowUdfDefinitions,
       setCurrentDocEntry,
@@ -2056,6 +2266,7 @@ function SalesQuotation() {
       
       // Clean lines - remove any readonly/computed fields
       const cleanedLines = lines.map(line => ({
+        lineNum: line.lineNum,
         itemNo: line.itemNo,
         itemDescription: line.itemDescription,
         hsnCode: line.hsnCode,
@@ -2068,11 +2279,14 @@ function SalesQuotation() {
         whse: line.whse,
         loc: line.loc,
         branch: line.branch,
+        baseEntry: line.baseEntry,
+        baseType: line.baseType,
+        baseLine: line.baseLine,
         udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
       }));
       
       const payload = {
-        company_id: SALES_ORDER_COMPANY_ID,
+        company_id: activeCompanyId,
         header: prep,
         lines: cleanedLines,
         freightCharges: freightModal.freightCharges,
@@ -2266,6 +2480,8 @@ function SalesQuotation() {
                       header={header}
                       onHeaderChange={handleHeaderChange}
                       businessPartners={refData.vendors || []}
+                      localCurrency={refData.company_currencies?.localCurrency || 'INR'}
+                      systemCurrency={refData.company_currencies?.systemCurrency || refData.company_currencies?.localCurrency || 'INR'}
                       disabled={pageState.vendorLoading || !header.vendor || !!currentDocEntry}
                     />
 
@@ -2473,6 +2689,7 @@ function SalesQuotation() {
                 onOpenPaymentTermsModal={openPaymentTermsModal}
                 getBranchName={getBranchName}
                 formSettings={formSettings}
+                matrixFields={matrixColumnDefinitions}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
               />
@@ -2684,11 +2901,12 @@ function SalesQuotation() {
             className="so-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
-            matrixFields={BASE_MATRIX_COLUMNS}
+            matrixFields={matrixColumnDefinitions}
             headerUdfFields={headerUdfDefinitions}
             rowUdfFields={rowUdfDefinitions}
             formSettings={formSettings}
             onSettingChange={updateFormSetting}
+            editableSapControlledGroups={['matrixColumns']}
           />
         </div>
 

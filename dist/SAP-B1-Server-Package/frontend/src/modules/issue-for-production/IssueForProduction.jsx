@@ -45,7 +45,8 @@ const decorateIssueLine = (line, orderNo = "") => ({
   planned_qty: line.planned_qty ?? 0,
   issued_qty: line.issued_qty ?? line.issue_qty ?? 0,
   remaining_qty: line.remaining_qty ?? 0,
-  issue_qty: line.issue_qty ?? 0,
+  issue_qty: line.issue_qty ?? line.copy_qty ?? line.remaining_qty ?? 0,
+  copy_qty: line.copy_qty ?? line.issue_qty ?? line.remaining_qty ?? 0,
   uom: line.uom || "",
   uom_name: line.uom_name || line.uom || "",
   warehouse: line.warehouse || "",
@@ -68,6 +69,7 @@ const decorateIssueLine = (line, orderNo = "") => ({
 });
 
 export default function IssueForProductionModule() {
+  const pageRef = useRef(null);
   const [mode, setMode] = useState(MODES.ADD);
   const [tab, setTab] = useState(0);
   const [header, setHeader] = useState(EMPTY_HEADER);
@@ -120,6 +122,7 @@ export default function IssueForProductionModule() {
     setAlert(null);
     setPoModal(null);
     setCopyModal(null);
+    setMode(MODES.ADD);
   }, [series]);
 
   const handleHeaderChange = useCallback((event) => {
@@ -143,7 +146,13 @@ export default function IssueForProductionModule() {
       due_date: data.due_date,
       start_date: data.start_date,
     });
-    setLines((selectedLines || data.lines || []).map((line) => decorateIssueLine(line, data.doc_num)));
+    setLines((selectedLines || data.lines || []).map((line) => {
+      const decorated = decorateIssueLine(line, data.doc_num);
+      return {
+        ...decorated,
+        issue_qty: decorated.copy_qty ?? decorated.issue_qty ?? decorated.remaining_qty ?? 0,
+      };
+    }));
     setTab(0);
   }, []);
 
@@ -305,6 +314,27 @@ export default function IssueForProductionModule() {
     }
   };
 
+  useEffect(() => {
+    if (mode === MODES.LIST) return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      const page = pageRef.current;
+      const routeContent = page?.closest(".app-shell__content");
+      const windowBody = page?.closest(".page-window-frame__body");
+      const lineGrid = page?.querySelector(".ifp-grid-scroll");
+
+      if (routeContent) routeContent.scrollTop = 0;
+      if (windowBody) windowBody.scrollTop = 0;
+      if (lineGrid) {
+        lineGrid.scrollTop = 0;
+        lineGrid.scrollLeft = 0;
+      }
+      window.scrollTo({ top: 0, left: 0 });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [mode]);
+
   if (mode === MODES.LIST) {
     return (
       <IssueList
@@ -320,7 +350,7 @@ export default function IssueForProductionModule() {
   const isView = mode === MODES.VIEW;
 
   return (
-    <div className="im-page ifp-page">
+    <div ref={pageRef} className="im-page ifp-page">
       <div className="im-toolbar">
         <span className="im-toolbar__title">Issue for Production</span>
         <span className={`im-mode-badge im-mode-badge--${isView ? "update" : "add"}`}>
@@ -332,9 +362,25 @@ export default function IssueForProductionModule() {
             {loading ? "..." : "Add"}
           </button>
         )}
+        <button className="im-btn" onClick={resetForm}>Cancel</button>
         <button className="im-btn" onClick={() => { resetForm(); setMode(MODES.ADD); }}>New</button>
         <button className="im-btn" onClick={() => setMode(MODES.LIST)}>Find</button>
-        <button className="im-btn" onClick={resetForm}>Cancel</button>
+        <button
+          type="button"
+          className="im-btn"
+          onClick={() => setPoModal({ type: "", title: "List of Production Orders" })}
+          disabled={isView || loading}
+        >
+          IV Production Order
+        </button>
+        <button
+          type="button"
+          className="im-btn"
+          onClick={() => setPoModal({ type: "disassembly", title: "List of Disassembly Orders" })}
+          disabled={isView || loading}
+        >
+          Disassembly Order
+        </button>
       </div>
 
       {alert && <div className={`im-alert im-alert--${alert.type}`}>{alert.msg}</div>}
@@ -522,12 +568,11 @@ export default function IssueForProductionModule() {
           <div className="im-field ifp-footer-field">
             <label className="im-field__label">Journal Remark</label>
             <input
-              className="im-field__input"
+              className="im-field__input ifp-footer-input"
               name="journal_remark"
               value={header.journal_remark}
               onChange={handleHeaderChange}
               readOnly={isView}
-              style={{ width: 170 }}
             />
           </div>
         </div>
@@ -542,28 +587,6 @@ export default function IssueForProductionModule() {
               onChange={handleHeaderChange}
               readOnly={isView}
             />
-          </div>
-          <div className="ifp-footer-udfs">
-            <div className="ifp-footer-udf">
-              <button
-                type="button"
-                className="ifp-footer-link-btn"
-                onClick={() => setPoModal({ type: "", title: "List of Production Orders" })}
-                disabled={isView || loading}
-              >
-                IV Production Order
-              </button>
-            </div>
-            <div className="ifp-footer-udf">
-              <button
-                type="button"
-                className="ifp-footer-link-btn"
-                onClick={() => setPoModal({ type: "disassembly", title: "List of Disassembly Orders" })}
-                disabled={isView || loading}
-              >
-                Disassembly Order
-              </button>
-            </div>
           </div>
         </div>
       </div>

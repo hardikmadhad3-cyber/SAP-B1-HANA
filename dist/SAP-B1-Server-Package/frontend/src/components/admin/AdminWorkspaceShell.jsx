@@ -74,8 +74,11 @@ const AdminWorkspaceShell = ({ children }) => {
   const currentEntity = entities.find((entity) =>
     location.pathname === entity.path || location.pathname.startsWith(`${entity.path}/`)
   );
-  const pageTitle = currentEntity?.title || (location.pathname === '/admin' ? 'Overview' : 'Admin Workspace');
-  const pageDescription = currentEntity?.description || 'Manage application setup, users, roles, and access rights.';
+  const isGeneralSettings = location.pathname === '/admin/general-settings';
+  const pageTitle = isGeneralSettings ? 'General Settings' : (currentEntity?.title || (location.pathname === '/admin' ? 'Overview' : 'Admin Workspace'));
+  const pageDescription = isGeneralSettings
+    ? 'Assign company-specific defaults to application users.'
+    : (currentEntity?.description || 'Manage application setup, users, roles, and access rights.');
 
   const handleAdminLogout = () => {
     adminLogout();
@@ -99,7 +102,7 @@ const AdminWorkspaceShell = ({ children }) => {
             <NavLink to="/admin" end className={({ isActive }) => `admin-workspace__nav-link${isActive ? ' is-active' : ''}`}>
               Overview
             </NavLink>
-            <NavLink to="/general-settings" className={({ isActive }) => `admin-workspace__nav-link${isActive ? ' is-active' : ''}`}>
+            <NavLink to="/admin/general-settings" className={({ isActive }) => `admin-workspace__nav-link${isActive ? ' is-active' : ''}`}>
               General Settings
             </NavLink>
           </div>

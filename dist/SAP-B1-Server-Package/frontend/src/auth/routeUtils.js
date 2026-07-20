@@ -15,7 +15,7 @@ const normalizeMenuPath = (rawPath) => {
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 };
 
-const ALWAYS_ALLOWED_PATHS = ['/dashboard', '/general-settings'];
+const ALWAYS_ALLOWED_PATHS = ['/dashboard'];
 
 export const normalizePath = (path) => {
   const normalized = normalizeMenuPath(path);

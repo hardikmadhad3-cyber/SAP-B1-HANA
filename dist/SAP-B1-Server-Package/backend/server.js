@@ -42,6 +42,11 @@ const {
 const { runWithRequestContext } = require('./services/requestContextService');
 const apiTimingMiddleware = require('./middleware/apiTiming');
 const { cacheMiddleware, invalidateCacheMiddleware } = require('./middleware/cacheMiddleware');
+const {
+  apiRateLimitMiddleware,
+  reportRateLimitMiddleware,
+  reportSafetyMiddleware,
+} = require('./services/safetyControls');
 
 const authRoutes            = require('./routes/authRoutes');
 const menuRoutes            = require('./routes/menuRoutes');
@@ -69,6 +74,7 @@ const printRoutes           = require('./routes/printRoutes');
 const documentPrintRoutes   = require('./routes/documentPrintRoutes');
 const reportLayoutRoutes    = require('./routes/reportLayoutRoutes');
 const salesAnalysisRoutes   = require('./routes/salesAnalysisRoutes');
+const opportunitiesForecastRoutes = require('./routes/opportunitiesForecastRoutes');
 const bomRoutes             = require('./routes/bomRoutes');
 const productionOrderRoutes    = require('./routes/productionOrder');
 const issueForProductionRoutes   = require('./routes/issueForProduction');
@@ -82,6 +88,8 @@ const apInvoiceRoutes            = require('./routes/apInvoice');
 const arInvoiceRoutes            = require('./routes/arInvoice');
 const serviceArInvoiceRoutes      = require('./routes/serviceArInvoice');
 const serviceApInvoiceRoutes      = require('./routes/serviceApInvoice');
+const serviceApCreditMemoRoutes   = require('./routes/serviceApCreditMemo');
+const serviceArCreditMemoRoutes   = require('./routes/serviceArCreditMemo');
 const journalEntryRoutes           = require('./routes/journalEntryRoutes');
 const incomingPaymentsRoutes      = require('./routes/incomingPayments');
 const outgoingPaymentsRoutes      = require('./routes/outgoingPayments');
@@ -94,8 +102,13 @@ const goodsIssueRoutes           = require('./routes/goodsIssue');
 const inventoryTransferRequestRoutes = require('./routes/inventoryTransferRequest');
 const inventoryTransferRoutes    = require('./routes/inventoryTransfer');
 const purchaseAnalysisRoutes     = require('./routes/reports/purchaseAnalysis.routes');
+const activityOverviewRoutes     = require('./routes/reports/activityOverview.routes');
+const campaignsListRoutes        = require('./routes/reports/campaignsList.routes');
+const inactiveCustomersRoutes    = require('./routes/reports/inactiveCustomers.routes');
 const purchaseRequestReportRoutes = require('./routes/reports/purchaseRequestReport.routes');
 const itemListReportRoutes       = require('./routes/reports/itemListReport.routes');
+const productionOpenItemsRoutes  = require('./routes/reports/productionOpenItems.routes');
+const billOfMaterialsReportRoutes = require('./routes/reports/billOfMaterials.routes');
 const inventoryPostingListRoutes = require('./routes/reports/inventoryPostingList.routes');
 const inventoryInWarehouseRoutes = require('./routes/reports/inventoryInWarehouse.routes');
 const inventoryAuditRoutes       = require('./routes/reports/inventoryAudit.routes');
@@ -105,12 +118,16 @@ const generalLedgerRoutes        = require('./routes/reports/generalLedger.route
 const customerReceivablesAgingRoutes = require('./routes/reports/customerReceivablesAging.routes');
 const vendorLiabilitiesAgingRoutes = require('./routes/reports/vendorLiabilitiesAging.routes');
 const accountingTransactionReportsRoutes = require('./routes/reports/accountingTransactionReports.routes');
+const financialStatementsRoutes  = require('./routes/reports/financialStatements.routes');
 const reportStudioRoutes         = require('./routes/reportStudioRoutes');
 const reportLookupsRoutes        = require('./routes/reportLookups');
 const adminPanelRoutes           = require('./routes/adminPanelRoutes');
 const performanceRoutes          = require('./routes/performanceRoutes');
 const formSettingsRoutes         = require('./routes/formSettings');
+const generalSettingsRoutes      = require('./routes/generalSettingsRoutes');
 const predefinedTextRoutes       = require('./routes/predefinedTextRoutes');
+const relationshipMapRoutes      = require('./routes/relationshipMap');
+const sapDocumentLayoutRoutes    = require('./routes/sapDocumentLayout');
 
 const app = express();
 
@@ -132,10 +149,11 @@ const isReusableLookupRequest = (req) => {
 
   return (
     path.endsWith('/reference-data') ||
+    path.endsWith('/lookups') ||
+    path === '/api/sap/layout/document' ||
+    path.startsWith('/api/hsn-codes') ||
     path.includes('/lookup/') ||
     path.endsWith('/metadata') ||
-    path.endsWith('/series') ||
-    path.includes('/series/') ||
     path.endsWith('/items-modal') ||
     path.endsWith('/freight-charges') ||
     path.endsWith('/print-layouts') ||
@@ -146,7 +164,7 @@ const isReusableLookupRequest = (req) => {
 
 const reusableLookupCache = cacheMiddleware({
   namespace: (req) => `lookup:${req.path.toLowerCase()}`,
-  ttlSeconds: 300,
+  ttlSeconds: 1800,
   shouldCache: isReusableLookupRequest,
 });
 
@@ -214,6 +232,13 @@ app.use(cors({
   },
   credentials: true,
 }));
+
+// Ensure Authorization header is allowed in CORS preflight responses
+// so frontend clients can send Bearer tokens from browsers.
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  next();
+});
 app.use(express.json());
 app.use(apiTimingMiddleware);
 app.use((req, res, next) => runWithRequestContext(req, next));
@@ -248,6 +273,8 @@ app.use((req, res, next) => {
   return authenticateAccessToken(req, res, next);
 });
 
+app.use('/api', apiRateLimitMiddleware);
+app.use('/api/reports', reportRateLimitMiddleware, reportSafetyMiddleware);
 app.use('/api', reusableLookupCache);
 
 // Routes
@@ -281,6 +308,7 @@ app.use('/api/document-print',     documentPrintRoutes);
 app.use('/api',                    reportLayoutRoutes);
 app.use('/api',                    reportStudioRoutes);
 app.use('/api/reports',            salesAnalysisRoutes);
+app.use('/api/reports',            opportunitiesForecastRoutes);
 app.use('/api/bom',                bomRoutes);
 app.use('/api/production-order',   productionOrderRoutes);
 app.use('/api/issue-for-production',    issueForProductionRoutes);
@@ -294,6 +322,8 @@ app.use('/api/ap-invoice',         apInvoiceRoutes);
 app.use('/api/ar-invoice',         arInvoiceRoutes);
 app.use('/api/services/ar-invoice', serviceArInvoiceRoutes);
 app.use('/api/services/ap-invoice', serviceApInvoiceRoutes);
+app.use('/api/services/ap-credit-memo', serviceApCreditMemoRoutes);
+app.use('/api/services/ar-credit-memo', serviceArCreditMemoRoutes);
 app.use('/api/journal-entry',      journalEntryRoutes);
 app.use('/api/incoming-payments',  incomingPaymentsRoutes);
 app.use('/api/outgoing-payments',  outgoingPaymentsRoutes);
@@ -305,8 +335,13 @@ app.use('/api/goods-issue',        goodsIssueRoutes);
 app.use('/api/inventory-transfer-request', inventoryTransferRequestRoutes);
 app.use('/api/inventory-transfer', inventoryTransferRoutes);
 app.use('/api/reports',            purchaseAnalysisRoutes);
+app.use('/api/reports',            activityOverviewRoutes);
+app.use('/api/reports',            campaignsListRoutes);
+app.use('/api/reports',            inactiveCustomersRoutes);
 app.use('/api/reports',            purchaseRequestReportRoutes);
 app.use('/api/reports',            itemListReportRoutes);
+app.use('/api/reports',            productionOpenItemsRoutes);
+app.use('/api/reports',            billOfMaterialsReportRoutes);
 app.use('/api/reports',            inventoryPostingListRoutes);
 app.use('/api/reports',            inventoryInWarehouseRoutes);
 app.use('/api/reports',            inventoryAuditRoutes);
@@ -316,11 +351,16 @@ app.use('/api/reports',            generalLedgerRoutes);
 app.use('/api/reports',            customerReceivablesAgingRoutes);
 app.use('/api/reports',            vendorLiabilitiesAgingRoutes);
 app.use('/api/reports',            accountingTransactionReportsRoutes);
+app.use('/api/reports',            financialStatementsRoutes);
+app.use('/api',                    financialStatementsRoutes);
 app.use('/api/lookups',            reportLookupsRoutes);
 app.use('/api/admin-panel',        adminPanelRoutes);
 app.use('/api/performance',        performanceRoutes);
 app.use('/api/form-settings',      formSettingsRoutes);
+app.use('/api/general-settings',   generalSettingsRoutes);
 app.use('/api/predefined-texts',   predefinedTextRoutes);
+app.use('/api/relationship-map',   relationshipMapRoutes);
+app.use('/api/sap/layout',         sapDocumentLayoutRoutes);
 app.use('/api',                    sapRoutes);
 
 // Health check
@@ -400,6 +440,7 @@ app.use((err, req, res, next) => {
   res.status(err.statusCode || 500).json({
     success: false,
     message: err.message || 'Internal Server Error',
+    details: err.details || undefined,
     error: process.env.NODE_ENV === 'development' ? err.stack : undefined,
   });
 });

@@ -28,21 +28,48 @@ const safeRows = async (sql, params = {}) => {
   }
 };
 
-const getTableShape = async () => {
+const getColumnMap = async (tableName) => {
   const rows = await safeRows(`
-    SELECT
-      OBJECT_ID('OJDT', 'U') AS HeaderObjectId,
-      OBJECT_ID('JDT1', 'U') AS LineObjectId,
-      COL_LENGTH('OJDT', 'Origin') AS HeaderOriginColumn,
-      COL_LENGTH('OJDT', 'OriginNo') AS HeaderOriginNoColumn,
-      COL_LENGTH('OJDT', 'CreatedAt') AS HeaderCreatedAtColumn,
-      COL_LENGTH('JDT1', 'LineId') AS LineIdentityColumn,
-      COL_LENGTH('JDT1', 'AccountName') AS LineAccountNameColumn
-  `);
-  return rows[0] || {};
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+  `, { tableName });
+
+  return rows.reduce((map, row) => {
+    const columnName = String(row.COLUMN_NAME || '').trim();
+    if (columnName) map.set(columnName.toUpperCase(), columnName);
+    return map;
+  }, new Map());
+};
+
+const getColumnName = (columns, columnName) =>
+  columns.get(String(columnName || '').trim().toUpperCase()) || '';
+
+const columnFlag = (columns, columnName) =>
+  getColumnName(columns, columnName) ? 1 : null;
+
+const tableFlag = (columns) => (columns.size ? 1 : null);
+
+const getTableShape = async () => {
+  const headerColumns = await getColumnMap('OJDT');
+  const lineColumns = await getColumnMap('JDT1');
+
+  return {
+    HeaderObjectId: tableFlag(headerColumns),
+    LineObjectId: tableFlag(lineColumns),
+    HeaderOriginColumn: columnFlag(headerColumns, 'Origin'),
+    HeaderOriginNoColumn: columnFlag(headerColumns, 'OriginNo'),
+    HeaderCreatedAtColumn: columnFlag(headerColumns, 'CreatedAt'),
+    LineIdentityColumn: columnFlag(lineColumns, 'LineId'),
+    LineAccountNameColumn: columnFlag(lineColumns, 'AccountName'),
+  };
 };
 
 const ensureJournalTables = async () => {
+  if (await db.getDialect() === 'hana') {
+    return getTableShape();
+  }
+
   await db.query(`
     IF OBJECT_ID('OJDT', 'U') IS NULL
     BEGIN
@@ -100,34 +127,36 @@ const coalesceExpr = (parts, fallback = "''") => {
 };
 
 const getPostedJournalShape = async () => {
-  const rows = await safeRows(`
-    SELECT
-      COL_LENGTH('OJDT', 'Series') AS HeaderSeriesColumn,
-      COL_LENGTH('OJDT', 'Number') AS HeaderNumberColumn,
-      COL_LENGTH('OJDT', 'RefDate') AS HeaderRefDateColumn,
-      COL_LENGTH('OJDT', 'DueDate') AS HeaderDueDateColumn,
-      COL_LENGTH('OJDT', 'TaxDate') AS HeaderTaxDateColumn,
-      COL_LENGTH('OJDT', 'Memo') AS HeaderMemoColumn,
-      COL_LENGTH('OJDT', 'Ref1') AS HeaderRef1Column,
-      COL_LENGTH('OJDT', 'Ref2') AS HeaderRef2Column,
-      COL_LENGTH('OJDT', 'Ref3') AS HeaderRef3Column,
-      COL_LENGTH('JDT1', 'Line_ID') AS LineIdColumn,
-      COL_LENGTH('JDT1', 'Account') AS LineAccountColumn,
-      COL_LENGTH('JDT1', 'ShortName') AS LineShortNameColumn,
-      COL_LENGTH('JDT1', 'Debit') AS LineDebitColumn,
-      COL_LENGTH('JDT1', 'Credit') AS LineCreditColumn,
-      COL_LENGTH('JDT1', 'TaxCode') AS LineTaxCodeColumn,
-      COL_LENGTH('JDT1', 'LineMemo') AS LineMemoColumn,
-      COL_LENGTH('JDT1', 'Project') AS LineProjectColumn,
-      COL_LENGTH('JDT1', 'LocCode') AS LineLocCodeColumn,
-      COL_LENGTH('JDT1', 'Location') AS LineLocationColumn,
-      COL_LENGTH('JDT1', 'ProfitCode') AS LineProfitCodeColumn,
-      COL_LENGTH('JDT1', 'OcrCode') AS LineOcrCodeColumn,
-      OBJECT_ID('OLCT', 'U') AS LocationMasterObjectId,
-      COL_LENGTH('OLCT', 'Code') AS LocationMasterCodeColumn,
-      COL_LENGTH('OLCT', 'Location') AS LocationMasterNameColumn
-  `);
-  return rows[0] || {};
+  const headerColumns = await getColumnMap('OJDT');
+  const lineColumns = await getColumnMap('JDT1');
+  const locationColumns = await getColumnMap('OLCT');
+
+  return {
+    HeaderSeriesColumn: columnFlag(headerColumns, 'Series'),
+    HeaderNumberColumn: columnFlag(headerColumns, 'Number'),
+    HeaderRefDateColumn: columnFlag(headerColumns, 'RefDate'),
+    HeaderDueDateColumn: columnFlag(headerColumns, 'DueDate'),
+    HeaderTaxDateColumn: columnFlag(headerColumns, 'TaxDate'),
+    HeaderMemoColumn: columnFlag(headerColumns, 'Memo'),
+    HeaderRef1Column: columnFlag(headerColumns, 'Ref1'),
+    HeaderRef2Column: columnFlag(headerColumns, 'Ref2'),
+    HeaderRef3Column: columnFlag(headerColumns, 'Ref3'),
+    LineIdColumn: columnFlag(lineColumns, 'Line_ID'),
+    LineAccountColumn: columnFlag(lineColumns, 'Account'),
+    LineShortNameColumn: columnFlag(lineColumns, 'ShortName'),
+    LineDebitColumn: columnFlag(lineColumns, 'Debit'),
+    LineCreditColumn: columnFlag(lineColumns, 'Credit'),
+    LineTaxCodeColumn: columnFlag(lineColumns, 'TaxCode'),
+    LineMemoColumn: columnFlag(lineColumns, 'LineMemo'),
+    LineProjectColumn: columnFlag(lineColumns, 'Project'),
+    LineLocCodeColumn: columnFlag(lineColumns, 'LocCode'),
+    LineLocationColumn: columnFlag(lineColumns, 'Location'),
+    LineProfitCodeColumn: columnFlag(lineColumns, 'ProfitCode'),
+    LineOcrCodeColumn: columnFlag(lineColumns, 'OcrCode'),
+    LocationMasterObjectId: tableFlag(locationColumns),
+    LocationMasterCodeColumn: columnFlag(locationColumns, 'Code'),
+    LocationMasterNameColumn: columnFlag(locationColumns, 'Location'),
+  };
 };
 
 const getPostedJournal = async ({
@@ -252,10 +281,12 @@ const getPostedJournal = async ({
 };
 
 const getNextJournalNumber = async () => {
+  const columns = await getColumnMap('OJDT');
+  if (!getColumnName(columns, 'Number')) return 1;
+
   const rows = await safeRows(`
     SELECT ISNULL(MAX(Number), 0) + 1 AS NextNumber
     FROM OJDT
-    WHERE COL_LENGTH('OJDT', 'Origin') IS NOT NULL
   `);
   return Number(rows[0]?.NextNumber || 1);
 };
@@ -301,6 +332,25 @@ const getTaxComponents = async (taxCodes) => {
   const codes = [...new Set((taxCodes || []).map((code) => String(code || '').trim()).filter(Boolean))];
   if (!codes.length) return new Map();
 
+  const columns = await getColumnMap('STC1');
+  const stcCodeColumn = getColumnName(columns, 'STCCode');
+  const staCodeColumn = getColumnName(columns, 'STACode');
+  const lineIdColumn = getColumnName(columns, 'Line_ID');
+  const staTypeColumn = getColumnName(columns, 'STAType');
+  const rateColumns = ['EfctivRate', 'Rate']
+    .map((columnName) => getColumnName(columns, columnName))
+    .filter(Boolean);
+
+  if (!stcCodeColumn || !staCodeColumn) return new Map();
+
+  const rateExpr = rateColumns.length > 1
+    ? `COALESCE(${rateColumns.map((columnName) => `T0.${columnName}`).join(', ')})`
+    : (rateColumns[0] ? `T0.${rateColumns[0]}` : '0');
+  const staTypeFilter = staTypeColumn
+    ? `AND T0.${staTypeColumn} IN ('-100', '-110', '-120')`
+    : '';
+  const orderBy = lineIdColumn ? `ORDER BY T0.${stcCodeColumn}, T0.${lineIdColumn}` : `ORDER BY T0.${stcCodeColumn}`;
+
   const params = {};
   const placeholders = codes.map((code, index) => {
     const key = `code${index}`;
@@ -310,13 +360,13 @@ const getTaxComponents = async (taxCodes) => {
 
   const rows = await safeRows(`
     SELECT
-      STCCode,
-      STACode,
-      ISNULL(EfctivRate, Rate) AS Rate
-    FROM STC1
-    WHERE STCCode IN (${placeholders.join(', ')})
-      AND STAType IN ('-100', '-110', '-120')
-    ORDER BY STCCode, Line_ID
+      T0.${stcCodeColumn} AS STCCode,
+      T0.${staCodeColumn} AS STACode,
+      ${rateExpr} AS Rate
+    FROM STC1 T0
+    WHERE T0.${stcCodeColumn} IN (${placeholders.join(', ')})
+      ${staTypeFilter}
+    ${orderBy}
   `, params);
 
   return rows.reduce((map, row) => {
@@ -581,6 +631,26 @@ const buildAPJournal = async ({ header = {}, lines = [], origin = 'Service A/P I
   return journal;
 };
 
+const reverseJournalAmounts = (journal, origin = journal.origin) => {
+  const reversed = {
+    ...journal,
+    origin,
+    remarks: String(journal.remarks || '').replace('Service A/P Invoice', origin),
+    lines: (journal.lines || []).map((line, index) => ({
+      ...line,
+      lineId: index + 1,
+      debit: round2(line.credit),
+      credit: round2(line.debit),
+    })),
+  };
+
+  reversed.totalDebit = round2(reversed.lines.reduce((sum, line) => sum + line.debit, 0));
+  reversed.totalCredit = round2(reversed.lines.reduce((sum, line) => sum + line.credit, 0));
+  reversed.difference = round2(reversed.totalDebit - reversed.totalCredit);
+  reversed.isBalanced = Math.abs(reversed.difference) < 0.005;
+  return reversed;
+};
+
 const getSavedInvoicePayload = async (docEntry) => {
   const headerRows = await queryRows(`
     SELECT
@@ -713,6 +783,138 @@ const getSavedAPInvoicePayload = async (docEntry) => {
   };
 };
 
+const getSavedARCreditMemoPayload = async (docEntry) => {
+  const headerRows = await queryRows(`
+    SELECT
+      T0.DocEntry,
+      T0.DocNum,
+      T0.CardCode,
+      T0.CardName,
+      T0.DocDate,
+      T0.DocDueDate,
+      T0.TaxDate,
+      T0.Comments,
+      T0.JrnlMemo,
+      T0.NumAtCard,
+      T0.DiscPrcnt,
+      T0.TransId
+    FROM ORIN T0
+    WHERE T0.DocEntry = @docEntry
+      AND T0.DocType = 'S'
+  `, { docEntry });
+
+  if (!headerRows.length) throw new Error('Service A/R Credit Memo was not found.');
+
+  const lineRows = await queryRows(`
+    SELECT
+      T1.LineNum,
+      T1.AcctCode,
+      OACT.AcctName,
+      T1.Dscription,
+      T1.OcrCode,
+      T1.TaxCode,
+      T1.LineTotal,
+      T1.VatSum
+    FROM RIN1 T1
+    LEFT JOIN OACT ON OACT.AcctCode = T1.AcctCode
+    WHERE T1.DocEntry = @docEntry
+    ORDER BY T1.LineNum
+  `, { docEntry });
+
+  const header = headerRows[0];
+  return {
+    header: {
+      vendor: header.CardCode,
+      customerCode: header.CardCode,
+      name: header.CardName,
+      postingDate: formatDate(header.DocDate),
+      deliveryDate: formatDate(header.DocDueDate),
+      documentDate: formatDate(header.TaxDate),
+      remarks: header.Comments || '',
+      journalRemark: header.JrnlMemo || '',
+      salesContractNo: header.NumAtCard || '',
+      discount: header.DiscPrcnt || 0,
+    },
+    lines: lineRows.map((line) => ({
+      description: line.Dscription || '',
+      glAccount: line.AcctCode || '',
+      glAccountName: line.AcctName || '',
+      distRule: line.OcrCode || '',
+      taxCode: line.TaxCode || '',
+      totalLC: line.LineTotal || 0,
+      taxAmountLC: line.VatSum || 0,
+    })),
+    originNo: header.DocNum || docEntry,
+    transId: header.TransId || null,
+  };
+};
+
+const getSavedAPCreditMemoPayload = async (docEntry) => {
+  const headerRows = await queryRows(`
+    SELECT
+      T0.DocEntry,
+      T0.DocNum,
+      T0.CardCode,
+      T0.CardName,
+      T0.DocDate,
+      T0.DocDueDate,
+      T0.TaxDate,
+      T0.Comments,
+      T0.JrnlMemo,
+      T0.NumAtCard,
+      T0.DiscPrcnt,
+      T0.TransId
+    FROM ORPC T0
+    WHERE T0.DocEntry = @docEntry
+      AND T0.DocType = 'S'
+  `, { docEntry });
+
+  if (!headerRows.length) throw new Error('Service A/P Credit Memo was not found.');
+
+  const lineRows = await queryRows(`
+    SELECT
+      T1.LineNum,
+      T1.AcctCode,
+      OACT.AcctName,
+      T1.Dscription,
+      T1.OcrCode,
+      T1.TaxCode,
+      T1.LineTotal,
+      T1.VatSum
+    FROM RPC1 T1
+    LEFT JOIN OACT ON OACT.AcctCode = T1.AcctCode
+    WHERE T1.DocEntry = @docEntry
+    ORDER BY T1.LineNum
+  `, { docEntry });
+
+  const header = headerRows[0];
+  return {
+    header: {
+      vendor: header.CardCode,
+      vendorCode: header.CardCode,
+      name: header.CardName,
+      postingDate: formatDate(header.DocDate),
+      deliveryDate: formatDate(header.DocDueDate),
+      documentDate: formatDate(header.TaxDate),
+      remarks: header.Comments || '',
+      journalRemark: header.JrnlMemo || '',
+      salesContractNo: header.NumAtCard || '',
+      discount: header.DiscPrcnt || 0,
+    },
+    lines: lineRows.map((line) => ({
+      description: line.Dscription || '',
+      glAccount: line.AcctCode || '',
+      glAccountName: line.AcctName || '',
+      distRule: line.OcrCode || '',
+      taxCode: line.TaxCode || '',
+      totalLC: line.LineTotal || 0,
+      taxAmountLC: line.VatSum || 0,
+    })),
+    originNo: header.DocNum || docEntry,
+    transId: header.TransId || null,
+  };
+};
+
 const getExistingShadowJournal = async (originNo, origin = 'Service A/R Invoice') => {
   const shape = await getTableShape();
   if (!canPersistToShadowJournal(shape)) return null;
@@ -773,6 +975,14 @@ const getExistingShadowJournal = async (originNo, origin = 'Service A/R Invoice'
 };
 
 const persistShadowJournal = async (journal) => {
+  if (await db.getDialect() === 'hana') {
+    return {
+      ...journal,
+      persisted: false,
+      persistenceNote: 'SAP HANA company databases do not support direct SQL journal insertion; direct SQL journal insertion was skipped.',
+    };
+  }
+
   const shape = await ensureJournalTables();
   if (!canPersistToShadowJournal(shape)) {
     return {
@@ -887,6 +1097,72 @@ const generateFromServiceAPInvoice = async ({ docEntry, payload, persist = false
   return { ...journal, persisted: false };
 };
 
+const generateFromServiceAPCreditMemo = async ({ docEntry, payload, persist = false }) => {
+  const origin = 'Service A/P Credit Memo';
+
+  if (docEntry) {
+    const saved = await getSavedAPCreditMemoPayload(docEntry);
+    const posted = await getPostedJournal({
+      transId: saved.transId,
+      origin,
+      originNo: saved.originNo,
+      reference2: saved.header.vendorCode,
+    });
+    if (posted) return posted;
+    const existing = persist ? await getExistingShadowJournal(saved.originNo, origin) : null;
+    if (existing) return existing;
+    const journal = reverseJournalAmounts(await buildAPJournal({
+      ...saved,
+      origin,
+      originNo: saved.originNo,
+      transId: saved.transId,
+    }), origin);
+    return persist ? persistShadowJournal(journal) : journal;
+  }
+
+  const source = payload || {};
+  const journal = reverseJournalAmounts(await buildAPJournal({
+    header: source.header || {},
+    lines: source.lines || [],
+    origin,
+    originNo: source.header?.docNo || null,
+  }), origin);
+  return { ...journal, persisted: false };
+};
+
+const generateFromServiceARCreditMemo = async ({ docEntry, payload, persist = false }) => {
+  const origin = 'Service A/R Credit Memo';
+
+  if (docEntry) {
+    const saved = await getSavedARCreditMemoPayload(docEntry);
+    const posted = await getPostedJournal({
+      transId: saved.transId,
+      origin,
+      originNo: saved.originNo,
+      reference2: saved.header.customerCode,
+    });
+    if (posted) return posted;
+    const existing = persist ? await getExistingShadowJournal(saved.originNo, origin) : null;
+    if (existing) return existing;
+    const journal = reverseJournalAmounts(await buildJournal({
+      ...saved,
+      origin,
+      originNo: saved.originNo,
+      transId: saved.transId,
+    }), origin);
+    return persist ? persistShadowJournal(journal) : journal;
+  }
+
+  const source = payload || {};
+  const journal = reverseJournalAmounts(await buildJournal({
+    header: source.header || {},
+    lines: source.lines || [],
+    origin,
+    originNo: source.header?.docNo || null,
+  }), origin);
+  return { ...journal, persisted: false };
+};
+
 const normalizeManualLine = (line = {}) => ({
   accountCode: String(line.accountCode || line.account || line.glAccount || '').trim(),
   accountName: String(line.accountName || line.name || '').trim(),
@@ -984,6 +1260,8 @@ const getJournalEntryByTransId = async (transId) => {
 module.exports = {
   generateFromServiceARInvoice,
   generateFromServiceAPInvoice,
+  generateFromServiceAPCreditMemo,
+  generateFromServiceARCreditMemo,
   createManualJournalEntry,
   getJournalEntryByTransId,
 };

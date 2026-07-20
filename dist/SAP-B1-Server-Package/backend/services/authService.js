@@ -2,9 +2,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const env = require('../config/env');
 const authDbService = require('./authDbService');
+const generalSettingsService = require('./generalSettingsService');
 const { syncApplicationSidebarMenus } = require('./applicationMenuSyncService');
 const { appendVirtualMenus } = require('./virtualMenuService');
-const { appendVirtualLayoutManagerMenu } = require('./reportLayoutService');
 
 const createHttpError = (statusCode, message) => {
   const error = new Error(message);
@@ -25,8 +25,11 @@ const sanitizeUser = (user) => ({
 const sanitizeCompany = (company) => ({
   companyId: company.CompanyId,
   companyName: company.CompanyName,
+  dbDialect: company.DbDialect || 'sqlserver',
   dbName: company.DbName,
-  serverName: company.ServerName,
+  dbServer: company.DbServer || '',
+  dbPort: company.DbPort || '',
+  serverName: company.ServerName || company.DbServer || '',
   licenseServer: company.LicenseServer || '',
   sapVersion: company.SAPVersion || '',
   isDefault: Boolean(company.IsDefault),
@@ -123,6 +126,38 @@ const buildMenuTree = (menus, rightsByMenuId) => {
 
 const isAdminRoleName = (roleName) =>
   ['admin', 'superadmin'].includes(String(roleName || '').trim().toLowerCase());
+
+const isSetupAdminLogin = (username, password) =>
+  String(username || '') === env.setupAdminUsername &&
+  String(password || '') === env.setupAdminPassword;
+
+const createSetupAdminLoginResult = () => {
+  const username = env.setupAdminUsername || 'manager';
+  const adminToken = createToken(
+    {
+      tokenType: 'admin',
+      userId: 0,
+      username,
+      roleId: 0,
+      roleName: 'SuperAdmin',
+      isSetupAdmin: true,
+    },
+    env.jwtExpiresIn,
+  );
+
+  return {
+    token: adminToken,
+    user: {
+      userId: 0,
+      username,
+      fullName: 'Setup Administrator',
+      email: '',
+      isActive: true,
+    },
+    roleId: 0,
+    roleName: 'SuperAdmin',
+  };
+};
 
 const REPORT_MENU_PATH_PATTERN = /^\/reportlayoutmanager\/menu\/(\d+)\/?$/i;
 
@@ -235,9 +270,7 @@ const buildAuthorizedMenus = async (roleId, roleName = '', companyId = null) => 
     includeAdminPanel: isAdminRoleName(roleName),
   });
 
-  return isAdminRoleName(roleName)
-    ? appendVirtualLayoutManagerMenu(menuPayload)
-    : menuPayload;
+  return menuPayload;
 };
 
 const login = async (username, password) => {
@@ -280,6 +313,10 @@ const adminLogin = async (username, password) => {
 
   if (!normalizedUsername || !normalizedPassword) {
     throw createHttpError(400, 'Username and password are required.');
+  }
+
+  if (isSetupAdminLogin(normalizedUsername, normalizedPassword)) {
+    return createSetupAdminLoginResult();
   }
 
   const user = await authDbService.findUserByUsername(normalizedUsername);
@@ -341,7 +378,10 @@ const selectCompany = async (userId, companyId) => {
     throw createHttpError(403, 'No role is assigned for the selected company.');
   }
 
-  const { menus, menuPaths } = await buildAuthorizedMenus(role.RoleId, role.RoleName, companyId);
+  const [{ menus, menuPaths }, generalSettings] = await Promise.all([
+    buildAuthorizedMenus(role.RoleId, role.RoleName, companyId),
+    generalSettingsService.getSettings(userId, companyId),
+  ]);
   const accessToken = createToken(
     {
       tokenType: 'access',
@@ -359,6 +399,7 @@ const selectCompany = async (userId, companyId) => {
     roleId: role.RoleId,
     roleName: role.RoleName,
     company: sanitizeCompany(company),
+    generalSettings,
     menus,
     menuPaths,
   };

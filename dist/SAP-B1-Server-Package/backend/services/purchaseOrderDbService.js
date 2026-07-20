@@ -20,6 +20,54 @@ const safe = async (promise) => {
   }
 };
 
+const normalizeUdfLookupToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]+/g, '');
+
+const getUdfValue = (udfs = {}, aliases = []) => {
+  const aliasTokens = new Set((Array.isArray(aliases) ? aliases : [aliases]).map(normalizeUdfLookupToken).filter(Boolean));
+  const match = Object.entries(udfs || {}).find(([key, value]) =>
+    aliasTokens.has(normalizeUdfLookupToken(key)) &&
+    value !== undefined &&
+    value !== null &&
+    String(value) !== ''
+  );
+  return match ? match[1] : '';
+};
+
+const getTableColumnSet = async (tableName) => {
+  const rows = await safe(db.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+  `, { tableName }));
+
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '').trim().toUpperCase()).filter(Boolean));
+};
+
+const selectColumnOrBlank = (columns, columnName, alias = columnName) =>
+  columns.has(String(columnName || '').toUpperCase())
+    ? `${columnName} AS ${alias}`
+    : `CAST('' AS NVARCHAR(254)) AS ${alias}`;
+
+const formatCompanyAddress = (address = {}) => {
+  const directAddress = String(address.Address || '').trim();
+  if (directAddress) return directAddress;
+
+  return [
+    [address.Street, address.StreetNo],
+    [address.Block, address.Building, address.Address2, address.Address3],
+    [address.City, address.County, address.State, address.ZipCode],
+    [address.Country],
+  ]
+    .map((parts) => parts.filter(Boolean).join(', '))
+    .filter(Boolean)
+    .join('\n');
+};
+
 // ── REFERENCE DATA QUERIES ────────────────────────────────────────────────────
 
 const getVendors = () => safe(db.query(`
@@ -69,11 +117,20 @@ const getItems = () => safe(db.query(`
     T0.PUoMEntry   AS PurchaseUomEntry,
     T0.IUoMEntry   AS InventoryUomEntry,
     T0.DfltWH      AS DefaultWarehouse,
+    T0.DfltWH      AS WarehouseCode,
+    T0.DfltWH      AS WhsCode,
+    CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS UnitPrice,
+    CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS Price,
+    CAST(T0.LastPurPrc AS DECIMAL(19,6)) AS LastPurPrc,
+    CAST(T0.LastPurPrc AS DECIMAL(19,6)) AS LastPurchasePrice,
+    CAST(T0.AvgPrice AS DECIMAL(19,6)) AS MovingAveragePrice,
+    CAST(T0.AvgPrice AS DECIMAL(19,6)) AS AvgStdPrice,
     CHP.ChapterID  AS HSNCode
   FROM OITM T0
   LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID
   WHERE T0.PrchseItem = 'Y'
-    AND T0.validFor  <> 'N'
+    AND ISNULL(T0.validFor, 'Y') <> 'N'
+    AND ISNULL(T0.frozenFor, 'N') <> 'Y'
   ORDER BY T0.ItemCode
 `));
 
@@ -90,6 +147,14 @@ const getItemsForModal = () => safe(db.query(`
     T0.PUoMEntry       AS PurchaseUomEntry,
     T0.IUoMEntry       AS InventoryUomEntry,
     T0.DfltWH          AS DefaultWarehouse,
+    T0.DfltWH          AS WarehouseCode,
+    T0.DfltWH          AS WhsCode,
+    CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS UnitPrice,
+    CAST(COALESCE(NULLIF(T0.LastPurPrc, 0), NULLIF(T0.AvgPrice, 0), 0) AS DECIMAL(19,6)) AS Price,
+    CAST(T0.LastPurPrc AS DECIMAL(19,6)) AS LastPurPrc,
+    CAST(T0.LastPurPrc AS DECIMAL(19,6)) AS LastPurchasePrice,
+    CAST(T0.AvgPrice AS DECIMAL(19,6)) AS MovingAveragePrice,
+    CAST(T0.AvgPrice AS DECIMAL(19,6)) AS AvgStdPrice,
     CHP.ChapterID      AS HSNCode,
     T0.ManBtchNum      AS BatchManaged,
     T0.ManSerNum       AS SerialManaged
@@ -97,13 +162,14 @@ const getItemsForModal = () => safe(db.query(`
   LEFT JOIN OITB T1  ON T1.ItmsGrpCod = T0.ItmsGrpCod
   LEFT JOIN OCHP CHP ON CHP.AbsEntry  = T0.ChapterID
   WHERE T0.PrchseItem = 'Y'
-    AND T0.validFor  <> 'N'
+    AND ISNULL(T0.validFor, 'Y') <> 'N'
+    AND ISNULL(T0.frozenFor, 'N') <> 'Y'
   ORDER BY T0.ItemCode
 `));
 
 const getWarehouses = () => safe(db.query(`
   SELECT WhsCode, WhsName, Street, Block,
-         City, County, State, ZipCode, Country, BPLId AS BranchID
+         City, County, State, ZipCode, Country, BPLid AS BranchID
   FROM   OWHS
   WHERE  Inactive <> 'Y'
   ORDER  BY WhsCode
@@ -253,22 +319,54 @@ const resolvePurchaseOrderLineUomEntry = async (itemCode, uomValue) => {
 const getDecimalSettings = () => safe(db.query(`
   SELECT TOP 1
     DecSep, ThousSep, DateSep, DateFormat,
-    PriceDP AS PriceDec,
-    QuantityDP AS QtyDec,
-    RateDP AS RateDec,
-    PercentDP AS PercentDec,
-    MeasurDP AS MeasurDec,
-    SumDP AS SumDec
+    PriceDec,
+    QtyDec,
+    RateDec,
+    PercentDec,
+    MeasureDec AS MeasurDec,
+    SumDec
   FROM OADM
 `));
 
-const getCompanyInfo = () => safe(db.query(`
-  SELECT TOP 1
-    CompnyName,
-    CompnyAddr AS Address,
-    State
-  FROM OADM
-`));
+const getCompanyInfo = async () => {
+  const oadmColumns = await getTableColumnSet('OADM');
+  const companyRows = await safe(db.query(`
+    SELECT TOP 1
+      ${selectColumnOrBlank(oadmColumns, 'CompnyName')},
+      ${selectColumnOrBlank(oadmColumns, 'CompnyAddr', 'Address')},
+      ${selectColumnOrBlank(oadmColumns, 'State')},
+      ${selectColumnOrBlank(oadmColumns, 'MainCurncy')},
+      ${selectColumnOrBlank(oadmColumns, 'SysCurrncy')}
+    FROM OADM
+  `));
+
+  const company = companyRows[0] || {};
+  const adm1Columns = await getTableColumnSet('ADM1');
+  const adm1Rows = adm1Columns.size
+    ? await safe(db.query(`
+      SELECT TOP 1
+        ${selectColumnOrBlank(adm1Columns, 'Street')},
+        ${selectColumnOrBlank(adm1Columns, 'StreetNo')},
+        ${selectColumnOrBlank(adm1Columns, 'Block')},
+        ${selectColumnOrBlank(adm1Columns, 'Building')},
+        ${selectColumnOrBlank(adm1Columns, 'Address2')},
+        ${selectColumnOrBlank(adm1Columns, 'Address3')},
+        ${selectColumnOrBlank(adm1Columns, 'City')},
+        ${selectColumnOrBlank(adm1Columns, 'County')},
+        ${selectColumnOrBlank(adm1Columns, 'State')},
+        ${selectColumnOrBlank(adm1Columns, 'ZipCode')},
+        ${selectColumnOrBlank(adm1Columns, 'Country')}
+      FROM ADM1
+    `))
+    : [];
+
+  const adm1Address = adm1Rows[0] || {};
+  return [{
+    ...company,
+    Address: String(company.Address || '').trim() || formatCompanyAddress(adm1Address),
+    State: String(company.State || '').trim() || String(adm1Address.State || '').trim(),
+  }];
+};
 
 const PURCHASE_ORDER_FORM_ID = '142';
 const PURCHASE_ORDER_MATRIX_ITEM_ID = '38';
@@ -285,6 +383,7 @@ const PURCHASE_ORDER_LINE_COLUMNS = [
   { key: 'totalBeforeTax', label: 'Total Before Tax', sapField: 'LineTotal', calculated: true, sapColumnIds: ['21', 'LineTotal', 'Total Before Tax'], minWidth: 135 },
   { key: 'total', label: 'Total', sapField: 'LineTotal', calculated: true, sapColumnIds: ['17', 'GTotal', 'Total', 'Total (LC)', 'LineTotal'], minWidth: 105 },
   { key: 'whse', label: 'Whse', sapField: 'WhsCode', sapColumnIds: ['24', 'WhsCode', 'WarehouseCode', 'Warehouse', 'Whse'], minWidth: 90 },
+  { key: 'commPercent', label: 'Comm. %', sapField: 'Commission', sapColumnIds: ['28', 'Commission', 'CommissionPercent', 'Commission Percentage', 'Comm. %'], minWidth: 95 },
   { key: 'loc', label: 'LOC', source: 'branch', sapColumnIds: ['LocCode', 'Location', 'LOC'], minWidth: 115 },
   { key: 'branch', label: 'Branch', source: 'branch', sapColumnIds: ['BPLId', 'Branch'], minWidth: 115 },
 ];
@@ -569,7 +668,7 @@ const getContactsByVendor = async (cardCode) => {
 
 const getAddressesByVendor = async (cardCode) => {
   const result = await safe(db.query(`
-    SELECT 
+    SELECT T0.*,
       T0.CardCode,
       T0.Address,
       T0.AdresType,
@@ -704,6 +803,12 @@ const getPurchaseOrder = async (docEntry) => {
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
+      T0.ShipToCode,
+      T0.PayToCode,
+      T0.Address AS ShipToAddress,
+      T0.Address2 AS PayToAddress,
+      T0.TrnspCode AS ShippingType,
+      T0.LangCode AS Language,
       T0.Confirmed,
       CASE T0.DocStatus
         WHEN 'O' THEN 'Open'
@@ -732,10 +837,13 @@ const getPurchaseOrder = async (docEntry) => {
       T0.ItemCode,
       T0.Dscription AS ItemDescription,
       T0.Quantity,
-      T0.Price AS UnitPrice,
+      COALESCE(T0.PriceBefDi, T0.Price) AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
       T0.LineTotal,
+      T0.GTotal AS GrossTotal,
+      T0.VatSum AS TaxAmount,
+      T0.Commission AS CommissionPercent,
       T0.WhsCode AS Warehouse,
       T0.unitMsr AS UoMCode,
       CHP.ChapterID AS HSNCode
@@ -764,6 +872,19 @@ const getPurchaseOrder = async (docEntry) => {
         postingDate: header.PostingDate ? header.PostingDate.toISOString().split('T')[0] : '',
         deliveryDate: header.DeliveryDate ? header.DeliveryDate.toISOString().split('T')[0] : '',
         documentDate: header.DocumentDate ? header.DocumentDate.toISOString().split('T')[0] : '',
+        currency: header.Currency || 'INR',
+        shipToCode: header.ShipToCode || '',
+        shipTo: '',
+        shipToAddress: '',
+        buyerLocation: getUdfValue(headerUdfs, ['U_ShipLocation', 'U_SHIPLOCATION']) || '',
+        billTo: header.ShipToAddress || '',
+        billToAddress: header.ShipToAddress || '',
+        payToCode: header.PayToCode || '',
+        billToCode: header.PayToCode || '',
+        payTo: header.PayToAddress || '',
+        payToAddress: header.PayToAddress || '',
+        shippingType: header.ShippingType != null ? String(header.ShippingType) : '',
+        language: header.Language != null ? String(header.Language) : '',
         confirmed: header.Confirmed === 'Y',
         journalRemark: header.JournalRemark || '',
         paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
@@ -782,6 +903,11 @@ const getPurchaseOrder = async (docEntry) => {
         stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
         taxCode: l.TaxCode || '',
         total: l.LineTotal != null ? String(l.LineTotal) : '',
+        totalBeforeTax: l.LineTotal != null ? String(l.LineTotal) : '',
+        totalLC: l.LineTotal != null ? String(l.LineTotal) : '',
+        grossTotal: l.GrossTotal != null ? String(l.GrossTotal) : '',
+        taxAmount: l.TaxAmount != null ? String(l.TaxAmount) : '',
+        commPercent: l.CommissionPercent != null ? String(l.CommissionPercent) : '',
         whse: l.Warehouse || '',
         uomCode: l.UoMCode || '',
         udf: lineUdfsByLineNum[l.LineNum] || {},
@@ -796,25 +922,33 @@ const getPurchaseOrder = async (docEntry) => {
 // ── DOCUMENT SERIES ───────────────────────────────────────────────────────────
 
 const getDocumentSeries = async () => {
-  const result = await safe(db.query(`
-        SELECT 
-    T0.Series,
-    T0.SeriesName,
-    T0.Indicator,
-    T0.NextNumber,
-    T1.Name AS FinancialYear,
-    T1.F_RefDate AS FromDate,
-    T1.T_RefDate AS ToDate
-FROM NNM1 T0
-INNER JOIN OFPR T1 
-    ON T0.Indicator = T1.Indicator
-WHERE T0.ObjectCode = '22'
-    AND T0.Locked = 'N'
-    AND GETDATE() BETWEEN T1.F_RefDate AND T1.T_RefDate
-ORDER BY T0.SeriesName
-  `));
+  const result = await db.query(`
+    SELECT
+      T0.Series,
+      T0.SeriesName,
+      T0.Indicator,
+      T0.NextNumber,
+      FY.FinancialYear,
+      FY.FromDate,
+      FY.ToDate,
+      CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault
+    FROM NNM1 T0
+    LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
+    LEFT JOIN (
+      SELECT
+        Indicator,
+        MAX(Name) AS FinancialYear,
+        MIN(F_RefDate) AS FromDate,
+        MAX(T_RefDate) AS ToDate
+      FROM OFPR
+      GROUP BY Indicator
+    ) FY ON FY.Indicator = T0.Indicator
+    WHERE T0.ObjectCode = '22'
+      AND T0.Locked = 'N'
+    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName
+  `);
 
-  return { series: result };
+  return { series: result.recordset || [] };
 };
 
 const getNextNumber = async (series) => {
@@ -938,22 +1072,30 @@ const getReferenceData = async () => {
     name: companyRows[0].CompnyName || 'SAP B1',
     address: companyRows[0].Address || '',
     state: companyRows[0].State || '',
+    localCurrency: companyRows[0].MainCurncy || '',
+    systemCurrency: companyRows[0].SysCurrncy || '',
   } : {
     name: 'SAP B1',
     address: '',
     state: '',
+    localCurrency: '',
+    systemCurrency: '',
   };
 
   return {
     company: companyInfo.name,
     company_state: companyInfo.state,
+    local_currency: companyInfo.localCurrency,
+    system_currency: companyInfo.systemCurrency,
     vendors,
     contacts: [],
     pay_to_addresses: [],
+    ship_to_addresses: [],
+    bill_to_addresses: [],
     items,
     warehouses,
     warehouse_addresses: warehouses,
-    company_address: { State: companyInfo.state },
+    company_address: { Address: companyInfo.address, State: companyInfo.state },
     tax_codes: taxCodes,
     payment_terms: paymentTerms,
     sales_employees: salesEmployees.map((e) => ({ SlpCode: e.SlpCode, SlpName: e.SlpName, Memo: e.Memo, Commission: e.Commission, Active: e.Active })),
@@ -978,6 +1120,8 @@ const getVendorDetails = async (vendorCode) => {
     return {
       contacts: [],
       pay_to_addresses: [],
+      bill_to_addresses: [],
+      ship_to_addresses: [],
     };
   }
 
@@ -990,10 +1134,15 @@ const getVendorDetails = async (vendorCode) => {
   const payToAddresses = addresses.filter(a => 
     a.AdresType === 'B' || a.AdresType === 'bo_BillTo'
   );
+  const shipToAddresses = addresses.filter(a =>
+    a.AdresType === 'S' || a.AdresType === 'bo_ShipTo'
+  );
 
   return {
     contacts,
     pay_to_addresses: payToAddresses,
+    bill_to_addresses: payToAddresses,
+    ship_to_addresses: shipToAddresses,
   };
 };
 

@@ -8,6 +8,11 @@ const forbidden = (message) => {
 
 const requireAdminPanelAccess = async (req, _res, next) => {
   try {
+    const tokenRoleName = String(req.auth?.roleName || '').trim().toLowerCase();
+    if (['admin', 'superadmin'].includes(tokenRoleName)) {
+      return next();
+    }
+
     const roleId = Number(req.auth?.roleId);
     if (!Number.isFinite(roleId)) {
       throw forbidden('A valid role is required to access the admin panel.');

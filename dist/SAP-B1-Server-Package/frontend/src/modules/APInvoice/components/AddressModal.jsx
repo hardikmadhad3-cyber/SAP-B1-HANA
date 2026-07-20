@@ -1,1 +1,1 @@
-export { default } from '../../sales-order/components/AddressModal';
+export { default } from '../../../components/document/AddressComponentModal';

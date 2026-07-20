@@ -1,3 +1,5 @@
+import { SALES_QUOTATION_WORKBOOK_COLUMNS } from './workbookMatrixColumns';
+
 const FORM_SETTINGS_STORAGE_KEY = 'sapb1.salesQuotation.formSettings.v1';
 
 const HEADER_UDF_DEFINITIONS = [
@@ -167,63 +169,7 @@ const ROW_UDF_DEFINITIONS = [
   { key: 'U_QcStatus', label: 'QC Status', type: 'select', defaultValue: 'Pending', options: ['Pending', 'Approved', 'Rejected'] },
 ];
 
-const BASE_MATRIX_COLUMNS = [
-  { key: 'itemNo', label: 'Item No.', visible: true },
-  { key: 'requiredDate', label: 'Required Date', visible: true },
-  { key: 'quotedDate', label: 'Quoted Date', visible: true },
-  { key: 'requiredQty', label: 'Required Qty.', visible: true },
-  { key: 'quantity', label: 'Quoted Qty.', visible: true },
-  { key: 'unitPrice', label: 'Unit Price', visible: true },
-  { key: 'stdDiscount', label: 'Discount %', visible: true },
-  { key: 'taxCode', label: 'Tax Code', visible: true },
-  { key: 'totalLC', label: 'Total (LC)', visible: true },
-  { key: 'distRule', label: 'Distr. Rule', visible: true },
-  { key: 'uomCode', label: 'UoM Code', visible: true },
-  { key: 'cogsDistRule', label: 'COGS Distr. Rule', visible: true },
-  { key: 'countryOfOrigin', label: 'Country/Region of Origin', visible: true },
-  { key: 'loc', label: 'Loc.', visible: true },
-  { key: 'blanketAgreementNo', label: 'Blanket Agreement No.', visible: true },
-  { key: 'allowProcurementDoc', label: 'Allow Procmnt. Doc.', visible: true },
-  { key: 'saudaNodeRef', label: 'Sauda Node Ref', visible: true },
-  { key: 'apInvDocKey', label: 'AP Inv DocKey', visible: true },
-  { key: 'apInvDocNum', label: 'AP Inv DocNum', visible: true },
-  { key: 'apInvLineNum', label: 'AP Inv LineNum', visible: true },
-  { key: 'assessableValue', label: 'Assessable Value', visible: true },
-  { key: 'bedRate', label: 'BED Rate', visible: true },
-  { key: 'bedAmount', label: 'BED Amount', visible: true },
-  { key: 'rg23dNo', label: 'RG23DNo', visible: true },
-  { key: 'specialRebate', label: 'Special Rebate', visible: true },
-  { key: 'commission', label: 'Commision', visible: true },
-  { key: 'sellerItem', label: 'S_Item', visible: true },
-  { key: 'sellerQty', label: 'S_Qty', visible: true },
-  { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', visible: true },
-  { key: 'hsnCode', label: 'HSN', visible: true },
-  { key: 'sacCode', label: 'SAC', visible: true },
-  { key: 'unitPriceUdf', label: 'Unit Price', visible: true },
-  { key: 'sellerBrokerage', label: 'Seller Brokerage', visible: true },
-  { key: 'buyerBrokerage', label: 'Buyer Brokerage', visible: true },
-  { key: 'buyerDelivery', label: 'Buyer - Delivery', visible: true },
-  { key: 'sellerDelivery', label: 'Seller - Delivery', visible: true },
-  { key: 'buyerPaymentTerms', label: 'Buyer - Terms of payment', visible: true },
-  { key: 'sellerPaymentTerms', label: 'Seller - Terms of Payment', visible: true },
-  { key: 'buyerQuality', label: 'Buyer - Quality', visible: true },
-  { key: 'sellerQuality', label: 'Seller - Quality', visible: true },
-  { key: 'buyerPrice', label: 'Buyer - Price', visible: true },
-  { key: 'sellerPrice', label: 'Seller - Price', visible: true },
-  { key: 'buyerSpecialInstruction', label: 'Buyer - Special Instruction', visible: true },
-  { key: 'sellerSpecialInstruction', label: 'Seller - Special Instruction', visible: true },
-  { key: 'sellerBrokerageAmtPer', label: 'Seller Brokerage(Amt./Per)', visible: true },
-  { key: 'sellerBrokeragePercent', label: 'Seller Brokerage in Percentage', visible: true },
-  { key: 'buyerBillDiscount', label: 'Buyer Bill Discount', visible: true },
-  { key: 'sellerBillDiscount', label: 'Seller Bill Discount', visible: true },
-  { key: 'stcode', label: 'STCODE', visible: true },
-  { key: 'freightPurchase', label: 'Freight Purchase', visible: true },
-  { key: 'freightSales', label: 'Freight Sales', visible: true },
-  { key: 'freightProvider', label: 'Freight Provider', visible: true },
-  { key: 'freightProviderName', label: 'Freight Provider Name', visible: true },
-  { key: 'documentCreated', label: 'Document Created', visible: true },
-  { key: 'brokerageNumber', label: 'Brokerage Number', visible: true },
-];
+const BASE_MATRIX_COLUMNS = SALES_QUOTATION_WORKBOOK_COLUMNS;
 
 const getOptionValue = (option) => (typeof option === 'string' ? option : option?.value ?? '');
 
@@ -263,8 +209,8 @@ const createUdfState = (definitions) =>
     return acc;
   }, {});
 
-const normalizeUdfState = (definitions, values = {}) =>
-  definitions.reduce((acc, field) => {
+const normalizeUdfState = (definitions, values = {}) => {
+  const normalized = definitions.reduce((acc, field) => {
     const currentValue = values[field.key];
     const shouldApplyDefault =
       currentValue === undefined ||
@@ -275,16 +221,35 @@ const normalizeUdfState = (definitions, values = {}) =>
     return acc;
   }, {});
 
+  Object.entries(values || {}).forEach(([key, value]) => {
+    if (String(key || '').startsWith('U_') && !Object.prototype.hasOwnProperty.call(normalized, key)) {
+      normalized[key] = value == null ? '' : value;
+    }
+  });
+
+  return normalized;
+};
+
 const buildVisibilitySettings = (definitions) =>
   definitions.reduce((acc, field) => {
-    acc[field.key] = { visible: field.visible !== undefined ? field.visible : true, active: true };
+    acc[field.key] = {
+      visible: field.visible !== undefined ? field.visible : true,
+      active: field.active !== undefined ? field.active : true,
+      sapControlled: Boolean(field.sapControlled),
+      order: field.order,
+      minWidth: field.minWidth,
+    };
     return acc;
   }, {});
 
-const createDefaultFormSettings = () => ({
-  headerUdfs: buildVisibilitySettings(HEADER_UDF_DEFINITIONS),
-  matrixColumns: buildVisibilitySettings(BASE_MATRIX_COLUMNS),
-  rowUdfs: buildVisibilitySettings(ROW_UDF_DEFINITIONS),
+const createDefaultFormSettings = (
+  headerUdfs = HEADER_UDF_DEFINITIONS,
+  rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = BASE_MATRIX_COLUMNS,
+) => ({
+  headerUdfs: buildVisibilitySettings(headerUdfs),
+  matrixColumns: buildVisibilitySettings(matrixColumns),
+  rowUdfs: buildVisibilitySettings(rowUdfs),
 });
 
 const mergeNestedSettings = (defaults, saved = {}) =>
@@ -296,8 +261,19 @@ const mergeNestedSettings = (defaults, saved = {}) =>
     return acc;
   }, {});
 
-const readSavedFormSettings = (storageKey = FORM_SETTINGS_STORAGE_KEY) => {
-  const defaults = createDefaultFormSettings();
+const readSavedFormSettings = (
+  headerUdfs = HEADER_UDF_DEFINITIONS,
+  rowUdfs = ROW_UDF_DEFINITIONS,
+  matrixColumns = BASE_MATRIX_COLUMNS,
+  storageKey = FORM_SETTINGS_STORAGE_KEY,
+) => {
+  if (typeof headerUdfs === 'string') {
+    storageKey = headerUdfs;
+    headerUdfs = HEADER_UDF_DEFINITIONS;
+    rowUdfs = ROW_UDF_DEFINITIONS;
+    matrixColumns = BASE_MATRIX_COLUMNS;
+  }
+  const defaults = createDefaultFormSettings(headerUdfs, rowUdfs, matrixColumns);
 
   try {
     const raw = localStorage.getItem(storageKey);

@@ -16,6 +16,11 @@ const toNum = (v) => {
 };
 
 const opt = (v) => v !== '' && v != null;
+const positiveInt = (v) => {
+  if (v === '' || v == null) return undefined;
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
 
 const normalizeBranches = (rows = []) =>
   (rows || [])
@@ -623,8 +628,8 @@ function _buildPayload(body, isCreate = false) {
         if (opt(l.distribution_rule))  line.DistributionRule   = l.distribution_rule;
         if (opt(l.project))            line.Project            = l.project;
         if (opt(l.additional_qty))     line.AdditionalQuantity = Number(l.additional_qty);
-        if (opt(l.stage_id))           line.StageID            = Number(l.stage_id);
-        // Note: StageID is not supported in ProductionOrderLines
+        const stageId = positiveInt(l.stage_id || l.route_sequence);
+        if (stageId)                   line.StageID            = stageId;
         return line;
       });
   }

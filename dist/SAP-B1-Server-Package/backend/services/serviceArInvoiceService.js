@@ -4,6 +4,8 @@ const arInvoiceService = require('./arInvoiceService');
 const hsnCodeDbService = require('./hsnCodeDbService');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
+const authDbService = require('./authDbService');
+const { getRequestContext } = require('./requestContextService');
 
 const parseNum = (value, fallback = 0) => {
   const parsed = Number(String(value ?? '').replace(/,/g, ''));
@@ -32,6 +34,29 @@ const normalizeBranchId = (value) => {
   if (!normalized || normalized === '-1' || normalized === '0') return undefined;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const resolveDocumentSeries = async (header, series, isManualSeries) => {
+  if (isManualSeries) return { series, branchId: normalizeBranchId(header.branch) };
+  if (!(series > 0)) throw new Error('Select a numbering series before adding the document');
+
+  const postingDate = header.postingDate || header.documentDate;
+  const availableSeries = await serviceArInvoiceDb.getDocumentSeries(
+    postingDate,
+    header.transactionType || '',
+    header.branch || ''
+  );
+  const selectedSeries = (Array.isArray(availableSeries) ? availableSeries : availableSeries?.series || [])
+    .find((row) => Number(row.Series) === series);
+
+  if (!selectedSeries) {
+    throw new Error(`The selected numbering series is not valid for posting date ${postingDate}. Select a series for that financial year and branch.`);
+  }
+
+  return {
+    series,
+    branchId: normalizeBranchId(header.branch) ?? normalizeBranchId(selectedSeries.BPLId),
+  };
 };
 
 const getUdfDefinitionsByKey = async (tableId) => {
@@ -98,8 +123,6 @@ const applyExplicitUdfs = (target, values = {}, udfDefinitionsByKey) => {
 };
 
 const LINE_UDF_ALIASES = {
-  sac: ['SAC', 'SACCode'],
-  loc: ['Loc', 'Location', 'LocationCode'],
   saudaNodeRef: ['SaudaNodeRef', 'SaudaNodhRef', 'SaudaNode'],
   brokPerQty: ['BrokPerQty'],
   sItem: ['S_Item', 'SItem'],
@@ -206,18 +229,22 @@ const buildSapPayload = async (payload, includeSeries = true) => {
     throw new Error('Document number is required when Series is Manual');
   }
 
+  const resolvedSeries = includeSeries
+    ? await resolveDocumentSeries(header, series, isManualSeries)
+    : { series, branchId: normalizeBranchId(header.branch) };
+
   const sapPayload = {
     DocType: 'dDocument_Service',
     CardCode: customerCode,
     ...(includeSeries && isManualSeries ? { Series: -1, DocNum: manualDocNum } : {}),
-    ...(includeSeries && !isManualSeries && series > 0 ? { Series: series } : {}),
+    ...(includeSeries && !isManualSeries ? { Series: resolvedSeries.series } : {}),
     DocDate: header.postingDate || header.documentDate,
     DocDueDate: header.deliveryDate || header.postingDate || header.documentDate,
     TaxDate: header.documentDate || header.postingDate,
     ContactPersonCode: contactPersonCode,
     SalesPersonCode: salesPersonCode,
-    BPLId: normalizeBranchId(header.branch),
-    BPL_IDAssignedToInvoice: normalizeBranchId(header.branch),
+    BPLId: resolvedSeries.branchId,
+    BPL_IDAssignedToInvoice: resolvedSeries.branchId,
     PaymentGroupCode: paymentGroupCode,
     NumAtCard: optString(header.salesContractNo || header.customerRefNo),
     Comments: optString(header.remarks || header.otherInstruction || header.comments),
@@ -298,8 +325,28 @@ const updateServiceARInvoice = async (docEntry, payload) => {
   };
 };
 
+const getReferenceData = async (companyId, userId) => {
+  try {
+    if (companyId && userId) {
+      try {
+        const assignedCompany = await authDbService.getAssignedCompanyForUser(Number(userId), Number(companyId));
+        const ctx = getRequestContext();
+        if (ctx && assignedCompany && assignedCompany.DbName) {
+          ctx.databaseName = String(assignedCompany.DbName).trim();
+        }
+      } catch (innerErr) {
+        console.warn('[serviceArInvoiceService] could not resolve assigned company for user/company:', innerErr.message || innerErr);
+      }
+    }
+
+    return await serviceArInvoiceDb.getReferenceData();
+  } catch (error) {
+    throw error;
+  }
+};
+
 module.exports = {
-  getReferenceData: serviceArInvoiceDb.getReferenceData,
+  getReferenceData,
   getCustomerDetails: serviceArInvoiceDb.getCustomerDetails,
   getCustomerFilterOptions: arInvoiceService.getCustomerFilterOptions,
   getDocumentSeries: serviceArInvoiceDb.getDocumentSeries,

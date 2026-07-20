@@ -1,13 +1,13 @@
 import React from 'react';
 
-export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onFormChange }) {
+export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onFormChange, disabled = false }) {
   if (!isOpen) return null;
 
   return (
     <div className="del-modal-overlay" onClick={onClose}>
-      <div className="del-modal" onClick={e => e.stopPropagation()}>
+      <div className="del-modal del-tax-info-modal" onClick={e => e.stopPropagation()}>
         <div className="del-modal__header">
-          <h6 style={{ margin: 0, fontSize: '12px', fontWeight: 600 }}>Tax Information</h6>
+          <h6 className="del-tax-info-modal__title">Tax Information</h6>
           <button 
             type="button" 
             onClick={onClose}
@@ -28,8 +28,9 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
             ×
           </button>
         </div>
-        <div className="del-modal__body">
-          <div className="del-field-grid">
+        <div className="del-modal__body del-tax-info-modal__body">
+          <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+          <div className="del-tax-info-modal__grid">
             <div className="del-field">
               <label className="del-field__label">P.A.N. No.</label>
               <input
@@ -166,6 +167,7 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
                 onChange={onFormChange}
               >
                 <option value="">— Select —</option>
+                <option>Regular/TDS/ISD</option>
                 <option>Regular</option>
                 <option>Composition</option>
                 <option>Unregistered</option>
@@ -181,14 +183,11 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
               />
             </div>
           </div>
+          </fieldset>
         </div>
         <div className="del-modal__footer">
-          <button type="button" className="del-btn del-btn--primary" onClick={onSave}>
-            OK
-          </button>
-          <button type="button" className="del-btn" onClick={onClose}>
-            Cancel
-          </button>
+          {!disabled ? <button type="button" className="del-btn del-btn--primary" onClick={onSave}>OK</button> : null}
+          <button type="button" className="del-btn" onClick={onClose}>{disabled ? 'Close' : 'Cancel'}</button>
         </div>
       </div>
     </div>

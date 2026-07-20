@@ -29,7 +29,9 @@ const updatePurchaseOrder = (docEntry, payload) =>
   apiClient.patch(`/purchase-order/${docEntry}`, payload);
 
 const fetchDocumentSeries = () =>
-  apiClient.get('/purchase-order/series');
+  apiClient.get('/purchase-order/series', {
+    params: { _: Date.now() },
+  });
 
 const fetchNextNumber = (series) =>
   apiClient.get(`/purchase-order/series/${series}/next-number`);
@@ -41,7 +43,9 @@ const fetchStateFromWarehouse = (whsCode) =>
   apiClient.get(`/purchase-order/warehouse-state/${encodeURIComponent(whsCode)}`);
 
 const fetchItemsForModal = () =>
-  apiClient.get('/purchase-order/items-modal');
+  apiClient.get('/purchase-order/items-modal', {
+    params: { _: Date.now() },
+  });
 
 const fetchFreightCharges = (docEntry) =>
   apiClient.get('/purchase-order/freight-charges', { params: { docEntry } });

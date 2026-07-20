@@ -36,6 +36,9 @@ const buildMarketingDocumentListFilterQuery = ({
   const sellerCodeField = String(options.sellerCodeField || `${tableAlias}.U_Seller_Code`).trim();
   const sellerNameField = String(options.sellerNameField || `${tableAlias}.U_Seller_Name`).trim();
   const includeSellerFields = options.includeSellerFields === true;
+  const additionalQueryClauses = Array.isArray(options.additionalQueryClauses)
+    ? options.additionalQueryClauses.filter(Boolean)
+    : [];
   const postingDateField = String(options.postingDateField || `${tableAlias}.DocDate`).trim();
   const statusField = String(options.statusField || `${tableAlias}.DocStatus`).trim();
   const canceledField = String(options.canceledField || `${tableAlias}.CANCELED`).trim();
@@ -68,6 +71,7 @@ const buildMarketingDocumentListFilterQuery = ({
       OR ${partnerNameField} LIKE @query
       ${includeSellerFields ? `OR ${sellerCodeField} LIKE @query
       OR ${sellerNameField} LIKE @query` : ''}
+      ${additionalQueryClauses.length ? `OR ${additionalQueryClauses.join('\n      OR ')}` : ''}
     )`);
     params.query = `%${escapeLike(normalizedQuery)}%`;
   }

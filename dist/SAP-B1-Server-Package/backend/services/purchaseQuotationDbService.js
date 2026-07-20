@@ -20,6 +20,22 @@ const safe = async (promise) => {
   }
 };
 
+const formatDateForInput = (value) => {
+  if (!value) return '';
+  if (value instanceof Date) return value.toISOString().split('T')[0];
+  return String(value).split('T')[0].split(' ')[0];
+};
+
+const getTableColumns = async (tableName) => {
+  const rows = await safe(db.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+  `, { tableName }));
+
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '').trim()));
+};
+
 // ── REFERENCE DATA QUERIES ────────────────────────────────────────────────────
 
 const getVendors = () => safe(db.query(`
@@ -74,7 +90,7 @@ const getItems = () => safe(db.query(`
 
 const getWarehouses = () => safe(db.query(`
   SELECT WhsCode, WhsName, Street, Block,
-         City, County, State, ZipCode, Country, BPLId AS BranchID
+         City, County, State, ZipCode, Country, BPLid AS BranchID
   FROM   OWHS
   WHERE  Inactive <> 'Y'
   ORDER  BY WhsCode
@@ -129,12 +145,12 @@ const getUomGroups = () => safe(db.query(`
 const getDecimalSettings = () => safe(db.query(`
   SELECT TOP 1
     DecSep, ThousSep, DateSep, DateFormat,
-    PriceDP AS PriceDec,
-    QuantityDP AS QtyDec,
-    RateDP AS RateDec,
-    PercentDP AS PercentDec,
-    MeasurDP AS MeasurDec,
-    SumDP AS SumDec
+    PriceDec,
+    QtyDec,
+    RateDec,
+    PercentDec,
+    MeasureDec AS MeasurDec,
+    SumDec
   FROM OADM
 `));
 
@@ -150,7 +166,7 @@ const getCompanyInfo = () => safe(db.query(`
 
 const getContactsByVendor = async (cardCode) => {
   const result = await safe(db.query(`
-    SELECT 
+    SELECT
       T0.CardCode,
       T0.CntctCode,
       T0.Name,
@@ -169,7 +185,7 @@ const getContactsByVendor = async (cardCode) => {
 
 const getAddressesByVendor = async (cardCode) => {
   const result = await safe(db.query(`
-    SELECT 
+    SELECT T0.*,
       T0.CardCode,
       T0.Address,
       T0.AdresType,
@@ -326,6 +342,14 @@ const getPurchaseQuotation = async (docEntry) => {
     getLineUdfValues({ tableId: 'PQT1', keyValue: docEntry }),
   ]);
 
+  const lineColumns = await getTableColumns('PQT1');
+  const firstExistingLineColumn = (...columns) =>
+    columns.find((column) => lineColumns.has(column));
+  const optionalLineColumn = (columns, alias, fallback = "''") => {
+    const column = firstExistingLineColumn(...(Array.isArray(columns) ? columns : [columns]));
+    return column ? `T0.${column} AS ${alias}` : `${fallback} AS ${alias}`;
+  };
+
   // Get lines
   const lineRows = await safe(db.query(`
     SELECT 
@@ -338,7 +362,13 @@ const getPurchaseQuotation = async (docEntry) => {
       T0.TaxCode,
       T0.LineTotal,
       T0.WhsCode AS Warehouse,
-      T0.unitMsr AS UoMCode
+      T0.unitMsr AS UoMCode,
+      ${optionalLineColumn(['ReqDate', 'RequiredDate'], 'RequiredDate')},
+      ${optionalLineColumn('ShipDate', 'ShipDate')},
+      ${optionalLineColumn('OcrCode', 'DistributionRule')},
+      ${optionalLineColumn('CountryOrg', 'CountryOfOrigin')},
+      ${optionalLineColumn('LocCode', 'LocationCode')},
+      ${optionalLineColumn('AgrNo', 'BlanketAgreementNo')}
     FROM PQT1 T0
     WHERE T0.DocEntry = @docEntry
     ORDER BY T0.LineNum
@@ -411,15 +441,29 @@ const getPurchaseQuotation = async (docEntry) => {
           sacCode: firstUdfValue(lineUdf, ['U_SACCode', 'U_SAC']),
           quantity: l.Quantity != null ? String(l.Quantity) : '',
           requiredQty: firstUdfValue(lineUdf, ['U_Req_Qty', 'U_ReqQty']),
+          requiredDate: formatDateForInput(l.RequiredDate),
+          quotedDate: formatDateForInput(l.ShipDate),
           sellerQty: firstUdfValue(lineUdf, ['U_S_Qty']),
           unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
           unitPriceUdf: firstUdfValue(lineUdf, ['U_Unit_Price']),
+          taxCodeRepeat: firstUdfValue(lineUdf, ['U_TAXCODE', 'U_TaxCode']),
+          price: firstUdfValue(lineUdf, ['U_PRICE', 'U_Price']),
           stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
           taxCode: l.TaxCode || '',
           total: l.LineTotal != null ? String(l.LineTotal) : '',
           totalLC: l.LineTotal != null ? String(l.LineTotal) : '',
           whse: l.Warehouse || '',
           uomCode: l.UoMCode || '',
+          distRule: l.DistributionRule || '',
+          countryOfOrigin: l.CountryOfOrigin || '',
+          loc: l.LocationCode != null ? String(l.LocationCode) : '',
+          branch: l.LocationCode != null ? String(l.LocationCode) : '',
+          blanketAgreementNo: l.BlanketAgreementNo != null ? String(l.BlanketAgreementNo) : '',
+          U_Cost_Sheet: firstUdfValue(lineUdf, ['U_Cost_Sheet', 'U_COST_SHEET', 'U_COSTSHEET', 'U_CostSheet']),
+          U_PackingType: firstUdfValue(lineUdf, ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'U_PackingStatus', 'U_PACKINGSTATUS']),
+          U_ContainerType: firstUdfValue(lineUdf, ['U_ContainerType', 'U_CONTAINERTYPE', 'U_Container_Type']),
+          U_GrossWt: firstUdfValue(lineUdf, ['U_GrossWt', 'U_GROSSWT', 'U_Gross_Wt', 'U_GrossWeight', 'U_GROSSWEIGHT']),
+          U_TotalPackage: firstUdfValue(lineUdf, ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_Total_Package', 'U_TotalPackge']),
           specialRebate: firstUdfValue(lineUdf, ['U_SPLRBT']),
           commission: firstUdfValue(lineUdf, ['U_COMPRC']),
           sellerBrokeragePerQty: firstUdfValue(lineUdf, ['U_S_BrokPerQty']),
@@ -446,6 +490,8 @@ const getPurchaseQuotation = async (docEntry) => {
           freightProvider: firstUdfValue(lineUdf, ['U_Fr_trans']),
           freightProviderName: firstUdfValue(lineUdf, ['U_Fr_trans_name']),
           brokerageNumber: firstUdfValue(lineUdf, ['U_BDNum']),
+          U_Fix_Brock_B: firstUdfValue(lineUdf, ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER', 'U_FIXBROKBUYER', 'U_FixBrokBuyer']),
+          U_Fix_Brock_S: firstUdfValue(lineUdf, ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller', 'U_FIXBROCKSELLER', 'U_FIXBROKSELLER', 'U_FixBrokSeller']),
           udf: lineUdf,
         };
       }),

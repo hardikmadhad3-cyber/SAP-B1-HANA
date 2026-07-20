@@ -2,12 +2,88 @@ const sapService = require('./sapService');
 const arInvoiceDb = require('./arInvoiceDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { buildMarketingDocumentAddressPayload } = require('./documentAddressPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { applyUdfValues, isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
-  return normalized === '' ? -1 : Number(normalized);
+  const branchId = Number(normalized);
+  return Number.isInteger(branchId) && branchId > 0 ? branchId : undefined;
+};
+
+const getSapErrorMessage = (error, fallback = '') => {
+  if (error?.response?.data?.error?.message?.value) return error.response.data.error.message.value;
+  if (error?.response?.data?.error?.message) return error.response.data.error.message;
+  return error?.message || fallback;
+};
+
+const isNumberingSeriesError = (error) => String(getSapErrorMessage(error)).includes('10000521');
+const isManualSeriesSelection = (series) => String(series || '').trim().toLowerCase() === '__sap_manual__';
+
+const resolveARInvoiceSeries = async (header = {}, lines = [], options = {}) => {
+  const selectedSeries = Number(header.series);
+  const preferSubmittedSeries = options.preferSubmittedSeries !== false;
+  let requestedBranchId = normalizeBranchId(header.branch);
+
+  if (!requestedBranchId) {
+    const firstLine = Array.isArray(lines) ? lines[0] || {} : {};
+    const warehouseCode = String(
+      header.warehouse || firstLine.whse || firstLine.warehouse || firstLine.WarehouseCode || '',
+    ).trim();
+    if (warehouseCode) {
+      const warehouseBranch = await arInvoiceDb.getWarehouseBranch(warehouseCode);
+      requestedBranchId = normalizeBranchId(warehouseBranch?.branchId);
+    }
+  }
+
+  if (isManualSeriesSelection(header.series)) {
+    return {
+      series: undefined,
+      branchId: requestedBranchId,
+    };
+  }
+
+  try {
+    const seriesRows = await arInvoiceDb.getDocumentSeries(
+      header.postingDate || header.documentDate || null,
+      header.transactionType || '',
+      requestedBranchId || '',
+    );
+
+    if (!Array.isArray(seriesRows) || !seriesRows.length) {
+      return {
+        series: Number.isFinite(selectedSeries) && selectedSeries > 0 ? selectedSeries : undefined,
+        branchId: requestedBranchId,
+      };
+    }
+
+    const selectedRow = preferSubmittedSeries && Number.isFinite(selectedSeries) && selectedSeries > 0
+      ? seriesRows.find((row) => Number(row.Series) === selectedSeries)
+      : null;
+    const defaultRow = seriesRows.find((row) => row.IsDefault) || seriesRows[0];
+    const resolvedRow = selectedRow || defaultRow;
+    const resolved = Number(resolvedRow?.Series);
+    const seriesBranchId = normalizeBranchId(resolvedRow?.BPLId);
+
+    if (requestedBranchId && seriesBranchId && requestedBranchId !== seriesBranchId) {
+      const mismatchError = new Error('The selected A/R Invoice numbering series belongs to a different branch. Select a matching series or branch.');
+      mismatchError.code = 'AR_INVOICE_SERIES_BRANCH_MISMATCH';
+      throw mismatchError;
+    }
+
+    return {
+      series: Number.isFinite(resolved) && resolved > 0 ? resolved : undefined,
+      branchId: requestedBranchId || seriesBranchId,
+    };
+  } catch (error) {
+    if (error.code === 'AR_INVOICE_SERIES_BRANCH_MISMATCH') throw error;
+    console.warn('[ARInvoiceService] Could not validate invoice series; using submitted value.', error.message);
+    return {
+      series: Number.isFinite(selectedSeries) && selectedSeries > 0 ? selectedSeries : undefined,
+      branchId: requestedBranchId,
+    };
+  }
 };
 
 const isUdfValuePresent = (value) => {
@@ -145,6 +221,9 @@ const getReferenceData = async (companyId) => {
     return data;
   } catch (error) {
     console.error('[AR Invoice Service] Failed to load reference data via ODBC:', error);
+    if (error?.status === 503 || /\bis busy\b/i.test(String(error?.message || ''))) {
+      throw error;
+    }
     return {
       company: '',
       vendors: [],
@@ -286,6 +365,8 @@ const getARInvoice = async (docEntry) => {
 // ───────── CREATE INVOICE (USING SERVICE LAYER) ─────────
 
 const submitARInvoice = async (payload) => {
+  let lastSapPayload = null;
+
   try {
     console.log("🔥 [ARInvoiceService] RECEIVED AR INVOICE PAYLOAD:", JSON.stringify(payload, null, 2));
 
@@ -305,6 +386,11 @@ const submitARInvoice = async (payload) => {
     }
     
     console.log("🔍 [ARInvoiceService] Using customer code:", customerCode);
+    const resolvedSeries = await resolveARInvoiceSeries(payload.header, payload.lines);
+    const batchResult = await arInvoiceDb.validateBatchSelection(payload.lines || []);
+    if (!batchResult.isValid) {
+      throw new Error(batchResult.errors.join('; '));
+    }
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('OINV'),
@@ -317,7 +403,7 @@ const submitARInvoice = async (payload) => {
       CardCode: String(customerCode).trim(),
 
       // Series for auto-numbering - only include if explicitly provided and valid
-      ...(payload.header.series && Number(payload.header.series) > 0 ? { Series: Number(payload.header.series) } : {}),
+      ...(resolvedSeries.series ? { Series: resolvedSeries.series } : {}),
 
       DocDate: payload.header.postingDate || payload.header.documentDate,
       DocDueDate: payload.header.deliveryDate || payload.header.dueDate,
@@ -332,8 +418,10 @@ const submitARInvoice = async (payload) => {
           : undefined,
 
       // Branch mapping
-      BPLId: normalizeBranchId(payload.header.branch),
-      BPL_IDAssignedToInvoice: normalizeBranchId(payload.header.branch),
+      ...(resolvedSeries.branchId ? {
+        BPLId: resolvedSeries.branchId,
+        BPL_IDAssignedToInvoice: resolvedSeries.branchId,
+      } : {}),
 
       PaymentGroupCode: payload.header.paymentTerms ? Number(payload.header.paymentTerms) : undefined,
 
@@ -343,6 +431,7 @@ const submitARInvoice = async (payload) => {
       // Comments
       Comments: payload.header.otherInstruction || payload.header.comments || undefined,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(payload.header),
 
       DocumentLines: payload.lines.map((l, index) => {
         console.log(`🔍 [ARInvoiceService] Processing line ${index}:`, l);
@@ -353,7 +442,7 @@ const submitARInvoice = async (payload) => {
           Quantity: Number(l.quantity),
           UnitPrice: getLineUnitPrice(l),
           TaxCode: l.taxCode || undefined,
-          MeasureUnit: l.uomCode || undefined,
+          UoMCode: l.uomCode || undefined,
           WTLiable: yesNo(l.wTaxLiable ?? l.wtaxLiable),
           AccountCode: l.glAccount || undefined,
           CostingCode: l.distRule || undefined,
@@ -363,6 +452,15 @@ const submitARInvoice = async (payload) => {
 
         if (warehouseCode) {
           line.WarehouseCode = warehouseCode;
+        }
+
+        if (Array.isArray(l.batches) && l.batches.length > 0) {
+          line.BatchNumbers = l.batches
+            .filter((batch) => String(batch.batchNumber || '').trim() && Number(batch.quantity) > 0)
+            .map((batch) => ({
+              BatchNumber: String(batch.batchNumber || '').trim(),
+              Quantity: Number(batch.quantity),
+            }));
         }
 
         // Add discount if present
@@ -384,6 +482,7 @@ const submitARInvoice = async (payload) => {
         return line;
       })
     };
+    lastSapPayload = sapPayload;
 
     addIfPresent(sapPayload, 'ShipToCode', payload.header.shipToCode);
     addIfPresent(sapPayload, 'PayToCode', payload.header.billToCode || payload.header.payToCode);
@@ -404,15 +503,51 @@ const submitARInvoice = async (payload) => {
     console.log("🔥 [ARInvoiceService] SAP AR INVOICE PAYLOAD:", JSON.stringify(sapPayload, null, 2));
 
     applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
-    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], payload.header.transactionType);
+    setKnownUdfValue(
+      sapPayload,
+      headerUdfDefinitionsByKey,
+      ['TransactionType', 'TransType', 'DocumentType', 'DocType'],
+      payload.header.transactionTypeCode || payload.header.transactionType,
+    );
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], payload.header.indicator);
 
-    // Use Service Layer for POST operations - Invoices endpoint
-    const response = await sapService.request({
-      method: 'post',
-      url: '/Invoices',
-      data: sapPayload,
-    });
+    let response;
+    try {
+      response = await sapService.request({
+        method: 'post',
+        url: '/Invoices',
+        data: sapPayload,
+      });
+    } catch (postError) {
+      if (!isNumberingSeriesError(postError)) throw postError;
+
+      const fallbackSeries = await resolveARInvoiceSeries(
+        { ...payload.header, series: '' },
+        payload.lines,
+        { preferSubmittedSeries: false },
+      );
+
+      if (!fallbackSeries.series || fallbackSeries.series === sapPayload.Series) throw postError;
+
+      sapPayload.Series = fallbackSeries.series;
+      if (fallbackSeries.branchId) {
+        sapPayload.BPLId = fallbackSeries.branchId;
+        sapPayload.BPL_IDAssignedToInvoice = fallbackSeries.branchId;
+      } else {
+        delete sapPayload.BPLId;
+        delete sapPayload.BPL_IDAssignedToInvoice;
+      }
+      lastSapPayload = sapPayload;
+      console.warn(
+        '[ARInvoiceService] Retrying A/R Invoice with default numbering series after SAP rejected submitted series.',
+        { series: sapPayload.Series, branchId: sapPayload.BPLId || '' },
+      );
+      response = await sapService.request({
+        method: 'post',
+        url: '/Invoices',
+        data: sapPayload,
+      });
+    }
 
     console.log("✅ [ARInvoiceService] SAP AR INVOICE RESPONSE:", JSON.stringify(response.data, null, 2));
 
@@ -430,12 +565,16 @@ const submitARInvoice = async (payload) => {
 
     // Extract meaningful error message from SAP
     let errorMessage = 'AR Invoice submission failed.';
-    if (error.response?.data?.error?.message?.value) {
-      errorMessage = error.response.data.error.message.value;
-    } else if (error.response?.data?.error?.message) {
-      errorMessage = error.response.data.error.message;
-    } else if (error.message) {
-      errorMessage = error.message;
+    errorMessage = getSapErrorMessage(error, errorMessage);
+
+    if (String(errorMessage).includes('10000521') && lastSapPayload) {
+      const submittedContext = [
+        lastSapPayload.Series ? `Series=${lastSapPayload.Series}` : '',
+        lastSapPayload.BPLId ? `BPLId=${lastSapPayload.BPLId}` : '',
+      ].filter(Boolean).join(', ');
+      if (submittedContext) {
+        errorMessage = `${errorMessage} (submitted ${submittedContext})`;
+      }
     }
 
     // Create a new error with the SAP message
@@ -477,15 +616,18 @@ const updateARInvoice = async (docEntry, payload) => {
       NumAtCard: payload.header.salesContractNo || payload.header.customerRefNo || undefined,
       Comments: payload.header.otherInstruction || payload.header.comments || undefined,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(payload.header),
 
       DocumentLines: payload.lines.map((l) => {
         const warehouseCode = String(l.whse || l.warehouse || '').trim();
+        const lineNum = l.lineNum ?? l.LineNum;
         const line = {
+          ...(lineNum !== undefined && lineNum !== null && lineNum !== '' ? { LineNum: Number(lineNum) } : {}),
           ItemCode: l.itemNo,
           Quantity: Number(l.quantity),
           UnitPrice: getLineUnitPrice(l),
           TaxCode: l.taxCode || undefined,
-          MeasureUnit: l.uomCode || undefined,
+          UoMCode: l.uomCode || undefined,
           WTLiable: yesNo(l.wTaxLiable ?? l.wtaxLiable),
           AccountCode: l.glAccount || undefined,
           CostingCode: l.distRule || undefined,
@@ -521,7 +663,12 @@ const updateARInvoice = async (docEntry, payload) => {
     }
 
     applyUdfValues(sapPayload, payload.header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
-    setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], payload.header.transactionType);
+    setKnownUdfValue(
+      sapPayload,
+      headerUdfDefinitionsByKey,
+      ['TransactionType', 'TransType', 'DocumentType', 'DocType'],
+      payload.header.transactionTypeCode || payload.header.transactionType,
+    );
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], payload.header.indicator);
 
     // Use Service Layer for PATCH operations

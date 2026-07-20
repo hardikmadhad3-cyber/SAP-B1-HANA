@@ -10,6 +10,7 @@ import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import AddressModal from './components/AddressModal';
+import { formatAddressComponent, mapAddressFields, pickAddressComponentFields } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
 import StateSelectionModal from '../sales-order/components/StateSelectionModal';
@@ -20,12 +21,13 @@ import LineValueLookupModal from '../../components/sales-document/LineValueLooku
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
 import CopyToModal from './components/CopyToModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
-import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
+import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
@@ -37,6 +39,13 @@ import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import { useAuth } from '../../auth/AuthContext';
+import { getDocumentLayout } from '../../api/sapLayoutApi';
+import {
+  AR_CREDIT_MEMO_LAYOUT_DOCUMENT_TYPE,
+  buildSalesOrderMatrixColumnsFromLayout,
+} from '../sales-order/documentLayout';
+import { hydrateWorkbookDocumentLine } from '../../utils/workbookLineHydration';
 import {
   fetchARCreditMemoReferenceData,
   fetchARCreditMemoCustomerDetails,
@@ -54,7 +63,6 @@ import {
 } from '../../api/arCreditMemoApi';
 import { fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { fetchDeliveryForCopyToCreditMemo } from '../../api/deliveryApi';
-import { AR_INVOICE_COMPANY_ID } from '../../config/appConfig';
 import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
   FORM_SETTINGS_STORAGE_KEY,
@@ -66,17 +74,22 @@ import {
   readSavedFormSettings,
 } from '../../config/arCreditMemoForm';
 
+const SAP_MANUAL_SERIES_VALUE = '__SAP_MANUAL__';
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const getErrMsg = (e, fb) => {
-  const d = e?.response?.data?.detail;
+  const body = e?.response?.data || {};
+  const d = body.detail || body.details;
   if (typeof d === 'string' && d.trim()) return d;
   if (d?.error?.message) return d.error.message;
   if (d?.message) return d.message;
+  if (body.message) return d?.hint ? `${body.message} ${d.hint}` : body.message;
   return e?.message || fb;
 };
 const today = () => new Date().toISOString().split('T')[0];
 const parseNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const roundTo = (v, d) => { const f = 10 ** Math.max(d, 0); return Math.round((v + Number.EPSILON) * f) / f; };
+const calcRoundingAmount = (value, decimals) => roundTo(Math.round(value) - value, decimals);
 const fmtDec = (v, d) => { if (v === '' || v == null) return ''; const n = Number(v); return Number.isNaN(n) ? '' : n.toFixed(Math.max(d, 0)); };
 const sanitize = (v, d) => {
   const c = String(v ?? '').replace(/[^\d.-]/g, '').replace(/(?!^)-/g, '').replace(/^(-?)\./, '$10.').replace(/(\..*)\./g, '$1');
@@ -98,17 +111,24 @@ const mapAddressToModalForm = (address, existing = {}) => ({
   billToAddress: existing.billToAddress || '',
   streetPoBox: address?.Street || '',
   streetNo: address?.StreetNo || '',
-  buildingFloorRoom: address?.Building || '',
+  buildingFloorRoom: address?.BuildingFloorRoom || address?.Building || '',
   block: address?.Block || '',
   city: address?.City || '',
   zipCode: address?.ZipCode || '',
   county: address?.County || '',
   state: address?.State || '',
   countryRegion: address?.Country || '',
-  addressName2: address?.Address2 || '',
-  addressName3: address?.Address3 || '',
-  gln: address?.GLN || '',
-  gstin: address?.GSTIN || '',
+  addressName2: address?.AddressName2 || address?.Address2 || '',
+  addressName3: address?.AddressName3 || address?.Address3 || '',
+  gln: address?.GlobalLocationNumber || address?.GlblLocNum || address?.GLN || '',
+  erpAddress: address?.U_ERPAddress || address?.U_ERP_Address || address?.ERPAddress || '',
+  contactPerson: address?.U_ContactPerson || address?.U_CONTACT_PERSON || address?.ContactPerson || '',
+  mobile: address?.U_Mobile || address?.U_MOBILE || address?.Mobile || address?.MobilePhone || '',
+  dateOfRegistration: address?.U_DateOfRegistration || address?.U_Date_Of_Registration || address?.DateOfRegistration || '',
+  dateDetailsOfRegistration: address?.U_DateDetlOfReg || address?.U_Date_Detl_Of_Reg || address?.DateDetlOfReg || '',
+  addressStatus: address?.U_Status || address?.AddressStatus || address?.Status || '',
+  gstin: address?.GSTRegnNo || address?.GSTIN || address?.U_GSTIN_No || address?.U_GSTINNo || '',
+  ...mapAddressFields(address),
 });
 const normalizeAddressText = (value) =>
   String(value || '')
@@ -117,6 +137,10 @@ const normalizeAddressText = (value) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+const normalizeBranchSelection = (value) => {
+  const normalized = String(value ?? '').trim();
+  return normalized && normalized !== '-1' && normalized !== '0' ? normalized : '';
+};
 
 // Check if batches are available for item in specific warehouse
 const checkBatchAvailability = async (itemCode, whsCode) => {
@@ -171,7 +195,17 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   loc: '', branch: '', noOfPackages: '', wTaxLiable: 'N', glAccount: '',
   distRule: '', taxLiable: 'Y', weight: '', taxAmount: '', totalLC: '',
   uomName: '', cogsDistRule: '', countryOfOrigin: '',
+  binLocationAllocation: '', itemCost: '', withoutQtyPosting: 'N',
   enableSettingCost: 'N', returnCost: '', blanketAgreementNo: '',
+  costSheet: '', packingType: '', containerType: '', grossWt: '', totalPackage: '',
+  taxCodeRepeat: '', price: '',
+  sellerBrokerage: '', buyerBrokerage: '', buyerDelivery: '', sellerDelivery: '',
+  buyerPaymentTerms: '', sellerPaymentTerms: '', buyerQuality: '', sellerQuality: '',
+  buyerPrice: '', sellerPrice: '', buyerSpecialInstruction: '', sellerSpecialInstruction: '',
+  sellerBrokerageAmtPer: '', sellerBrokeragePercent: '', stcode: '',
+  sellerItem: '', sellerQty: '', specialRebate: '', commission: '',
+  sellerBrokeragePerQty: '', fixBrokBuyer: '', fixBrockSeller: '',
+  sellerPaymentTermsRepeat: '',
   batchManaged: false,
   hasBatchesAvailable: false,
   batches: [],
@@ -184,12 +218,14 @@ const INIT_HEADER = {
   vendor: '', name: '', contactPerson: '', salesContractNo: '', branch: '', warehouse: DEFAULT_WAREHOUSE_CODE,
   docNo: '', status: 'Open', series: '', nextNumber: '',
   postingDate: today(), deliveryDate: '', documentDate: today(), contractDate: '',
+  transactionType: 'GST Tax Invoice',
   branchRegNo: '', shipTo: '', shipToCode: '', payTo: '', payToCode: '',
   shippingType: '', confirmed: false, journalRemark: '', paymentTerms: '',
   paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
-  totalPaymentDue: '', rounding: false, owner: '', purchaser: '', salesEmployee: '',
+  totalPaymentDue: '', rounding: false, roundingAmount: '', owner: '', purchaser: '', salesEmployee: '',
   placeOfSupply: '', currency: 'INR', useBillToForTax: false,
   billToAddress: '', billToCode: '', shipToAddress: '',
+  shipToAddressComponents: null, billToAddressComponents: null,
 };
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
@@ -198,9 +234,25 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 }));
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+const getARCreditMemoDocumentLines = (creditMemo = {}) => {
+  const candidates = [
+    creditMemo.lines,
+    creditMemo.Lines,
+    creditMemo.documentLines,
+    creditMemo.DocumentLines,
+    creditMemo.rows,
+    creditMemo.DocumentRows,
+  ];
+
+  return candidates.find((value) => Array.isArray(value) && value.length) || [];
+};
+
 function ARCreditMemo() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { company } = useAuth();
+  const activeCompanyId = company?.companyId || '';
+  const activeCompanyDb = company?.dbName || '';
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const requestedEditDocEntry = location.state?.arCreditMemoDocEntry;
 
@@ -209,6 +261,7 @@ function ARCreditMemo() {
   const [headerUdfDefinitions, setHeaderUdfDefinitions] = useState(HEADER_UDF_DEFINITIONS);
   const [rowUdfDefinitions, setRowUdfDefinitions] = useState(ROW_UDF_DEFINITIONS);
   const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState([]);
+  const [loadedCreditMemo, setLoadedCreditMemo] = useState(null);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [attachments] = useState(INIT_ATTACH);
   const [activeTab, setActiveTab] = useState('Contents');
@@ -235,6 +288,7 @@ function ARCreditMemo() {
   useValidationHighlights(valErrors);
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const [seriesReloadToken, setSeriesReloadToken] = useState(0);
   const [addressModal, setAddressModal] = useState(null);
   const [taxInfoModal, setTaxInfoModal] = useState(false);
   const [bpModal, setBpModal] = useState(false);
@@ -316,18 +370,38 @@ function ARCreditMemo() {
   const hasBuyerCode = Boolean(String(header.vendor || '').trim());
   const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
   const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+  const getBranchFromWarehouseCode = useCallback((warehouseCode = '') => {
+    const code = String(warehouseCode || '').trim();
+    if (!code) return '';
+    const warehouse = (refData.warehouses || []).find((row) => (
+      String(row?.WhsCode || row?.WarehouseCode || row?.warehouse || '').trim() === code
+    ));
+    return normalizeBranchSelection(getWarehouseBranchId(warehouse));
+  }, [refData.warehouses]);
   const resolvePreferredSeries = (seriesList, postingDateValue, selectedSeries = '') => {
     if (!Array.isArray(seriesList) || !seriesList.length) return null;
 
+    const selectedBranchId = normalizeBranchSelection(header.branch);
+    const compatibleSeries = seriesList.filter((series) => {
+      const seriesBranchId = String(series?.BPLId ?? '').trim();
+      return !seriesBranchId || seriesBranchId === '0' || seriesBranchId === '-1'
+        || !selectedBranchId || seriesBranchId === selectedBranchId;
+    });
+
+    if (!compatibleSeries.length) return null;
+
     const normalizedSeries = String(selectedSeries || '').trim();
     const matchedSeries = normalizedSeries
-      ? seriesList.find((series) => String(series.Series) === normalizedSeries)
+      ? compatibleSeries.find((series) => String(series.Series) === normalizedSeries)
       : null;
 
     if (matchedSeries) return matchedSeries;
 
+    const sapDefaultSeries = compatibleSeries.find((series) => series.IsDefault || series.isDefault);
+    if (sapDefaultSeries) return sapDefaultSeries;
+
     const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
-    return getDefaultSeriesForCurrentYear(seriesList, seriesDate) || seriesList[0];
+    return getDefaultSeriesForCurrentYear(compatibleSeries, seriesDate) || compatibleSeries[0];
   };
   const primaryActionLabel = pageState.posting
     ? 'Saving…'
@@ -357,7 +431,42 @@ function ARCreditMemo() {
     const load = async () => {
       setPageState(p => ({ ...p, loading: true, error: '', success: '' }));
       try {
-        const refDataRes = await fetchARCreditMemoReferenceData(AR_INVOICE_COMPANY_ID);
+        if (!activeCompanyId) {
+          setLoadedCreditMemo(null);
+          setHeaderUdfDefinitions([]);
+          setRowUdfDefinitions([]);
+          setMatrixColumnDefinitions([]);
+          setHeaderUdfs({});
+          setLines([createLine([])]);
+          setRefData(prev => ({
+            ...prev,
+            company: '',
+            vendors: [], contacts: [], pay_to_addresses: [], items: [], warehouses: [],
+            warehouse_addresses: [], company_address: {}, tax_codes: [], payment_terms: [],
+            shipping_types: [], sales_employees: [], branches: [], states: [], gl_accounts: [],
+            distribution_rules: [], uom_groups: [], matrix_columns: [],
+            line_field_metadata: { matrix_columns: [], sap_form: {} },
+            udf_metadata: { header: [], rows: [] },
+          }));
+          return;
+        }
+
+        setMatrixColumnDefinitions([]);
+
+        const [refDataRes, layoutRes] = await Promise.all([
+          fetchARCreditMemoReferenceData(activeCompanyId),
+          getDocumentLayout({
+            companyDb: activeCompanyDb || undefined,
+            documentType: AR_CREDIT_MEMO_LAYOUT_DOCUMENT_TYPE,
+            objectType: '14',
+          }).catch((error) => ({
+            data: {
+              success: false,
+              columns: [],
+              warning: getErrMsg(error, 'Failed to load SAP layout.'),
+            },
+          })),
+        ]);
         
         if (!ignore) {
           const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
@@ -366,13 +475,19 @@ function ARCreditMemo() {
           const nextMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
             ? refDataRes.data.line_field_metadata.matrix_columns
             : (refDataRes.data.matrix_columns || []);
+          const nextLayoutMatrixColumns = buildSalesOrderMatrixColumnsFromLayout({
+            layoutColumns: layoutRes?.data?.columns || [],
+            liveMatrixColumns: nextMatrixColumns,
+            rowUdfFields: nextRowUdfs,
+            includeLineNumber: false,
+          });
           const hasSapMatrixPreferences =
             Number(refDataRes.data.line_field_metadata?.sap_form?.preferenceRows || 0) > 0;
-          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns, formSettingsStorageKey);
-          const nextSapDefaults = createDefaultFormSettings(nextHeaderUdfs, nextRowUdfs, nextMatrixColumns);
+          const nextDefaults = readSavedFormSettings(nextHeaderUdfs, nextRowUdfs, nextLayoutMatrixColumns, formSettingsStorageKey);
+          const nextSapDefaults = createDefaultFormSettings(nextHeaderUdfs, nextRowUdfs, nextLayoutMatrixColumns);
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
-          setMatrixColumnDefinitions(nextMatrixColumns);
+          setMatrixColumnDefinitions(nextLayoutMatrixColumns);
           setHeaderUdfs((prev) => normalizeUdfState(nextHeaderUdfs, prev));
           setLines((prev) => prev.map((line) => ({
             ...line,
@@ -394,12 +509,7 @@ function ARCreditMemo() {
                     ...((prev.rowUdfs || {})[field.key] || {}),
                   },
             }), hasSapMatrixPreferences ? nextSapDefaults.rowUdfs : nextDefaults.rowUdfs),
-            matrixColumns: hasSapMatrixPreferences
-              ? nextSapDefaults.matrixColumns
-              : {
-                  ...nextDefaults.matrixColumns,
-                  ...(prev.matrixColumns || {}),
-                },
+            matrixColumns: nextSapDefaults.matrixColumns,
           }));
           setRefData(prev => ({
             ...prev,
@@ -421,10 +531,17 @@ function ARCreditMemo() {
             distribution_rules: refDataRes.data.distribution_rules || [],
             uom_groups: refDataRes.data.uom_groups || [],
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
-            matrix_columns: nextMatrixColumns,
-            line_field_metadata: refDataRes.data.line_field_metadata || { matrix_columns: nextMatrixColumns, sap_form: {} },
+            matrix_columns: nextLayoutMatrixColumns,
+            line_field_metadata: {
+              ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+              matrix_columns: nextLayoutMatrixColumns,
+              imported_layout: layoutRes?.data || null,
+            },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
-            warnings: refDataRes.data.warnings || [],
+            warnings: [
+              ...(refDataRes.data.warnings || []),
+              ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
+            ],
             series: Array.isArray(prev.series) ? prev.series : [],
           }));
         }
@@ -436,7 +553,7 @@ function ARCreditMemo() {
     };
     load();
     return () => { ignore = true; };
-  }, [formSettingsStorageKey]);
+  }, [activeCompanyDb, activeCompanyId, formSettingsStorageKey]);
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
@@ -453,7 +570,7 @@ function ARCreditMemo() {
 
     const loadSeriesForPostingDate = async () => {
       try {
-        const seriesResponse = await fetchDocumentSeries(seriesDate);
+        const seriesResponse = await fetchDocumentSeries(seriesDate, header.transactionType || 'GST Tax Invoice', header.branch);
         const availableSeries = seriesResponse.data?.series || [];
 
         if (ignore || requestedEditDocEntry) return;
@@ -480,7 +597,7 @@ function ARCreditMemo() {
 
     loadSeriesForPostingDate();
     return () => { ignore = true; };
-  }, [currentDocEntry, requestedEditDocEntry, header.postingDate]);
+  }, [currentDocEntry, requestedEditDocEntry, header.postingDate, header.transactionType, header.branch, seriesReloadToken]);
 
   useEffect(() => {
     const docEntry = requestedEditDocEntry;
@@ -491,15 +608,32 @@ function ARCreditMemo() {
       try {
         const r = await fetchARCreditMemoByDocEntry(docEntry);
         const so = r.data.ar_credit_memo;
+        console.log('AR Credit Memo response:', r.data);
+        console.log('DocType:', so?.header?.docType);
+        console.log('Document lines:', getARCreditMemoDocumentLines(so));
+        if (ignore || !so) return;
+        if (String(so.header?.docType || 'I').trim().toUpperCase() === 'S') {
+          setLoadedCreditMemo(null);
+          setPageState(p => ({
+            ...p,
+            error: 'This A/R Credit Memo is a Service type document. Open it in the Service A/R Credit Memo page.',
+            success: '',
+          }));
+          return;
+        }
         let editSeries = [];
         try {
           const seriesDate = so?.header?.postingDate || so?.header?.documentDate || '';
-          const seriesResponse = await fetchDocumentSeries(seriesDate);
+          const seriesResponse = await fetchDocumentSeries(
+            seriesDate,
+            so?.header?.transactionType || 'GST Tax Invoice',
+            so?.header?.branch || '',
+          );
           editSeries = seriesResponse.data?.series || [];
         } catch (_seriesError) {
           editSeries = [];
         }
-        if (ignore || !so) return;
+        if (ignore) return;
         setCurrentDocEntry(so.doc_entry || Number(docEntry));
         const savedSeriesValue = String(so.header?.series || '');
         const savedSeriesOption = savedSeriesValue
@@ -521,6 +655,7 @@ function ARCreditMemo() {
             series: mergedEditSeries,
           }));
         }
+        setLoadedCreditMemo(so);
         setHeader(prev => ({
           ...prev,
           ...INIT_HEADER,
@@ -531,16 +666,26 @@ function ARCreditMemo() {
           paymentTerms: so.header?.paymentTermsCode || so.header?.paymentTerms || '',
           placeOfSupply: so.header?.placeOfSupply || '',
           branch: so.header?.branch || '',
+          shipToAddressComponents: so.header?.shipToAddressComponents || null,
+          billToAddressComponents: so.header?.billToAddressComponents || null,
           docNo: so.header?.docNo || so.header?.docNum || '',
           series: so.header?.series || '',
           nextNumber: so.header?.docNo || so.header?.docNum || '',
+          rounding: Boolean(so.header?.rounding || parseNum(so.header?.roundingAmount) !== 0),
+          roundingAmount: so.header?.roundingAmount ?? '',
         }));
         
-        setLines(
-          Array.isArray(so.lines) && so.lines.length
-            ? so.lines.map(l => ({ ...createLine(rowUdfDefinitions), ...l, udf: normalizeUdfState(rowUdfDefinitions, l.udf || {}) }))
-            : [createLine(rowUdfDefinitions)]
-        );
+        const savedDocumentLines = getARCreditMemoDocumentLines(so);
+        if (savedDocumentLines.length) {
+          setLines(savedDocumentLines.map((line) => hydrateWorkbookDocumentLine({
+            line,
+            createLine,
+            rowUdfDefinitions,
+            normalizeUdfState,
+            items: refData.items,
+            fallbackWarehouse: so.header?.warehouse || DEFAULT_WAREHOUSE_CODE,
+          })));
+        }
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
         setSnapshotPending(true);
         setIsDirty(false);
@@ -560,6 +705,21 @@ function ARCreditMemo() {
     load();
     return () => { ignore = true; };
   }, [location.pathname, requestedEditDocEntry, navigate]);
+
+  useEffect(() => {
+    if (!loadedCreditMemo || isDirty) return;
+    const savedDocumentLines = getARCreditMemoDocumentLines(loadedCreditMemo);
+    if (!savedDocumentLines.length) return;
+
+    setLines(savedDocumentLines.map((line) => hydrateWorkbookDocumentLine({
+      line,
+      createLine,
+      rowUdfDefinitions,
+      normalizeUdfState,
+      items: refData.items,
+      fallbackWarehouse: loadedCreditMemo.header?.warehouse || DEFAULT_WAREHOUSE_CODE,
+    })));
+  }, [loadedCreditMemo, rowUdfDefinitions, refData.items, isDirty]);
 
   useEffect(() => {
     if (!currentDocEntry) {
@@ -720,6 +880,7 @@ function ARCreditMemo() {
         uomCode:         l.uomCode            || l.UomCode || l.unitMsr || '',
         hsnCode:         l.hsnCode            || l.HSNCode || '',
         taxCode:         l.taxCode            || l.TaxCode || '',
+        taxCodeManuallyOverridden: Boolean(String(l.taxCode || l.TaxCode || l.VatGroup || '').trim()),
         total:           String(l.total       || l.LineTotal || 0),
         whse:            l.whse               || l.WarehouseCode || l.WhsCode || DEFAULT_WAREHOUSE_CODE,
         loc:             l.loc                || l.Location || '',
@@ -878,7 +1039,10 @@ function ARCreditMemo() {
         if (net <= 0 || !l.taxCode) return;
         const rate = taxRateMap.get(String(l.taxCode || '')) || 0;
         const base = discSub * (net / subtotal);
-        const lineTax = roundTo(base * rate / 100, numDec.tax);
+        const explicitTaxValue = String(l.taxAmount ?? '').trim() === '' ? null : Number(l.taxAmount);
+        const lineTax = Number.isFinite(explicitTaxValue)
+          ? roundTo(explicitTaxValue, numDec.tax)
+          : roundTo(base * rate / 100, numDec.tax);
         taxAmt += lineTax;
         const ex = taxMap.get(l.taxCode) || { taxCode: l.taxCode, taxRate: rate, taxableAmount: 0, taxAmount: 0 };
         ex.taxableAmount = roundTo(ex.taxableAmount + base, numDec.total);
@@ -889,10 +1053,31 @@ function ARCreditMemo() {
     taxAmt = roundTo(taxAmt, numDec.tax);
     if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
     taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+    const totalBeforeRounding = roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue);
+    const roundingAmount = header.rounding ? calcRoundingAmount(totalBeforeRounding, numDec.totalPaymentDue) : 0;
+    const total = roundTo(totalBeforeRounding + roundingAmount, numDec.totalPaymentDue);
+    return {
+      subtotal,
+      discAmt,
+      discSub,
+      freight,
+      freightTaxAmt,
+      taxAmt,
+      totalBeforeRounding,
+      roundingAmount,
+      total,
+      taxBreakdown: Array.from(taxMap.values()),
+    };
   };
 
   const totals = calcTotals();
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 14,
+    docEntry: currentDocEntry,
+    header,
+    total: totals.total,
+  });
 
   // Continue in next part...
 
@@ -1029,6 +1214,35 @@ function ARCreditMemo() {
       handleSeriesChange(value);
       return;
     }
+    if (name === 'branch') {
+      const nextWarehouses = filterWarehousesByBranch(effectiveWarehouses, value);
+      setHeader(p => ({
+        ...p,
+        branch: value,
+        series: '',
+        nextNumber: '',
+        warehouse: nextWarehouses.some((w) => String(w.WhsCode) === String(p.warehouse))
+          ? p.warehouse
+          : '',
+      }));
+      setSeriesReloadToken((token) => token + 1);
+      return;
+    }
+    if (name === 'warehouse') {
+      const warehouseBranch = getBranchFromWarehouseCode(value);
+      setHeader(p => ({
+        ...p,
+        warehouse: value,
+        branch: warehouseBranch || p.branch,
+        ...(warehouseBranch && warehouseBranch !== normalizeBranchSelection(p.branch)
+          ? { series: '', nextNumber: '' }
+          : {}),
+      }));
+      if (warehouseBranch && warehouseBranch !== normalizeBranchSelection(header.branch)) {
+        setSeriesReloadToken((token) => token + 1);
+      }
+      return;
+    }
     
     if (name === 'shipToCode') {
       handleShipToCodeChange(value);
@@ -1115,10 +1329,25 @@ function ARCreditMemo() {
   };
   
   const handleSeriesChange = async (seriesValue) => {
-    if (!seriesValue) return;
+    if (!seriesValue || seriesValue === SAP_MANUAL_SERIES_VALUE) {
+      setHeader(p => ({
+        ...p,
+        series: seriesValue,
+        nextNumber: '',
+      }));
+      setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+      return;
+    }
+    const selectedSeries = refData.series.find((series) => String(series.Series) === String(seriesValue));
+    const seriesBranchId = normalizeBranchSelection(selectedSeries?.BPLId);
     
     setPageState(p => ({ ...p, seriesLoading: true }));
-    setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
+    setHeader(p => ({
+      ...p,
+      series: seriesValue,
+      nextNumber: '...',
+      branch: seriesBranchId || p.branch,
+    }));
     
     try {
       const res = await fetchNextNumber(seriesValue);
@@ -1237,7 +1466,7 @@ function ARCreditMemo() {
           
           setLines(prev => prev.map((line, idx) => {
             if (idx !== i) return line;
-            const next = { ...line, itemNo: value };
+            const next = { ...line, itemNo: value, taxCodeManuallyOverridden: false };
             
             // Step 1: Set Item Details
             next.itemDescription = item.ItemName || next.itemDescription;
@@ -1268,6 +1497,7 @@ function ARCreditMemo() {
             if (!gstState || !companyState) {
               console.warn('⚠️ Missing state information for tax determination');
               next.taxCode = '';
+              next.taxCodeRepeat = '';
               next.total = fmtDec(calcLineTotal(next), numDec.total);
               return next;
             }
@@ -1284,10 +1514,12 @@ function ARCreditMemo() {
             
             if (determinedTaxCode) {
               next.taxCode = determinedTaxCode;
+              next.taxCodeRepeat = determinedTaxCode;
               console.log(`✅ Auto-assigned tax code: ${determinedTaxCode} (${getGSTTypeLabel(companyState, gstState)})`);
             } else {
               console.warn('⚠️ Could not determine tax code automatically');
               next.taxCode = '';
+              next.taxCodeRepeat = '';
             }
             
             next.total = fmtDec(calcLineTotal(next), numDec.total);
@@ -1299,7 +1531,7 @@ function ARCreditMemo() {
         // Fallback to basic item selection without HSN
         setLines(prev => prev.map((line, idx) => {
           if (idx !== i) return line;
-          const next = { ...line, itemNo: value };
+          const next = { ...line, itemNo: value, taxCodeManuallyOverridden: false };
           const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
           if (item) {
             next.itemDescription = item.ItemName || next.itemDescription;
@@ -1392,6 +1624,10 @@ function ARCreditMemo() {
       const next = { ...line, [name]: numDec[name] !== undefined ? sanitize(value, numDec[name]) : value };
       if (name === 'distRule') {
         next.cogsDistRule = value;
+      }
+      if (name === 'taxCode') {
+        next.taxCodeManuallyOverridden = Boolean(String(next.taxCode || '').trim());
+        next.taxCodeRepeat = value;
       }
       next.total = fmtDec(calcLineTotal(next), numDec.total);
       return next;
@@ -1561,14 +1797,20 @@ function ARCreditMemo() {
       header.billToAddress || header.payTo,
     );
     const activeAddress = type === 'billTo' ? billAddress : shipAddress;
+    const activeComponents = type === 'billTo'
+      ? header.billToAddressComponents
+      : header.shipToAddressComponents;
 
     setAddressForm(
-      mapAddressToModalForm(activeAddress, {
-        shipToCode: header.shipToCode || shipAddress?.Address || '',
-        shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
-        billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
-        billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
-      }),
+      {
+        ...mapAddressToModalForm(activeAddress, {
+          shipToCode: header.shipToCode || shipAddress?.Address || '',
+          shipToAddress: header.shipToAddress || header.shipTo || (shipAddress ? fmtAddr(shipAddress) : ''),
+          billToCode: header.billToCode || header.payToCode || billAddress?.Address || '',
+          billToAddress: header.billToAddress || header.payTo || (billAddress ? fmtAddr(billAddress) : ''),
+        }),
+        ...(activeComponents || {}),
+      },
     );
     setAddressModal({ type });
   };
@@ -1578,27 +1820,22 @@ function ARCreditMemo() {
   };
 
   const saveAddressModal = () => {
-    const formatted = [
-      [addressForm.streetPoBox, addressForm.streetNo].filter(Boolean).join(', '),
-      addressForm.buildingFloorRoom,
-      [addressForm.block, addressForm.city].filter(Boolean).join(', '),
-      [addressForm.county, addressForm.state, addressForm.zipCode].filter(Boolean).join(', '),
-      addressForm.countryRegion,
-      addressForm.addressName2,
-      addressForm.addressName3,
-    ].filter(Boolean).join('\n');
+    const formatted = formatAddressComponent(addressForm);
+    const components = pickAddressComponentFields(addressForm);
+    markDirty();
 
     if (addressModal.type === 'shipTo') {
       setHeader(p => ({
         ...p,
         shipToCode: addressForm.shipToCode || p.shipToCode,
-        shipToAddress: formatted || addressForm.shipToAddress,
-        shipTo: formatted || addressForm.shipToAddress,
+        shipToAddress: formatted,
+        shipTo: formatted,
+        shipToAddressComponents: components,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
         billToAddress: addressForm.billToAddress || p.billToAddress,
         payTo: addressForm.billToAddress || p.payTo,
-        placeOfSupply: addressForm.state || p.placeOfSupply,
+        placeOfSupply: addressForm.state || '',
       }));
     } else {
       setHeader(p => ({
@@ -1608,9 +1845,10 @@ function ARCreditMemo() {
         shipTo: addressForm.shipToAddress || p.shipTo,
         billToCode: addressForm.billToCode || p.billToCode,
         payToCode: addressForm.billToCode || p.payToCode,
-        billToAddress: formatted || addressForm.billToAddress,
-        payTo: formatted || addressForm.billToAddress,
-        placeOfSupply: header.useBillToForTax ? addressForm.state || p.placeOfSupply : p.placeOfSupply,
+        billToAddress: formatted,
+        payTo: formatted,
+        billToAddressComponents: components,
+        placeOfSupply: header.useBillToForTax ? addressForm.state || '' : p.placeOfSupply,
       }));
     }
     closeAddressModal();
@@ -1618,6 +1856,37 @@ function ARCreditMemo() {
 
   const handleAddressFormChange = (e) => {
     const { name, value } = e.target;
+
+    if (name === 'shipToCode') {
+      const selectedAddress = resolveARCreditMemoAddress(value, vendorEffectiveShipToAddresses);
+      setAddressForm(prev => {
+        const nextState = {
+          ...prev,
+          shipToCode: value,
+          shipToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.shipToAddress,
+        };
+        return addressModal?.type === 'shipTo'
+          ? mapAddressToModalForm(selectedAddress, nextState)
+          : nextState;
+      });
+      return;
+    }
+
+    if (name === 'billToCode') {
+      const selectedAddress = resolveARCreditMemoAddress(value, vendorEffectiveBillToAddresses);
+      setAddressForm(prev => {
+        const nextState = {
+          ...prev,
+          billToCode: value,
+          billToAddress: selectedAddress ? fmtAddr(selectedAddress) : prev.billToAddress,
+        };
+        return addressModal?.type === 'billTo'
+          ? mapAddressToModalForm(selectedAddress, nextState)
+          : nextState;
+      });
+      return;
+    }
+
     setAddressForm(p => ({ ...p, [name]: value }));
   };
 
@@ -1794,6 +2063,7 @@ function ARCreditMemo() {
               side: 'sales',
               hsnCode: hsnData.hsnCode || hsnData.hsn_sww || '',
               fallbackWarehouse: header.warehouse || DEFAULT_WAREHOUSE_CODE,
+              syncUnitPriceUdf: false,
               calcLineTotal,
               formatTotal: (value) => fmtDec(value, numDec.total),
             }),
@@ -1829,6 +2099,7 @@ function ARCreditMemo() {
           const nextLine = hydrateDocumentLineFromItem(line, mergedItem, {
             side: 'sales',
             fallbackWarehouse: header.warehouse || DEFAULT_WAREHOUSE_CODE,
+            syncUnitPriceUdf: false,
             calcLineTotal,
             formatTotal: (value) => fmtDec(value, numDec.total),
           });
@@ -2165,16 +2436,34 @@ function ARCreditMemo() {
     const copySource = unwrapCopyFromDocument(data);
     const baseType = BASE_TYPE[sourceType] || 13;
     const normHeader = normaliseDocumentHeader(copySource.header);
+    const firstSourceLine = Array.isArray(copySource.lines) && copySource.lines.length ? copySource.lines[0] : {};
+    const copiedWarehouse = firstSourceLine.whse || firstSourceLine.WarehouseCode || firstSourceLine.WhsCode || normHeader.warehouse || DEFAULT_WAREHOUSE_CODE;
+    const resolvedBranch = normalizeBranchSelection(normHeader.branch)
+      || normalizeBranchSelection(firstSourceLine.branch || firstSourceLine.Branch || firstSourceLine.BPL_IDAssignedToInvoice || firstSourceLine.BPLId)
+      || getBranchFromWarehouseCode(copiedWarehouse);
+    const copyDate = today();
 
-    setHeader(prev => ({ ...prev, ...normHeader }));
+    setHeader(prev => ({
+      ...prev,
+      ...normHeader,
+      branch: resolvedBranch,
+      warehouse: normHeader.warehouse || copiedWarehouse || prev.warehouse,
+      postingDate: copyDate,
+      documentDate: copyDate,
+      deliveryDate: normHeader.deliveryDate || copyDate,
+      series: '',
+      nextNumber: '',
+    }));
+    setSeriesReloadToken((token) => token + 1);
 
     const rawLines = copySource.lines;
     const newLines = rawLines.map((line, idx) => {
-      const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, normHeader.branch);
+      const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, resolvedBranch);
       return {
         ...createLine(rowUdfDefinitions),
         ...normalizedLine,
-        whse: normalizedLine.whse || normalizedLine.WarehouseCode || normalizedLine.WhsCode || normHeader.warehouse || DEFAULT_WAREHOUSE_CODE,
+        branch: normalizeBranchSelection(normalizedLine.branch) || resolvedBranch,
+        whse: normalizedLine.whse || normalizedLine.WarehouseCode || normalizedLine.WhsCode || copiedWarehouse || DEFAULT_WAREHOUSE_CODE,
       };
     });
     setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
@@ -2233,7 +2522,8 @@ function ARCreditMemo() {
     });
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
+    const duplicateDate = today();
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -2256,7 +2546,25 @@ function ARCreditMemo() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      setHeader(prev => ({
+        ...prev,
+        postingDate: duplicateDate,
+        documentDate: duplicateDate,
+        deliveryDate: prev.deliveryDate || duplicateDate,
+        series: '',
+        nextNumber: '',
+      }));
+      try {
+        const seriesResponse = await fetchDocumentSeries(duplicateDate, header.transactionType || 'GST Tax Invoice', header.branch);
+        const duplicateSeries = seriesResponse.data?.series || [];
+        setRefData((prev) => ({ ...prev, series: duplicateSeries }));
+        const preferredSeries = resolvePreferredSeries(duplicateSeries, duplicateDate, '');
+        if (preferredSeries?.Series != null) {
+          handleSeriesChange(preferredSeries.Series);
+        }
+      } catch (_error) {
+        refreshDuplicateSeries(refData.series, '', handleSeriesChange);
+      }
     }
   };
 
@@ -2281,8 +2589,11 @@ function ARCreditMemo() {
         ...header, 
         deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
         placeOfSupply: header.placeOfSupply,
-        branch: header.branch,
+        branch: normalizeBranchSelection(header.branch)
+          || getBranchFromWarehouseCode(header.warehouse || lines[0]?.whse || ''),
         contactPerson: header.contactPerson,
+        totalPaymentDue: fmtDec(totals.total, numDec.totalPaymentDue),
+        roundingAmount: fmtDec(totals.roundingAmount, numDec.totalPaymentDue),
       };
       
       // Only include series if it's explicitly set and valid
@@ -2294,7 +2605,7 @@ function ARCreditMemo() {
       console.log('🔍 [Frontend] Lines:', lines);
       
       const payload = {
-        company_id: AR_INVOICE_COMPANY_ID,
+        company_id: activeCompanyId,
         header: prep,
         lines: lines.map((line) => ({
           ...line,
@@ -2307,6 +2618,7 @@ function ARCreditMemo() {
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
       setSnapshotPending(false);
       setIsDirty(false);
+      setLoadedCreditMemo(null);
       setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
       setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
@@ -2328,6 +2640,7 @@ function ARCreditMemo() {
   const resetForm = () => {
     setSnapshotPending(false);
     setIsDirty(false);
+    setLoadedCreditMemo(null);
     setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
     setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
@@ -2435,41 +2748,33 @@ function ARCreditMemo() {
       )}
 
       <fieldset className="del-fieldset" disabled={!isDocumentEditable} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-      <div className={`so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`}>
-        <div className="so-layout__main">
+      <div className={`sap-document-layout so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ' sap-document-layout--no-udf'}`}>
+        <div className="sap-document-main so-layout__main">
 
             {/* ══ HEADER CARD ══════════════════════════════════════════════ */}
             <div className="del-header-card">
               <div className="row g-2">
                 {/* LEFT COLUMN */}
                 <div className="col-md-6">
-                  <div className="del-field-grid" style={{ gridTemplateColumns: '1fr' }}>
+                  <div className="del-field-grid del-field-grid--single">
                     
                     {/* Buyer's Code */}
                     <div className="del-field">
                       <label className="del-field__label">Buyer's Code *</label>
-                      <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                      <div className="sap-input-group">
                         <input
                           name="vendor"
-                          className={`so-field__input${valErrors.header.vendor ? ' so-field__input--error' : ''}`}
+                          className={`del-field__input${valErrors.header.vendor ? ' del-field__input--error' : ''}`}
                           value={header.vendor}
                           onChange={handleHeaderChange}
                           disabled={!!currentDocEntry}
                           placeholder="Customer code"
-                          style={{ flex: 1 }}
                         />
                         <button
                           type="button"
-                          className="btn btn-sm"
+                          className="del-btn del-btn--lookup"
                           onClick={openBpModal}
                           disabled={!!currentDocEntry}
-                          style={{
-                            padding: '0 8px',
-                            fontSize: 11,
-                            border: '1px solid #a0aab4',
-                            background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                            minWidth: '28px'
-                          }}
                           title="Select Business Partner"
                         >
                           ...
@@ -2513,26 +2818,18 @@ function ARCreditMemo() {
                     {/* Place of Supply */}
                     <div className="del-field">
                       <label className="del-field__label">Place of Supply *</label>
-                      <div style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                      <div className="sap-input-group">
                         <input
                           name="placeOfSupply"
-                          className={`so-field__input${valErrors.header.placeOfSupply ? ' so-field__input--error' : ''}`}
+                          className={`del-field__input${valErrors.header.placeOfSupply ? ' del-field__input--error' : ''}`}
                           value={getStateDisplayName(header.placeOfSupply, refData.states)}
                           onChange={handleHeaderChange}
                           placeholder="State code"
-                          style={{ flex: 1 }}
                         />
                         <button
                           type="button"
-                          className="btn btn-sm"
+                          className="del-btn del-btn--lookup"
                           onClick={openStateModal}
-                          style={{
-                            padding: '0 8px',
-                            fontSize: 11,
-                            border: '1px solid #a0aab4',
-                            background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
-                            minWidth: '28px'
-                          }}
                           title="Select State"
                         >
                           ...
@@ -2585,7 +2882,7 @@ function ARCreditMemo() {
 
                 {/* RIGHT COLUMN */}
                 <div className="col-md-6">
-                  <div className="del-field-grid" style={{ gridTemplateColumns: '1fr' }}>
+                  <div className="del-field-grid del-field-grid--single">
 
                     {/* Series */}
                     <div className="del-field">
@@ -2598,9 +2895,10 @@ function ARCreditMemo() {
                         disabled={!!currentDocEntry || pageState.seriesLoading}
                       >
                         <option value="">Select Series</option>
+                        <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
                         {Array.isArray(refData.series) && refData.series.map(s => (
                           <option key={s.Series} value={s.Series}>
-                            {s.SeriesName} ({s.Indicator})
+                            {s.DisplayName || s.RawSeriesName || s.SeriesName || s.Series}
                           </option>
                         ))}
                       </select>
@@ -2734,7 +3032,7 @@ function ARCreditMemo() {
 
             {/* ══ TOTALS FOOTER ═════════════════════════════════════════════ */}
             <div className="del-header-card">
-              <div className="del-field-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div className="del-field-grid del-field-grid--summary">
                 <div>
                   <div className="del-field">
                     <label className="del-field__label">Sales Employee</label>
@@ -2811,7 +3109,7 @@ function ARCreditMemo() {
                         </tr>
                         <tr>
                           <td><input type="checkbox" className="" name="rounding" checked={header.rounding} onChange={handleHeaderChange} style={{ marginRight: 6 }} /><span>Rounding</span></td>
-                          <td></td>
+                          <td className="del-grid__cell--num"><input className="del-grid__input" value={fmtDec(totals.roundingAmount, numDec.totalPaymentDue)} readOnly /></td>
                         </tr>
                         <tr>
                           <td>Tax</td>
@@ -2891,7 +3189,7 @@ function ARCreditMemo() {
           </div>{/* end main col */}
 
           <HeaderUdfSidebar
-            className="so-layout__sidebar"
+            className="sap-header-udf-panel so-layout__sidebar"
             isOpen={sidebarOpen}
             fields={visHdrUdfs}
             formSettings={formSettings}
@@ -2902,7 +3200,7 @@ function ARCreditMemo() {
           />
           <FormSettingsPanel
             variant="sidebar"
-            className="so-layout__sidebar"
+            className="sap-header-udf-panel so-layout__sidebar"
             isOpen={formSettingsOpen}
             onClose={() => setFormSettingsOpen(false)}
             matrixFields={matrixColumnDefinitions}

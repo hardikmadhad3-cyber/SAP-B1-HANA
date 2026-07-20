@@ -92,7 +92,7 @@ export default function EWayBillModal({ isOpen, onClose, onSave, initialData = {
         <div className="im-modal__body" style={{ padding: '14px', maxHeight: '60vh', overflowY: 'auto' }}>
           {activeTab === 'ewb' && (
             <div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
+              <div className="sap-modal-grid">
                 {/* Left Column */}
                 <div>
                   <div className="im-section-title">EWB Details</div>
@@ -196,7 +196,7 @@ export default function EWayBillModal({ isOpen, onClose, onSave, initialData = {
               </div>
 
               {/* Dispatch From & Ship To */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px', marginTop: '16px' }}>
+              <div className="sap-modal-grid sap-modal-grid--spaced">
                 <div>
                   <div className="im-section-title">Dispatch From</div>
                   
@@ -252,7 +252,7 @@ export default function EWayBillModal({ isOpen, onClose, onSave, initialData = {
             <div>
               <div className="im-section-title">Transportation Details</div>
               
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
+              <div className="sap-modal-grid">
                 <div>
                   <div className="im-field">
                     <label className="im-field__label">Transporter Code</label>

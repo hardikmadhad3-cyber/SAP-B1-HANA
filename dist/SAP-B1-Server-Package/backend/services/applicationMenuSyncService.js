@@ -4,6 +4,8 @@ const createHttpError = (statusCode, message) => {
   return error;
 };
 
+const authDbService = require('./authDbService');
+
 const APP_MENU_DEFINITIONS = [
   { key: 'dashboard', menuName: 'Dashboard', menuPath: '/dashboard', icon: 'dashboard', sortOrder: -1 },
   { key: 'sales', menuName: 'Sales', aliases: ['Sales - A/R', 'Sales A/R'], icon: 'sales', sortOrder: 1 },
@@ -22,6 +24,8 @@ const APP_MENU_DEFINITIONS = [
   { key: 'services', menuName: 'Services', icon: 'invoice', sortOrder: 2 },
   { key: 'service-ar-invoice', parentKey: 'services', menuName: 'A/R Invoice', menuPath: '/services/ar-invoice', icon: 'invoice', sortOrder: 1, enforceSortOrder: true },
   { key: 'service-ap-invoice', parentKey: 'services', menuName: 'A/P Invoice', menuPath: '/services/ap-invoice', icon: 'invoice', sortOrder: 2, enforceSortOrder: true },
+  { key: 'service-ap-credit-memo', parentKey: 'services', menuName: 'A/P Credit Memo', menuPath: '/services/ap-credit-memo', icon: 'invoice', sortOrder: 3, enforceSortOrder: true },
+  { key: 'service-ar-credit-memo', parentKey: 'services', menuName: 'A/R Credit Memo', menuPath: '/services/ar-credit-memo', icon: 'invoice', sortOrder: 4, enforceSortOrder: true },
 
   { key: 'purchase', menuName: 'Purchase', aliases: ['Purchase - A/P', 'Purchase A/P', 'Purchasing', 'Purchasing - A/P', 'Purchasing A/P'], icon: 'purchase', sortOrder: 3 },
   { key: 'purchase-request', parentKey: 'purchase', menuName: 'Purchase Request', menuPath: '/purchase-request', icon: 'document', sortOrder: 1 },
@@ -88,6 +92,7 @@ const APP_MENU_DEFINITIONS = [
   },
 
   { key: 'reports', menuName: 'Reports', icon: 'reports', sortOrder: 8 },
+  { key: 'report-layout-manager', parentKey: 'reports', menuName: 'Report Layout Manager', menuPath: '/reportlayoutmanager', icon: 'report', sortOrder: 0, enforceSortOrder: true, enforceMenuName: true },
   { key: 'sales-analysis', parentKey: 'reports', menuName: 'Sales Analysis', menuPath: '/reports/sales/analysis', icon: 'report', sortOrder: 1 },
   { key: 'item-list-report', parentKey: 'reports', menuName: 'Item List', menuPath: '/reports/item-list', icon: 'report', sortOrder: 2 },
   { key: 'inventory-in-warehouse-report', parentKey: 'reports', menuName: 'Inventory in Warehouse Report', menuPath: '/reports/inventory/in-warehouse', icon: 'report', sortOrder: 3 },
@@ -97,7 +102,29 @@ const APP_MENU_DEFINITIONS = [
   { key: 'inventory-posting-list-report', parentKey: 'reports', menuName: 'Inventory Posting List', menuPath: '/reports/inventory/posting-list', icon: 'report', sortOrder: 6 },
   { key: 'purchase-analysis', parentKey: 'reports', menuName: 'Purchase Analysis', menuPath: '/reports/purchasing/analysis', icon: 'report', sortOrder: 7 },
   { key: 'purchase-request-report', parentKey: 'reports', menuName: 'Purchase Request Report', menuPath: '/reports/purchasing/purchase-request-report', icon: 'report', sortOrder: 8 },
-  { key: 'reports-financial', parentKey: 'reports', menuName: 'Financial', icon: 'report', sortOrder: 9 },
+  { key: 'reports-production', parentKey: 'reports', menuName: 'Production', icon: 'production', sortOrder: 9 },
+  { key: 'bill-of-materials-report', parentKey: 'reports-production', menuName: 'Bill of Materials Report', menuPath: '/reports/production/bill-of-materials', icon: 'bom', sortOrder: 1 },
+  { key: 'open-items-list-report', parentKey: 'reports-production', menuName: 'Open Items List', menuPath: '/reports/production/open-items-list', icon: 'report', sortOrder: 2 },
+  { key: 'reports-crm', parentKey: 'reports', menuName: 'CRM', icon: 'partner', sortOrder: 10 },
+  { key: 'reports-crm-my-activities', parentKey: 'reports-crm', menuName: 'My Activities', menuPath: '/reports/crm/my-activities', icon: 'report', sortOrder: 1 },
+  { key: 'reports-crm-activities-overview', parentKey: 'reports-crm', menuName: 'Activities Overview', menuPath: '/reports/crm/activities-overview', icon: 'report', sortOrder: 2 },
+  { key: 'reports-crm-inactive-customers', parentKey: 'reports-crm', menuName: 'Inactive Customers', menuPath: '/reports/crm/inactive-customers', icon: 'report', sortOrder: 3 },
+  { key: 'reports-crm-campaigns-list', parentKey: 'reports-crm', menuName: 'Campaigns List', menuPath: '/reports/crm/campaigns-list', icon: 'report', sortOrder: 4 },
+  { key: 'reports-crm-opportunities', parentKey: 'reports-crm', menuName: 'Opportunities', icon: 'report', sortOrder: 5 },
+  { key: 'reports-crm-opportunities-electronic-reports', parentKey: 'reports-crm-opportunities', menuName: 'Electronic Reports', menuPath: '/reports/crm/opportunities/electronic-reports', icon: 'report', sortOrder: 1 },
+  { key: 'reports-crm-opportunities-forecast', parentKey: 'reports-crm-opportunities', menuName: 'Opportunities Forecast Report', menuPath: '/reports/crm/opportunities/forecast', icon: 'report', sortOrder: 2 },
+  { key: 'reports-crm-opportunities-forecast-over-time', parentKey: 'reports-crm-opportunities', menuName: 'Opportunities Forecast Over Time Report', menuPath: '/reports/crm/opportunities/forecast-over-time', icon: 'report', sortOrder: 3 },
+  { key: 'reports-crm-opportunities-statistics', parentKey: 'reports-crm-opportunities', menuName: 'Opportunities Statistics Report', menuPath: '/reports/crm/opportunities/statistics', icon: 'report', sortOrder: 4 },
+  { key: 'reports-crm-opportunities-report', parentKey: 'reports-crm-opportunities', menuName: 'Opportunities Report', menuPath: '/reports/crm/opportunities/report', icon: 'report', sortOrder: 5 },
+  { key: 'reports-crm-opportunities-stage-analysis', parentKey: 'reports-crm-opportunities', menuName: 'Stage Analysis', menuPath: '/reports/crm/opportunities/stage-analysis', icon: 'report', sortOrder: 6 },
+  { key: 'reports-crm-opportunities-info-source-distribution-over-time', parentKey: 'reports-crm-opportunities', menuName: 'Information Source Distribution Over Time Report', menuPath: '/reports/crm/opportunities/information-source-distribution-over-time', icon: 'report', sortOrder: 7 },
+  { key: 'reports-crm-opportunities-won', parentKey: 'reports-crm-opportunities', menuName: 'Won Opportunities Report', menuPath: '/reports/crm/opportunities/won', icon: 'report', sortOrder: 8 },
+  { key: 'reports-crm-opportunities-lost', parentKey: 'reports-crm-opportunities', menuName: 'Lost Opportunities Report', menuPath: '/reports/crm/opportunities/lost', icon: 'report', sortOrder: 9 },
+  { key: 'reports-crm-opportunities-my-open', parentKey: 'reports-crm-opportunities', menuName: 'My Open Opportunities Report', menuPath: '/reports/crm/opportunities/my-open', icon: 'report', sortOrder: 10 },
+  { key: 'reports-crm-opportunities-my-closed', parentKey: 'reports-crm-opportunities', menuName: 'My Closed Opportunities Report', menuPath: '/reports/crm/opportunities/my-closed', icon: 'report', sortOrder: 11 },
+  { key: 'reports-crm-opportunities-pipeline', parentKey: 'reports-crm-opportunities', menuName: 'Opportunities Pipeline', menuPath: '/reports/crm/opportunities/pipeline', icon: 'report', sortOrder: 12 },
+  { key: 'reports-crm-opportunities-test', parentKey: 'reports-crm-opportunities', menuName: 'test', menuPath: '/reports/crm/opportunities/test', icon: 'report', sortOrder: 13 },
+  { key: 'reports-financial', parentKey: 'reports', menuName: 'Financial', icon: 'report', sortOrder: 11 },
   { key: 'reports-financial-accounting', parentKey: 'reports-financial', menuName: 'Accounting', icon: 'accounts', sortOrder: 1 },
   { key: 'gl-accounts-business-partners-report', parentKey: 'reports-financial-accounting', menuName: 'G/L Accounts and Business Partners', menuPath: '/reports/financial/accounting/gl-accounts-business-partners', icon: 'report', sortOrder: 1 },
   { key: 'general-ledger-report', parentKey: 'reports-financial-accounting', menuName: 'General Ledger', menuPath: '/reports/financial/accounting/general-ledger', icon: 'report', sortOrder: 2 },
@@ -113,8 +140,14 @@ const APP_MENU_DEFINITIONS = [
   { key: 'form-er-3-report', parentKey: 'reports-financial-accounting', menuName: 'Form ER-3', menuPath: '/reports/financial/accounting/form-er-3', icon: 'report', sortOrder: 10 },
   { key: 'form-er-5-report', parentKey: 'reports-financial-accounting', menuName: 'Form ER-5', menuPath: '/reports/financial/accounting/form-er-5', icon: 'report', sortOrder: 11 },
   { key: 'form-er-6-report', parentKey: 'reports-financial-accounting', menuName: 'Form ER-6', menuPath: '/reports/financial/accounting/form-er-6', icon: 'report', sortOrder: 12 },
-
-  { key: 'general-settings', menuName: 'General Settings', menuPath: '/general-settings', icon: 'settings', sortOrder: 9 },
+  { key: 'reports-financial-statements', parentKey: 'reports-financial', menuName: 'Financial', icon: 'report', sortOrder: 2 },
+  { key: 'balance-sheet-report', parentKey: 'reports-financial-statements', menuName: 'Balance Sheet', menuPath: '/reports/financial/financial/balance-sheet', icon: 'report', sortOrder: 1 },
+  { key: 'trial-balance-report', parentKey: 'reports-financial-statements', menuName: 'Trial Balance', menuPath: '/reports/financial/financial/trial-balance', icon: 'report', sortOrder: 2 },
+  { key: 'profit-loss-statement-report', parentKey: 'reports-financial-statements', menuName: 'Profit and Loss Statement', menuPath: '/reports/financial/financial/profit-and-loss-statement', icon: 'report', sortOrder: 3 },
+  { key: 'cash-flow-report', parentKey: 'reports-financial-statements', menuName: 'Cash Flow', menuPath: '/reports/financial/financial/cash-flow', icon: 'report', sortOrder: 4 },
+  { key: 'statement-cash-flows-report', parentKey: 'reports-financial-statements', menuName: 'Statement of Cash Flows', menuPath: '/reports/financial/financial/statement-of-cash-flows', icon: 'report', sortOrder: 5 },
+  { key: 'cash-flow-reference-report', parentKey: 'reports-financial-statements', menuName: 'Cash Flow Reference Report', menuPath: '/reports/financial/financial/cash-flow-reference-report', icon: 'report', sortOrder: 6 },
+  { key: 'business-assessment-report', parentKey: 'reports-financial-statements', menuName: 'Business Assessment Report', menuPath: '/reports/financial/financial/business-assessment-report', icon: 'report', sortOrder: 7 },
 
 ];
 
@@ -125,19 +158,13 @@ const normalizeName = (value) => normalizeText(value).toLowerCase().replace(/[^a
 // Add new code-owned sidebar pages here. They will appear in Admin > Menus automatically,
 // but they will not show in the app sidebar until Role Rights grants CanView.
 const hasMenusTable = async (db) => {
-  const row = await db.queryOne(`
-    SELECT CASE WHEN OBJECT_ID(N'dbo.Menus', N'U') IS NULL THEN 0 ELSE 1 END AS hasMenus
-  `);
-
-  return Boolean(row?.hasMenus);
+  void db;
+  return authDbService.tableExists('Menus');
 };
 
 const hasRoleRightsTable = async (db) => {
-  const row = await db.queryOne(`
-    SELECT CASE WHEN OBJECT_ID(N'dbo.RoleRights', N'U') IS NULL THEN 0 ELSE 1 END AS hasRoleRights
-  `);
-
-  return Boolean(row?.hasRoleRights);
+  void db;
+  return authDbService.tableExists('RoleRights');
 };
 
 const getExistingMenus = async (db) => db.queryRows(`
@@ -146,14 +173,20 @@ const getExistingMenus = async (db) => db.queryRows(`
   ORDER BY MenuId ASC
 `);
 
-const findExistingMenu = (menus, definition) => {
+const findExistingMenu = (menus, definition, parentId) => {
   const menuPaths = new Set([definition.menuPath, ...(definition.legacyPaths || [])].map(normalizePath).filter(Boolean));
   if (menuPaths.size) {
     return menus.find((menu) => menuPaths.has(normalizePath(menu.MenuPath))) || null;
   }
 
   const menuNames = new Set([definition.menuName, ...(definition.aliases || [])].map(normalizeName));
-  return menus.find((menu) => menuNames.has(normalizeName(menu.MenuName))) || null;
+  return menus.find((menu) =>
+    menuNames.has(normalizeName(menu.MenuName))
+    && (menu.ParentId ?? null) === (parentId ?? null),
+  ) || menus.find((menu) =>
+    menuNames.has(normalizeName(menu.MenuName))
+    && Number(menu.ParentId) === Number(menu.MenuId),
+  ) || null;
 };
 
 const insertMenu = async (db, definition, parentId) => {
@@ -274,7 +307,18 @@ const cloneRoleRightsForDuplicateMenu = async (db, sourceMenuId, targetMenuId) =
   return result.rowsAffected?.[0] || 0;
 };
 
-const deleteDeprecatedReportLayoutManagerMenu = async (db) => {
+const deleteDeprecatedReportLayoutManagerMenu = async (db, canonicalMenuId = null) => {
+  const reportsRoot = await db.queryOne(`
+    SELECT TOP (1) MenuId
+    FROM dbo.Menus
+    WHERE LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) = '/reports'
+       OR LOWER(LTRIM(RTRIM(COALESCE(MenuName, '')))) = 'reports'
+    ORDER BY
+      CASE WHEN LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) = '/reports' THEN 0 ELSE 1 END,
+      SortOrder ASC,
+      MenuId ASC
+  `);
+
   const rows = await db.queryRows(`
     SELECT MenuId, ParentId
     FROM dbo.Menus
@@ -285,7 +329,10 @@ const deleteDeprecatedReportLayoutManagerMenu = async (db) => {
         AND LOWER(LTRIM(RTRIM(COALESCE(MenuPath, '')))) NOT LIKE '/reportlayoutmanager/menu/%'
       )
     )
-  `);
+      AND (@canonicalMenuId IS NULL OR MenuId <> @canonicalMenuId)
+  `, {
+    canonicalMenuId: Number.isInteger(Number(canonicalMenuId)) ? Number(canonicalMenuId) : null,
+  });
 
   if (!rows.length) return 0;
 
@@ -297,7 +344,7 @@ const deleteDeprecatedReportLayoutManagerMenu = async (db) => {
       WHERE ParentId = @menuId
     `, {
       menuId: row.MenuId,
-      parentId: row.ParentId ?? null,
+      parentId: reportsRoot?.MenuId ?? row.ParentId ?? null,
     });
 
     if (await hasRoleRightsTable(db)) {
@@ -333,7 +380,7 @@ const syncApplicationSidebarMenus = async (db) => {
       throw createHttpError(500, `Missing parent menu definition for ${definition.key}.`);
     }
 
-    const existingMenu = findExistingMenu(existingMenus, definition);
+    const existingMenu = findExistingMenu(existingMenus, definition, parentId);
     const shouldUseCanonicalPath = Boolean(
       existingMenu
       && definition.menuPath
@@ -345,6 +392,11 @@ const syncApplicationSidebarMenus = async (db) => {
 
     if (!existingMenu) {
       existingMenus.push(syncedMenu);
+    } else {
+      const existingIndex = existingMenus.findIndex((menu) => Number(menu.MenuId) === Number(existingMenu.MenuId));
+      if (existingIndex >= 0) {
+        existingMenus[existingIndex] = syncedMenu;
+      }
     }
 
     menuByKey.set(definition.key, syncedMenu);
@@ -388,8 +440,28 @@ const syncApplicationSidebarMenus = async (db) => {
   );
   syncCount += await cloneRoleRightsForDuplicateMenu(
     db,
+    menuByKey.get('reports')?.MenuId,
+    menuByKey.get('report-layout-manager')?.MenuId,
+  );
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
     menuByKey.get('item-list-report')?.MenuId,
     menuByKey.get('inventory-posting-list-report')?.MenuId,
+  );
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
+    menuByKey.get('reports')?.MenuId,
+    menuByKey.get('reports-production')?.MenuId,
+  );
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
+    menuByKey.get('bom')?.MenuId,
+    menuByKey.get('bill-of-materials-report')?.MenuId,
+  );
+  syncCount += await cloneRoleRightsForDuplicateMenu(
+    db,
+    menuByKey.get('item-list-report')?.MenuId,
+    menuByKey.get('open-items-list-report')?.MenuId,
   );
   syncCount += await cloneRoleRightsForDuplicateMenu(
     db,
@@ -418,7 +490,54 @@ const syncApplicationSidebarMenus = async (db) => {
       menuByKey.get(reportKey)?.MenuId,
     );
   }
-  syncCount += await deleteDeprecatedReportLayoutManagerMenu(db);
+  const financialStatementReportKeys = [
+    'balance-sheet-report',
+    'trial-balance-report',
+    'profit-loss-statement-report',
+    'cash-flow-report',
+    'statement-cash-flows-report',
+    'cash-flow-reference-report',
+    'business-assessment-report',
+  ];
+
+  for (const reportKey of financialStatementReportKeys) {
+    syncCount += await cloneRoleRightsForDuplicateMenu(
+      db,
+      menuByKey.get('gl-accounts-business-partners-report')?.MenuId,
+      menuByKey.get(reportKey)?.MenuId,
+    );
+  }
+  const crmReportKeys = [
+    'reports-crm-my-activities',
+    'reports-crm-activities-overview',
+    'reports-crm-inactive-customers',
+    'reports-crm-campaigns-list',
+    'reports-crm-opportunities-electronic-reports',
+    'reports-crm-opportunities-forecast',
+    'reports-crm-opportunities-forecast-over-time',
+    'reports-crm-opportunities-statistics',
+    'reports-crm-opportunities-report',
+    'reports-crm-opportunities-stage-analysis',
+    'reports-crm-opportunities-info-source-distribution-over-time',
+    'reports-crm-opportunities-won',
+    'reports-crm-opportunities-lost',
+    'reports-crm-opportunities-my-open',
+    'reports-crm-opportunities-my-closed',
+    'reports-crm-opportunities-pipeline',
+    'reports-crm-opportunities-test',
+  ];
+
+  for (const reportKey of crmReportKeys) {
+    syncCount += await cloneRoleRightsForDuplicateMenu(
+      db,
+      menuByKey.get('sales-analysis')?.MenuId,
+      menuByKey.get(reportKey)?.MenuId,
+    );
+  }
+  syncCount += await deleteDeprecatedReportLayoutManagerMenu(
+    db,
+    menuByKey.get('report-layout-manager')?.MenuId,
+  );
 
   return syncCount;
 };

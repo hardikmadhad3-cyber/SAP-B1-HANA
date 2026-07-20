@@ -89,16 +89,21 @@ function Register-BackendAutoStart {
     Write-Host '[setup] Falling back to Windows Startup folder shortcut.'
   }
 
-  $startupDir = [Environment]::GetFolderPath('Startup')
-  $shortcutPath = Join-Path $startupDir $StartupShortcutName
-  $shell = New-Object -ComObject WScript.Shell
-  $shortcut = $shell.CreateShortcut($shortcutPath)
-  $shortcut.TargetPath = 'powershell.exe'
-  $shortcut.Arguments = $actionArgs
-  $shortcut.WorkingDirectory = $RootDir
-  $shortcut.WindowStyle = 7
-  $shortcut.Save()
-  Write-Host "[ok] Startup shortcut created: $shortcutPath"
+  try {
+    $startupDir = [Environment]::GetFolderPath('Startup')
+    $shortcutPath = Join-Path $startupDir $StartupShortcutName
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = 'powershell.exe'
+    $shortcut.Arguments = $actionArgs
+    $shortcut.WorkingDirectory = $RootDir
+    $shortcut.WindowStyle = 7
+    $shortcut.Save()
+    Write-Host "[ok] Startup shortcut created: $shortcutPath"
+  } catch {
+    Write-Host "[warning] Startup shortcut registration failed: $($_.Exception.Message)"
+    Write-Host '[warning] Backend will still be started now, but auto-start was not registered.'
+  }
 }
 
 $Port = Get-AppPort

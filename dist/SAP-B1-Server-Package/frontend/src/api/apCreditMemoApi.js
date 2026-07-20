@@ -23,8 +23,8 @@ export const updateAPCreditMemo = (docEntry, payload) =>
 export const fetchAPCreditMemoByDocEntry = (docEntry) =>
   apiClient.get(`/ap-credit-memo/${docEntry}`);
 
-export const fetchAPCreditMemoSeries = () =>
-  apiClient.get('/ap-credit-memo/series');
+export const fetchAPCreditMemoSeries = (params = {}) =>
+  apiClient.get('/ap-credit-memo/series', { params });
 
 export const fetchAPCreditMemoNextNumber = (series) =>
   apiClient.get(`/ap-credit-memo/series/${series}/next-number`);

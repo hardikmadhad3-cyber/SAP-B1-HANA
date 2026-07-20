@@ -581,7 +581,7 @@ const decorateReportServiceConnectionError = (error, action, config) => {
   const detail = code ? ` (${code})` : '';
   const wrapped = new Error(
     `Could not connect to SAP Report Service at ${baseUrl} while trying to ${action}${detail}. ` +
-    `Check the selected company's SAP Report Service Base URL (${source}) and confirm port 60020 is reachable from this backend server.`,
+    `Check the selected company's SAP Report Service Base URL (${source}) and confirm the configured host and port are reachable from this backend server.`,
   );
 
   wrapped.statusCode = code === 'ETIMEDOUT' || code === 'ECONNABORTED' ? 504 : 502;
@@ -628,6 +628,7 @@ const getReportSessionKey = (config) => [
   config.username,
   hashSecret(config.password),
   config.companyDb,
+  config.dbInstance,
 ].map((value) => String(value || '').trim().toLowerCase()).join('|');
 
 const ensureReportLoginConfig = (config) => {
@@ -662,21 +663,120 @@ const buildCredentialSourceSummary = (config) => {
   return `username from ${usernameSource}, password from ${passwordSource}, company DB from ${companyDbSource}`;
 };
 
+const getHttpStatusText = (status) => {
+  if (Number(status) === 401) return '401 Unauthorized';
+  if (Number(status) === 403) return '403 Forbidden';
+  return status ? `HTTP ${status}` : 'an authorization error';
+};
+
+const decorateReportServiceAuthorizationError = (error, action, config) => {
+  const status = Number(error?.response?.status);
+  if (![401, 403].includes(status)) {
+    return error;
+  }
+
+  const companyDb = String(config.companyDb || '').trim() || 'the configured company';
+  const credentialSource = buildCredentialSourceSummary(config);
+  const sapMessage = extractReportServiceMessage(error.response?.data);
+  const statusText = getHttpStatusText(status);
+  const message = sapMessage ? ` SAP said: ${sapMessage}` : '';
+  const wrapped = new Error(
+    `SAP Report Service rejected the request with ${statusText} while trying to ${action} for company ${companyDb} (${credentialSource}). ` +
+    `Check Admin Panel > Companies > SAP Report Service credentials, company DB, and report permissions.${message}`,
+  );
+
+  wrapped.statusCode = 502;
+  wrapped.code = 'REPORT_SERVICE_AUTH_FAILED';
+  wrapped.cause = error;
+  return wrapped;
+};
+
+const summarizeReportServicePayload = (payload) => {
+  const parsedPayload = parseLoginPayload(payload);
+  const sapMessage = extractReportServiceMessage(parsedPayload);
+
+  if (sapMessage) {
+    return sapMessage;
+  }
+
+  if (typeof parsedPayload === 'string') {
+    return parsedPayload.trim().replace(/\s+/g, ' ').slice(0, 500);
+  }
+
+  if (parsedPayload && typeof parsedPayload === 'object') {
+    try {
+      return JSON.stringify(parsedPayload).replace(/\s+/g, ' ').slice(0, 500);
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  return '';
+};
+
+const decorateReportServiceHttpError = (error, action, config, context = {}) => {
+  const status = Number(error?.response?.status);
+  if (!status || [401, 403].includes(status)) {
+    return error;
+  }
+
+  const statusText = getHttpStatusText(status);
+  const companyDb = String(config.companyDb || '').trim() || 'the configured company';
+  const baseUrl = normalizeReportServiceBaseUrl(config.baseUrl);
+  const docCode = String(context.docCode || '').trim();
+  const layoutName = String(context.layoutName || '').trim();
+  const detail = summarizeReportServicePayload(error.response?.data);
+  const layoutText = docCode
+    ? ` Layout ${docCode}${layoutName ? ` (${layoutName})` : ''}.`
+    : '';
+  const detailText = detail ? ` SAP said: ${detail}` : '';
+  const wrapped = new Error(
+    `SAP Report Service returned ${statusText} while trying to ${action} for company ${companyDb} at ${baseUrl}.${layoutText}${detailText}`,
+  );
+
+  wrapped.statusCode = 502;
+  wrapped.code = `REPORT_SERVICE_HTTP_${status}`;
+  wrapped.cause = error;
+  wrapped.details = {
+    upstreamStatus: status,
+    docCode: docCode || undefined,
+    layoutName: layoutName || undefined,
+    reportCompanyDb: companyDb,
+    reportServiceBaseUrl: baseUrl,
+  };
+
+  return wrapped;
+};
+
 const loginToReportServiceWithConfig = async (reportConfig) => {
   const normalizedCompanyDb = String(reportConfig.companyDb || '').trim();
+  const normalizedDbInstance = String(reportConfig.dbInstance || '').trim();
   ensureReportLoginConfig(reportConfig);
 
   let response;
+  const loginPayload = {
+    CompanyDB: normalizedCompanyDb,
+    UserName: reportConfig.username,
+    Password: reportConfig.password,
+  };
+
+  if (normalizedDbInstance) {
+    loginPayload.DBInstance = normalizedDbInstance;
+  }
 
   try {
     await assertReportServiceReachable(reportConfig);
-    response = await getReportClient(reportConfig).post('/login', {
-      CompanyDB: normalizedCompanyDb,
-      UserName: reportConfig.username,
-      Password: reportConfig.password,
-    });
+    response = await getReportClient(reportConfig).post('/login', loginPayload);
   } catch (error) {
-    throw decorateReportServiceConnectionError(error, 'log in', reportConfig);
+    throw decorateReportServiceConnectionError(
+      decorateReportServiceHttpError(
+        decorateReportServiceAuthorizationError(error, 'log in', reportConfig),
+        'log in',
+        reportConfig,
+      ),
+      'log in',
+      reportConfig,
+    );
   }
 
   const sessionCookie = extractCookieHeader(response.headers['set-cookie']);
@@ -904,6 +1004,9 @@ const isSchemaParameter = (parameterName) => {
   ].some((candidate) => key.endsWith(candidate));
 };
 
+const hasSchemaParameter = (parameters = []) =>
+  parameters.some((parameter) => isSchemaParameter(parameter.paramName || parameter.name));
+
 const isCardCodeParameter = (parameterName) => {
   const key = normalizeParameterNameKey(parameterName);
   if (!key || key.includes('name')) return false;
@@ -926,6 +1029,13 @@ const isCardCodeParameter = (parameterName) => {
     'suppliercode',
   ].includes(key);
 };
+
+const isDocumentPrintSystemParameter = (parameterName) =>
+  isDocEntryParameter(parameterName) ||
+  isSchemaParameter(parameterName) ||
+  isObjectTypeParameter(parameterName) ||
+  isCardCodeParameter(parameterName) ||
+  isDocNumParameter(parameterName);
 
 const resolveDocumentParameterValue = (parameterName, context) => {
   if (isDocEntryParameter(parameterName)) {
@@ -997,13 +1107,7 @@ const buildDocumentPrintParameters = async ({
     cardCode: String(cardCode || '').trim(),
     objectType: String(objectType || '').trim(),
   };
-  let layoutParameters = [];
-
-  try {
-    layoutParameters = await loadReportParameters(docCode, { reportCompanyDb: schema });
-  } catch (_error) {
-    layoutParameters = [];
-  }
+  const layoutParameters = await loadReportParameters(docCode, { reportCompanyDb: schema });
 
   const parameters = [];
   layoutParameters.forEach((layoutParameter) => {
@@ -1047,6 +1151,26 @@ const summarizeReportParameters = (parameters = []) =>
     type: resolveXsdType(parameter?.type),
     value: Array.isArray(parameter?.value) ? parameter.value : parameter?.value,
   }));
+
+const normalizeAdditionalReportParameters = (parameters = []) => {
+  if (!Array.isArray(parameters)) {
+    return [];
+  }
+
+  return parameters
+    .map((parameter) => ({
+      name: String(parameter?.name || parameter?.paramName || '').trim(),
+      type: parameter?.type || parameter?.paramType || 'string',
+      value: parameter?.value,
+    }))
+    .filter((parameter) =>
+      parameter.name &&
+      !isDocumentPrintSystemParameter(parameter.name) &&
+      parameter.value !== undefined &&
+      parameter.value !== null &&
+      String(parameter.value).trim() !== '',
+    );
+};
 
 const exportReportPdf = async ({
   docCode,
@@ -1119,7 +1243,19 @@ const exportReportPdf = async ({
         return postExport(activeReportConfig, false);
       }
 
-      throw decorateReportServiceConnectionError(error, 'export the PDF', activeReportConfig);
+      throw decorateReportServiceConnectionError(
+        decorateReportServiceHttpError(
+          decorateReportServiceAuthorizationError(error, 'export the PDF', activeReportConfig),
+          'export the PDF',
+          activeReportConfig,
+          {
+            docCode: normalizedDocCode,
+            layoutName: String(layoutMetadata.DocName || '').trim(),
+          },
+        ),
+        'export the PDF',
+        activeReportConfig,
+      );
     }
   };
 
@@ -1190,6 +1326,7 @@ const exportDocumentPdf = async ({
   docCode,
   documentLabel = 'Document',
   fileName = '',
+  reportParameters = [],
 } = {}, retryOnAuth = true) => {
   const normalizedDocEntry = toRequiredPositiveIntegerString(docEntry, 'DocEntry');
   const reportConfig = await resolveReportServiceConfig();
@@ -1208,6 +1345,19 @@ const exportDocumentPdf = async ({
     cardCode: normalizedCardCode,
     objectType: normalizedObjectType,
   });
+  normalizeAdditionalReportParameters(reportParameters).forEach((parameter) => {
+    addParameterIfMissing(parameters, parameter);
+  });
+  const parametersWithSchemaFallback = hasSchemaParameter(parameters)
+    ? parameters
+    : [
+      ...parameters,
+      {
+        name: 'Schema@',
+        type: 'string',
+        value: normalizedSchema,
+      },
+    ];
   const docKeyParameter = parameters.find((parameter) => isDocEntryParameter(parameter.name));
 
   console.info('[ReportService] Document print parameters confirmed', {
@@ -1221,12 +1371,35 @@ const exportDocumentPdf = async ({
     docKeyParameterValue: String(docKeyParameter?.value ?? '').trim(),
   });
 
-  const genericResponse = await exportReportPdf({
-    docCode: normalizedDocCode,
-    reportCompanyDb: normalizedSchema,
-    parameters,
-    fileName: outputFileName,
-  }, retryOnAuth);
+  let genericResponse;
+
+  try {
+    genericResponse = await exportReportPdf({
+      docCode: normalizedDocCode,
+      reportCompanyDb: normalizedSchema,
+      parameters,
+      fileName: outputFileName,
+    }, retryOnAuth);
+  } catch (error) {
+    if (hasSchemaParameter(parameters) || !error?.code?.startsWith?.('REPORT_SERVICE_HTTP_')) {
+      throw error;
+    }
+
+    console.warn('[ReportService] Retrying document print with Schema@ fallback after Report Service HTTP failure', {
+      documentLabel,
+      docEntry: normalizedDocEntry,
+      docCode: normalizedDocCode,
+      schema: normalizedSchema,
+      firstFailure: error.message,
+    });
+
+    genericResponse = await exportReportPdf({
+      docCode: normalizedDocCode,
+      reportCompanyDb: normalizedSchema,
+      parameters: parametersWithSchemaFallback,
+      fileName: outputFileName,
+    }, retryOnAuth);
+  }
 
   return {
     message: `${documentLabel} PDF generated successfully.`,
@@ -1313,7 +1486,16 @@ const loadReportParameters = async (docCode, optionsOrRetry = {}, retryOverride 
         return loadParameters(activeReportConfig, false);
       }
 
-      throw decorateReportServiceConnectionError(error, 'load report parameters', activeReportConfig);
+      throw decorateReportServiceConnectionError(
+        decorateReportServiceHttpError(
+          decorateReportServiceAuthorizationError(error, 'load report parameters', activeReportConfig),
+          'load report parameters',
+          activeReportConfig,
+          { docCode: normalizedDocCode },
+        ),
+        'load report parameters',
+        activeReportConfig,
+      );
     }
   };
 
@@ -1364,7 +1546,15 @@ const loadAuthorizedCrList = async (query = '', retryOnAuth = true) => {
         return loadList(activeReportConfig, false);
       }
 
-      throw decorateReportServiceConnectionError(error, 'load authorized Crystal layouts', activeReportConfig);
+      throw decorateReportServiceConnectionError(
+        decorateReportServiceHttpError(
+          decorateReportServiceAuthorizationError(error, 'load authorized Crystal layouts', activeReportConfig),
+          'load authorized Crystal layouts',
+          activeReportConfig,
+        ),
+        'load authorized Crystal layouts',
+        activeReportConfig,
+      );
     }
   };
 
@@ -1416,6 +1606,8 @@ module.exports = {
   loadAuthorizedCrList,
   loadReportParameters,
   isProbablyBase64,
+  isDocumentPrintSystemParameter,
+  buildDocumentPrintParameters,
   exportReportPdf,
   exportDocumentPdf,
   exportSalesOrderPdf,

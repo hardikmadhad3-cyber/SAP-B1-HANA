@@ -64,6 +64,12 @@ const fetchSalesOrderPrintLayouts = () =>
 const createSalesOrderLookupValue = (field, value, description = '') =>
   apiClient.post('/sales-order/lookup-values', { field, value, description });
 
+const fetchSalesOrderLookupOptions = (source, params = {}) =>
+  apiClient.get(`/sales-order/lookups/${encodeURIComponent(source)}`, { params });
+
+const fetchSalesOrderReferenceDocumentLookup = (params = {}) =>
+  apiClient.get('/sales-order/reference-documents', { params });
+
 // ── Copy From: reuse existing sales-quotation and blanket-agreement endpoints ──
 const fetchOpenSalesQuotations = (customerCode = null) =>
   apiClient.get('/sales-quotation/open', {
@@ -114,6 +120,8 @@ export {
   fetchFreightCharges,
   fetchSalesOrderPrintLayouts,
   createSalesOrderLookupValue,
+  fetchSalesOrderLookupOptions,
+  fetchSalesOrderReferenceDocumentLookup,
   fetchOpenSalesQuotations,
   fetchOpenBlanketAgreements,
   fetchSalesQuotationForCopy,

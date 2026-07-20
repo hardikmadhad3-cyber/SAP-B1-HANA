@@ -14,6 +14,49 @@ const safe = async (promise) => {
   }
 };
 
+const getTableColumns = async (tableName) => {
+  const rows = await safe(db.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @tableName
+  `, { tableName }));
+
+  return new Map(rows
+    .map((row) => String(row.COLUMN_NAME || '').trim())
+    .filter(Boolean)
+    .map((columnName) => [columnName.toUpperCase(), columnName]));
+};
+
+const getColumnName = (columns, columnName) => (
+  columns.get(String(columnName || '').trim().toUpperCase()) || ''
+);
+
+const hasColumn = (columns, columnName) => Boolean(getColumnName(columns, columnName));
+
+const optionalColumn = (columns, tableAlias, columnName, alias, fallback = 'NULL') => {
+  const actualColumnName = getColumnName(columns, columnName);
+  return actualColumnName
+    ? `${tableAlias}.${actualColumnName} AS ${alias}`
+    : `${fallback} AS ${alias}`;
+};
+
+const queryRowsWithFallback = async ({ primarySql, fallbackSql, params = {}, label }) => {
+  try {
+    const result = await db.query(primarySql, params);
+    return result.recordset || [];
+  } catch (error) {
+    console.error(`[Service AR Invoice DB] ${label} query error:`, error.message);
+  }
+
+  try {
+    const fallbackResult = await db.query(fallbackSql, params);
+    return fallbackResult.recordset || [];
+  } catch (fallbackError) {
+    console.error(`[Service AR Invoice DB] ${label} fallback query error:`, fallbackError.message);
+    return [];
+  }
+};
+
 const toInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -310,7 +353,17 @@ const getServiceARInvoiceList = async ({
 };
 
 const mapUdfToAliases = (udf = {}) => ({
+  sac: udf.U_SAC || udf.U_SACCode || '',
   saudaNodeRef: udf.U_SaudaNodeRef || udf.U_SaudaNodhRef || '',
+  costSheet: udf.U_Cost_Sheet || udf.U_CostSheet || udf.U_COSTSHEET || '',
+  packingType: udf.U_PackingType || udf.U_Packing_Type || udf.U_PACKINGTYPE || '',
+  containerType: udf.U_ContainerType || udf.U_Container_Type || udf.U_CONTAINERTYPE || '',
+  grossWt: udf.U_GrossWt || udf.U_Gross_Wt || udf.U_GrossWeight || '',
+  totalPackage: udf.U_TotalPackage || udf.U_Total_Package || '',
+  taxCodeRepeat: udf.U_TAXCODE || udf.U_TaxCode || '',
+  price: udf.U_PRICE || udf.U_Price || '',
+  specialRebate: udf.U_SpecialRebate || '',
+  commision: udf.U_Commision || udf.U_Commission || '',
   brokPerQty: udf.U_BrokPerQty || '',
   sItem: udf.U_S_Item || udf.U_SItem || '',
   sQty: udf.U_S_Qty || udf.U_SQty || '',
@@ -331,6 +384,9 @@ const mapUdfToAliases = (udf = {}) => ({
   stcode: udf.U_STCODE || '',
   buyerTermsOfPayment: udf.U_BuyerTermsOfPayment || udf.U_BuyerPayTerms || '',
   sellerTermsOfPayment: udf.U_SellerTermsOfPayment || udf.U_SellerPayTerms || '',
+  sellerTermsOfPaymentRepeat: udf.U_SellerTermsOfPayment || udf.U_SellerPayTerms || '',
+  fixBrokBuyer: udf.U_Fix_Brock_B || udf.U_Fix_Brok_B || udf.U_FIX_BROK_BUYER || '',
+  fixBrockSeller: udf.U_Fix_Brock_S || udf.U_Fix_Brok_S || udf.U_FIXBROCKSELLER || udf.U_FIX_BROK_SELLER || '',
   freightPurchase: udf.U_FreightPurchase || '',
   freightSales: udf.U_FreightSales || '',
   freightProvider: udf.U_FreightProvider || '',
@@ -340,6 +396,34 @@ const mapUdfToAliases = (udf = {}) => ({
 });
 
 const getServiceARInvoice = async (docEntry) => {
+  const headerColumns = await getTableColumns('OINV');
+  const canJoinShipAddress = hasColumn(headerColumns, 'ShipToCode');
+  const canJoinBillAddress = hasColumn(headerColumns, 'PayToCode');
+  const shipPlaceExpr = canJoinShipAddress ? 'ShipState.Name, ShipAddr.State' : 'NULL, NULL';
+  const billPlaceExpr = canJoinBillAddress ? 'BillState.Name, BillAddr.State' : 'NULL, NULL';
+  const placeOfSupplyColumn = getColumnName(headerColumns, 'U_PlaceOfSupply');
+  const placeOfSupplyExpr = placeOfSupplyColumn
+    ? `COALESCE(NULLIF(LTRIM(RTRIM(CAST(T0.${placeOfSupplyColumn} AS NVARCHAR(254)))), ''), ${shipPlaceExpr}, ${billPlaceExpr}, '')`
+    : `COALESCE(${shipPlaceExpr}, ${billPlaceExpr}, '')`;
+  const shipAddressJoin = canJoinShipAddress
+    ? `LEFT JOIN CRD1 ShipAddr
+      ON ShipAddr.CardCode = T0.CardCode
+     AND ShipAddr.Address = T0.ShipToCode
+     AND ShipAddr.AdresType = 'S'
+    LEFT JOIN OCST ShipState
+      ON ShipState.Code = ShipAddr.State
+     AND ShipState.Country = ShipAddr.Country`
+    : '';
+  const billAddressJoin = canJoinBillAddress
+    ? `LEFT JOIN CRD1 BillAddr
+      ON BillAddr.CardCode = T0.CardCode
+     AND BillAddr.Address = T0.PayToCode
+     AND BillAddr.AdresType = 'B'
+    LEFT JOIN OCST BillState
+      ON BillState.Code = BillAddr.State
+     AND BillState.Country = BillAddr.Country`
+    : '';
+
   const headerRows = await safe(db.query(`
     SELECT
       T0.DocEntry,
@@ -363,19 +447,42 @@ const getServiceARInvoice = async (docEntry) => {
       T0.TotalExpns,
       T0.VatSum,
       T0.DocTotal,
+      ${optionalColumn(headerColumns, 'T0', 'DiscSum', 'DiscSum', '0')},
+      ${optionalColumn(headerColumns, 'T0', 'RoundDif', 'RoundDif', '0')},
+      ${optionalColumn(headerColumns, 'T0', 'WTSum', 'WTSum', '0')},
+      ${optionalColumn(headerColumns, 'T0', 'PaidToDate', 'PaidToDate', '0')},
+      ${optionalColumn(headerColumns, 'T0', 'DpmAmnt', 'DpmAmnt', '0')},
+      ${placeOfSupplyExpr} AS PlaceOfSupply,
+      ${optionalColumn(headerColumns, 'T0', 'ShipToCode', 'ShipToCode', "''")},
+      ${optionalColumn(headerColumns, 'T0', 'PayToCode', 'PayToCode', "''")},
+      ${optionalColumn(headerColumns, 'T0', 'Address', 'ShipToAddress', "''")},
+      ${optionalColumn(headerColumns, 'T0', 'Address2', 'BillToAddress', "''")},
       T0.SlpCode,
       SLP.SlpName,
       CASE T0.DocStatus WHEN 'O' THEN 'Open' WHEN 'C' THEN 'Closed' ELSE T0.DocStatus END AS Status
     FROM OINV T0
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '13' AND NNM.Series = T0.Series
+    ${shipAddressJoin}
+    ${billAddressJoin}
     WHERE T0.DocEntry = @docEntry AND T0.DocType = 'S'
   `, { docEntry }));
 
   if (!headerRows.length) throw new Error('Service A/R Invoice not found');
   const header = headerRows[0];
+  const inv1Columns = await getTableColumns('INV1');
+  const classificationColumn = getColumnName(inv1Columns, 'SacEntry')
+    || getColumnName(inv1Columns, 'HsnEntry');
+  const sacSelect = classificationColumn
+    ? `T0.${classificationColumn} AS SACEntry,
+      NULL AS SAC`
+    : `NULL AS SACEntry,
+      NULL AS SAC`;
 
-  const lineRows = await safe(db.query(`
+  const lineRows = await queryRowsWithFallback({
+    label: 'invoice lines',
+    params: { docEntry },
+    primarySql: `
     SELECT
       T0.LineNum,
       T0.AcctCode,
@@ -386,25 +493,77 @@ const getServiceARInvoice = async (docEntry) => {
       T0.LineTotal,
       T0.VatSum,
       T0.Price,
+      ${optionalColumn(inv1Columns, 'T0', 'DiscPrcnt', 'DiscountPercent', '0')},
+      ${optionalColumn(inv1Columns, 'T0', 'PriceBefDi', 'PriceBeforeDiscount', 'NULL')},
+      NULL AS WTLiable,
+      ${optionalColumn(inv1Columns, 'T0', 'LocCode', 'LocationCode')},
+      ${optionalColumn(inv1Columns, 'T0', 'AgrNo', 'BlanketAgreementNo')},
       T0.Quantity,
       T0.BaseEntry,
       T0.BaseType,
       T0.BaseLine,
-      T0.SACEntry,
-      CHP.ChapterID AS SAC
+      ${sacSelect}
     FROM INV1 T0
     LEFT JOIN OACT ACT ON ACT.AcctCode = T0.AcctCode
-    LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.SACEntry
     WHERE T0.DocEntry = @docEntry
     ORDER BY T0.LineNum
-  `, { docEntry }));
+  `,
+    fallbackSql: `
+    SELECT
+      T0.LineNum,
+      T0.AcctCode,
+      ACT.AcctName,
+      T0.Dscription,
+      T0.OcrCode,
+      T0.TaxCode,
+      T0.LineTotal,
+      T0.VatSum,
+      T0.Price,
+      0 AS DiscountPercent,
+      NULL AS PriceBeforeDiscount,
+      NULL AS WTLiable,
+      NULL AS LocationCode,
+      NULL AS BlanketAgreementNo,
+      T0.Quantity,
+      T0.BaseEntry,
+      T0.BaseType,
+      T0.BaseLine,
+      NULL AS SACEntry,
+      NULL AS SAC
+    FROM INV1 T0
+    LEFT JOIN OACT ACT ON ACT.AcctCode = T0.AcctCode
+    WHERE T0.DocEntry = @docEntry
+    ORDER BY T0.LineNum
+  `,
+  });
 
   const [headerUdfs, lineUdfsByLineNum] = await Promise.all([
     getHeaderUdfValues({ tableId: 'OINV', keyValue: docEntry }),
     getLineUdfValues({ tableId: 'INV1', keyValue: docEntry }),
   ]);
-  const sacLookup = await hsnCodeDbService.getSACCodes('', 5000, 0);
+  const [sacLookup, hsnLookup] = await Promise.all([
+    hsnCodeDbService.getSACCodes('', 5000, 0),
+    hsnCodeDbService.getHSNCodes('', 5000, 0),
+  ]);
   const sacByEntry = new Map(sacLookup.map((sac) => [String(sac.absEntry ?? ''), sac.serviceCode || sac.code || '']));
+  const hsnByEntry = new Map(hsnLookup.map((hsn) => [String(hsn.absEntry ?? ''), hsn.code || '']));
+  const classificationByEntry = classificationColumn.toUpperCase() === 'HSNENTRY' ? hsnByEntry : sacByEntry;
+  const lineSubtotal = lineRows.reduce((sum, line) => sum + Number(line.LineTotal || 0), 0);
+  const headerSubtotal = Number(header.DocTotal || 0)
+    + Number(header.DiscSum || 0)
+    + Number(header.WTSum || 0)
+    - Number(header.TotalExpns || 0)
+    - Number(header.VatSum || 0)
+    - Number(header.RoundDif || 0);
+  const totalBeforeDiscount = lineSubtotal || headerSubtotal;
+  const derivedRounding = Number(header.DocTotal || 0)
+    + Number(header.WTSum || 0)
+    + Number(header.DiscSum || 0)
+    + Number(header.DpmAmnt || 0)
+    - totalBeforeDiscount
+    - Number(header.TotalExpns || 0)
+    - Number(header.VatSum || 0);
+  const roundingAmount = Number(header.RoundDif || 0) || (Math.abs(derivedRounding) <= 1 ? derivedRounding : 0);
 
   return {
     service_ar_invoice: {
@@ -419,6 +578,7 @@ const getServiceARInvoice = async (docEntry) => {
         currency: header.DocCur || 'INR',
         transactionType: getKnownHeaderUdfValue(headerUdfs, ['TransactionType', 'TransType', 'DocumentType', 'DocType']),
         indicator: getKnownHeaderUdfValue(headerUdfs, ['Indicator']),
+        placeOfSupply: header.PlaceOfSupply || '',
         docNo: header.DocNum ? String(header.DocNum) : '',
         status: header.Status || 'Open',
         series: header.Series ? String(header.Series) : '',
@@ -433,32 +593,48 @@ const getServiceARInvoice = async (docEntry) => {
         otherInstruction: header.Comments || '',
         journalRemark: header.JrnlMemo || '',
         discount: header.DiscPrcnt != null ? String(header.DiscPrcnt) : '',
+        discountAmount: header.DiscSum != null ? String(header.DiscSum) : '',
         freight: header.TotalExpns != null ? String(header.TotalExpns) : '',
         tax: header.VatSum != null ? String(header.VatSum) : '',
+        roundingAmount: String(roundingAmount),
+        wtaxAmount: header.WTSum != null ? String(header.WTSum) : '',
+        appliedAmount: header.PaidToDate != null ? String(header.PaidToDate) : '',
+        totalDownPayment: header.DpmAmnt != null ? String(header.DpmAmnt) : '',
         totalPaymentDue: header.DocTotal != null ? String(header.DocTotal) : '',
+        balanceDue: header.DocTotal != null && header.PaidToDate != null ? String(Number(header.DocTotal || 0) - Number(header.PaidToDate || 0)) : '',
+        totalBeforeDiscount: header.DocTotal != null ? String(totalBeforeDiscount) : '',
+        shipToCode: header.ShipToCode || '',
+        billToCode: header.PayToCode || '',
+        shipToAddress: header.ShipToAddress || '',
+        billToAddress: header.BillToAddress || '',
         salesEmployee: header.SlpCode != null ? String(header.SlpCode) : '',
         purchaser: header.SlpName || '',
       },
       lines: lineRows.map((line) => {
         const udf = lineUdfsByLineNum[line.LineNum] || {};
+        const udfAliases = mapUdfToAliases(udf);
         return {
+          ...udfAliases,
           baseEntry: line.BaseEntry ?? null,
           baseType: line.BaseType ?? null,
           baseLine: line.BaseLine ?? null,
-          sac: line.SAC || sacByEntry.get(String(line.SACEntry ?? '')) || (line.SACEntry != null ? String(line.SACEntry) : ''),
+          sac: line.SAC || classificationByEntry.get(String(line.SACEntry ?? '')) || hsnByEntry.get(String(line.SACEntry ?? '')) || sacByEntry.get(String(line.SACEntry ?? '')) || udfAliases.sac || '',
           description: line.Dscription || '',
           glAccount: line.AcctCode || '',
           glAccountName: line.AcctName || '',
           distRule: line.OcrCode || '',
+          discountPercent: line.DiscountPercent != null ? String(line.DiscountPercent) : '',
+          priceAfterDisc: line.Price != null ? String(line.Price) : '',
           taxCode: line.TaxCode || '',
-          wtaxLiable: '',
+          wtaxLiable: line.WTLiable != null
+            ? (String(line.WTLiable).toUpperCase() === 'Y' ? 'Yes' : 'No')
+            : (Number(header.WTSum || 0) !== 0 ? 'Yes' : 'No'),
           totalLC: line.LineTotal != null ? String(line.LineTotal) : '',
           taxAmountLC: line.VatSum != null ? String(line.VatSum) : '',
-          loc: '',
-          unitPrice: line.Price != null ? String(line.Price) : '',
-          sQty: line.Quantity != null ? String(line.Quantity) : '',
+          loc: line.LocationCode != null ? String(line.LocationCode) : '',
+          blanketAgreementNo: line.BlanketAgreementNo != null ? String(line.BlanketAgreementNo) : '',
+          unitPrice: line.PriceBeforeDiscount != null ? String(line.PriceBeforeDiscount) : (line.Price != null ? String(line.Price) : ''),
           udf,
-          ...mapUdfToAliases(udf),
         };
       }),
       header_udfs: headerUdfs,
@@ -494,7 +670,19 @@ const getServiceDocumentForCopy = async ({ headerTable, lineTable, docEntry, bas
     WHERE T0.DocEntry = @docEntry AND T0.DocType = 'S'
   `, { docEntry }));
 
-  const lineRows = await safe(db.query(`
+  const lineColumns = await getTableColumns(lineTable);
+  const copyClassificationColumn = getColumnName(lineColumns, 'SacEntry')
+    || getColumnName(lineColumns, 'HsnEntry');
+  const copySacSelect = copyClassificationColumn
+    ? `T0.${copyClassificationColumn} AS SACEntry,
+      NULL AS SAC`
+    : `NULL AS SACEntry,
+      NULL AS SAC`;
+
+  const lineRows = await queryRowsWithFallback({
+    label: `${lineTable} copy lines`,
+    params: { docEntry, baseType },
+    primarySql: `
     SELECT
       T0.LineNum,
       T0.AcctCode AS AccountCode,
@@ -506,36 +694,101 @@ const getServiceDocumentForCopy = async ({ headerTable, lineTable, docEntry, bas
       T0.OcrCode AS DistributionRule,
       T0.LineTotal,
       T0.VatSum AS TaxAmount,
-      T0.SACEntry,
-      CHP.ChapterID AS SAC,
+      ${copySacSelect},
       T0.DocEntry AS BaseEntry,
       T0.LineNum AS BaseLine,
       @baseType AS BaseType
     FROM ${lineTable} T0
     LEFT JOIN OACT ACT ON ACT.AcctCode = T0.AcctCode
-    LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.SACEntry
     WHERE T0.DocEntry = @docEntry
       AND ISNULL(T0.LineStatus, 'O') = 'O'
     ORDER BY T0.LineNum
-  `, { docEntry, baseType }));
+  `,
+    fallbackSql: `
+    SELECT
+      T0.LineNum,
+      T0.AcctCode AS AccountCode,
+      ACT.AcctName AS AccountName,
+      T0.Dscription AS ItemDescription,
+      T0.Quantity,
+      T0.Price AS UnitPrice,
+      T0.TaxCode,
+      T0.OcrCode AS DistributionRule,
+      T0.LineTotal,
+      T0.VatSum AS TaxAmount,
+      NULL AS SACEntry,
+      NULL AS SAC,
+      T0.DocEntry AS BaseEntry,
+      T0.LineNum AS BaseLine,
+      @baseType AS BaseType
+    FROM ${lineTable} T0
+    LEFT JOIN OACT ACT ON ACT.AcctCode = T0.AcctCode
+    WHERE T0.DocEntry = @docEntry
+      AND ISNULL(T0.LineStatus, 'O') = 'O'
+    ORDER BY T0.LineNum
+  `,
+  });
 
-  const sacLookup = await hsnCodeDbService.getSACCodes('', 5000, 0);
+  const [sacLookup, hsnLookup] = await Promise.all([
+    hsnCodeDbService.getSACCodes('', 5000, 0),
+    hsnCodeDbService.getHSNCodes('', 5000, 0),
+  ]);
   const sacByEntry = new Map(sacLookup.map((sac) => [String(sac.absEntry ?? ''), sac.serviceCode || sac.code || '']));
+  const hsnByEntry = new Map(hsnLookup.map((hsn) => [String(hsn.absEntry ?? ''), hsn.code || '']));
+  const copyClassificationByEntry = copyClassificationColumn.toUpperCase() === 'HSNENTRY' ? hsnByEntry : sacByEntry;
 
   return {
     ...(headerRows[0] || {}),
     DocumentLines: lineRows.map((line) => ({
       ...line,
-      SAC: line.SAC || sacByEntry.get(String(line.SACEntry ?? '')) || line.SAC,
+      SAC: line.SAC || copyClassificationByEntry.get(String(line.SACEntry ?? '')) || hsnByEntry.get(String(line.SACEntry ?? '')) || sacByEntry.get(String(line.SACEntry ?? '')) || '',
     })),
   };
+};
+
+const getServiceARDocumentSeries = async (date, transactionType = '', branch = '') => {
+  const series = await arInvoiceDb.getDocumentSeries(date, transactionType, branch);
+  if (!date) return series;
+
+  const parsedTargetDate = new Date(`${String(date).split('T')[0]}T00:00:00Z`);
+  const targetDate = parsedTargetDate.getTime();
+  if (!Number.isFinite(targetDate)) return [];
+
+  const dateMatchedSeries = (series || []).filter((row) => {
+    const fromDate = row.FromDate ? new Date(row.FromDate).getTime() : NaN;
+    const toDate = row.ToDate ? new Date(row.ToDate).getTime() : NaN;
+    return Number.isFinite(fromDate) && Number.isFinite(toDate) && targetDate >= fromDate && targetDate <= toDate;
+  });
+
+  const startYear = parsedTargetDate.getUTCMonth() >= 3
+    ? parsedTargetDate.getUTCFullYear()
+    : parsedTargetDate.getUTCFullYear() - 1;
+  const endYear = startYear + 1;
+  const yearTokens = [
+    `${String(startYear).slice(-2)}${String(endYear).slice(-2)}`,
+    `${startYear}${String(endYear).slice(-2)}`,
+    `${startYear}${endYear}`,
+  ];
+  const yearNamedSeries = dateMatchedSeries.filter((row) => {
+    const name = `${row.SeriesName || ''} ${row.Indicator || ''}`.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return yearTokens.some((token) => name.includes(token));
+  });
+  const hasFinancialYearNamedSeries = dateMatchedSeries.some((row) => {
+    return [row.SeriesName, row.Indicator].some((value) => {
+      const match = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').match(/(\d{2})(\d{2})$/);
+      return match && Number(match[2]) === (Number(match[1]) + 1) % 100;
+    });
+  });
+
+  if (yearNamedSeries.length) return yearNamedSeries;
+  return hasFinancialYearNamedSeries ? [] : dateMatchedSeries;
 };
 
 module.exports = {
   getReferenceData,
   getCustomerDetails: arInvoiceDb.getCustomerDetails,
   getCustomerFilterOptions: null,
-  getDocumentSeries: arInvoiceDb.getDocumentSeries,
+  getDocumentSeries: getServiceARDocumentSeries,
   getNextNumber: arInvoiceDb.getNextNumber,
   getServiceARInvoiceList,
   getServiceARInvoice,

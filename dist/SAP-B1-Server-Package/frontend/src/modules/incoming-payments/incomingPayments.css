@@ -679,12 +679,193 @@
   font-variant-numeric: tabular-nums;
 }
 
-.ip-lookup-modal-layer {
-  z-index: 100000 !important;
+.sap-amount-with-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+}
+
+.sap-amount-with-button input {
+  border-radius: 2px 0 0 2px;
+}
+
+.sap-amount-with-button button {
+  height: 22px;
+  border: 1px solid #a0aab4;
+  border-left: 0;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
+  color: #003366;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.ip-payment-means-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 100200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.ip-payment-means {
+  width: 632px;
+  max-width: calc(100vw - 40px);
+  background: #fff;
+  border: 1px solid #244a68;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.28);
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 12px;
+}
+
+.ip-payment-means__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 34px;
+  padding: 4px 6px 4px 14px;
+  background: #28516f;
+  color: #fff;
+  font-size: 18px;
+}
+
+.ip-payment-means__window-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.ip-payment-means__window-controls button {
+  width: 24px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-weight: 700;
+  line-height: 20px;
+}
+
+.ip-payment-means__body {
+  padding: 10px 16px;
+}
+
+.ip-payment-means__currency,
+.ip-payment-means__panel label,
+.ip-payment-means__footer-fields label {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.ip-payment-means__currency input,
+.ip-payment-means__panel input,
+.ip-payment-means__panel select,
+.ip-payment-means__footer-fields input {
+  height: 22px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  padding: 0 5px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.ip-payment-means__tabs {
+  display: flex;
+  align-items: flex-end;
+  margin-top: 10px;
+  border-bottom: 1px solid #c8d0da;
+}
+
+.ip-payment-means__tabs button {
+  min-width: 116px;
+  height: 24px;
+  border: 1px solid #c8d0da;
+  border-bottom: 0;
+  background: #e8edf2;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ip-payment-means__tabs button.is-active {
+  background: #fff;
+  border-color: #a0aab4;
+  margin-bottom: -1px;
+}
+
+.ip-payment-means__panel {
+  min-height: 298px;
+  padding: 14px 8px;
+  border: 1px solid #c8d0da;
+  border-top: 0;
+}
+
+.ip-payment-means__panel .sap-lookup {
+  width: 100%;
+}
+
+.ip-payment-means__footer-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 36px;
+  margin-top: 8px;
+}
+
+.ip-payment-means__footer-fields input {
+  text-align: right;
+}
+
+.ip-payment-means__paid {
+  grid-column: 2;
+}
+
+.ip-payment-means__error {
+  margin-top: 8px;
+  border: 1px solid #d34b4b;
+  background: #fff1f1;
+  color: #a31212;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.ip-payment-means__actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px 14px;
+}
+
+.ip-payment-means .po-btn {
+  height: 24px;
+  padding: 3px 18px;
+  border: 1px solid #a0aab4;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ip-payment-means .po-btn--primary {
+  border-color: #004a80;
+  background: #244a68;
+  color: #ffffff;
+}
+
+.modal.show.d-block.ip-lookup-modal-layer {
+  z-index: 100600 !important;
   background: rgba(0, 0, 0, 0.45);
 }
 
-.ip-lookup-modal-layer .ip-lookup-dialog {
+.modal.show.d-block.ip-lookup-modal-layer .ip-lookup-dialog {
+  position: relative;
+  z-index: 100601 !important;
   width: min(1320px, calc(100vw - 44px));
   max-width: min(1320px, calc(100vw - 44px));
   margin: 40px auto;
@@ -832,6 +1013,15 @@
   padding: 8px 12px;
   border-top: 1px solid #c8d0da;
   background: #f0f2f5;
+}
+
+.ip-lookup-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  font-size: 11px;
+  color: #44515e;
 }
 
 @media (max-width: 1120px) {

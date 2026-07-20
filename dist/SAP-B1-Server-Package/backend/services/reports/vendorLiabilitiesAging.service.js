@@ -131,7 +131,7 @@ const getReport = async (criteria = {}) => {
   }
   const ageColumn = criteria.ageBy === "posting" ? "L.RefDate" : criteria.ageBy === "document" ? "L.TaxDate" : "L.DueDate";
   const rows = await queryRows(`
-    SELECT TOP 50000
+    SELECT TOP 5000
       BP.CardCode, ISNULL(BP.CardName, '') AS CardName, ISNULL(BP.Currency, '') AS BpCurrency,
       ISNULL(S.SlpCode, -1) AS SlpCode, ISNULL(S.SlpName, 'No Buyer') AS SlpName,
       L.TransId, L.TransType, ISNULL(L.CreatedBy, 0) AS SourceDocEntry,

@@ -1,138 +1,133 @@
-export default function AccountingTab({ header, onHeaderChange, payTermOpts }) {
+export default function AccountingTab({
+  header,
+  onHeaderChange,
+  payTermOpts,
+  paymentMethodOpts = [],
+  referenceDocuments = [],
+  onOpenReferenceDocuments,
+  isEditable = true,
+}) {
+  const referenceCount = (referenceDocuments || [])
+    .filter((row) => String(row.transactionType || row.docNumber || row.docEntry || row.extDocNumber || '').trim())
+    .length;
+  const paymentMethods = [...paymentMethodOpts];
+  const currentPaymentMethod = String(header.paymentMethod || '').trim();
+  if (currentPaymentMethod && !paymentMethods.some((method) => String(method.value) === currentPaymentMethod)) {
+    paymentMethods.push({ value: currentPaymentMethod, label: currentPaymentMethod });
+  }
+
+  const emitHeaderChange = (name, value, type = 'text', checked = false) => {
+    onHeaderChange({
+      target: {
+        name,
+        value,
+        type,
+        checked,
+      },
+    });
+  };
+
   return (
-    <div className="so-tab-panel">
-      <div className="so-field-grid">
-        {/* Journal Remark */}
-        <div className="so-field">
-          <label className="so-field__label">Journal Remark</label>
-          <input
-            className="so-field__input"
-            name="journalRemark"
-            value={header.journalRemark}
-            onChange={onHeaderChange}
-          />
-        </div>
-
-        {/* Payment Terms */}
-        <div className="so-field">
-          <label className="so-field__label">Payment Terms</label>
-          <select
-            className="so-field__select"
-            name="paymentTerms"
-            value={header.paymentTerms}
-            onChange={onHeaderChange}
-          >
-            <option value="">— Select —</option>
-            {payTermOpts.map(t => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Payment Method */}
-        <div className="so-field">
-          <label className="so-field__label">Payment Method</label>
-          <select
-            className="so-field__select"
-            name="paymentMethod"
-            value={header.paymentMethod}
-            onChange={onHeaderChange}
-          >
-            <option value="">— Select —</option>
-            <option>Bank Transfer</option>
-            <option>Cheque</option>
-            <option>Cash</option>
-            <option>Credit Card</option>
-          </select>
-        </div>
-
-        {/* Central Bank Ind. */}
-        <div className="so-field">
-          <label className="so-field__label">Central Bank Ind.</label>
-          <input className="so-field__input" />
-        </div>
-
-        {/* Business Partner Project */}
-        <div className="so-field">
-          <label className="so-field__label">Business Partner Project</label>
-          <input className="so-field__input" />
-        </div>
-
-        {/* Create QR Code From */}
-        <div className="so-field">
-          <label className="so-field__label">Create QR Code From</label>
-          <input className="so-field__input" />
-        </div>
-
-        {/* Cancellation Date */}
-        <div className="so-field">
-          <label className="so-field__label">Cancellation Date</label>
-          <input type="date" className="so-field__input" />
-        </div>
-
-        {/* Required Date */}
-        <div className="so-field">
-          <label className="so-field__label">Required Date</label>
-          <input type="date" className="so-field__input" />
-        </div>
-
-        {/* Indicator */}
-        <div className="so-field">
-          <label className="so-field__label">Indicator</label>
-          <select className="so-field__select">
-            <option value="">— Select —</option>
-          </select>
-        </div>
-
-        {/* Order Number */}
-        <div className="so-field">
-          <label className="so-field__label">Order Number</label>
-          <input className="so-field__input" />
-        </div>
-
-        {/* Referenced Document */}
-        <div className="so-field">
-          <label className="so-field__label">Referenced Document</label>
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <input className="so-field__input" readOnly style={{ flex: 1 }} />
-            <button type="button" className="so-btn so-btn--secondary" style={{ padding: '2px 8px', fontSize: '12px' }}>
-              ...
-            </button>
+    <div className="sap-tab-panel so-tab-panel so-accounting-panel">
+      <div className="sap-tab-grid">
+        <div className="sap-tab-column">
+          <div className="sap-section-title">Accounting</div>
+          <div className="sap-form-row">
+            <label className="so-field__label">Journal Remark</label>
+            <input className="so-field__input" name="journalRemark" value={header.journalRemark || ''} onChange={onHeaderChange} disabled={!isEditable} />
           </div>
-        </div>
 
-        {/* Manually Recalculate Due Date - Full width section */}
-        <div style={{ gridColumn: '1 / -1', padding: '8px 0', borderTop: '1px solid #e0e6ed', marginTop: '8px' }}>
-          <div className="so-section-title" style={{ margin: '0 0 8px 0' }}>Manually Recalculate Due Date:</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '110px' }}>
-            <label style={{ fontSize: 12 }}>Selected Date</label>
-            <input type="number" className="so-field__input" style={{ width: '40px', height: '22px' }} defaultValue="0" />
-            <label style={{ fontSize: 12 }}>Months +</label>
-            <input type="number" className="so-field__input" style={{ width: '40px', height: '22px' }} defaultValue="0" />
-            <label style={{ fontSize: 12 }}>Days</label>
-            <select className="so-field__select" style={{ width: '80px', height: '22px' }}>
-              <option>None</option>
+          <div className="sap-form-row">
+            <label className="so-field__label">Payment Terms</label>
+            <select className="so-field__select" name="paymentTerms" value={header.paymentTerms || ''} onChange={onHeaderChange} disabled={!isEditable}>
+              <option value="">-- Select --</option>
+              {payTermOpts.map(t => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-field__label">Payment Method</label>
+            <select className="so-field__select" name="paymentMethod" value={header.paymentMethod || ''} onChange={onHeaderChange} disabled={!isEditable}>
+              <option value="">-- Select --</option>
+              {paymentMethods.map(method => (
+                <option key={method.value} value={method.value}>{method.label}</option>
+              ))}
             </select>
           </div>
         </div>
 
-        {/* Cash Discount Date Offset */}
-        <div style={{ gridColumn: '1 / -1', padding: '4px 0' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ width: '110px', fontSize: 12, textAlign: 'right' }}>Cash Discount Date Offset:</span>
-            <input type="number" className="so-field__input" style={{ width: '100px', height: '22px' }} />
+        <div className="sap-tab-column">
+          <div className="sap-section-title">Reference</div>
+          <div className="sap-form-row">
+            <label className="so-field__label">BP Project</label>
+            <input className="so-field__input" name="bpProject" value={header.bpProject || ''} onChange={onHeaderChange} disabled={!isEditable} />
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-field__label">Create QR Code From</label>
+            <input className="so-field__input" name="createQrCodeFrom" value={header.createQrCodeFrom || ''} onChange={onHeaderChange} disabled={!isEditable} />
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-field__label">Cancellation Date</label>
+            <input type="date" className="so-field__input" name="cancellationDate" value={header.cancellationDate || ''} onChange={onHeaderChange} disabled={!isEditable} />
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-field__label">Required Date</label>
+            <input type="date" className="so-field__input" name="requiredDate" value={header.requiredDate || ''} onChange={onHeaderChange} disabled={!isEditable} />
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-field__label">Indicator</label>
+            <select className="so-field__select" name="indicator" value={header.indicator || ''} onChange={onHeaderChange} disabled={!isEditable}>
+              <option value="">-- Select --</option>
+            </select>
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-field__label">Order Number</label>
+            <input className="so-field__input" name="orderNumber" value={header.orderNumber || ''} onChange={onHeaderChange} disabled={!isEditable} />
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-field__label">Referenced Document</label>
+            <div className="sap-input-group">
+              <input className="so-field__input" readOnly value={referenceCount ? `(${referenceCount})` : ''} />
+              <button type="button" className="so-btn so-btn--secondary so-btn--lookup" onClick={onOpenReferenceDocuments} disabled={!isEditable && !referenceCount}>
+                ...
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Use Shipped Goods Account */}
-        <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 0' }}>
-          <span style={{ width: '110px' }}></span>
-          <input type="checkbox" id="useShippedGoods" style={{ cursor: 'pointer' }} />
-          <label htmlFor="useShippedGoods" style={{ cursor: 'pointer', margin: 0, fontSize: 12 }}>
-            Use Shipped Goods Account
-          </label>
+        <div className="sap-tab-section sap-tab-section--full sap-due-date-section">
+          <div className="sap-section-title">Manually Recalculate Due Date</div>
+
+          <div className="sap-form-row sap-form-row--full">
+            <label className="so-field__label">Due Date</label>
+            <div className="sap-inline-row sap-due-date-controls">
+              <input type="number" className="so-field__input sap-inline-control sap-inline-control--short" name="recalcSelectedDate" value={header.recalcSelectedDate || '0'} onChange={onHeaderChange} disabled={!isEditable} />
+              <span>Months +</span>
+              <input type="number" className="so-field__input sap-inline-control sap-inline-control--short" name="recalcMonths" value={header.recalcMonths || '0'} onChange={onHeaderChange} disabled={!isEditable} />
+              <span>Days</span>
+              <select className="so-field__select sap-inline-control sap-inline-control--mode" name="recalcDaysMode" value={header.recalcDaysMode || 'None'} onChange={onHeaderChange} disabled={!isEditable}>
+                <option>None</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="sap-form-row">
+            <label className="so-field__label">Cash Discount Date Offset</label>
+            <input type="number" className="so-field__input" name="cashDiscountDateOffset" value={header.cashDiscountDateOffset || ''} onChange={onHeaderChange} disabled={!isEditable} />
+          </div>
+
+          <div className="sap-checkbox-row">
+            <input type="checkbox" name="useShippedGoodsAccount" checked={Boolean(header.useShippedGoodsAccount)} onChange={(event) => emitHeaderChange('useShippedGoodsAccount', event.target.checked, 'checkbox', event.target.checked)} disabled={!isEditable} />
+            <span>Use Shipped Goods Account</span>
+          </div>
         </div>
       </div>
     </div>

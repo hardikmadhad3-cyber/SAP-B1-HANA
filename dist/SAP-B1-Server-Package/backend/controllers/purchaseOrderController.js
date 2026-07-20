@@ -20,7 +20,7 @@ const parseTopParam = (value) => {
 
 const getReferenceData = async (req, res) => {
   try {
-    const data = await purchaseOrderService.getReferenceData(req.query.company_id);
+    const data = await purchaseOrderService.getReferenceData(req.query.company_id, req.auth?.userId);
     res.json(data);
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load purchase order reference data.'));
@@ -106,6 +106,7 @@ const updatePurchaseOrder = async (req, res) => {
 
 const getDocumentSeries = async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     const data = await purchaseOrderService.getDocumentSeries();
     res.json(data);
   } catch (error) {
@@ -176,6 +177,7 @@ const getPurchaseRequestForCopy = async (req, res) => {
 
 const getItemsForModal = async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     res.json(await purchaseOrderService.getItemsForModal());
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load items.'));

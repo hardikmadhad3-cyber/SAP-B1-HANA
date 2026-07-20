@@ -32,11 +32,11 @@ const getPredefinedTexts = async (query = '') => {
   const rows = await safe(db.query(`
     SELECT TOP 500
       LTRIM(RTRIM(CAST(TextCode AS NVARCHAR(20)))) AS TextCode,
-      LTRIM(RTRIM(CAST([Text] AS NVARCHAR(MAX)))) AS [Text]
+      LTRIM(RTRIM(CAST([Text] AS NVARCHAR(5000)))) AS [Text]
     FROM OPDT
     WHERE @query = ''
       OR TextCode LIKE @queryLike
-      OR CAST([Text] AS NVARCHAR(MAX)) LIKE @queryLike
+      OR CAST([Text] AS NVARCHAR(5000)) LIKE @queryLike
     ORDER BY TextCode
   `, {
     query: normalizedQuery,
@@ -75,7 +75,7 @@ const createPredefinedText = async ({ textCode, text }) => {
   const existingRows = await db.query(`
     SELECT TOP 1
       LTRIM(RTRIM(CAST(TextCode AS NVARCHAR(20)))) AS TextCode,
-      LTRIM(RTRIM(CAST([Text] AS NVARCHAR(MAX)))) AS [Text]
+      LTRIM(RTRIM(CAST([Text] AS NVARCHAR(5000)))) AS [Text]
     FROM OPDT
     WHERE UPPER(LTRIM(RTRIM(TextCode))) = @textCode
   `, {
@@ -87,21 +87,27 @@ const createPredefinedText = async ({ textCode, text }) => {
     return mapPredefinedTextRow(existing);
   }
 
-  const insertedRows = await db.query(`
-    DECLARE @nextAbsEntry INT;
+  const nextRows = await db.query(`
+    SELECT ISNULL(MAX(AbsEntry), 0) + 1 AS NextAbsEntry
+    FROM OPDT
+  `);
+  const nextAbsEntry = Number(nextRows.recordset?.[0]?.NextAbsEntry || 1);
 
-    SELECT @nextAbsEntry = ISNULL(MAX(AbsEntry), 0) + 1
-    FROM OPDT WITH (UPDLOCK, HOLDLOCK);
-
+  await db.query(`
     INSERT INTO OPDT (AbsEntry, TextCode, [Text])
-    VALUES (@nextAbsEntry, @textCode, @text);
+    VALUES (@nextAbsEntry, @textCode, @text)
+  `, {
+    nextAbsEntry,
+  });
 
+  const insertedRows = await db.query(`
     SELECT
       LTRIM(RTRIM(CAST(TextCode AS NVARCHAR(20)))) AS TextCode,
-      LTRIM(RTRIM(CAST([Text] AS NVARCHAR(MAX)))) AS [Text]
+      LTRIM(RTRIM(CAST([Text] AS NVARCHAR(5000)))) AS [Text]
     FROM OPDT
-    WHERE AbsEntry = @nextAbsEntry;
+    WHERE AbsEntry = @nextAbsEntry
   `, {
+    nextAbsEntry,
     textCode: normalizedTextCode,
     text: normalizedText,
   });

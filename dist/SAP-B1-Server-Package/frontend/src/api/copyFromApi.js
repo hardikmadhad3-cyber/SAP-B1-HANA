@@ -157,6 +157,14 @@ const firstString = (...values) => {
   return value === '' ? '' : String(value);
 };
 
+const sapYesNoToBoolean = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const normalized = String(value).trim().toUpperCase();
+  if (['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized)) return true;
+  if (['N', 'NO', 'FALSE', '0', 'TNO'].includes(normalized)) return false;
+  return Boolean(value);
+};
+
 const formatDateForInput = (value) => {
   if (!value) return '';
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -193,6 +201,9 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
   buyerQuality:    firstString(line.buyerQuality, line.BuyerQuality),
   quantity:        firstString(line.Quantity, line.OpenQty, line.quantity, 0),
   unitPrice:       firstString(line.UnitPrice, line.Price, line.unitPrice, 0),
+  price:           firstString(line.Price, line.UnitPrice, line.price, line.unitPrice, 0),
+  priceAfterDiscount: firstString(line.PriceAfterDiscount, line.priceAfterDiscount),
+  itemCost:        firstString(line.ItemCost, line.StockPrice, line.itemCost, line.stockPrice),
   discountAmount:  firstString(
     line.discountAmount,
     line.DiscountAmount,
@@ -209,10 +220,11 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
   sellerBrokeragePercent: firstString(line.sellerBrokeragePercent, line.SellerBrokeragePercent),
   sellerBrokerage: firstString(line.sellerBrokerage, line.SellerBrokerage),
   buyerBrokerage:  firstString(line.buyerBrokerage, line.BuyerBrokerage),
+  commPercent:     firstString(line.commPercent, line.CommissionPercent, line.CommPercent),
   specialRebate:   line.SpecialRebate != null ? String(line.SpecialRebate) : (line.specialRebate != null ? String(line.specialRebate) : ''),
   commission:      line.Commission != null ? String(line.Commission) : (line.commission != null ? String(line.commission) : ''),
   sellerBrokeragePerQty: line.SellerBrokeragePerQty != null ? String(line.SellerBrokeragePerQty) : (line.sellerBrokeragePerQty != null ? String(line.sellerBrokeragePerQty) : ''),
-  unitPriceUdf:    line.UnitPriceUdf != null ? String(line.UnitPriceUdf) : (line.unitPriceUdf != null ? String(line.unitPriceUdf) : String(line.UnitPrice || line.Price || line.unitPrice || 0)),
+  unitPriceUdf:    line.UnitPriceUdf != null ? String(line.UnitPriceUdf) : (line.unitPriceUdf != null ? String(line.unitPriceUdf) : ''),
   buyerPaymentTerms: firstString(line.buyerPaymentTerms, line.BuyerPaymentTerms),
   sellerPaymentTerms: firstString(line.sellerPaymentTerms, line.SellerPaymentTerm, line.SellerPaymentTerms, line.udf?.U_Seller_Payment_Term, line.udf?.U_Seller_Payment_Terms),
   qtySpecialInstruction: firstString(line.qtySpecialInstruction, line.QtySpecialInstruction, line.sellerSpecialInstruction, line.SellerSpecialInstruction),
@@ -221,19 +233,20 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
   sellerSpecialInstruction: firstString(line.sellerSpecialInstruction, line.SellerSpecialInstruction),
   buyerBillDiscount: line.BuyerBillDiscount != null ? String(line.BuyerBillDiscount) : (line.buyerBillDiscount != null ? String(line.buyerBillDiscount) : ''),
   sellerBillDiscount: line.SellerBillDiscount != null ? String(line.SellerBillDiscount) : (line.sellerBillDiscount != null ? String(line.sellerBillDiscount) : ''),
-  sellerItem:      firstString(line.sellerItem, line.SellerItem),
+  sellerItem:      firstString(line.sellerItem, line.SellerItem, line.U_S_Item, line.U_SItem, line.udf?.U_S_Item, line.udf?.U_SItem),
   sellerQty:       line.SellerQty != null ? String(line.SellerQty) : (line.sellerQty != null ? String(line.sellerQty) : ''),
   freightPurchase: line.FreightPurchase != null ? String(line.FreightPurchase) : (line.freightPurchase != null ? String(line.freightPurchase) : ''),
   freightSales:    line.FreightSales != null ? String(line.FreightSales) : (line.freightSales != null ? String(line.freightSales) : ''),
   freightProvider: firstString(line.freightProvider, line.FreightProvider),
   freightProviderName: firstString(line.freightProviderName, line.FreightProviderName),
   brokerageNumber: firstString(line.brokerageNumber, line.BrokerageNumber),
-  uomCode:         firstString(line.UomCode, line.unitMsr, line.uomCode),
-  uomName:         firstString(line.UomName, line.unitMsr, line.uomName, line.UomCode, line.uomCode),
+  uomCode:         firstString(line.UoMCode, line.UomCode, line.UOMCode, line.uomCode, line.UomEntry, line.UoMEntry),
+  uomName:         firstString(line.UoMName, line.UomName, line.UnitMsr, line.unitMsr, line.MeasureUnit, line.uomName, line.UoMCode, line.UomCode, line.uomCode),
   hsnCode:         firstString(line.HSNCode, line.hsnCode),
   sacCode:         firstString(line.SACCode, line.SacCode, line.sacCode),
   taxCode:         firstString(line.TaxCode, line.VatGroup, line.taxCode),
-  stcode:          firstString(line.STCODE, line.STACode, line.stcode, line.TaxCode, line.VatGroup, line.taxCode),
+  taxCodeManuallyOverridden: Boolean(firstString(line.TaxCode, line.VatGroup, line.taxCode)),
+  stcode:          firstString(line.STCODE, line.STACode, line.stcode),
   whse:            firstString(line.WarehouseCode, line.WhsCode, line.whse),
   stdDiscount:     firstString(line.DiscountPercent, line.DiscPrcnt, line.stdDiscount, 0),
   total:           line.LineTotal != null ? String(line.LineTotal) : (line.total != null ? String(line.total) : ''),
@@ -251,7 +264,7 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
   baseEntry:       docEntry             || null,
   baseType,
   baseLine:        line.LineNum         ?? line.lineNum         ?? idx,
-  loc:             firstString(line.Location, line.LocCode, line.loc),
+  loc:             firstString(line.LocCode, line.LocationCode, line.loc, line.Location),
   branch:          normalizeBranchValue(line.branch || line.Branch || headerBranch),
   commissionAmountPerTon: firstString(line.commissionAmountPerTon, line.CommissionAmountPerTon),
   commissionBy:    firstString(line.commissionBy, line.CommissionBy),
@@ -280,6 +293,8 @@ export const normaliseDocumentHeader = (data) => {
     postingDate:      formatDateForInput(firstValue(h.postingDate, h.DocDate)),
     deliveryDate:     formatDateForInput(firstValue(h.deliveryDate, h.DocDueDate)),
     documentDate:     formatDateForInput(firstValue(h.documentDate, h.TaxDate)),
+    taxInvoiceNo:     firstString(h.taxInvoiceNo, h.TaxInvoiceNo, h.NumAtCard, h.salesContractNo, h.customerRefNo, h.DocNum, h.docNo),
+    taxInvoiceDate:   formatDateForInput(firstValue(h.taxInvoiceDate, h.TaxInvoiceDate, h.TaxDate, h.documentDate, h.DocDate)),
     customerRefNo:    documentRefNo,
     salesContractNo:  documentRefNo,
     salesEmployee:    firstString(h.salesEmployee, h.SlpCode),
@@ -290,7 +305,7 @@ export const normaliseDocumentHeader = (data) => {
     billToCode:       firstString(h.payToCode, h.billToCode, h.PayToCode),
     billToAddress:    firstString(h.payTo, h.billToAddress, h.Address2),
     shippingType:     firstString(h.shippingType, h.TrnspCode),
-    confirmed:        h.confirmed ?? (h.Confirmed === 'Y'),
+    confirmed:        h.confirmed ?? sapYesNoToBoolean(h.Confirmed),
     journalRemark:    firstString(h.journalRemark, h.JrnlMemo),
     discount:         firstString(h.discount, h.DiscPrcnt),
     freight:          firstString(h.freight, h.Freight),

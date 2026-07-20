@@ -185,7 +185,7 @@ function PropertiesSelectionModal({
             <div className="sap-properties-modal__toolbar">
               <button
                 type="button"
-                className="sap-properties-modal__action-btn"
+                className="sap-properties-modal__action-btn sap-report-btn"
                 disabled={draft.ignoreProperties}
                 onClick={() =>
                   setDraft((current) => ({
@@ -198,7 +198,7 @@ function PropertiesSelectionModal({
               </button>
               <button
                 type="button"
-                className="sap-properties-modal__action-btn"
+                className="sap-properties-modal__action-btn sap-report-btn"
                 disabled={draft.ignoreProperties}
                 onClick={() =>
                   setDraft((current) => ({
@@ -213,7 +213,7 @@ function PropertiesSelectionModal({
               </button>
               <button
                 type="button"
-                className="sap-properties-modal__action-btn"
+                className="sap-properties-modal__action-btn sap-report-btn"
                 disabled={draft.ignoreProperties}
                 onClick={() =>
                   setDraft((current) => ({
@@ -228,10 +228,10 @@ function PropertiesSelectionModal({
           </div>
 
           <div className="sap-properties-modal__footer">
-            <button type="button" className="sap-properties-modal__primary-btn" onClick={handleSave}>
+            <button type="button" className="sap-properties-modal__primary-btn sap-report-btn sap-report-btn--primary" onClick={handleSave}>
               OK
             </button>
-            <button type="button" className="sap-properties-modal__primary-btn" onClick={onClose}>
+            <button type="button" className="sap-properties-modal__primary-btn sap-report-btn" onClick={onClose}>
               Cancel
             </button>
           </div>

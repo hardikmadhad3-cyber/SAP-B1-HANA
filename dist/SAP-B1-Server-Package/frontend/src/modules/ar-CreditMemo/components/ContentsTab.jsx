@@ -2,48 +2,12 @@ import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
 import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
 import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
+import { AR_CREDIT_MEMO_WORKBOOK_COLUMNS } from '../../../config/workbookMatrixColumns';
 
-const MATRIX_COLS = [
-  { key: 'itemNo', label: 'Item No.', minWidth: 160 },
-  { key: 'itemDescription', label: 'Item Description', minWidth: 220 },
-  { key: 'quantity', label: 'Qty', minWidth: 80 },
-  { key: 'noOfPackages', label: 'No. of Packages', minWidth: 120 },
-  { key: 'unitPrice', label: 'Unit Price', minWidth: 95 },
-  { key: 'stdDiscount', label: 'Disc%', minWidth: 85 },
-  { key: 'taxCode', label: 'Tax Code', minWidth: 115 },
-  { key: 'wTaxLiable', label: 'WTax Liable', minWidth: 100, type: 'yesNo' },
-  { key: 'totalLC', label: 'Total (LC)', minWidth: 110, readOnly: true },
-  { key: 'totalBeforeTax', label: 'Total Before Tax', minWidth: 135, readOnly: true },
-  { key: 'total', label: 'Total', minWidth: 105, readOnly: true },
-  { key: 'whse', label: 'Whse', minWidth: 90 },
-  { key: 'glAccount', label: 'G/L Account', minWidth: 135 },
-  { key: 'distRule', label: 'Distr. Rule', minWidth: 105 },
-  { key: 'taxLiable', label: 'Tax Liable', minWidth: 95, type: 'checkbox' },
-  { key: 'weight', label: 'Weight', minWidth: 95 },
-  { key: 'taxAmount', label: 'Tax Amount (LC)', minWidth: 125, readOnly: true },
-  { key: 'uomCode', label: 'UoM Code', minWidth: 105 },
-  { key: 'uomName', label: 'UoM Name', minWidth: 120, readOnly: true },
-  { key: 'cogsDistRule', label: 'COGS Distr. Rule', minWidth: 135 },
-  { key: 'countryOfOrigin', label: 'Country/Region of Origin', minWidth: 185 },
-  { key: 'loc', label: 'Loc.', minWidth: 115, readOnly: true },
-  { key: 'branch', label: 'Branch', minWidth: 115, readOnly: true },
-  { key: 'enableSettingCost', label: 'Enable Setting Cost', minWidth: 140, type: 'checkbox' },
-  { key: 'returnCost', label: 'Return Cost (LC)', minWidth: 125 },
-  { key: 'blanketAgreementNo', label: 'Blanket Agreement No.', minWidth: 170 },
-  { key: 'hsnCode', label: 'HSN', minWidth: 115 },
-  { key: 'sacCode', label: 'SAC', minWidth: 95 },
-];
+const MATRIX_COLS = AR_CREDIT_MEMO_WORKBOOK_COLUMNS;
 
 const INDEX_COL_WIDTH = 42;
 const ACTION_COL_WIDTH = 48;
-const SUPPRESSED_ROW_UDFS = new Set([
-  'APIVDOCKEY',
-  'APIVDOCNUM',
-  'APIVLINENUM',
-  'APINVDOCKEY',
-  'APINVDOCNUM',
-  'APINVLINENUM',
-]);
 
 const pickerButtonStyle = {
   padding: '0 6px',
@@ -58,6 +22,16 @@ const pickerButtonStyle = {
 
 const isCheckedValue = (value) =>
   ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase());
+
+const getLineFieldValue = (line = {}, key = '') => {
+  if (key === 'itemNo') {
+    return line.itemNo || line.ItemCode || line.itemCode || '';
+  }
+  if (key === 'itemDescription') {
+    return line.itemDescription || line.ItemDescription || line.Dscription || line.description || line.itemName || '';
+  }
+  return line[key] || '';
+};
 
 const normalizeUdfKey = (value) =>
   String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
@@ -84,47 +58,62 @@ export default function ContentsTab({
   onRowUdfChange,
 }) {
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
-  const standardColumnByKey = new Map(MATRIX_COLS.map((column) => [column.key, column]));
   const standardColumnOrderByKey = new Map(MATRIX_COLS.map((column, index) => [column.key, index + 1]));
-  const hasLiveMatrixFields = Array.isArray(matrixFields) && matrixFields.length > 0;
-  const standardColumns = hasLiveMatrixFields
-    ? matrixFields
-        .map((field) => {
-          const fallbackOrder = standardColumnOrderByKey.get(field.key) || 90000;
-          return {
-            ...(standardColumnByKey.get(field.key) || {}),
-            ...field,
-            order: Number.isFinite(Number(field.order)) ? Number(field.order) : fallbackOrder,
-          };
-        })
-        .filter((column) => column.key)
-    : MATRIX_COLS.map((column, index) => ({
-        ...column,
-        order: index + 1,
-      }));
+  const rowUdfByNormalizedKey = new Map();
+  (rowUdfFields || []).forEach((field) => {
+    [field.key, field.sapField, field.aliasId, field.label]
+      .map(normalizeUdfKey)
+      .filter(Boolean)
+      .forEach((key) => {
+        if (!rowUdfByNormalizedKey.has(key)) rowUdfByNormalizedKey.set(key, field);
+      });
+  });
+  const getColumnUdfField = (column) => {
+    if (!column?.isUdf) return column?.field;
+    const key = column.valueKey || column.rendererKey || column.key;
+    return rowUdfByNormalizedKey.get(normalizeUdfKey(key)) || column.field || {
+      key,
+      label: column.label || key,
+      type: column.type || (column.numeric ? 'number' : 'text'),
+      options: column.options || [],
+      readOnly: column.readOnly,
+    };
+  };
+  const liveMatrixColumnByKey = new Map(
+    (Array.isArray(matrixFields) ? matrixFields : [])
+      .filter((field) => field?.key)
+      .map((field) => [field.key, field])
+  );
+  const isVisibleBySetting = (field = {}, setting = {}) => (
+    field.visible === false ? false : setting?.visible !== undefined ? setting.visible !== false : true
+  );
+  const standardColumns = MATRIX_COLS.map((column, index) => {
+    const liveColumn = liveMatrixColumnByKey.get(column.key);
+    const mergedColumn = {
+      ...(liveColumn || {}),
+      ...column,
+      key: column.key,
+      valueKey: column.valueKey || column.key,
+      rendererKey: column.rendererKey || column.valueKey || column.key,
+      label: column.label,
+      minWidth: column.minWidth || liveColumn?.minWidth || 125,
+      order: standardColumnOrderByKey.get(column.key) || index + 1,
+      visible: column.visible !== false,
+      isUdf: Boolean(column.isUdf),
+    };
 
-  const udfColumns = rowUdfFields
-    .filter((field) => {
-      const fieldKeys = [field.key, field.sapField, field.aliasId, field.label]
-        .map(normalizeUdfKey)
-        .filter(Boolean);
-      return !fieldKeys.some((key) => SUPPRESSED_ROW_UDFS.has(key));
-    })
-    .map((field) => ({
-      key: field.key,
-      label: field.label || field.key,
-      minWidth: field.minWidth || (field.type === 'textarea' ? 180 : 125),
-      order: field.order,
-      isUdf: true,
-      field,
-    }));
+    return {
+      ...mergedColumn,
+      field: getColumnUdfField(mergedColumn),
+    };
+  });
 
-  const matrixCols = [...standardColumns, ...udfColumns]
+  const matrixCols = standardColumns
     .filter((column) => {
       if (column.isUdf) {
-        return formSettings.rowUdfs?.[column.field.key]?.visible !== false;
+        return isVisibleBySetting(column, formSettings.rowUdfs?.[column.field.key] || {});
       }
-      return formSettings.matrixColumns?.[column.key]?.visible !== false;
+      return isVisibleBySetting(column, formSettings.matrixColumns?.[column.key] || {});
     })
     .sort((left, right) => {
       const leftOrder = Number.isFinite(Number(left.order)) ? Number(left.order) : 99999;
@@ -167,6 +156,13 @@ export default function ContentsTab({
   };
 
   const renderUdfCell = (field, line, i) => {
+    if (!field?.key) {
+      return (
+        <td>
+          <input className="del-grid__input" value="" readOnly />
+        </td>
+      );
+    }
     const disabled = !isEditable || field.readOnly || formSettings.rowUdfs?.[field.key]?.active === false;
     const value = line.udf?.[field.key] || '';
     const isSellerItem = normalizeUdfKey(field.key || field.aliasId || field.label) === 'SITEM';
@@ -196,7 +192,7 @@ export default function ContentsTab({
       );
     }
 
-    if (field.type === 'select') {
+    if (field.type === 'select' && Array.isArray(field.options) && field.options.length > 0) {
       return (
         <td key={field.key}>
           <select
@@ -246,12 +242,14 @@ export default function ContentsTab({
   };
 
   const renderCell = (column, line, i, uomOpts, lineTotals) => {
-    if (column.isUdf) return renderUdfCell(column.field, line, i);
+    if (column.isUdf && column.field) {
+      return renderUdfCell(column.field, line, i);
+    }
 
     const disabled = isStandardDisabled(column);
     const lineErrors = valErrors.lines[i] || {};
 
-    switch (column.key) {
+    switch (column.rendererKey || column.valueKey || column.key) {
       case 'itemNo':
         return (
           <td key="itemNo">
@@ -263,7 +261,7 @@ export default function ContentsTab({
                 data-sap-lookup="item"
                 data-sap-row-index={i}
                 onKeyDown={(event) => sapItemTab.handleItemCodeTab(event, i)}
-                value={line.itemNo}
+                value={getLineFieldValue(line, 'itemNo')}
                 onChange={(event) => onLineChange(i, event)}
                 placeholder="Item Code"
                 disabled={disabled}
@@ -290,9 +288,9 @@ export default function ContentsTab({
               className="del-grid__input"
               style={{ textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
               name="itemDescription"
-              value={line.itemDescription}
+              value={getLineFieldValue(line, 'itemDescription')}
               onChange={(event) => onLineChange(i, event)}
-              title={line.itemDescription}
+              title={getLineFieldValue(line, 'itemDescription')}
               disabled={disabled}
             />
           </td>
@@ -362,7 +360,7 @@ export default function ContentsTab({
         );
       case 'taxCode':
         return (
-          <td key="taxCode">
+          <td key={column.key}>
             <TaxCodeLookup
               className="del-grid__input"
               style={{ textAlign: 'left', height: '20px', padding: '0 4px' }}
@@ -478,12 +476,12 @@ export default function ContentsTab({
           <td key={column.key}>
             <input
               className={`del-grid__input${lineErrors[column.key] ? ' del-field__input--error' : ''}`}
-              name={column.key}
-              value={line[column.key] || ''}
+              name={column.valueKey || column.rendererKey || column.key}
+              value={line[column.valueKey || column.rendererKey || column.key] || ''}
               onChange={(event) => onLineChange(i, event)}
               disabled={disabled}
               readOnly={column.readOnly}
-              title={String(line[column.key] || '')}
+              title={String(line[column.valueKey || column.rendererKey || column.key] || '')}
             />
           </td>
         );
@@ -491,7 +489,7 @@ export default function ContentsTab({
   };
 
   return (
-    <div className="del-tab-panel" style={{ overflow: 'visible', minWidth: 0, maxWidth: 'none' }}>
+    <div className="sap-tab-panel del-tab-panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
         <div className="del-section-title" style={{ margin: 0 }}>Document Lines</div>
         <button type="button" className="del-btn del-btn--primary" onClick={onAddLine}>

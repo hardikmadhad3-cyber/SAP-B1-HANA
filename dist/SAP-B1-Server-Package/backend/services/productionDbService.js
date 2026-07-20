@@ -174,7 +174,7 @@ const lookupSeries = async (objectCode) => {
       FROM NNM1 T0
       LEFT JOIN OFPR T1
         ON T1.Indicator = T0.Indicator
-        AND CONVERT(date, GETDATE()) BETWEEN T1.F_RefDate AND T1.T_RefDate
+        AND CAST(CURRENT_TIMESTAMP AS DATE) BETWEEN T1.F_RefDate AND T1.T_RefDate
       ${defaultSeriesJoin}
       WHERE T0.ObjectCode = @objectCode
         AND T0.Locked <> 'Y'
@@ -385,11 +385,32 @@ const lookupLinkedOrders = async (linkedTo = "", query = "") => {
   return [];
 };
 
+const itemWarehouseFallbackJoin = `
+      LEFT JOIN (
+        SELECT ItemCode, WhsCode
+        FROM (
+          SELECT
+            W.ItemCode,
+            W.WhsCode,
+            ROW_NUMBER() OVER (
+              PARTITION BY W.ItemCode
+              ORDER BY
+                CASE WHEN ISNULL(W.Locked, 'N') <> 'Y' AND ISNULL(WH.Inactive, 'N') <> 'Y' THEN 0 ELSE 1 END,
+                CASE WHEN ISNULL(W.OnHand, 0) > 0 THEN 0 ELSE 1 END,
+                W.WhsCode
+            ) AS RowNum
+          FROM OITW W
+          LEFT JOIN OWHS WH ON WH.WhsCode = W.WhsCode
+        ) RankedWarehouses
+        WHERE RowNum = 1
+      ) IW ON IW.ItemCode = I.ItemCode
+`;
+
 const lookupProductionOrderItems = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(
     `
-      SELECT TOP 50
+      SELECT
              T.Code AS TreeCode,
              T.Name AS ProductDescription,
              T.Qauntity AS BOMQuantity,
@@ -398,12 +419,13 @@ const lookupProductionOrderItems = async (query = "") => {
              I.ItemCode,
              I.ItemName,
              I.InvntryUom,
-             I.DfltWH AS DefaultWarehouse,
+             COALESCE(NULLIF(I.DfltWH, ''), IW.WhsCode, '') AS DefaultWarehouse,
              CAST(ISNULL(I.OnHand, 0) AS DECIMAL(19, 6)) AS QuantityOnStock,
              I.PrcrmntMtd AS ProcurementMethod
       FROM OITM I
       INNER JOIN OITT T ON T.Code = I.ItemCode
         AND T.TreeType = 'P'
+      ${itemWarehouseFallbackJoin}
       WHERE (
         @query = ''
         OR T.Code LIKE @like
@@ -436,19 +458,66 @@ const lookupProductionOrderItems = async (query = "") => {
   }));
 };
 
+const lookupFinishItems = async (query = "") => {
+  const trimmed = String(query || "").trim();
+  const rows = await queryRows(
+    `
+      SELECT
+             I.ItemCode,
+             I.ItemName,
+             CAST(ISNULL(I.OnHand, 0) AS DECIMAL(19, 6)) AS InStock,
+             G.ItmsGrpNam AS ItemGroup,
+             I.InvntryUom,
+             COALESCE(NULLIF(I.DfltWH, ''), IW.WhsCode, '') AS DefaultWarehouse
+      FROM OITM I
+      LEFT JOIN OITB G ON G.ItmsGrpCod = I.ItmsGrpCod
+      ${itemWarehouseFallbackJoin}
+      WHERE (
+        @query = ''
+        OR I.ItemCode LIKE @like
+        OR I.ItemName LIKE @like
+      )
+        AND ISNULL(I.validFor, 'Y') = 'Y'
+        AND ISNULL(I.frozenFor, 'N') = 'N'
+      ORDER BY I.ItemName, I.ItemCode
+    `,
+    { query: trimmed, like: `%${trimmed}%` }
+  );
+
+  return rows.map((row) => ({
+    ItemDescription: row.ItemName || "",
+    ItemNo: row.ItemCode || "",
+    ItemCode: row.ItemCode || "",
+    ItemName: row.ItemName || "",
+    InStock: row.InStock ?? 0,
+    ItemGroup: row.ItemGroup || "",
+    InventoryUOM: row.InvntryUom || "",
+    UoMName: row.InvntryUom || "",
+    DefaultWarehouse: row.DefaultWarehouse || "",
+    Warehouse: row.DefaultWarehouse || "",
+  }));
+};
+
 const lookupComponentItems = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(
     `
-      SELECT TOP 50 ItemCode, ItemName, InvntryUom, DfltWH AS DefaultWarehouse, ManSerNum, ManBtchNum
-      FROM OITM
-      WHERE InvntItem = 'Y'
+      SELECT
+        I.ItemCode,
+        I.ItemName,
+        I.InvntryUom,
+        COALESCE(NULLIF(I.DfltWH, ''), IW.WhsCode, '') AS DefaultWarehouse,
+        I.ManSerNum,
+        I.ManBtchNum
+      FROM OITM I
+      ${itemWarehouseFallbackJoin}
+      WHERE I.InvntItem = 'Y'
         AND (
           @query = ''
-          OR ItemCode LIKE @like
-          OR ItemName LIKE @like
+          OR I.ItemCode LIKE @like
+          OR I.ItemName LIKE @like
         )
-      ORDER BY ItemCode
+      ORDER BY I.ItemCode
     `,
     { query: trimmed, like: `%${trimmed}%` }
   );
@@ -467,7 +536,7 @@ const lookupResources = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(
     `
-      SELECT TOP 50 ResCode, ResName, DfltWH
+      SELECT TOP 500 ResCode, ResName, DfltWH
       FROM ORSC
       WHERE ProdRes = 'Y'
         AND (
@@ -1349,6 +1418,7 @@ module.exports = {
   getProductionOrderByDocEntry,
   explodeBOM,
   lookupProductionOrderItems,
+  lookupFinishItems,
   lookupComponentItems,
   lookupResources,
   lookupRouteStages,

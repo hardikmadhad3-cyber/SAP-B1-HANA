@@ -93,6 +93,9 @@ Invoke-NpmInstall -ProjectDir $BackendDir
 Write-Step 'Installing frontend dependencies'
 Invoke-NpmInstall -ProjectDir $FrontendDir
 
+Write-Step 'Preparing SQLite auth data directory'
+New-Item -ItemType Directory -Force -Path (Join-Path $BackendDir 'data') | Out-Null
+
 Write-Step 'Building frontend production files'
 Push-Location $FrontendDir
 try {

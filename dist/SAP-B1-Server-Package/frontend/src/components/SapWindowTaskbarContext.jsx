@@ -221,8 +221,13 @@ export function useSapWindowTaskbarActions() {
     taskbar?.removeTask(task.id);
     window.dispatchEvent(new CustomEvent("sap-window-restore", { detail: { id: task.id } }));
 
-    if (task.path && task.path !== window.location.pathname) {
-      navigate(task.path, task.state ? { state: task.state } : undefined);
+    if (task.path) {
+      const navigationOptions = task.state ? { state: task.state } : undefined;
+      if (task.path !== window.location.pathname) {
+        navigate(task.path, navigationOptions);
+      } else if (task.state) {
+        navigate(task.path, { ...navigationOptions, replace: true });
+      }
     }
     return true;
   }, [getWindowStateStorageKey, minimizeCurrentRouteTask, navigate, taskbar]);

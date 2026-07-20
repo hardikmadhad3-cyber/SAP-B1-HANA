@@ -47,6 +47,7 @@ function useFloatingWindow({
   isOpen = true,
   defaultTop = 16,
   minMargin = 8,
+  bounds = "viewport",
   resetOnClose = true,
   taskId,
   taskTitle,
@@ -71,6 +72,20 @@ function useFloatingWindow({
   const [isMaximized, setIsMaximized] = useState(Boolean(persistedStateRef.current?.isMaximized));
   const lastFloatingPositionRef = useRef(persistedStateRef.current?.position ?? null);
 
+  const getPositionBounds = useCallback((node) => {
+    if (bounds === "parent" && node?.offsetParent) {
+      return {
+        height: node.offsetParent.clientHeight,
+        width: node.offsetParent.clientWidth,
+      };
+    }
+
+    return {
+      height: window.innerHeight,
+      width: window.innerWidth,
+    };
+  }, [bounds]);
+
   useEffect(() => {
     const persistedState = readPersistedWindowState(taskId, companyScope);
     persistedStateRef.current = persistedState;
@@ -92,10 +107,11 @@ function useFloatingWindow({
     }
 
     const rect = node.getBoundingClientRect();
-    const maxLeft = Math.max(minMargin, window.innerWidth - rect.width - minMargin);
-    const maxTop = Math.max(minMargin, window.innerHeight - rect.height - minMargin);
-    const centeredLeft = (window.innerWidth - rect.width) / 2;
-    const nextLeft = clamp(centeredLeft - 80, minMargin, maxLeft);
+    const positionBounds = getPositionBounds(node);
+    const maxLeft = Math.max(minMargin, positionBounds.width - rect.width - minMargin);
+    const maxTop = Math.max(minMargin, positionBounds.height - rect.height - minMargin);
+    const centeredLeft = (positionBounds.width - rect.width) / 2;
+    const nextLeft = clamp(centeredLeft, minMargin, maxLeft);
     const nextTop = clamp(defaultTop, minMargin, maxTop);
 
     const nextPosition = {
@@ -105,7 +121,7 @@ function useFloatingWindow({
 
     lastFloatingPositionRef.current = nextPosition;
     setPosition(nextPosition);
-  }, [defaultTop, minMargin]);
+  }, [defaultTop, getPositionBounds, minMargin]);
 
   useEffect(() => {
     if (!taskId) return;
@@ -192,8 +208,9 @@ function useFloatingWindow({
         return;
       }
 
-      const maxLeft = Math.max(minMargin, window.innerWidth - dragState.width - minMargin);
-      const maxTop = Math.max(minMargin, window.innerHeight - dragState.height - minMargin);
+      const positionBounds = getPositionBounds(windowRef.current);
+      const maxLeft = Math.max(minMargin, positionBounds.width - dragState.width - minMargin);
+      const maxTop = Math.max(minMargin, positionBounds.height - dragState.height - minMargin);
       const nextPosition = {
         left: clamp(dragState.startLeft + (event.clientX - dragState.startX), minMargin, maxLeft),
         top: clamp(dragState.startTop + (event.clientY - dragState.startY), minMargin, maxTop),
@@ -215,17 +232,22 @@ function useFloatingWindow({
       }
 
       const rect = node.getBoundingClientRect();
+      const positionBounds = getPositionBounds(node);
       setPosition((current) => {
         if (!current) {
           return current;
         }
 
-        const maxLeft = Math.max(minMargin, window.innerWidth - rect.width - minMargin);
-        const maxTop = Math.max(minMargin, window.innerHeight - rect.height - minMargin);
+        const maxLeft = Math.max(minMargin, positionBounds.width - rect.width - minMargin);
+        const maxTop = Math.max(minMargin, positionBounds.height - rect.height - minMargin);
         const nextPosition = {
           left: clamp(current.left, minMargin, maxLeft),
           top: clamp(current.top, minMargin, maxTop),
         };
+
+        if (nextPosition.left === current.left && nextPosition.top === current.top) {
+          return current;
+        }
 
         lastFloatingPositionRef.current = nextPosition;
         return nextPosition;
@@ -242,7 +264,41 @@ function useFloatingWindow({
       window.removeEventListener("resize", handleResize);
       document.body.style.userSelect = "";
     };
-  }, [isMaximized, isMinimized, isOpen, minMargin]);
+  }, [getPositionBounds, isMaximized, isMinimized, isOpen, minMargin]);
+
+  useEffect(() => {
+    if (!isOpen || !position || isMaximized || typeof window === "undefined") {
+      return undefined;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const node = windowRef.current;
+      if (!node) return;
+
+      const rect = node.getBoundingClientRect();
+      const positionBounds = getPositionBounds(node);
+      const maxLeft = Math.max(minMargin, positionBounds.width - rect.width - minMargin);
+      const maxTop = Math.max(minMargin, positionBounds.height - rect.height - minMargin);
+
+      setPosition((current) => {
+        if (!current) return current;
+
+        const nextPosition = {
+          left: clamp(current.left, minMargin, maxLeft),
+          top: clamp(current.top, minMargin, maxTop),
+        };
+
+        if (nextPosition.left === current.left && nextPosition.top === current.top) {
+          return current;
+        }
+
+        lastFloatingPositionRef.current = nextPosition;
+        return nextPosition;
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [getPositionBounds, isMaximized, isOpen, minMargin, position]);
 
   useEffect(() => {
     if (!taskId || typeof window === "undefined") {

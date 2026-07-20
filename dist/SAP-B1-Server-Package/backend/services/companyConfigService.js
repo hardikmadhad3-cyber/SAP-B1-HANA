@@ -57,6 +57,11 @@ const numberFromConfig = (value, fallback = 0) => {
   return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : fallback;
 };
 
+const normalizeDbDialect = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'hana' ? 'hana' : 'sqlserver';
+};
+
 const splitSqlServerName = (serverName = '', explicitInstance = '') => {
   const normalizedServer = String(serverName || '').trim();
   const normalizedInstance = String(explicitInstance || '').trim();
@@ -94,6 +99,7 @@ const buildCompanyConfig = (company = {}) => {
   const hasSelectedCompany = company && Object.keys(company).length > 0;
   const companySqlDatabase = firstText(company.DbName);
   const companySapCompanyDb = firstText(company.SapCompanyDb);
+  const dbDialect = normalizeDbDialect(firstText(company.DbDialect, env.dbDialect));
   const sqlDatabase = firstText(companySqlDatabase, env.dbName);
   const sapCompanyDb = firstText(companySapCompanyDb, sqlDatabase, env.sapCompanyDb);
   const reportCompanyDb = hasSelectedCompany
@@ -111,6 +117,9 @@ const buildCompanyConfig = (company = {}) => {
   const reportPassword = hasSelectedCompany
     ? firstText(company.ReportServicePassword)
     : firstText(company.ReportServicePassword, env.reportServicePassword);
+  const reportDbInstance = hasSelectedCompany
+    ? firstText(company.ReportServiceDbInstance)
+    : firstText(company.ReportServiceDbInstance, env.reportServiceDbInstance);
 
   return {
     companyId: company.CompanyId ?? null,
@@ -118,8 +127,10 @@ const buildCompanyConfig = (company = {}) => {
     port: numberFromConfig(company.Port, env.port),
     authDbName: firstText(company.AuthDbName, env.authDbName),
     sql: {
+      dialect: dbDialect,
       server: firstText(company.DbServer, company.ServerName, env.dbServer),
       instanceName: env.dbInstance || undefined,
+      port: numberFromConfig(company.DbPort, env.dbPort),
       database: sqlDatabase,
       user: firstText(company.DbUser, env.dbUser),
       password: firstText(company.DbPassword, env.dbPassword),
@@ -138,6 +149,7 @@ const buildCompanyConfig = (company = {}) => {
       username: reportUsername,
       password: reportPassword,
       companyDb: reportCompanyDb,
+      dbInstance: reportDbInstance,
       defaultSchema: reportDefaultSchema,
       rejectUnauthorized: boolFromConfig(
         company.ReportServiceRejectUnauthorized,
@@ -147,6 +159,7 @@ const buildCompanyConfig = (company = {}) => {
         baseUrl: sourceForText(company.ReportServiceBaseUrl, hasSelectedCompany ? '' : env.reportServiceBaseUrl),
         username: sourceForText(company.ReportServiceUsername, hasSelectedCompany ? '' : env.reportServiceUsername),
         password: sourceForText(company.ReportServicePassword, hasSelectedCompany ? '' : env.reportServicePassword),
+        dbInstance: sourceForText(company.ReportServiceDbInstance, hasSelectedCompany ? '' : env.reportServiceDbInstance),
         companyDb: reportCompanyDbSource(company, !hasSelectedCompany),
         defaultSchema: reportDefaultSchemaSource(company, !hasSelectedCompany),
       },
@@ -177,5 +190,6 @@ module.exports = {
   boolFromConfig,
   buildCompanyConfig,
   getActiveCompanyConfig,
+  normalizeDbDialect,
   splitSqlServerName,
 };

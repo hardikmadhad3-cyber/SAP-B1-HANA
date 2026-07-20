@@ -10,6 +10,7 @@ import TaxTab from './components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import AddressModal from './components/AddressModal';
+import { mapAddressFields } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import BatchAllocationModal from './components/BatchAllocationModal';
 import BusinessPartnerModal from '../sales-order/components/BusinessPartnerModal';
@@ -20,6 +21,7 @@ import QualitySelectionModal from '../sales-order/components/QualitySelectionMod
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
+import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from './components/CopyFromModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
@@ -223,17 +225,24 @@ const mapAddressToModalForm = (address, existing = {}) => ({
   billToAddress: existing.billToAddress || '',
   streetPoBox: address?.Street || '',
   streetNo: address?.StreetNo || '',
-  buildingFloorRoom: address?.Building || '',
+  buildingFloorRoom: address?.BuildingFloorRoom || address?.Building || '',
   block: address?.Block || '',
   city: address?.City || '',
   zipCode: address?.ZipCode || '',
   county: address?.County || '',
   state: address?.State || '',
   countryRegion: address?.Country || '',
-  addressName2: address?.Address2 || '',
-  addressName3: address?.Address3 || '',
-  gln: address?.GLN || '',
-  gstin: address?.GSTIN || '',
+  addressName2: address?.AddressName2 || address?.Address2 || '',
+  addressName3: address?.AddressName3 || address?.Address3 || '',
+  gln: address?.GlobalLocationNumber || address?.GlblLocNum || address?.GLN || '',
+  erpAddress: address?.U_ERPAddress || address?.U_ERP_Address || address?.ERPAddress || '',
+  contactPerson: address?.U_ContactPerson || address?.U_CONTACT_PERSON || address?.ContactPerson || '',
+  mobile: address?.U_Mobile || address?.U_MOBILE || address?.Mobile || address?.MobilePhone || '',
+  dateOfRegistration: address?.U_DateOfRegistration || address?.U_Date_Of_Registration || address?.DateOfRegistration || '',
+  dateDetailsOfRegistration: address?.U_DateDetlOfReg || address?.U_Date_Detl_Of_Reg || address?.DateDetlOfReg || '',
+  addressStatus: address?.U_Status || address?.AddressStatus || address?.Status || '',
+  gstin: address?.GSTRegnNo || address?.GSTIN || address?.U_GSTIN_No || address?.U_GSTINNo || '',
+  ...mapAddressFields(address),
 });
 const normalizeAddressText = (value) =>
   String(value || '')
@@ -821,7 +830,7 @@ function NCDelivery() {
       brokerageNumber: line?.brokerageNumber || line?.BrokerageNumber || '',
       uomCode: rawUomCode,
       stdDiscount: String(line?.stdDiscount ?? line?.DiscountPercent ?? line?.DiscPrcnt ?? ''),
-      stcode: line?.stcode || line?.STCode || line?.TaxCode || '',
+      stcode: line?.stcode || line?.STCode || '',
       taxCode: line?.taxCode || line?.TaxCode || '',
       total: String(line?.total ?? line?.LineTotal ?? ''),
       taxAmount: String(line?.taxAmount ?? line?.LineTaxAmount ?? line?.VatSum ?? ''),
@@ -1237,7 +1246,7 @@ function NCDelivery() {
           ...createLine(rowUdfDefinitions),
           ...normalizedLine,
           taxCode: normalizedLine.taxCode || l.taxCode || l.TaxCode || l.VatGroup || '',
-          stcode: normalizedLine.stcode || l.stcode || l.TaxCode || l.VatGroup || '',
+          stcode: normalizedLine.stcode || l.stcode || '',
           branch: normalizedLine.branch || copiedLocation.branch,
           loc: normalizedLine.loc || copiedLocation.branch,
           whse: normalizedLine.whse || l.whse || l.WarehouseCode || l.WhsCode || copiedLocation.warehouse || DEFAULT_WAREHOUSE,
@@ -1544,6 +1553,13 @@ function NCDelivery() {
   };
 
   const totals = calcTotals();
+  useRelationshipMapRegistration({
+    enabled: Boolean(currentDocEntry),
+    objectType: 15,
+    docEntry: currentDocEntry,
+    header,
+    total: totals.total,
+  });
 
   // Continue in next part...
 
@@ -3520,7 +3536,7 @@ function NCDelivery() {
         baseType: line.baseType ?? line.BaseType ?? baseType,
         baseLine: line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? normalizedLine.baseLine ?? idx,
         taxCode: normalizedLine.taxCode || line.taxCode || line.TaxCode || line.VatGroup || '',
-        stcode: normalizedLine.stcode || line.stcode || line.TaxCode || line.VatGroup || '',
+        stcode: normalizedLine.stcode || line.stcode || '',
         branch: normalizedLine.branch || copiedLocation.branch,
         loc: normalizedLine.loc || copiedLocation.branch,
         whse: normalizedLine.whse || line.whse || line.WarehouseCode || line.WhsCode || copiedLocation.warehouse || DEFAULT_WAREHOUSE,
@@ -3703,6 +3719,8 @@ function NCDelivery() {
       );
       const prep = { 
         ...header, 
+        customerCode: header.customerCode || header.vendor,
+        customer: header.customer || header.vendor,
         deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
         placeOfSupply: header.placeOfSupply,
         branch: submitBranch,

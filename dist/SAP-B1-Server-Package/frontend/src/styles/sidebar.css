@@ -176,13 +176,15 @@ body.sap-floating-window-maximized .app-shell {
   min-width: 0;
   min-height: 0 !important;
   overflow-x: hidden !important;
-  overflow-y: visible !important;
+  overflow-y: auto !important;
 }
 
 .page-window-frame__body :is(
   .po-layout,
   .so-layout,
   .del-layout,
+  .sap-document-layout,
+  .sap-document-main,
   .sap-window,
   .sap-header-area,
   .sap-mid-row,
@@ -190,6 +192,7 @@ body.sap-floating-window-maximized .app-shell {
   .po-tab-panel,
   .so-tab-panel,
   .del-tab-panel,
+  .sap-tab-panel,
   .im-tab-panel,
   .admin-entity-page,
   .admin-panel-page
@@ -376,6 +379,110 @@ body.sap-floating-window-maximized .app-shell {
   padding: 10px 8px 14px;
 }
 
+.sidebar__search {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin-bottom: 8px;
+  padding: 2px 4px 8px;
+  background:
+    linear-gradient(180deg, rgba(14, 21, 31, 0.98) 0%, rgba(14, 21, 31, 0.9) 72%, rgba(14, 21, 31, 0) 100%);
+}
+
+.sidebar__search-label {
+  display: block;
+  margin: 0 0 5px 4px;
+  color: rgba(207, 222, 237, 0.72);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.sidebar__search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sidebar__search-icon {
+  position: absolute;
+  left: 10px;
+  width: 16px;
+  height: 16px;
+  color: rgba(209, 224, 239, 0.74);
+  pointer-events: none;
+}
+
+.sidebar__search-input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid rgba(124, 150, 177, 0.46);
+  border-radius: 9px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.055));
+  color: #f5f9fd;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 0 rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  font-weight: 600;
+  outline: none;
+  padding: 0 32px 0 32px;
+}
+
+.sidebar__search-input::placeholder {
+  color: rgba(207, 222, 237, 0.56);
+  font-weight: 600;
+}
+
+.sidebar__search-input:focus {
+  border-color: rgba(113, 169, 223, 0.95);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.08));
+  box-shadow:
+    0 0 0 2px rgba(94, 151, 205, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.sidebar__search-clear {
+  position: absolute;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(202, 217, 233, 0.22);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8f2fb;
+  cursor: pointer;
+}
+
+.sidebar__search-clear::before,
+.sidebar__search-clear::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 6px;
+  width: 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.sidebar__search-clear::before {
+  transform: rotate(45deg);
+}
+
+.sidebar__search-clear::after {
+  transform: rotate(-45deg);
+}
+
+.sidebar__search-clear:hover,
+.sidebar__search-clear:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(219, 231, 243, 0.36);
+  outline: none;
+}
+
 .sidebar__nav {
   display: flex;
   flex-direction: column;
@@ -531,6 +638,74 @@ body.sap-floating-window-maximized .app-shell {
   border-left: 0;
 }
 
+.sidebar__search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar__search-result {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #d6e1ec;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.sidebar__search-result:hover,
+.sidebar__search-result:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  outline: none;
+}
+
+.sidebar__search-result-icon {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f7fbff;
+}
+
+.sidebar__search-result-body {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.sidebar__search-result-title,
+.sidebar__search-result-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__search-result-title {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.sidebar__search-result-path {
+  color: rgba(207, 222, 237, 0.6);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
 .sidebar__empty {
   padding: 12px;
   border-radius: 12px;
@@ -552,6 +727,10 @@ body.sap-floating-window-maximized .app-shell {
 
 .sidebar-shell.is-collapsed .sidebar__content {
   padding-inline: 8px;
+}
+
+.sidebar-shell.is-collapsed .sidebar__search {
+  display: none;
 }
 
 .sidebar-shell.is-collapsed .sidebar__link,
@@ -601,77 +780,6 @@ body.sap-floating-window-maximized .app-shell {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: #9b7421;
-}
-
-.topbar__search-shell {
-  position: relative;
-  z-index: 1;
-  flex: 1;
-  max-width: 420px;
-}
-
-.topbar__search-input {
-  width: 100%;
-  padding: 8px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(205, 216, 228, 0.98);
-  background: rgba(255, 255, 255, 0.98);
-  color: #17314d;
-  font-size: 13px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
-}
-
-.topbar__search-input:focus {
-  outline: none;
-  border-color: rgba(81, 126, 170, 0.9);
-  box-shadow: 0 0 0 3px rgba(129, 172, 214, 0.18);
-}
-
-.topbar__search-results {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  z-index: 5;
-  display: grid;
-  gap: 6px;
-  padding: 8px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.98);
-  border: 1px solid rgba(214, 224, 234, 0.98);
-  box-shadow: 0 18px 38px rgba(123, 145, 167, 0.2);
-}
-
-.topbar__search-result {
-  width: 100%;
-  border: 0;
-  border-radius: 14px;
-  padding: 10px 12px;
-  background: #f8fbff;
-  color: #17314d;
-  text-align: left;
-  cursor: pointer;
-}
-
-.topbar__search-result:hover {
-  background: #eef5fc;
-}
-
-.topbar__search-result strong,
-.topbar__search-result span,
-.topbar__search-empty {
-  display: block;
-}
-
-.topbar__search-result span,
-.topbar__search-empty {
-  margin-top: 4px;
-  color: #678099;
-  font-size: 12px;
-}
-
-.topbar__search-empty {
-  padding: 10px 12px;
 }
 
 .topbar__meta {
@@ -1052,11 +1160,6 @@ body.sap-floating-window-maximized .app-shell {
     align-items: flex-start;
   }
 
-  .topbar__search-shell {
-    width: 100%;
-    max-width: none;
-  }
-
   .dashboard-banner {
     grid-template-columns: 1fr;
   }
@@ -1075,6 +1178,7 @@ body.sap-floating-window-maximized .app-shell {
   }
 
   .sidebar__brand,
+  .sidebar__search,
   .sidebar__link-text,
   .sidebar__section-title {
     display: none;

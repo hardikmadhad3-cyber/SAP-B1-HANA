@@ -5,31 +5,20 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
 
   return (
     <div className="so-modal-overlay" onClick={onClose}>
-      <div className="so-modal" onClick={e => e.stopPropagation()}>
+      <div className="so-modal so-tax-info-modal" onClick={e => e.stopPropagation()}>
         <div className="so-modal__header">
-          <h6 style={{ margin: 0, fontSize: '12px', fontWeight: 600 }}>Tax Information</h6>
+          <h6 className="so-tax-info-modal__title">Tax Information</h6>
           <button
             type="button"
+            className="so-modal__close so-tax-info-modal__close"
             onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'white',
-              fontSize: '18px',
-              cursor: 'pointer',
-              padding: 0,
-              width: '24px',
-              height: '24px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
+            aria-label="Close Tax Information"
           >
-            ×
+            x
           </button>
         </div>
         <div className="so-modal__body">
-          <div className="so-field-grid">
+          <div className="so-tax-info-modal__grid">
             <div className="so-field">
               <label className="so-field__label">P.A.N. No.</label>
               <input
@@ -165,7 +154,7 @@ export default function TaxInfoModal({ isOpen, onClose, onSave, taxInfoForm, onF
                 value={taxInfoForm.gstType}
                 onChange={onFormChange}
               >
-                <option value="">— Select —</option>
+                <option value="">-- Select --</option>
                 <option>Regular/TDS/ISD</option>
                 <option>Composition</option>
                 <option>Unregistered</option>

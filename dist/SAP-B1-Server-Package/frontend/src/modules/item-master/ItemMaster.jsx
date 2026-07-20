@@ -10,6 +10,7 @@ import ProductionDataTab from "./components/ProductionDataTab";
 import PropertiesTab     from "./components/PropertiesTab";
 import RemarksTab        from "./components/RemarksTab";
 import AttachmentsTab    from "./components/AttachmentsTab";
+import AddOnTab          from "./components/AddOnTab";
 import LookupField       from "./components/LookupField";
 import ItemGroupSetup     from "./components/ItemGroupSetup";
 import ManufacturerSetup  from "./components/ManufacturerSetup";
@@ -22,11 +23,14 @@ import {
   fetchWarehouses, fetchCustomsGroups, searchItems, generateItemCode,
 } from "../../api/itemApi";
 
-const TABS = [
+const YARN_COTTON_TAB = "Yarn Cotton";
+
+const BASE_TABS = [
   "General", "Purchasing Data", "Sales Data", "Inventory Data",
   "Planning Data", "Production Data", "Properties", "Remarks", "Attachments",
 ];
 
+const TABS = [YARN_COTTON_TAB, ...BASE_TABS];
 const REQUIRED_TABS = new Set(["General"]);
 const LS_KEY = "itemMaster_visibleTabs";
 
@@ -51,6 +55,16 @@ const buildInitialProps = () => {
   return p;
 };
 
+const normalizeGroupName = (value) =>
+  String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+const isYarnCottonGroup = (form = {}) =>
+  normalizeGroupName(form.ItemsGroupName) === "yarn cotton" ||
+  normalizeGroupName(form.ItemsGroupCode) === "yarn cotton";
+
+const getTabs = (form = {}) =>
+  isYarnCottonGroup(form) ? [YARN_COTTON_TAB, ...BASE_TABS] : BASE_TABS;
+
 const clonePlain = (value) => {
   if (Array.isArray(value)) return value.map(clonePlain);
   if (value && typeof value === "object") {
@@ -58,6 +72,12 @@ const clonePlain = (value) => {
   }
   return value;
 };
+
+const hasControlCharacters = (value) =>
+  Array.from(String(value || "")).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
 
 const normalizeGSTMaterialType = (value) => {
   const raw = String(value ?? "").trim();
@@ -99,14 +119,8 @@ const EMPTY_FORM = {
   ForceSelectionOfSerialNumber: "tNO", ManageSerialNumbersOnReleaseOnly: "tNO",
   AutoCreateSerialNumbersOnRelease: "tNO", IssuePrimarilyBy: "ipbSerialAndBatchNumbers",
   ManageItemBy: "None",
-  SerialGenerationType: "",
-  SerialNumberLength: "",
-  StartingSerialNumber: "",
+  BlockMultipleReceiptsForSameBatch: "tNO",
   SerialTrackingMethod: "",
-  BatchGenerationType: "",
-  BatchNumberPrefix: "",
-  BatchExpiryRequired: "tNO",
-  BatchQuantityValidation: "tNO",
   Valid: "tYES", ValidFrom: "", ValidTo: "", ValidRemarks: "",
   Frozen: "tNO", FrozenFrom: "", FrozenTo: "", FrozenRemarks: "",
   LinkedResource: "",
@@ -121,6 +135,12 @@ const EMPTY_FORM = {
   AssVal4WTR: "",
   AdditionalIdentifier: "",
   ServiceCategory: "",
+  U_Application: "",
+  U_Attribute: "",
+  U_Count: "",
+  U_CottonType: "",
+  U_SpinningProcess: "",
+  U_YarnPly: "",
   // Purchasing
   Mainsupplier: "", DefaultVendorName: "",
   PurchaseUnit: "", PurchaseItemsPerUnit: "", PurchasePackagingUnit: "", PurchaseQtyPerPackUnit: "",
@@ -324,7 +344,19 @@ export default function ItemMaster() {
       PurchaseVolumeUnit: "4", SalesVolumeUnit: "4",
     };
     Object.entries(unitDefaults).forEach(([f, def]) => { if (data[f] == null) data[f] = def; });
-    const { prefix, number } = splitItemCode(data.ItemCode);
+    let prefix = "";
+    let number = data.ItemCode || "";
+    // If there is a series (number series) defined, use it as prefix
+    if (data.Series !== undefined && data.Series !== null && data.Series !== "" && data.Series !== "-1") {
+      prefix = String(data.Series);
+      // Keep number as ItemCode (assumed to be the numeric part)
+      number = data.ItemCode || "";
+    } else {
+      // Fallback to splitting ItemCode to derive prefix and number
+      const { prefix: p, number: n } = splitItemCode(data.ItemCode);
+      prefix = p;
+      number = n;
+    }
     const manageItemBy = data.ManageSerialNumbers === "tYES"
       ? "Serial"
       : data.ManageBatchNumbers === "tYES"
@@ -453,6 +485,14 @@ export default function ItemMaster() {
         if (!newForm.GLMethod) {
           newForm.GLMethod = 'glm_WH';
         }
+      }
+    }
+
+    if (fieldName === 'ManageItemBy') {
+      newForm.ManageSerialNumbers = value === 'Serial' ? 'tYES' : 'tNO';
+      newForm.ManageBatchNumbers = value === 'Batch' ? 'tYES' : 'tNO';
+      if (value === 'Serial' || value === 'Batch') {
+        newForm.CostAccountingMethod = 'bis_SNB';
       }
     }
     
@@ -643,9 +683,8 @@ export default function ItemMaster() {
     // Item Code Format Validation
     const itemCode = String(form.ItemCode || "").trim();
     if (itemCode) {
-      // Check for valid characters (alphanumeric, hyphens, underscores)
-      if (!/^[a-zA-Z0-9\-_]+$/.test(itemCode)) {
-        errors.push("Item Code can only contain letters, numbers, hyphens, and underscores.");
+      if (hasControlCharacters(itemCode)) {
+        errors.push("Item Code cannot contain control characters.");
       }
       
       // Check minimum length
@@ -656,32 +695,6 @@ export default function ItemMaster() {
       // Check maximum length
       if (itemCode.length > 50) {
         errors.push("Item Code cannot exceed 50 characters.");
-      }
-    }
-    
-    // Manage Item By Validations
-    const manageItemBy = form.ManageItemBy || "None";
-    
-    if (manageItemBy === "Serial") {
-      if (!String(form.SerialGenerationType || "").trim()) {
-        errors.push("Serial Generation Type is required for serial items.");
-      }
-      if (form.SerialGenerationType === "Auto") {
-        if (!form.SerialNumberLength || isNaN(form.SerialNumberLength) || parseInt(form.SerialNumberLength) <= 0) {
-          errors.push("Serial Number Length is required and must be a positive number for auto-generated serials.");
-        }
-        if (!String(form.StartingSerialNumber || "").trim()) {
-          errors.push("Starting Serial Number is required for auto-generated serials.");
-        }
-      }
-    }
-    
-    if (manageItemBy === "Batch") {
-      if (!String(form.BatchGenerationType || "").trim()) {
-        errors.push("Batch Generation Type is required for batch items.");
-      }
-      if (form.BatchGenerationType === "Auto" && !String(form.BatchNumberPrefix || "").trim()) {
-        errors.push("Batch Number Prefix is required for auto-generated batches.");
       }
     }
     
@@ -853,7 +866,7 @@ export default function ItemMaster() {
     return '#FFFFFF';
   };
 
-  const visibleTabList = TABS.filter((t) => visibleTabs.has(t));
+  const visibleTabList = getTabs(form).filter((t) => visibleTabs.has(t));
   const activeTabName  = visibleTabList[tab] ?? visibleTabList[0];
 
   return (
@@ -1018,6 +1031,7 @@ export default function ItemMaster() {
       </div>
 
       <div className="im-tab-panel">
+        {activeTabName === YARN_COTTON_TAB && <AddOnTab form={form} onChange={handleChange} mode={mode} />}
         {activeTabName === "General"        && <GeneralTab        form={form} onChange={handleChange} onDefineManufacturer={() => setShowManufacturerSetup(true)} mode={mode} />}
         {activeTabName === "Purchasing Data" && <PurchasingTab    form={form} onChange={handleChange} fetchVendors={fetchVendors} customsGroups={customsGroups} />}
         {activeTabName === "Sales Data"      && <SalesTab         form={form} onChange={handleChange} />}
@@ -1193,7 +1207,10 @@ function buildPayload(form, prices = [], barcodes = [], uoms = [], prefVendors =
   if (num(form.AssessableValue))           p.AssessableValue           = num(form.AssessableValue);
   if (num(form.AssVal4WTR))                p.AssVal4WTR                = num(form.AssVal4WTR);
   if (opt(form.ItemCountryOrg))            p.ItemCountryOrg            = form.ItemCountryOrg;
-  // AdditionalIdentifier and ManageItemBy are UI-only fields, not sent to SAP
+  // AdditionalIdentifier, ManageItemBy, and BlockMultipleReceiptsForSameBatch are UI-only fields, not sent to SAP
+  ["U_Application", "U_Attribute", "U_Count", "U_CottonType", "U_SpinningProcess", "U_YarnPly"].forEach((field) => {
+    if (isYarnCottonGroup(form) && opt(form[field])) p[field] = form[field];
+  });
   if (opt(form.NoDiscounts))               p.NoDiscounts               = form.NoDiscounts;
   if (opt(form.ServiceCategoryEntry) && form.ServiceCategoryEntry !== "" && form.ServiceCategoryEntry !== "-1") 
     p.ServiceCategoryEntry = Number(form.ServiceCategoryEntry);

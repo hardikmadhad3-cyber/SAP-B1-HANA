@@ -4,6 +4,12 @@
  */
 
 // Field validation helpers
+const hasControlCharacters = (value) =>
+  Array.from(String(value || '')).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+
 export const validateRequired = (value, fieldName) => {
   if (!value || (typeof value === 'string' && !value.trim())) {
     return `${fieldName} is required.`;
@@ -47,9 +53,8 @@ export const validateItemCodeFormat = (itemCode) => {
   
   const code = itemCode.trim();
   
-  // Check for valid characters (alphanumeric, hyphens, underscores)
-  if (!/^[a-zA-Z0-9\-_]+$/.test(code)) {
-    return "Item Code can only contain letters, numbers, hyphens, and underscores.";
+  if (hasControlCharacters(code)) {
+    return "Item Code cannot contain control characters.";
   }
   
   // Check minimum length
@@ -102,34 +107,8 @@ export const validateItemBusinessRules = (form) => {
   return errors;
 };
 
-export const validateManageItemByRules = (form) => {
-  const errors = [];
-  const manageItemBy = form.ManageItemBy || "None";
-  
-  if (manageItemBy === "Serial") {
-    if (!form.SerialGenerationType || form.SerialGenerationType === "") {
-      errors.push("Serial Generation Type is required for serial items.");
-    }
-    if (form.SerialGenerationType === "Auto") {
-      if (!form.SerialNumberLength || isNaN(form.SerialNumberLength) || parseInt(form.SerialNumberLength) <= 0) {
-        errors.push("Serial Number Length is required and must be a positive number for auto-generated serials.");
-      }
-      if (!form.StartingSerialNumber || form.StartingSerialNumber.trim() === "") {
-        errors.push("Starting Serial Number is required for auto-generated serials.");
-      }
-    }
-  }
-  
-  if (manageItemBy === "Batch") {
-    if (!form.BatchGenerationType || form.BatchGenerationType === "") {
-      errors.push("Batch Generation Type is required for batch items.");
-    }
-    if (form.BatchGenerationType === "Auto" && (!form.BatchNumberPrefix || form.BatchNumberPrefix.trim() === "")) {
-      errors.push("Batch Number Prefix is required for auto-generated batches.");
-    }
-  }
-  
-  return errors;
+export const validateManageItemByRules = () => {
+  return [];
 };
 
 export const validateNumericFields = (form) => {
@@ -235,6 +214,14 @@ export const applySmartDefaults = (form, fieldName, value) => {
       if (!newForm.GLMethod) {
         newForm.GLMethod = 'glm_WH';
       }
+    }
+  }
+
+  if (fieldName === 'ManageItemBy') {
+    newForm.ManageSerialNumbers = value === 'Serial' ? 'tYES' : 'tNO';
+    newForm.ManageBatchNumbers = value === 'Batch' ? 'tYES' : 'tNO';
+    if (value === 'Serial' || value === 'Batch') {
+      newForm.CostAccountingMethod = 'bis_SNB';
     }
   }
   

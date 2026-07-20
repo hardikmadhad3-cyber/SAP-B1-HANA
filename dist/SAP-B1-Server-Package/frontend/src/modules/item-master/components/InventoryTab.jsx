@@ -12,11 +12,11 @@ export default function InventoryTab({ form, onChange, stock = [], onWarehouseCh
       <div className="im-field-grid">
 
         <div className="im-field">
-          <label className="im-field__label">Set G/L Accounts By</label>
+          <label className="im-field__label">Set Inv. Method By</label>
           <select className="im-field__select" name="GLMethod" value={form.GLMethod || "glm_WH"} onChange={onChange}>
-            <option value="glm_ItemClass">Item Class</option>
+            <option value="glm_WH">Warehouse</option>
+            <option value="glm_ItemClass">Item Group</option>
             <option value="glm_ItemLevel">Item Level</option>
-            <option value="glm_WH">Item Group</option>
           </select>
         </div>
 
@@ -37,7 +37,7 @@ export default function InventoryTab({ form, onChange, stock = [], onWarehouseCh
             <option value="bis_MovingAverage">Moving Average</option>
             <option value="bis_Standard">Standard</option>
             <option value="bis_FIFO">FIFO</option>
-            <option value="bis_SNB">Serial / Batch</option>
+            <option value="bis_SNB">Serial/Batch</option>
           </select>
         </div>
 

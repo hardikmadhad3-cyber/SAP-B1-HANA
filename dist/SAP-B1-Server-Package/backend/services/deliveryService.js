@@ -2,6 +2,8 @@ const sapService = require('./sapService');
 const deliveryDb = require('./deliveryDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { buildMarketingDocumentAddressPayload } = require('./documentAddressPayloadUtils');
+const { buildDocumentReferencesPayload } = require('./documentReferencesPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { getActiveCompanyConfig } = require('./companyConfigService');
 const { isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
@@ -34,6 +36,17 @@ const normalizeHeaderBranch = (header = {}) => ({
   ...(header || {}),
   branch: normalizeBranchValue(header?.branch),
 });
+
+const resolveHeaderCustomerCode = (header = {}) =>
+  String(
+    header.customerCode ||
+    header.customer ||
+    header.vendor ||
+    header.cardCode ||
+    header.CardCode ||
+    header.buyerCode ||
+    ''
+  ).trim();
 
 const toOptionalNumber = (value) => {
   if (value === undefined || value === null || String(value).trim() === '') {
@@ -69,13 +82,116 @@ const toBoolean = (value) => {
   return ['true', '1', 'yes', 'y'].includes(String(value || '').trim().toLowerCase());
 };
 
+const buildEWayBillDetailsPayload = async (details = {}) => {
+  if (!details || typeof details !== 'object' || !Object.keys(details).length) return null;
+
+  const addressParts = (value) => {
+    const text = String(value || '').trim();
+    return [text.slice(0, 120), text.slice(120, 240)];
+  };
+  const fromAddress = addressParts(details.dispatchFromAddress);
+  const toAddress = addressParts(details.shipToAddress);
+  const numberOrUndefined = (value) => {
+    const parsed = Number(value);
+    return String(value ?? '').trim() !== '' && Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  let mainHSNEntry = numberOrUndefined(details.mainHSNEntry);
+  if (mainHSNEntry === undefined && hasValue(details.mainHSN)) {
+    mainHSNEntry = await deliveryDb.resolveEWayBillHSNEntry(details.mainHSN);
+  }
+  const [billFromState, dispatchFromState, billToState, shipToState] = await Promise.all([
+    deliveryDb.resolveEWayBillStateCode(details.billFromState),
+    deliveryDb.resolveEWayBillStateCode(details.dispatchFromState),
+    deliveryDb.resolveEWayBillStateCode(details.billToState),
+    deliveryDb.resolveEWayBillStateCode(details.shipToState),
+  ]);
+
+  const result = {
+    SupplyType: String(details.supplyType || '').toLowerCase() === 'inward' ? 'ewb_st_Inward' : 'ewb_st_Outward',
+    SubType: numberOrUndefined(details.subSupplyType),
+    DocumentType: String(details.documentType || ''),
+    TransactionType: numberOrUndefined(details.transactionType),
+    MainHSNEntry: mainHSNEntry ?? undefined,
+    EWayBillNo: String(details.ewayBillNo || ''),
+    EWayBillDate: hasValue(details.ewayBillDate) ? formatDateForSAP(details.ewayBillDate) : undefined,
+    EWayBillExpirationDate: hasValue(details.expirationDate) ? formatDateForSAP(details.expirationDate) : undefined,
+    TransporterEntry: numberOrUndefined(details.transporterEntry),
+    TransporterName: String(details.transporterName || ''),
+    TransporterID: String(details.transporterId || ''),
+    TransportationMode: numberOrUndefined(details.mode),
+    VehicleType: String(details.vehicleType || ''),
+    VehicleNo: String(details.vehicleNo || ''),
+    Distance: numberOrUndefined(details.distanceInKM),
+    TransporterDocNo: String(details.transporterDocNo || ''),
+    TransporterDocDate: hasValue(details.transporterDocDate) ? formatDateForSAP(details.transporterDocDate) : undefined,
+    BillFromName: String(details.billFromName || ''),
+    BillFromGSTIN: String(details.billFromGSTIN || ''),
+    BillFromStateGSTCode: billFromState,
+    DispatchFromAddress1: fromAddress[0],
+    DispatchFromAddress2: fromAddress[1],
+    DispatchFromPlace: String(details.dispatchFromPlace || ''),
+    DispatchFromZipCode: String(details.dispatchFromZipCode || ''),
+    DispatchFromStateGSTCode: dispatchFromState,
+    BillToName: String(details.billToName || ''),
+    BillToGSTIN: String(details.billToGSTIN || ''),
+    BillToStateGSTCode: billToState,
+    ShipToAddress1: toAddress[0],
+    ShipToAddress2: toAddress[1],
+    ShipToPlace: String(details.shipToPlace || ''),
+    ShipToZipCode: String(details.shipToZipCode || ''),
+    ShipToStateGSTCode: shipToState,
+  };
+
+  return Object.fromEntries(Object.entries(result).filter(([, value]) => value !== undefined));
+};
+
+const mapServiceLayerEWayBillDetails = (details = {}) => {
+  if (!details || typeof details !== 'object') return {};
+  const dateValue = (value) => value ? String(value).slice(0, 10) : '';
+  const supplyType = String(details.SupplyType ?? '').toLowerCase();
+
+  return {
+    supplyType: supplyType.includes('inward') || supplyType === '0' ? 'Inward' : 'Outward',
+    subSupplyType: details.SubType != null ? String(details.SubType) : '',
+    documentType: details.DocumentType || '',
+    transactionType: details.TransactionType != null ? String(details.TransactionType) : '',
+    mainHSNEntry: details.MainHSNEntry != null ? String(details.MainHSNEntry) : '',
+    ewayBillNo: details.EWayBillNo || '',
+    ewayBillDate: dateValue(details.EWayBillDate),
+    expirationDate: dateValue(details.EWayBillExpirationDate),
+    transporterEntry: details.TransporterEntry != null ? String(details.TransporterEntry) : '',
+    transporterName: details.TransporterName || '',
+    transporterId: details.TransporterID || '',
+    mode: details.TransportationMode != null ? String(details.TransportationMode) : '',
+    vehicleType: details.VehicleType || '',
+    vehicleNo: details.VehicleNo || '',
+    distanceInKM: details.Distance != null ? String(details.Distance) : '',
+    transporterDocNo: details.TransporterDocNo || '',
+    transporterDocDate: dateValue(details.TransporterDocDate),
+    billFromName: details.BillFromName || '',
+    billFromGSTIN: details.BillFromGSTIN || '',
+    billFromState: details.BillFromStateGSTCode || '',
+    dispatchFromAddress: [details.DispatchFromAddress1, details.DispatchFromAddress2].filter(Boolean).join(' '),
+    dispatchFromPlace: details.DispatchFromPlace || '',
+    dispatchFromZipCode: details.DispatchFromZipCode || '',
+    dispatchFromState: details.DispatchFromStateGSTCode || '',
+    billToName: details.BillToName || '',
+    billToGSTIN: details.BillToGSTIN || '',
+    billToState: details.BillToStateGSTCode || '',
+    shipToAddress: [details.ShipToAddress1, details.ShipToAddress2].filter(Boolean).join(' '),
+    shipToPlace: details.ShipToPlace || '',
+    shipToZipCode: details.ShipToZipCode || '',
+    shipToState: details.ShipToStateGSTCode || '',
+  };
+};
+
 const applyUdfs = (target, udfValues = {}, allowedKeys = null, fieldMetadata = null, udfDefinitionsByKey = null) => {
   Object.entries(udfValues || {}).forEach(([key, value]) => {
     if (!String(key || '').startsWith('U_')) return;
     if (allowedKeys && !allowedKeys.has(key)) return;
 
     if (isBlankUdfValue(value)) {
-      target[key] = null;
       return;
     }
 
@@ -200,7 +316,7 @@ const DELIVERY_LINE_UDF_MAPPINGS = [
   { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
   { sapField: 'U_COMPRC', getValue: (line) => line.commission },
   { sapField: 'U_S_BrokPerQty', getValue: (line) => line.sellerBrokeragePerQty },
-  { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf ?? line.unitPrice },
+  { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf },
   { sapField: 'U_Rate', getValue: (line) => line.discountAmount ?? line.DiscountAmount },
   { sapField: 'U_Brok_Seller', getValue: (line) => line.sellerBrokerage },
   { sapField: 'U_Brok_Buyer', getValue: (line) => line.buyerBrokerage },
@@ -220,12 +336,15 @@ const DELIVERY_LINE_UDF_MAPPINGS = [
   { sapField: 'U_Seller_Bill_Disc', getValue: (line) => line.sellerBillDiscount },
   { sapField: 'U_SELLTCODE', getValue: (line) => line.stcode },
   { sapField: 'U_S_Item', getValue: (line) => line.sellerItem },
-  { sapField: 'U_S_Qty', getValue: (line) => line.sellerQty ?? line.quantity },
+  { sapField: 'U_S_Qty', getValue: (line) => line.sellerQty },
   { sapField: 'U_Freight_pur', getValue: (line) => line.freightPurchase },
   { sapField: 'U_Freight_sales', getValue: (line) => line.freightSales },
   { sapField: 'U_Fr_trans', getValue: (line) => line.freightProvider },
   { sapField: 'U_Fr_trans_name', getValue: (line) => line.freightProviderName },
   { sapField: 'U_BDNum', getValue: (line) => line.brokerageNumber },
+  { sapField: 'U_PackingType', getValue: (line) => line.udf?.U_PackingType ?? line.U_PackingType ?? line.packingType },
+  { sapField: 'U_GrossWt', getValue: (line) => line.udf?.U_GrossWt ?? line.U_GrossWt ?? line.grossWt },
+  { sapField: 'U_TotalPackage', getValue: (line) => line.udf?.U_TotalPackage ?? line.U_TotalPackage ?? line.totalPackage },
 ];
 
 const DELIVERY_LOOKUP_UDF_FIELDS = new Set([
@@ -265,7 +384,6 @@ const setValidatedDeliveryUdf = (target, fieldMetadata, fieldName, value) => {
   if (!fieldMetadata?.[fieldName]) return;
 
   if (isBlankUdfValue(value)) {
-    target[fieldName] = null;
     return;
   }
 
@@ -326,76 +444,94 @@ const resolveDeliveryLookupValue = (fieldName, value, lookupResolvers = {}) => {
   return undefined;
 };
 
-const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLineNum = false, lookupResolvers = {}, allowedLineUdfs = null) => {
+const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLineNum = false, lookupResolvers = {}, allowedLineUdfs = null, lineIndex = 0, includeBatchNumbers = true) => {
+  let isBaseDocumentLine = hasValue(line.baseEntry)
+    && hasValue(line.baseType)
+    && line.baseLine !== undefined
+    && line.baseLine !== null
+    && line.baseLine !== '';
+  if (isBaseDocumentLine && Number(line.baseType) === 17 && hasValue(line.itemNo)) {
+    const baseItemCode = await deliveryDb.getBaseSalesOrderLineItemCode(line.baseEntry, line.baseLine);
+    if (baseItemCode && baseItemCode !== String(line.itemNo || '').trim()) {
+      isBaseDocumentLine = false;
+    }
+  }
   const documentLine = {
     Quantity: toRequiredNumber(line.quantity, 0),
-    WarehouseCode: toRequiredString(line.whse, ''),
   };
 
   if (includeLineNum && line.lineNum != null && line.lineNum !== '') {
     documentLine.LineNum = Number(line.lineNum);
   }
 
-  if (hasValue(line.baseEntry) && hasValue(line.baseType) && line.baseLine !== undefined && line.baseLine !== null && line.baseLine !== '') {
+  if (isBaseDocumentLine) {
     documentLine.BaseEntry = Number(line.baseEntry);
     documentLine.BaseType = Number(line.baseType);
     documentLine.BaseLine = Number(line.baseLine);
+    if (hasValue(line.whse)) {
+      documentLine.WarehouseCode = String(line.whse).trim();
+    }
   } else {
     documentLine.ItemCode = toRequiredString(line.itemNo, '');
+    documentLine.WarehouseCode = toRequiredString(line.whse, '');
     documentLine.Price = toRequiredNumber(line.unitPrice, 0);
   }
 
-  const resolvedUomEntry = await deliveryDb.resolveDeliveryLineUomEntry(
-    line.itemNo,
-    line.uomEntry ?? line.UoMEntry ?? line.uomCode,
-  );
-  if (resolvedUomEntry !== null && resolvedUomEntry !== undefined) {
-    documentLine.UoMEntry = resolvedUomEntry;
-  } else if (hasValue(line.uomCode)) {
-    documentLine.UoMCode = String(line.uomCode).trim();
-  }
-
-  if (hasValue(line.taxCode)) {
-    documentLine.TaxCode = String(line.taxCode).trim();
-  }
-
-  if (hasValue(line.distRule)) {
-    documentLine.CostingCode = String(line.distRule).trim();
-  }
-
-  if (hasValue(line.freeText)) {
-    documentLine.FreeText = String(line.freeText).trim();
-  }
-
-  const sacEntry = toOptionalNumber(line.sacCode);
-  if (sacEntry !== undefined && fieldMetadata?.SACEntry) {
-    documentLine.SACEntry = sacEntry;
-  }
-
-  const countryOrg = normalizeCountryOrgValue(line.countryOfOrigin);
-  if (hasValue(line.countryOfOrigin) && !countryOrg) {
-    console.warn(`[Delivery Service] Skipping CountryOrg value because it is not a valid SAP country code: ${line.countryOfOrigin}`);
-  }
-  setValidatedDeliveryField(documentLine, fieldMetadata, 'CountryOrg', countryOrg);
-
-  for (const mapping of DELIVERY_LINE_UDF_MAPPINGS) {
-    const value = resolveDeliveryLookupValue(
-      mapping.sapField,
-      mapping.getValue(line),
-      lookupResolvers,
+  if (!isBaseDocumentLine) {
+    const resolvedUomEntry = await deliveryDb.resolveDeliveryLineUomEntry(
+      line.itemNo,
+      line.uomEntry ?? line.UoMEntry ?? line.uomCode,
     );
-    setValidatedDeliveryUdf(documentLine, fieldMetadata, mapping.sapField, value);
+    if (resolvedUomEntry !== null && resolvedUomEntry !== undefined) {
+      documentLine.UoMEntry = resolvedUomEntry;
+    } else if (hasValue(line.uomCode)) {
+      documentLine.UoMCode = String(line.uomCode).trim();
+    }
+
+    if (hasValue(line.taxCode)) {
+      documentLine.TaxCode = String(line.taxCode).trim();
+    }
+
+    if (hasValue(line.distRule)) {
+      documentLine.CostingCode = String(line.distRule).trim();
+    }
+
+    if (hasValue(line.freeText)) {
+      documentLine.FreeText = String(line.freeText).trim();
+    }
+
+    const sacEntry = toOptionalNumber(line.sacCode);
+    if (sacEntry !== undefined && fieldMetadata?.SACEntry) {
+      documentLine.SACEntry = sacEntry;
+    }
+
+    const countryOrg = normalizeCountryOrgValue(line.countryOfOrigin);
+    if (hasValue(line.countryOfOrigin) && !countryOrg) {
+      console.warn(`[Delivery Service] Skipping CountryOrg value because it is not a valid SAP country code: ${line.countryOfOrigin}`);
+    }
+    setValidatedDeliveryField(documentLine, fieldMetadata, 'CountryOrg', countryOrg);
   }
 
-  const normalizedLineUdfs = Object.entries(line.udf || {}).reduce((acc, [key, value]) => {
-    acc[key] = resolveDeliveryLookupValue(key, value, lookupResolvers);
-    return acc;
-  }, {});
-  applyUdfs(documentLine, normalizedLineUdfs, allowedLineUdfs, fieldMetadata);
+  if (!isBaseDocumentLine) {
+    for (const mapping of DELIVERY_LINE_UDF_MAPPINGS) {
+      const value = resolveDeliveryLookupValue(
+        mapping.sapField,
+        mapping.getValue(line),
+        lookupResolvers,
+      );
+      setValidatedDeliveryUdf(documentLine, fieldMetadata, mapping.sapField, value);
+    }
 
-  if (line.batches && line.batches.length > 0) {
+    const normalizedLineUdfs = Object.entries(line.udf || {}).reduce((acc, [key, value]) => {
+      acc[key] = resolveDeliveryLookupValue(key, value, lookupResolvers);
+      return acc;
+    }, {});
+    applyUdfs(documentLine, normalizedLineUdfs, allowedLineUdfs, fieldMetadata);
+  }
+
+  if (includeBatchNumbers && line.batches && line.batches.length > 0) {
     documentLine.BatchNumbers = line.batches.map((batch) => ({
-      BatchNumber: batch.batchNumber,
+      BatchNumber: String(batch.batchNumber || '').trim(),
       Quantity: Number(batch.quantity),
     }));
   }
@@ -403,7 +539,7 @@ const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLi
   return documentLine;
 };
 
-const buildDocumentLinesPayload = async (lines = [], includeLineNum = false) => {
+const buildDocumentLinesPayload = async (lines = [], includeLineNum = false, includeBatchNumbers = true) => {
   const [dln1FieldMetadata, lookupResolvers, allowedLineUdfs] = await Promise.all([
     deliveryDb.getDeliveryLineFieldMetadata(),
     buildDeliveryLookupResolvers(),
@@ -412,7 +548,7 @@ const buildDocumentLinesPayload = async (lines = [], includeLineNum = false) => 
 
   const sourceLines = (lines || []).filter((line) => hasValue(line.itemNo));
   return Promise.all(
-    sourceLines.map((line) => buildDocumentLinePayload(line, dln1FieldMetadata, includeLineNum, lookupResolvers, allowedLineUdfs))
+    sourceLines.map((line, index) => buildDocumentLinePayload(line, dln1FieldMetadata, includeLineNum, lookupResolvers, allowedLineUdfs, index, includeBatchNumbers))
   );
 };
 
@@ -649,6 +785,27 @@ const getDeliveryList = async ({
 const getDelivery = async (docEntry) => {
   try {
     const result = await deliveryDb.getDelivery(docEntry);
+    try {
+      const response = await sapService.request({
+        method: 'GET',
+        url: `/DeliveryNotes(${Number(docEntry)})?$select=EWayBillDetails`,
+      });
+      const serviceLayerDetails = mapServiceLayerEWayBillDetails(response.data?.EWayBillDetails);
+      const enteredServiceLayerDetails = Object.fromEntries(
+        Object.entries(serviceLayerDetails).filter(([, value]) => value !== '' && value !== null && value !== undefined),
+      );
+      if (result?.delivery && Object.keys(enteredServiceLayerDetails).length) {
+        const enteredDatabaseDetails = Object.fromEntries(
+          Object.entries(result.delivery.eway_bill_details || {}).filter(([, value]) => value !== '' && value !== null && value !== undefined),
+        );
+        result.delivery.eway_bill_details = {
+          ...enteredServiceLayerDetails,
+          ...enteredDatabaseDetails,
+        };
+      }
+    } catch (eWayBillError) {
+      console.warn(`[Delivery] Could not load E-Way Bill details from Service Layer for ${docEntry}: ${eWayBillError.message}`);
+    }
     return result;
   } catch (error) {
     throw new Error(`Failed to load Delivery: ${error.message}`);
@@ -732,17 +889,21 @@ const getBatchesByItem = async (itemCode, whsCode) => {
 
 const submitDelivery = async (payload) => {
   try {
+    const validationResult = await validateDeliveryDocument({ ...payload, _isUpdate: true });
+    if (!validationResult.isValid) {
+      const error = new Error(validationResult.errors.join('\n'));
+      error.statusCode = 400;
+      throw error;
+    }
+
     const { company_id, lines, header_udfs } = payload;
     const header = normalizeHeaderBranch(payload.header);
-    const customerCode =
-      String(
-        header.customerCode ||
-        header.customer ||
-        header.vendor ||
-        ''
-      ).trim();
+    const customerCode = resolveHeaderCustomerCode(header);
 console.log("Payload:", payload );
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
+    const documentReferences = payload.reference_documents_changed
+      ? buildDocumentReferencesPayload(payload.reference_documents)
+      : [];
     const [documentLines, headerUdfDefinitionsByKey] = await Promise.all([
       buildDocumentLinesPayload(lines),
       getUdfDefinitionsByKey('ODLN'),
@@ -764,6 +925,8 @@ console.log("Payload:", payload );
       NumAtCard: header.salesContractNo || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(header, { shipAddressField: 'Address2', billAddressField: 'Address' }),
+      ...(payload.reference_documents_changed ? { DocumentReferences: documentReferences } : {}),
       DocumentLines: documentLines,
     };
 console.log("SAP Payload:", sapPayload);
@@ -774,9 +937,16 @@ console.log("SAP Payload:", sapPayload);
     sapPayload.BPLId = normalizeBranchId(header.branch);
     sapPayload.BPL_IDAssignedToInvoice = normalizeBranchId(header.branch);
     if (header.paymentTerms) sapPayload.PaymentGroupCode = parseInt(header.paymentTerms);
+    if (header.paymentMethod) sapPayload.PaymentMethod = header.paymentMethod;
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
     if (salesPersonCode !== undefined) sapPayload.SalesPersonCode = salesPersonCode;
+    if (header.edocGenerationType) sapPayload.EDocGenerationType = header.edocGenerationType;
+    if (Number.isFinite(Number(header.edocExportFormat)) && String(header.edocExportFormat).trim() !== '') {
+      sapPayload.EDocExportFormat = Number(header.edocExportFormat);
+    }
+    const eWayBillDetails = await buildEWayBillDetailsPayload(payload.eway_bill_details);
+    if (eWayBillDetails) sapPayload.EWayBillDetails = eWayBillDetails;
 
     applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs, null, headerUdfDefinitionsByKey);
 
@@ -854,11 +1024,26 @@ console.log("SAP Payload:", sapPayload);
 
 const updateDelivery = async (docEntry, payload) => {
   try {
+    const includeDocumentLines = payload.include_document_lines === true;
+    const validationResult = await validateDeliveryDocument({
+      ...payload,
+      _isUpdate: true,
+      validateDocumentLines: includeDocumentLines,
+    });
+    if (!validationResult.isValid) {
+      const error = new Error(validationResult.errors.join('\n'));
+      error.statusCode = 400;
+      throw error;
+    }
+
     const { lines, header_udfs } = payload;
     const header = normalizeHeaderBranch(payload.header);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
+    const documentReferences = payload.reference_documents_changed
+      ? buildDocumentReferencesPayload(payload.reference_documents)
+      : [];
     const [documentLines, headerUdfDefinitionsByKey] = await Promise.all([
-      buildDocumentLinesPayload(lines, true),
+      includeDocumentLines ? buildDocumentLinesPayload(lines, true, false) : Promise.resolve([]),
       getUdfDefinitionsByKey('ODLN'),
     ]);
     const allowedHeaderUdfs = new Set(headerUdfDefinitionsByKey.keys());
@@ -873,12 +1058,21 @@ const updateDelivery = async (docEntry, payload) => {
       JournalMemo: header.journalRemark || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
-      DocumentLines: documentLines,
+      ...buildMarketingDocumentAddressPayload(header, { shipAddressField: 'Address2', billAddressField: 'Address' }),
+      ...(payload.reference_documents_changed ? { DocumentReferences: documentReferences } : {}),
     };
+    if (includeDocumentLines) sapPayload.DocumentLines = documentLines;
 
+    if (header.paymentMethod) sapPayload.PaymentMethod = header.paymentMethod;
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
     if (salesPersonCode !== undefined) sapPayload.SalesPersonCode = salesPersonCode;
+    if (header.edocGenerationType) sapPayload.EDocGenerationType = header.edocGenerationType;
+    if (Number.isFinite(Number(header.edocExportFormat)) && String(header.edocExportFormat).trim() !== '') {
+      sapPayload.EDocExportFormat = Number(header.edocExportFormat);
+    }
+    const eWayBillDetails = await buildEWayBillDetailsPayload(payload.eway_bill_details);
+    if (eWayBillDetails) sapPayload.EWayBillDetails = eWayBillDetails;
 
     applyUdfs(sapPayload, header_udfs, allowedHeaderUdfs, null, headerUdfDefinitionsByKey);
 
@@ -977,10 +1171,14 @@ const getUomConversionFactor = async (itemCode, uomCode) => {
 const validateDeliveryDocument = async (payload) => {
   const header = normalizeHeaderBranch(payload.header);
   const { lines } = payload;
+  const isUpdate = Boolean(payload._isUpdate);
+  const validateDocumentLines = !isUpdate || payload.validateDocumentLines !== false;
+  const documentLines = (lines || []).filter((line) => hasValue(line.itemNo));
+  const customerCode = resolveHeaderCustomerCode(header);
   const errors = [];
   
   // 1. Mandatory fields validation
-  if (!header.customerCode) {
+  if (!customerCode) {
     errors.push('Customer Code is required');
   }
   if (!header.postingDate) {
@@ -989,7 +1187,7 @@ const validateDeliveryDocument = async (payload) => {
   if (!header.documentDate) {
     errors.push('Document Date is required');
   }
-  if (!lines || lines.length === 0) {
+  if (validateDocumentLines && !documentLines.length) {
     errors.push('At least one document line is required');
   }
   
@@ -1006,13 +1204,15 @@ const validateDeliveryDocument = async (payload) => {
   }
   
   // 3. Series validation
-  const seriesResult = await deliveryDb.validateSeries(header.series, header.branch);
-  if (!seriesResult.isValid) {
-    errors.push(...seriesResult.errors);
+  if (!isUpdate || hasValue(header.series)) {
+    const seriesResult = await deliveryDb.validateSeries(header.series, header.branch);
+    if (!seriesResult.isValid) {
+      errors.push(...seriesResult.errors);
+    }
   }
   
   // 4. Warehouse-Branch validation for all lines
-  for (const line of lines) {
+  for (const line of validateDocumentLines ? documentLines : []) {
     if (line.whse && header.branch) {
       const whResult = await deliveryDb.validateWarehouseBranch(line.whse, header.branch);
       if (!whResult.isValid) {
@@ -1020,23 +1220,25 @@ const validateDeliveryDocument = async (payload) => {
       }
     }
   }
-  
-  // 5. Tax code validation
-  const taxResult = deliveryDb.validateTaxCodes(lines);
-  if (!taxResult.isValid) {
-    errors.push(...taxResult.errors);
-  }
-  
-  // 6. Stock validation
-  const stockResult = await deliveryDb.validateStockAvailability(lines);
-  if (!stockResult.isValid) {
-    errors.push(...stockResult.errors);
-  }
-  
-  // 7. Batch validation
-  const batchResult = await deliveryDb.validateBatchSelection(lines);
-  if (!batchResult.isValid) {
-    errors.push(...batchResult.errors);
+
+  // 5. SAP B1 live master-data validation for item, UoM, HSN, warehouse, price and tax.
+  if (validateDocumentLines) {
+    const masterDataResult = await deliveryDb.validateLineMasterData(documentLines);
+    if (!masterDataResult.isValid) errors.push(...masterDataResult.errors);
+
+    const udfResult = await deliveryDb.validateLineUdfValues(documentLines);
+    if (!udfResult.isValid) errors.push(...udfResult.errors);
+
+    const taxResult = deliveryDb.validateTaxCodes(documentLines);
+    if (!taxResult.isValid) errors.push(...taxResult.errors);
+
+    if (!isUpdate) {
+      const stockResult = await deliveryDb.validateStockAvailability(documentLines);
+      if (!stockResult.isValid) errors.push(...stockResult.errors);
+
+      const batchResult = await deliveryDb.validateBatchSelection(documentLines);
+      if (!batchResult.isValid) errors.push(...batchResult.errors);
+    }
   }
   
   return {

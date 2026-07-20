@@ -32,20 +32,28 @@ function DocumentCurrencySelect({
   onHeaderChange,
   businessPartners = [],
   disabled = false,
+  localCurrency = LOCAL_CURRENCY,
+  systemCurrency = '',
 }) {
   const mode = header.currencyMode || 'BP';
   const bpCurrency = findBpCurrency(businessPartners, header.vendor);
   const currentCurrency = String(header.currency || '').trim();
+  const resolvedLocalCurrency = String(localCurrency || '').trim() || LOCAL_CURRENCY;
+  const resolvedSystemCurrency = String(systemCurrency || '').trim() || resolvedLocalCurrency;
   const displayCurrency = mode === 'BP'
-    ? (bpCurrency || currentCurrency || LOCAL_CURRENCY)
-    : (currentCurrency || LOCAL_CURRENCY);
+    ? (bpCurrency || currentCurrency || resolvedLocalCurrency)
+    : mode === 'SYSTEM'
+      ? (currentCurrency || resolvedSystemCurrency)
+      : (currentCurrency || resolvedLocalCurrency);
   const showCurrencyCode = mode === 'BP';
 
   const handleModeChange = (event) => {
     const nextMode = event.target.value;
     const nextCurrency = nextMode === 'BP'
-      ? (bpCurrency || currentCurrency || LOCAL_CURRENCY)
-      : LOCAL_CURRENCY;
+      ? (bpCurrency || currentCurrency || resolvedLocalCurrency)
+      : nextMode === 'SYSTEM'
+        ? resolvedSystemCurrency
+        : resolvedLocalCurrency;
 
     emitHeaderChange(onHeaderChange, 'currencyMode', nextMode);
     emitHeaderChange(onHeaderChange, 'currency', nextCurrency);
@@ -54,14 +62,13 @@ function DocumentCurrencySelect({
   return (
     <div className={`${classPrefix}-field`}>
       <label className={`${classPrefix}-field__label`}>Currency</label>
-      <div style={{ display: 'flex', gap: 3, flex: 1 }}>
+      <div className="sap-input-group sap-input-group--currency">
         <select
           name="currencyMode"
           className={`${classPrefix}-field__select`}
           value={mode}
           onChange={handleModeChange}
           disabled={disabled}
-          style={{ flex: '1 1 58%' }}
         >
           {CURRENCY_MODES.map((option) => (
             <option key={option.value} value={option.value}>
@@ -76,7 +83,6 @@ function DocumentCurrencySelect({
             value={displayCurrency}
             readOnly
             disabled={disabled}
-            style={{ flex: '0 0 92px', background: '#f7f9fb' }}
             tabIndex={-1}
           />
         )}

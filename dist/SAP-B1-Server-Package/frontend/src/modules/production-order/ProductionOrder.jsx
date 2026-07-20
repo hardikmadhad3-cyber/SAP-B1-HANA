@@ -5,6 +5,7 @@ import ProductionOrderLines from "./components/ProductionOrderLines";
 import ProductionOrderList  from "./components/ProductionOrderList";
 import ItemSearchModal       from "../bom/components/ItemSearchModal";
 import CustomerSearchModal   from "./components/CustomerSearchModal";
+import { useAuth } from "../../auth/AuthContext";
 import {
   fetchProductionOrderReferenceData,
   fetchProductionOrderByDocEntry,
@@ -14,11 +15,11 @@ import {
   closeProductionOrder,
   explodeBOM,
   fetchProdOrderItems,
+  fetchProdOrderFinishItems,
   fetchProdOrderComponentItems,
   fetchProdOrderWarehouses,
   fetchProdOrderDistributionRules,
   fetchProdOrderProjects,
-  fetchProdOrderBranches,
   fetchProdOrderCustomers,
   fetchProdOrderResources,
   fetchProdOrderUsers,
@@ -109,7 +110,7 @@ const EMPTY_LINE = () => ({
   project:          "",
   location:         "",
   additional_qty:   0,
-  stage_id:         0,
+  stage_id:         "",
   route_sequence:   "",
   procurement_method:"",
   component_type:   "pit_Item",
@@ -129,8 +130,130 @@ const TYPE_LABELS = {
 };
 
 const formatSummaryNumber = (value) => Number(value || 0).toFixed(2);
+const firstWarehouse = (...values) => (
+  values.map((value) => String(value || "").trim()).find(Boolean) || ""
+);
+
+const normalizeLookupText = (value) => String(value || "").trim().toLowerCase();
+const getUserId = (user) => (user?.UserID != null ? String(user.UserID) : "");
+const getUserCode = (user) => String(user?.UserCode || "").trim();
+const getUserName = (user) => String(user?.UserName || "").trim();
+const getUserDisplay = (user) => getUserCode(user) || getUserName(user);
+const getUserDetail = (user) => {
+  const code = getUserCode(user);
+  const name = getUserName(user);
+  return code && name && code !== name ? name : "";
+};
+
+const findUserById = (users = [], userId = "") => (
+  users.find((user) => getUserId(user) === String(userId || ""))
+);
+
+const findDefaultSapUser = (users = [], authUser = {}) => {
+  const candidates = [authUser?.username, authUser?.fullName]
+    .map(normalizeLookupText)
+    .filter(Boolean);
+
+  if (!candidates.length) return null;
+
+  return users.find((user) => {
+    const code = normalizeLookupText(getUserCode(user));
+    const name = normalizeLookupText(getUserName(user));
+    return candidates.some((candidate) => (
+      code === candidate ||
+      name === candidate ||
+      code.endsWith(`-${candidate}`) ||
+      name.endsWith(`-${candidate}`)
+    ));
+  }) || null;
+};
+
+function UserPicker({ users, value, displayValue, disabled, onSelect, onRefresh }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef(null);
+  const selectedUser = findUserById(users, value);
+  const currentDisplay = selectedUser ? getUserDisplay(selectedUser) : (displayValue || "--");
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = (event) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open]);
+
+  const filteredUsers = users.filter((user) => {
+    const search = normalizeLookupText(query);
+    if (!search) return true;
+    return (
+      normalizeLookupText(getUserCode(user)).includes(search) ||
+      normalizeLookupText(getUserName(user)).includes(search)
+    );
+  });
+
+  const openPicker = () => {
+    if (disabled) return;
+    setOpen(true);
+    onRefresh?.();
+  };
+
+  const chooseUser = (user) => {
+    onSelect(user);
+    setQuery("");
+    setOpen(false);
+  };
+
+  return (
+    <div className="po-user-picker" ref={wrapRef}>
+      <button
+        type="button"
+        className="po-user-picker__field"
+        onClick={openPicker}
+        disabled={disabled}
+        title={currentDisplay}
+      >
+        <span>{currentDisplay}</span>
+        <span className="po-user-picker__arrow">v</span>
+      </button>
+      {open && (
+        <div className="po-user-picker__menu">
+          <input
+            className="po-user-picker__search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Find user"
+            autoFocus
+          />
+          <div className="po-user-picker__list">
+            {filteredUsers.length ? filteredUsers.map((user) => {
+              const id = getUserId(user);
+              return (
+                <button
+                  key={id || getUserDisplay(user)}
+                  type="button"
+                  className={`po-user-picker__option${id === String(value || "") ? " is-selected" : ""}`}
+                  onClick={() => chooseUser(user)}
+                >
+                  <span className="po-user-picker__code">{getUserDisplay(user)}</span>
+                  {getUserDetail(user) && <span className="po-user-picker__name">{getUserDetail(user)}</span>}
+                </button>
+              );
+            }) : (
+              <div className="po-user-picker__empty">No users found</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ProductionOrderModule() {
+  const { user: authUser } = useAuth();
   const [mode,    setMode]    = useState(MODES.ADD);
   const [tab,     setTab]     = useState(0);
   const [header,  setHeader]  = useState(EMPTY_HEADER);
@@ -146,7 +269,6 @@ export default function ProductionOrderModule() {
   const [projects,    setProjects]    = useState([]);
   const [series,      setSeries]      = useState([]);
   const [defaultSeries, setDefaultSeries] = useState("");
-  const [branches,    setBranches]    = useState([]);
   const [routeStages, setRouteStages] = useState([]);
   const [prodTypes,   setProdTypes]   = useState([]);
   const [prodStatuses,setProdStatuses]= useState([]);
@@ -161,6 +283,16 @@ export default function ProductionOrderModule() {
   const [linkedOrderModal, setLinkedOrderModal] = useState(false);
 
   const alertTimer = useRef(null);
+
+  const loadUsersLive = useCallback(() => (
+    fetchProdOrderUsers()
+      .then((loadedUsers) => {
+        const nextUsers = Array.isArray(loadedUsers) ? loadedUsers : [];
+        setUsers(nextUsers);
+        return nextUsers;
+      })
+      .catch(() => [])
+  ), []);
 
   useEffect(() => {
     // Load reference data
@@ -178,11 +310,11 @@ export default function ProductionOrderModule() {
             prev.series ? prev : { ...prev, series: loadedDefaultSeries }
           ));
         }
-        setBranches(d.branches || []);
         setRouteStages(d.route_stages || []);
         setProdTypes(d.production_order_types || []);
         setProdStatuses(d.production_order_statuses || []);
         setUsers(d.users || []);
+        loadUsersLive();
         const loadedLinkedToOptions = d.linked_to_options || [];
         setLinkedToOptions(loadedLinkedToOptions);
         const defaultLinkedTo =
@@ -199,10 +331,24 @@ export default function ProductionOrderModule() {
         fetchProdOrderWarehouses().then(setWarehouses).catch(() => {});
         fetchProdOrderDistributionRules().then(setDistRules).catch(() => {});
         fetchProdOrderProjects().then(setProjects).catch(() => {});
-        fetchProdOrderBranches().then(setBranches).catch(() => {});
-        fetchProdOrderUsers().then(setUsers).catch(() => {});
+        loadUsersLive();
       });
-  }, []);
+  }, [loadUsersLive]);
+
+  useEffect(() => {
+    if (mode !== MODES.ADD || header.user_id || header.user || !users.length) return;
+    const defaultUser = findDefaultSapUser(users, authUser);
+    if (!defaultUser) return;
+    setHeader((prev) => (
+      prev.user_id || prev.user
+        ? prev
+        : {
+            ...prev,
+            user_id: getUserId(defaultUser),
+            user: getUserDisplay(defaultUser),
+          }
+    ));
+  }, [authUser, header.user, header.user_id, mode, users]);
 
   const showAlert = useCallback((type, msg) => {
     clearTimeout(alertTimer.current);
@@ -226,7 +372,14 @@ export default function ProductionOrderModule() {
       ...prev,
       [name]: nextValue,
       ...(name === "linked_to" ? { linked_order: "", linked_order_entry: "" } : {}),
+      ...(name === "type" && mode === MODES.ADD
+        ? { item_code: "", item_name: "", uom_name: "", warehouse: "" }
+        : {}),
     }));
+
+    if (name === "type" && mode === MODES.ADD) {
+      setLines([EMPTY_LINE()]);
+    }
     
     // When planned_qty changes, recalculate all component planned quantities
     if (name === 'planned_qty') {
@@ -240,15 +393,13 @@ export default function ProductionOrderModule() {
     }
   }, []);
 
-  const handleUserChange = useCallback((e) => {
-    const userId = e.target.value;
-    const selected = users.find((u) => String(u.UserID) === String(userId));
+  const handleUserSelect = useCallback((selected) => {
     setHeader((prev) => ({
       ...prev,
-      user_id: userId,
-      user: selected?.UserCode || selected?.UserName || "",
+      user_id: getUserId(selected),
+      user: getUserDisplay(selected),
     }));
-  }, [users]);
+  }, []);
 
   // ── Item selected from modal ───────────────────────────────────────────────
   const handleItemSelect = useCallback(async (item) => {
@@ -256,9 +407,16 @@ export default function ProductionOrderModule() {
     setItemModal({ open: false, target: null });
     
     if (target === "header") {
-      const selectedItemCode = item.ItemCode || item.TreeCode || item.Code || "";
-      const selectedItemName = item.ItemName || item.ProductDescription || item.Name || "";
-      const selectedWarehouse = item.BOMWarehouse || item.Warehouse || item.DefaultWarehouse || "";
+      const isSpecialOrder = header.type === "bopotSpecial";
+      const selectedItemCode = item.ItemNo || item.ItemCode || item.TreeCode || item.Code || "";
+      const selectedItemName = item.ItemDescription || item.ItemName || item.ProductDescription || item.Name || "";
+      const selectedWarehouse = firstWarehouse(
+        item.BOMWarehouse,
+        item.Warehouse,
+        item.DefaultWarehouse,
+        item.WarehouseCode,
+        item.WhsCode
+      );
       const selectedUom = item.UoMName || item.InventoryUOM || item.InventoryUOMName || "";
 
       setHeader((prev) => ({
@@ -268,6 +426,12 @@ export default function ProductionOrderModule() {
         uom_name: selectedUom || prev.uom_name,
         warehouse: selectedWarehouse || prev.warehouse,
       }));
+
+      if (isSpecialOrder) {
+        setLines((prev) => (prev.length ? prev : [EMPTY_LINE()]));
+        showAlert("success", `Item selected: ${selectedItemCode}`);
+        return;
+      }
       
       // Automatically explode BOM for the selected item
       try {
@@ -321,6 +485,14 @@ export default function ProductionOrderModule() {
     } else {
       const currentLine = lines.find((l) => l._id === target);
       const isResource = currentLine?.component_type === "pit_Resource";
+      const selectedWarehouse = firstWarehouse(
+        item.DefaultWarehouse,
+        item.Warehouse,
+        item.WarehouseCode,
+        item.WhsCode,
+        currentLine?.warehouse,
+        header.warehouse
+      );
       setLines((prev) =>
         prev.map((l) =>
           l._id === target
@@ -332,7 +504,7 @@ export default function ProductionOrderModule() {
                 uom: isResource ? "" : item.InventoryUOM || "",
                 uom_code: isResource ? "" : item.InventoryUOM || "",
                 uom_name: isResource ? "" : item.UoMName || item.InventoryUOM || "",
-                warehouse: item.DefaultWarehouse || l.warehouse,
+                warehouse: selectedWarehouse,
                 issue_method: isResource
                   ? (item.IssueMethod === "rimBackflush" ? "im_Backflush" : "im_Manual")
                   : l.issue_method,
@@ -341,7 +513,7 @@ export default function ProductionOrderModule() {
         )
       );
     }
-  }, [itemModal, header.planned_qty, lines, showAlert]);
+  }, [itemModal, header.planned_qty, header.type, header.warehouse, lines, showAlert]);
 
   // ── Customer selected from modal ───────────────────────────────────────────
   const handleCustomerSelect = useCallback((customer) => {
@@ -379,11 +551,26 @@ export default function ProductionOrderModule() {
               ...l,
               component_type: value,
               item_code: "",
+              item_name: "",
               uom: "",
+              uom_code: "",
+              uom_name: "",
+              warehouse: "",
               issue_method: "im_Manual",
             };
           }
-          return { ...l, component_type: value };
+          return {
+            ...l,
+            component_type: value,
+            item_code: "",
+            item_name: "",
+            line_text: "",
+            uom: "",
+            uom_code: "",
+            uom_name: "",
+            warehouse: "",
+            issue_method: "im_Manual",
+          };
         }
         return { ...l, [field]: value };
       })
@@ -627,6 +814,7 @@ export default function ProductionOrderModule() {
   };
 
   const isReadOnly = header.status === "boposClosed" || header.status === "boposCancelled";
+  const isSpecialType = header.type === "bopotSpecial";
   const statusKey  = STATUS_LABELS[header.status] || header.status;
   const canEditStatus = mode === MODES.UPDATE && !isReadOnly;
   const componentCount = lines.filter((line) => line.item_code || line.line_text).length;
@@ -643,6 +831,41 @@ export default function ProductionOrderModule() {
     return String(Math.floor(diffMs / 86400000));
   })();
   const totalRunTime = formatSummaryNumber(componentCount);
+  const itemModalLine = itemModal.target === "header"
+    ? null
+    : lines.find((line) => line._id === itemModal.target);
+  const isResourceItemModal = itemModalLine?.component_type === "pit_Resource";
+  const itemModalTitle = itemModal.target === "header"
+    ? (isSpecialType ? "List of Items" : "List of Bill of Materials")
+    : isResourceItemModal
+      ? "Resource Search"
+      : "Component Search";
+  const itemModalFetchItems = itemModal.target === "header"
+    ? (isSpecialType ? fetchProdOrderFinishItems : fetchProdOrderItems)
+    : isResourceItemModal
+      ? fetchProdOrderResources
+      : fetchProdOrderComponentItems;
+  const itemModalColumns = itemModal.target === "header"
+    ? isSpecialType
+      ? [
+          { key: "ItemDescription", label: "Item Description" },
+          { key: "ItemNo", label: "Item No." },
+          { key: "InStock", label: "In Stock", className: "im-lookup-table__num", render: (value) => Number(value || 0).toFixed(2) },
+          { key: "ItemGroup", label: "Item Group" },
+        ]
+      : [
+          { key: "ItemCode", label: "Item No." },
+          { key: "ItemName", label: "Item Description" },
+          { key: "InStock", label: "In Stock", className: "im-lookup-table__num", render: (value) => Number(value || 0).toFixed(2) },
+        ]
+    : isResourceItemModal
+      ? [
+          { key: "Code", label: "Resource Code" },
+          { key: "Name", label: "Resource Name" },
+          { key: "DefaultWarehouse", label: "Whse" },
+          { key: "IssueMethod", label: "Issue Method" },
+        ]
+      : undefined;
 
   // ── List view ──────────────────────────────────────────────────────────────
   if (mode === MODES.LIST) {
@@ -712,9 +935,9 @@ export default function ProductionOrderModule() {
               <label className="im-field__label po-lbl">Product No.</label>
               <div className="im-lookup-wrap">
                 <input className="im-field__input" name="item_code" value={header.item_code}
-                  onChange={handleHeaderChange} readOnly={mode === MODES.UPDATE}
+                  onChange={handleHeaderChange} readOnly={mode === MODES.UPDATE || isSpecialType}
                   style={{ width: 130 }} autoFocus />
-                {mode !== MODES.UPDATE && (
+                {mode !== MODES.UPDATE && !isSpecialType && (
                   <button className="im-lookup-btn" onClick={() => setItemModal({ open: true, target: "header" })}>…</button>
                 )}
               </div>
@@ -722,8 +945,16 @@ export default function ProductionOrderModule() {
 
             <div className="im-field">
               <label className="im-field__label po-lbl">Product Description</label>
-              <input className="im-field__input" name="item_name" value={header.item_name}
-                onChange={handleHeaderChange} style={{ flex: 1 }} />
+              {isSpecialType && mode !== MODES.UPDATE ? (
+                <div className="im-lookup-wrap" style={{ flex: 1 }}>
+                  <input className="im-field__input" name="item_name" value={header.item_name}
+                    onChange={handleHeaderChange} style={{ flex: 1 }} />
+                  <button className="im-lookup-btn" onClick={() => setItemModal({ open: true, target: "header" })}>…</button>
+                </div>
+              ) : (
+                <input className="im-field__input" name="item_name" value={header.item_name}
+                  onChange={handleHeaderChange} style={{ flex: 1 }} />
+              )}
             </div>
 
             <div className="im-field">
@@ -733,16 +964,6 @@ export default function ProductionOrderModule() {
                 readOnly={isReadOnly} style={{ width: 100 }} />
               <label className="im-field__label po-uom-lbl">UoM Name</label>
               <input className="im-field__input po-readonly" value={header.uom_name} readOnly style={{ width: 120 }} />
-            </div>
-
-            <div className="im-field">
-              <label className="im-field__label po-lbl">Completed Qty</label>
-              <input className="im-field__input po-readonly" value={Number(header.completed_qty).toFixed(2)} readOnly style={{ width: 100 }} />
-            </div>
-
-            <div className="im-field">
-              <label className="im-field__label po-lbl">Rejected Qty</label>
-              <input className="im-field__input po-readonly" value={Number(header.rejected_qty).toFixed(2)} readOnly style={{ width: 100 }} />
             </div>
 
             <div className="im-field">
@@ -856,13 +1077,14 @@ export default function ProductionOrderModule() {
 
             <div className="im-field">
               <label className="im-field__label po-lbl-r">User</label>
-              <select className="im-field__select" name="user_id" value={header.user_id}
-                onChange={handleUserChange} disabled={isReadOnly} style={{ width: 160 }}>
-                <option value="">{header.user || "--"}</option>
-                {users.map((u) => (
-                  <option key={u.UserID} value={u.UserID}>{u.UserCode || u.UserName}</option>
-                ))}
-              </select>
+              <UserPicker
+                users={users}
+                value={header.user_id}
+                displayValue={header.user}
+                disabled={isReadOnly}
+                onSelect={handleUserSelect}
+                onRefresh={loadUsersLive}
+              />
             </div>
 
             <div className="im-field">
@@ -877,17 +1099,6 @@ export default function ProductionOrderModule() {
               </div>
               <input className="im-field__input po-readonly" 
                 value={header.customer_name} readOnly style={{ flex: 1, marginLeft: 4 }} />
-            </div>
-
-            <div className="im-field">
-              <label className="im-field__label po-lbl-r">Branch</label>
-              <select className="im-field__select" name="branch" value={header.branch}
-                onChange={handleHeaderChange} disabled={isReadOnly} style={{ width: 200 }}>
-                <option value="">--</option>
-                {branches.map((b) => (
-                  <option key={b.BPLID} value={b.BPLID}>{b.BPLName}</option>
-                ))}
-              </select>
             </div>
 
             <div className="im-field">
@@ -912,11 +1123,6 @@ export default function ProductionOrderModule() {
               </select>
             </div>
 
-            <div className="im-field">
-              <label className="im-field__label po-lbl-r">Journal Remark</label>
-              <input className="im-field__input" name="journal_remark" value={header.journal_remark}
-                onChange={handleHeaderChange} readOnly={isReadOnly} style={{ flex: 1 }} />
-            </div>
           </div>
 
         </div>
@@ -1088,39 +1294,11 @@ export default function ProductionOrderModule() {
         <ItemSearchModal
           onSelect={handleItemSelect}
           onClose={() => setItemModal({ open: false, target: null })}
-          title={
-            itemModal.target === "header"
-              ? "List of Bill of Materials"
-              : lines.find((line) => line._id === itemModal.target)?.component_type === "pit_Resource"
-                ? "Resource Search"
-                : "Component Search"
-          }
-          fetchItems={
-            itemModal.target === "header"
-              ? fetchProdOrderItems
-              : lines.find((line) => line._id === itemModal.target)?.component_type === "pit_Resource"
-                ? fetchProdOrderResources
-                : fetchProdOrderComponentItems
-          }
+          title={itemModalTitle}
+          fetchItems={itemModalFetchItems}
           autoSearchOnOpen
           emptyMessage={itemModal.target === "header" ? "" : "No items found."}
-          columns={
-            itemModal.target === "header"
-              ? [
-                  { key: "ItemCode", label: "Item No." },
-                  { key: "ItemName", label: "Item Description" },
-                  { key: "InStock", label: "In Stock", render: (value) => Number(value || 0).toFixed(2) },
-                ]
-              : itemModal.target !== "header" &&
-                lines.find((line) => line._id === itemModal.target)?.component_type === "pit_Resource"
-              ? [
-                  { key: "Code", label: "Resource Code" },
-                  { key: "Name", label: "Resource Name" },
-                  { key: "DefaultWarehouse", label: "Whse" },
-                  { key: "IssueMethod", label: "Issue Method" },
-                ]
-              : undefined
-          }
+          columns={itemModalColumns}
         />
       )}
 

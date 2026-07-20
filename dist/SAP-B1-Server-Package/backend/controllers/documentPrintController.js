@@ -25,6 +25,40 @@ const getLayouts = async (req, res) => {
   }
 };
 
+const getLayoutParameters = async (req, res) => {
+  try {
+    const data = await documentPrintLayoutService.getLayoutParameters({
+      documentType: req.params.documentType,
+      docCode: req.query?.docCode || req.query?.layoutCode,
+      schema: req.query?.schema,
+      auth: req.auth,
+    });
+    res.json(data);
+  } catch (error) {
+    const statusCode = error.statusCode || error.response?.status || 500;
+    res.status(statusCode).json(getErrorPayload(error, 'Failed to load document print parameters.'));
+  }
+};
+
+const getReportMetadata = async (req, res) => {
+  try {
+    const data = await documentPrintLayoutService.getDocumentReportMetadata({
+      documentType: req.params.documentType,
+      docEntry: req.params.docEntry || req.query?.docEntry,
+      docNum: req.query?.docNum,
+      series: req.query?.series,
+      schema: req.query?.schema,
+      docCode: req.query?.docCode || req.query?.layoutCode,
+      cardCode: req.query?.cardCode,
+      auth: req.auth,
+    });
+    res.json(data);
+  } catch (error) {
+    const statusCode = error.statusCode || error.response?.status || 500;
+    res.status(statusCode).json(getErrorPayload(error, 'Failed to resolve SAP B1 report metadata.'));
+  }
+};
+
 const printDocument = async (req, res) => {
   try {
     const data = await documentPrintLayoutService.printDocument({
@@ -35,6 +69,7 @@ const printDocument = async (req, res) => {
       schema: req.body?.schema,
       docCode: req.body?.docCode || req.body?.layoutCode,
       cardCode: req.body?.cardCode,
+      reportParameters: req.body?.reportParameters,
       auth: req.auth,
     });
 
@@ -68,6 +103,8 @@ const downloadAllLayouts = async (req, res) => {
 
 module.exports = {
   getLayouts,
+  getLayoutParameters,
+  getReportMetadata,
   printDocument,
   downloadPdf,
   downloadAllLayouts,

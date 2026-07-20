@@ -9,6 +9,7 @@ const dbService = require('./dbService');
 const { getRequestContext, getOrSetContextValue } = require('./requestContextService');
 const { getActiveCompanyConfig } = require('./companyConfigService');
 const { normalizeSapWritePayload } = require('./sapPayloadUtils');
+const { withSapSlot } = require('./safetyControls');
 
 const httpsAgentsByRejectMode = new Map();
 const SERVICE_LAYER_REQUEST_TIMEOUT_MS = Number(process.env.SAP_SERVICE_LAYER_TIMEOUT_MS || 180000);
@@ -119,6 +120,13 @@ const buildUrl = (baseUrl, path) => {
     .replace(/'/g, '%27');
 
   return `${baseUrl}${base}?${encodedQs}`;
+};
+
+const buildStringKeyPath = (entityName, value) => {
+  const escapedValue = String(value ?? '').replace(/'/g, "''");
+  // SAP Service Layer rejects encoded path separators (%2F) inside OData keys.
+  const encodedValue = encodeURIComponent(escapedValue).replace(/%2F/gi, '/');
+  return `/${entityName}('${encodedValue}')`;
 };
 
 const extractCookie = (header) => {
@@ -459,14 +467,14 @@ const request = async (config, retryOnAuth = true, retryOnTransientRead = true) 
   const useKeepAlive = !WRITE_METHODS.has(normalizedMethod);
 
   try {
-    return await rawRequest(
+    return await withSapSlot(config, () => rawRequest(
       normalizedMethod,
       buildUrl(serviceLayerConfig.baseUrl, config.url),
       { Cookie: sessionState.sessionCookie, ...(config.headers || {}) },
       requestData,
       serviceLayerConfig.rejectUnauthorized,
       { keepAlive: useKeepAlive },
-    );
+    ));
   } catch (error) {
     if (retryOnAuth && [401, 403].includes(error.response?.status)) {
       console.log(`[SAP] Auth error for ${companyDb}; re-logging in`);
@@ -492,12 +500,12 @@ const createItem = async (data) => {
 };
 
 const getItem = async (itemCode) => {
-  const res = await request({ method: 'GET', url: `/Items('${encodeURIComponent(itemCode)}')` });
+  const res = await request({ method: 'GET', url: buildStringKeyPath('Items', itemCode) });
   return res.data;
 };
 
 const updateItem = async (itemCode, data) => {
-  await request({ method: 'PATCH', url: `/Items('${encodeURIComponent(itemCode)}')`, data });
+  await request({ method: 'PATCH', url: buildStringKeyPath('Items', itemCode), data });
   return getItem(itemCode);
 };
 
@@ -533,6 +541,7 @@ module.exports = {
   login,
   ensureSession,
   request,
+  buildStringKeyPath,
   resolveCompanyDb,
   resolveServiceLayerConfig,
   clearServiceLayerSessions,

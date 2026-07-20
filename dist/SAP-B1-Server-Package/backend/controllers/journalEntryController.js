@@ -37,6 +37,38 @@ const generateFromAPInvoice = async (req, res) => {
   }
 };
 
+const generateFromAPCreditMemo = async (req, res) => {
+  try {
+    const docEntry = req.body?.docEntry || req.body?.DocEntry || null;
+    const payload = req.body?.payload || (!docEntry ? req.body : null);
+    const persist = Boolean(req.body?.persist || req.body?.createJournalEntry);
+    const journalEntry = await journalEntryService.generateFromServiceAPCreditMemo({
+      docEntry,
+      payload,
+      persist,
+    });
+    res.json(journalEntry);
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error, 'Failed to generate Journal Entry.'));
+  }
+};
+
+const generateFromARCreditMemo = async (req, res) => {
+  try {
+    const docEntry = req.body?.docEntry || req.body?.DocEntry || null;
+    const payload = req.body?.payload || (!docEntry ? req.body : null);
+    const persist = Boolean(req.body?.persist || req.body?.createJournalEntry);
+    const journalEntry = await journalEntryService.generateFromServiceARCreditMemo({
+      docEntry,
+      payload,
+      persist,
+    });
+    res.json(journalEntry);
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error, 'Failed to generate Journal Entry.'));
+  }
+};
+
 const createManualJournalEntry = async (req, res) => {
   try {
     const result = await journalEntryService.createManualJournalEntry(req.body || {});
@@ -57,6 +89,8 @@ const getJournalEntryByTransId = async (req, res) => {
 module.exports = {
   generateFromARInvoice,
   generateFromAPInvoice,
+  generateFromAPCreditMemo,
+  generateFromARCreditMemo,
   createManualJournalEntry,
   getJournalEntryByTransId,
 };

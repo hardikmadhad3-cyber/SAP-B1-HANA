@@ -8,7 +8,7 @@ const WORKSPACE_LINKS = [
     key: 'general-settings',
     title: 'General Settings',
     description: 'Configure default warehouses and numbering series for document screens.',
-    path: '/general-settings',
+    path: '/admin/general-settings',
     count: 'Open',
   },
 ];

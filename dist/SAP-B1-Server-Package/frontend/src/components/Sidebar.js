@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { useSapWindowTaskbar, useSapWindowTaskbarActions } from './SapWindowTaskbarContext';
 import { normalizePath } from '../auth/routeUtils';
 import { restoreTargetWindowState } from '../utils/copyToState';
 import '../styles/sidebar.css';
@@ -13,15 +14,6 @@ const STATIC_DASHBOARD_MENU = {
   parentId: null,
   icon: 'dashboard',
   sortOrder: -1,
-  children: [],
-};
-const STATIC_GENERAL_SETTINGS_MENU = {
-  menuId: 'general-settings-static',
-  menuName: 'General Settings',
-  menuPath: '/general-settings',
-  parentId: null,
-  icon: 'settings',
-  sortOrder: 99,
   children: [],
 };
 const SIDEBAR_COLLAPSED_KEY = 'sap-b1-sidebar-collapsed';
@@ -301,11 +293,49 @@ const normalizeReportSidebarTree = (menus = []) =>
     };
   });
 
-const hasMenuPath = (menus = [], targetPath = '') =>
-  menus.some((menu) => {
-    const menuPath = menu.menuPath ? normalizePath(menu.menuPath) : '';
-    return menuPath === targetPath || hasMenuPath(menu.children || [], targetPath);
+const mergeReportLayoutManagerIntoReports = (menus = []) => {
+  const layoutManagerMenus = menus.filter((menu) =>
+    REPORT_STUDIO_NAMES.has(normalizeMenuPriorityName(menu?.menuName)),
+  );
+  const remainingMenus = menus.filter((menu) =>
+    !REPORT_STUDIO_NAMES.has(normalizeMenuPriorityName(menu?.menuName)),
+  );
+  const layoutChildren = layoutManagerMenus.flatMap((menu) =>
+    flattenReportSidebarItems(menu.children || [], menu.menuName),
+  );
+
+  if (!layoutChildren.length) {
+    return remainingMenus;
+  }
+
+  return remainingMenus.map((menu) => {
+    if (normalizeMenuPriorityName(menu?.menuName) !== REPORTS_MENU_NAME) {
+      return menu;
+    }
+
+    const existingKeys = new Set((menu.children || []).map((child) =>
+      child.menuPath
+        ? `path:${normalizePath(child.menuPath)}`
+        : `name:${normalizeMenuPriorityName(child.menuName)}`,
+    ));
+    const nextChildren = [...(menu.children || [])];
+
+    for (const child of layoutChildren) {
+      const key = child.menuPath
+        ? `path:${normalizePath(child.menuPath)}`
+        : `name:${normalizeMenuPriorityName(child.menuName)}`;
+      if (!existingKeys.has(key)) {
+        existingKeys.add(key);
+        nextChildren.push(child);
+      }
+    }
+
+    return {
+      ...menu,
+      children: nextChildren,
+    };
   });
+};
 
 const buildSidebarMenus = (menus = []) => {
   const { dashboardMenu, remainingMenus } = extractDashboardMenu(menus);
@@ -320,6 +350,10 @@ const buildSidebarMenus = (menus = []) => {
       const isMasterMenu = normalizeMenuPriorityName(item?.menuName) === MASTER_MENU_NAME;
       const isInsideMaster = insideMaster || isMasterMenu;
       const filteredChildren = removeHiddenSidebarItems(item.children || [], isInsideMaster);
+
+      if (menuPath === '/general-settings') {
+        return nextItems;
+      }
 
       if (insideMaster && !shouldShowMasterChild(item, menuPath) && !filteredChildren.length) {
         return nextItems;
@@ -336,14 +370,13 @@ const buildSidebarMenus = (menus = []) => {
       return nextItems;
     }, []);
 
-  const visibleMenus = sortSalesMenuChildren(normalizeReportSidebarTree(removeHiddenSidebarItems(remainingMenus)));
-  const generalSettingsMenus = hasMenuPath(visibleMenus, STATIC_GENERAL_SETTINGS_MENU.menuPath)
-    ? []
-    : [STATIC_GENERAL_SETTINGS_MENU];
-
+  const visibleMenus = sortSalesMenuChildren(
+    mergeReportLayoutManagerIntoReports(
+      normalizeReportSidebarTree(removeHiddenSidebarItems(remainingMenus)),
+    ),
+  );
   return [
     dashboardMenu,
-    ...generalSettingsMenus,
     ...sortTopLevelMenus(visibleMenus),
   ];
 };
@@ -356,6 +389,47 @@ const hasActiveChild = (menu, pathname) => {
 
   return menu.children?.some((child) => hasActiveChild(child, pathname));
 };
+
+const getComparableTaskPath = (path = '') =>
+  normalizePath(String(path || '').split(/[?#]/)[0]);
+
+const flattenSidebarSearchItems = (items = [], parents = []) =>
+  items.flatMap((item) => {
+    const displayName = getDisplayMenuName(item);
+    const menuPath = item.menuPath ? normalizePath(item.menuPath) : '';
+    const trail = [...parents, displayName].filter(Boolean);
+    const ownItem = menuPath
+      ? [{
+          menuId: item.menuId,
+          menuName: displayName,
+          menuPath,
+          trail,
+          searchText: `${displayName} ${menuPath} ${trail.join(' ')}`.toLowerCase(),
+          iconMenu: item,
+        }]
+      : [];
+
+    return [
+      ...ownItem,
+      ...flattenSidebarSearchItems(item.children || [], trail),
+    ];
+  });
+
+const SidebarSearchResult = ({ item, onOpen }) => (
+  <button
+    type="button"
+    className="sidebar__search-result"
+    onClick={() => onOpen(item.menuPath)}
+  >
+    <span className="sidebar__search-result-icon" aria-hidden="true">
+      <SidebarIcon menu={item.iconMenu} />
+    </span>
+    <span className="sidebar__search-result-body">
+      <span className="sidebar__search-result-title">{item.menuName}</span>
+      <span className="sidebar__search-result-path">{item.trail.join(' / ')}</span>
+    </span>
+  </button>
+);
 
 const SidebarMenuNode = ({ menu, collapsed, openState, setOpenState, pathname, onNavigate, depth = 0 }) => {
   const hasChildren = Boolean(menu.children?.length);
@@ -449,6 +523,8 @@ export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { menus, company } = useAuth();
+  const taskbar = useSapWindowTaskbar();
+  const { restoreTask } = useSapWindowTaskbarActions();
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
@@ -457,12 +533,33 @@ export default function Sidebar() {
     }
   });
   const [openState, setOpenState] = useState({});
+  const [searchQuery, setSearchQuery] = useState('');
   const pathname = normalizePath(location.pathname);
 
   const sidebarMenus = useMemo(
     () => buildSidebarMenus(menus),
     [menus],
   );
+  const sidebarSearchItems = useMemo(
+    () => flattenSidebarSearchItems(sidebarMenus),
+    [sidebarMenus],
+  );
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const sidebarSearchResults = normalizedSearchQuery
+    ? sidebarSearchItems
+        .filter((item) => item.searchText.includes(normalizedSearchQuery))
+        .slice(0, 10)
+    : [];
+
+  const restoreExistingTaskForPath = (menuPath) => {
+    const normalizedMenuPath = normalizePath(menuPath);
+    const matchingTask = [...(taskbar?.tasks || [])]
+      .reverse()
+      .find((task) => getComparableTaskPath(task?.path) === normalizedMenuPath);
+
+    if (!matchingTask) return false;
+    return restoreTask(matchingTask);
+  };
 
   const handleNavigate = (event, menuPath) => {
     if (!menuPath) return;
@@ -478,6 +575,9 @@ export default function Sidebar() {
     }
 
     event.preventDefault();
+    if (restoreExistingTaskForPath(menuPath)) {
+      return;
+    }
     restoreTargetWindowState(menuPath);
     navigate(menuPath, { state: null });
   };
@@ -492,6 +592,21 @@ export default function Sidebar() {
       }
       return nextCollapsed;
     });
+  };
+
+  const openSearchResult = (menuPath) => {
+    if (!menuPath) return;
+    const normalizedPath = normalizePath(menuPath);
+    if (isAdminMenuPath(normalizedPath)) {
+      window.open(normalizedPath, '_blank', 'noopener,noreferrer');
+    } else if (restoreExistingTaskForPath(normalizedPath)) {
+      setSearchQuery('');
+      return;
+    } else {
+      restoreTargetWindowState(normalizedPath);
+      navigate(normalizedPath, { state: null });
+    }
+    setSearchQuery('');
   };
 
   return (
@@ -519,8 +634,66 @@ export default function Sidebar() {
         </div>
 
         <div className="sidebar__content">
+          {!collapsed ? (
+            <div className="sidebar__search">
+              <label className="sidebar__search-label" htmlFor="sidebar-menu-search">
+                Menu Search
+              </label>
+              <div className="sidebar__search-field">
+                <span className="sidebar__search-icon" aria-hidden="true">
+                  <svg className="sidebar__icon-svg" viewBox="0 0 24 24" focusable="false">
+                    <path d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z" />
+                    <path d="M16 16l5 5" />
+                  </svg>
+                </span>
+                <input
+                  id="sidebar-menu-search"
+                  className="sidebar__search-input"
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && sidebarSearchResults[0]) {
+                      event.preventDefault();
+                      openSearchResult(sidebarSearchResults[0].menuPath);
+                    }
+                    if (event.key === 'Escape') {
+                      setSearchQuery('');
+                    }
+                  }}
+                  placeholder="Search menu"
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    className="sidebar__search-clear"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Clear menu search"
+                    title="Clear"
+                  />
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           <nav className="sidebar__nav">
-            {sidebarMenus.length ? (
+            {normalizedSearchQuery ? (
+              sidebarSearchResults.length ? (
+                <div className="sidebar__search-results" aria-label="Menu search results">
+                  {sidebarSearchResults.map((item) => (
+                    <SidebarSearchResult
+                      key={`${item.menuId}-${item.menuPath}`}
+                      item={item}
+                      onOpen={openSearchResult}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="sidebar__empty">
+                  No matching menu found.
+                </div>
+              )
+            ) : sidebarMenus.length ? (
               sidebarMenus.map((menu) => (
                 <SidebarMenuNode
                   key={menu.menuId}

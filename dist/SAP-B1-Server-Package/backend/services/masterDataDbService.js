@@ -442,7 +442,7 @@ const mapBOMLine = (row) => {
     ChildNum: row.ChildNum ?? 0,
     VisualOrder: row.VisOrder ?? 0,
     StageID: row.StageId ?? row.StageID ?? "",
-    RouteSequence: row.StageId ?? row.StageID ?? row.VisOrder ?? 0,
+    RouteSequence: row.StageId ?? row.StageID ?? "",
   };
 };
 
@@ -767,7 +767,7 @@ const queryDocumentTaxCodes = async (query = "", documentType = "", top = 500, s
         ELSE 'OTHER'
       END AS GSTType,
       '' AS Category,
-      STRING_AGG(CONCAT(ISNULL(T1.STACode, ''), ':', CAST(ISNULL(T1.EfctivRate, 0) AS NVARCHAR(50))), ', ') AS Components
+      STRING_AGG(CONCAT(CONCAT(ISNULL(T1.STACode, ''), ':'), CAST(ISNULL(T1.EfctivRate, 0) AS NVARCHAR(50))), ', ') AS Components
     FROM OSTC T0
     INNER JOIN STC1 T1
       ON T0.Code = T1.STCCode
@@ -799,8 +799,11 @@ const searchDocumentTaxCodes = async (query = "", documentType = "", top = 500, 
 };
 
 const getTaxCode = async (code) => {
-  const rows = await searchDocumentTaxCodes(code, "", 1, 0);
-  const row = rows.find((tax) => String(tax.Code || "") === String(code || "")) || null;
+  const normalizedCode = String(code || "").trim().toLowerCase();
+  if (!normalizedCode) return null;
+
+  const rows = await searchDocumentTaxCodes(String(code).trim(), "", 20, 0);
+  const row = rows.find((tax) => String(tax.Code || "").trim().toLowerCase() === normalizedCode) || null;
 
   return row || null;
 };
@@ -1021,8 +1024,8 @@ const searchBP = async (query = "", type = "", top = 50, skip = 0, options = {})
       E_Mail,
       Currency,
       Balance,
-      ValidFor,
-      FrozenFor,
+      validFor,
+      frozenFor,
       BillToDef,
       Address,
       LicTradNum
@@ -1047,8 +1050,8 @@ const searchBP = async (query = "", type = "", top = 50, skip = 0, options = {})
       EmailAddress: row.E_Mail || "",
       Currency: row.Currency || "##",
       Balance: row.Balance ?? 0,
-      Active: String(row.ValidFor || '').toUpperCase() === 'N' ? 'No' : 'Yes',
-      Inactive: String(row.FrozenFor || '').toUpperCase() === 'Y' ? 'Yes' : 'No',
+      Active: String(row.validFor || '').toUpperCase() === 'N' ? 'No' : 'Yes',
+      Inactive: String(row.frozenFor || '').toUpperCase() === 'Y' ? 'Yes' : 'No',
       BillToBlock: row.BillToDef || "",
       BillToBuildingFloorRoom: row.Address || "",
       GTSRegistrationNumber: row.LicTradNum || "",

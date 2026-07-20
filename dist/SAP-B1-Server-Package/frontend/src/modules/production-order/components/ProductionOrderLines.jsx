@@ -16,9 +16,19 @@ export default function ProductionOrderLines({
   readOnly, onChange, onAdd, onDelete, onItemSearch,
 }) {
   const EMPTY_ROWS = 8;
+  const columnCount = 20 + (!readOnly ? 1 : 0);
 
   return (
     <div className="po-lines-wrap">
+      {!readOnly && (
+        <div className="po-lines-toolbar">
+          <div className="po-section-label">Components</div>
+          <button type="button" className="po-add-row-btn" onClick={onAdd}>
+            + Add Row
+          </button>
+        </div>
+      )}
+
       <div className="po-grid-scroll">
         <table className="po-grid">
           <thead>
@@ -43,6 +53,7 @@ export default function ProductionOrderLines({
               <th className="po-th po-th--addqty">Add. Qty</th>
               <th className="po-th po-th--route">Route Sequence</th>
               <th className="po-th po-th--procure">Procurement</th>
+              {!readOnly && <th className="po-th po-th--action" aria-label="Row action" />}
             </tr>
           </thead>
           <tbody>
@@ -280,13 +291,27 @@ export default function ProductionOrderLines({
                       onChange={(e) => onChange(line._id, "procurement_method", e.target.value)}
                     />
                   </td>
+
+                  {!readOnly && (
+                    <td className="po-grid__cell po-grid__cell--action">
+                      <button
+                        type="button"
+                        className="po-row-delete-btn"
+                        onClick={() => onDelete(line._id)}
+                        title="Remove row"
+                        aria-label={`Remove row ${idx + 1}`}
+                      >
+                        -
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}
 
             {lines.length < EMPTY_ROWS && Array.from({ length: EMPTY_ROWS - lines.length }).map((_, i) => (
               <tr key={`e-${i}`} className="po-grid__row po-grid__row--empty">
-                {Array.from({ length: 20 }).map((__, j) => (
+                {Array.from({ length: columnCount }).map((__, j) => (
                   <td key={j} className="po-grid__cell po-grid__cell--empty" />
                 ))}
               </tr>

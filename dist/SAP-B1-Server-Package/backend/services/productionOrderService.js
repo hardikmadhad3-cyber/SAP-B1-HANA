@@ -16,6 +16,11 @@ const toNum = (v) => {
 };
 
 const opt = (v) => v !== '' && v != null;
+const positiveInt = (v) => {
+  if (v === '' || v == null) return undefined;
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
 
 const normalizeBranches = (rows = []) =>
   (rows || [])
@@ -103,7 +108,7 @@ const mapToForm = (o) => {
     procure_items: o.ProcureItems === 'tYES' || o.ProcureItems === true,
     distribution_rule: o.DistributionRule || '',
     project:      o.Project || '',
-    journal_remark: o.JournalMemo || '',
+    journal_remark: o.JournalRemarks || o.JournalMemo || '',
     remarks:      o.Remarks || '',
     series:       o.Series != null ? String(o.Series) : '',
     origin_num:   o.OriginNum != null ? String(o.OriginNum) : '',
@@ -263,9 +268,11 @@ const explodeBOM = async (itemCode, qty = 1) => {
 // ── Create ────────────────────────────────────────────────────────────────────
 const createProductionOrder = async (body) => {
   console.log('[ProductionOrder] Create called with status:', body.status);
+  const isSpecialOrder = body.type === 'bopotSpecial';
   
-  // Validate that the item has a BOM before creating production order
-  if (body.item_code) {
+  // Standard/Disassemble orders need a BOM. Special orders use a normal item
+  // as the finished item and manual components, matching SAP B1 behavior.
+  if (body.item_code && !isSpecialOrder) {
     let bomData;
     try {
       const bomResp = await sapService.request({
@@ -292,7 +299,7 @@ const createProductionOrder = async (body) => {
           try {
             const itemResp = await sapService.request({
               method: 'GET',
-              url: `/Items('${encodeURIComponent(line.ItemCode)}')`,
+              url: sapService.buildStringKeyPath('Items', line.ItemCode),
             });
             const item = itemResp.data;
             
@@ -476,7 +483,7 @@ const lookupItems = async (query = '') => {
   
   const bomResp = await sapService.request({
     method: 'GET',
-    url: `/ProductTrees?$select=TreeCode,ProductDescription${bomFilter}&$top=50`,
+    url: `/ProductTrees?$select=TreeCode,ProductDescription${bomFilter}&$top=500`,
   });
   
   const bomsData = bomResp.data?.value || [];
@@ -492,7 +499,7 @@ const lookupItems = async (query = '') => {
   const itemFilter = itemCodes.map(code => `ItemCode eq '${escapeOData(code)}'`).join(' or ');
   const itemResp = await sapService.request({
     method: 'GET',
-    url: `/Items?$select=ItemCode,ItemName,InventoryUOM,InventoryItem&$filter=${encodeURIComponent(itemFilter)}&$top=50`,
+    url: `/Items?$select=ItemCode,ItemName,InventoryUOM,InventoryItem&$filter=${encodeURIComponent(itemFilter)}&$top=500`,
   });
   
   return itemResp.data?.value || [];
@@ -506,7 +513,7 @@ const lookupComponentItems = async (query = '') => {
   }
   const resp = await sapService.request({
     method: 'GET',
-    url: `/Items?$select=ItemCode,ItemName,InventoryUOM,DefaultWarehouse,ManageSerialNumbers,ManageBatchNumbers&$filter=${encodeURIComponent(filterParts.join(' and '))}&$top=50`,
+    url: `/Items?$select=ItemCode,ItemName,InventoryUOM,DefaultWarehouse,ManageSerialNumbers,ManageBatchNumbers&$filter=${encodeURIComponent(filterParts.join(' and '))}&$top=500`,
   });
   return resp.data?.value || [];
 };
@@ -517,7 +524,7 @@ const lookupResources = async (query = '') => {
     : '';
   const resp = await sapService.request({
     method: 'GET',
-    url: `/Resources?$select=Code,Name,DefaultWarehouse,IssueMethod${filter}&$top=50`,
+    url: `/Resources?$select=Code,Name,DefaultWarehouse,IssueMethod${filter}&$top=500`,
   });
   return resp.data?.value || [];
 };
@@ -590,7 +597,7 @@ function _buildPayload(body, isCreate = false) {
   if (opt(body.type))         p.ProductionOrderType      = body.type;
   if (opt(body.distribution_rule)) p.DistributionRule   = body.distribution_rule;
   if (opt(body.project))      p.Project                  = body.project;
-  if (opt(body.journal_remark)) p.JournalMemo            = body.journal_remark;
+  if (opt(body.journal_remark)) p.JournalRemarks         = body.journal_remark;
   if (opt(body.remarks))      p.Remarks                  = body.remarks;
   
   // Only include Series if explicitly provided and valid
@@ -621,8 +628,8 @@ function _buildPayload(body, isCreate = false) {
         if (opt(l.distribution_rule))  line.DistributionRule   = l.distribution_rule;
         if (opt(l.project))            line.Project            = l.project;
         if (opt(l.additional_qty))     line.AdditionalQuantity = Number(l.additional_qty);
-        if (opt(l.stage_id))           line.StageID            = Number(l.stage_id);
-        // Note: StageID is not supported in ProductionOrderLines
+        const stageId = positiveInt(l.stage_id || l.route_sequence);
+        if (stageId)                   line.StageID            = stageId;
         return line;
       });
   }

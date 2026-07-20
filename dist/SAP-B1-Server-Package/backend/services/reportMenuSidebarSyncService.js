@@ -4,6 +4,8 @@ const createHttpError = (statusCode, message) => {
   return error;
 };
 
+const authDbService = require('./authDbService');
+
 const REPORT_MENU_PATH_PREFIX = '/reportlayoutmanager/menu/';
 const REPORTS_ROOT_CANDIDATE_PATHS = ['/reports', '/reportlayoutmanager'];
 const REPORTS_ROOT_CANDIDATE_NAMES = ['reports', 'report layout manager'];
@@ -18,17 +20,10 @@ const normalizeText = (value) => String(value || '').trim();
 const buildReportMenuPath = (reportMenuId) => `${REPORT_MENU_PATH_PREFIX}${reportMenuId}`;
 
 const hasRequiredTables = async (db) => {
-  const tables = await db.queryOne(`
-    SELECT
-      CASE WHEN OBJECT_ID(N'dbo.ReportMenus', N'U') IS NULL THEN 0 ELSE 1 END AS hasReportMenus,
-      CASE WHEN OBJECT_ID(N'dbo.Menus', N'U') IS NULL THEN 0 ELSE 1 END AS hasMenus,
-      CASE WHEN OBJECT_ID(N'dbo.RoleRights', N'U') IS NULL THEN 0 ELSE 1 END AS hasRoleRights
-  `);
-
   return {
-    hasReportMenus: Boolean(tables?.hasReportMenus),
-    hasMenus: Boolean(tables?.hasMenus),
-    hasRoleRights: Boolean(tables?.hasRoleRights),
+    hasReportMenus: await authDbService.tableExists('ReportMenus'),
+    hasMenus: await authDbService.tableExists('Menus'),
+    hasRoleRights: await authDbService.tableExists('RoleRights'),
   };
 };
 

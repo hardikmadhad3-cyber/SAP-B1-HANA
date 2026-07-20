@@ -2,7 +2,13 @@ const sapService = require("../services/sapService");
 const masterDataDbService = require("../services/masterDataDbService");
 const authDbService = require("../services/authDbService");
 const businessPartnerDbService = require("../services/businessPartnerDbService");
-const { sanitizeBusinessPartnerForDuplicate } = require("../services/businessPartnerPayloadCleanup");
+const {
+  normalizeBusinessPartnerDuplicateForTargetType,
+  preserveBusinessPartnerUpdateCollectionKeys,
+  sanitizeBusinessPartnerDuplicateOverrides,
+  sanitizeBusinessPartnerForDuplicate,
+  sanitizeBusinessPartnerPayloadForSap,
+} = require("../services/businessPartnerPayloadCleanup");
 
 const parseMetadataEnumMembers = (metadataXml, enumName) => {
   const enumStart = metadataXml.indexOf(`<EnumType Name="${enumName}"`);
@@ -13,6 +19,22 @@ const parseMetadataEnumMembers = (metadataXml, enumName) => {
 
   const enumBlock = metadataXml.slice(enumStart, enumEnd);
   return [...enumBlock.matchAll(/<Member Name="([^"]+)"/g)].map((match) => match[1]);
+};
+
+const sanitizePayloadForActiveSap = async (payload) => {
+  const companyDb = await sapService.resolveCompanyDb();
+  const { payload: sanitizedPayload, removedPaths } = await sanitizeBusinessPartnerPayloadForSap(payload, {
+    companyDb,
+    loadMetadataXml: async () => {
+      const response = await sapService.request({ method: "GET", url: "/$metadata" });
+      return typeof response.data === "string" ? response.data : String(response.data || "");
+    },
+  });
+
+  if (removedPaths.length > 0) {
+    console.warn(`[SAP BP payload] Removed unsupported properties for ${companyDb}: ${removedPaths.join(", ")}`);
+  }
+  return sanitizedPayload;
 };
 
 const formatSapEnumLabel = (value) =>
@@ -232,6 +254,9 @@ const createBP = async (req, res) => {
       if (!newCardCode && isManual) {
         return res.status(400).json({ message: "CardCode is required for duplicate business partner." });
       }
+      if (!String(data.CardName || "").trim()) {
+        return res.status(400).json({ message: "CardName is required for duplicate business partner." });
+      }
 
       if (!newCardCode && !isManual) {
         if (!next || next.isManual || !next.formattedCode) {
@@ -242,35 +267,66 @@ const createBP = async (req, res) => {
 
       const sourceResponse = await sapService.request({
         method: "GET",
-        url: `/BusinessPartners('${encodeURIComponent(duplicateFromCardCode)}')`,
+        url: sapService.buildStringKeyPath("BusinessPartners", duplicateFromCardCode),
       });
 
-      const duplicatePayload = sanitizeBusinessPartnerForDuplicate(sourceResponse.data, {
+      let duplicatePayload = sanitizeBusinessPartnerForDuplicate(sourceResponse.data, {
         CardCode: newCardCode,
         ...(Object.prototype.hasOwnProperty.call(data, "CardName") ? { CardName: data.CardName } : {}),
       });
+      duplicatePayload = normalizeBusinessPartnerDuplicateForTargetType(
+        duplicatePayload,
+        sourceResponse.data.CardType,
+        cardType,
+      );
 
-      const requestOverrides = { ...data };
-      delete requestOverrides._duplicateFromCardCode;
-      delete requestOverrides.CardCode;
-      delete requestOverrides.Series;
+      const requestOverrides = sanitizeBusinessPartnerDuplicateOverrides(data);
+      if (sourceResponse.data.CardType !== cardType) {
+        [
+          "BPPaymentMethods",
+          "PeymentMethodCode",
+          "DefaultAccount",
+          "DebitorAccount",
+          "DownPaymentClearAct",
+          "DownPaymentInterimAccount",
+          "BPWithholdingTaxCollection",
+          "WTCode",
+          "SubjectToWithholdingTax",
+          "WithholdingTaxCertified",
+        ].forEach((field) => delete requestOverrides[field]);
+      }
       Object.entries(requestOverrides).forEach(([key, value]) => {
         if (value !== undefined) duplicatePayload[key] = value;
       });
 
       duplicatePayload.CardCode = newCardCode;
       duplicatePayload.CardType = cardType;
+      if (Array.isArray(duplicatePayload.BPFiscalTaxIDCollection)) {
+        duplicatePayload.BPFiscalTaxIDCollection = duplicatePayload.BPFiscalTaxIDCollection.map((row) => {
+          const nextRow = { ...row };
+          const taxId12 = String(nextRow.TaxId12 || "");
+          if (taxId12.includes(duplicateFromCardCode)) {
+            if (isManual) {
+              nextRow.TaxId12 = taxId12.replaceAll(duplicateFromCardCode, newCardCode);
+            } else {
+              delete nextRow.TaxId12;
+            }
+          }
+          return nextRow;
+        });
+      }
       if (!isManual) {
         duplicatePayload.Series = Number(series);
       } else {
         delete duplicatePayload.Series;
       }
       await normalizeBusinessPartnerAddressPayload(duplicatePayload, req);
+      const sanitizedDuplicatePayload = await sanitizePayloadForActiveSap(duplicatePayload);
 
       const result = await sapService.request({
         method: "POST",
         url: "/BusinessPartners",
-        data: duplicatePayload,
+        data: sanitizedDuplicatePayload,
         preserveEmptyStrings: true,
       });
       return res.status(201).json(result.data);
@@ -278,6 +334,7 @@ const createBP = async (req, res) => {
 
     if (!data.CardType) return res.status(400).json({ message: "CardType is required." });
     data.CardName = String(data.CardName ?? "");
+    if (!data.CardName.trim()) return res.status(400).json({ message: "CardName is required." });
     const series = String(data.Series ?? "");
     let isManual = !series || series === "0";
 
@@ -301,7 +358,10 @@ const createBP = async (req, res) => {
       delete data.Series;
     }
 
-    const result = await sapService.createItem_generic("/BusinessPartners", data);
+    const result = await sapService.createItem_generic(
+      "/BusinessPartners",
+      await sanitizePayloadForActiveSap(data),
+    );
     res.status(201).json(result);
   } catch (err) {
     const msg =
@@ -317,7 +377,7 @@ const getBP = async (req, res) => {
   try {
     const response = await sapService.request({
       method: "GET",
-      url: `/BusinessPartners('${encodeURIComponent(req.params.cardCode)}')`,
+      url: sapService.buildStringKeyPath("BusinessPartners", req.params.cardCode),
     });
     res.json(await enrichBP(response.data));
   } catch (err) {
@@ -329,16 +389,30 @@ const getBP = async (req, res) => {
 const updateBP = async (req, res) => {
   const { cardCode } = req.params;
   try {
-    await normalizeBusinessPartnerAddressPayload(req.body, req);
+    const payload = { ...req.body };
+    delete payload.CardCode;
+    delete payload.CardType;
+    delete payload.Series;
+    delete payload._duplicateFromCardCode;
+    await normalizeBusinessPartnerAddressPayload(payload, req);
+    const currentResponse = await sapService.request({
+      method: "GET",
+      url: sapService.buildStringKeyPath("BusinessPartners", cardCode),
+    });
+    const payloadWithCollectionKeys = preserveBusinessPartnerUpdateCollectionKeys(
+      payload,
+      currentResponse.data,
+    );
+    const sanitizedPayload = await sanitizePayloadForActiveSap(payloadWithCollectionKeys);
 
     await sapService.request({
       method: "PATCH",
-      url: `/BusinessPartners('${encodeURIComponent(cardCode)}')`,
-      data: req.body,
+      url: sapService.buildStringKeyPath("BusinessPartners", cardCode),
+      data: sanitizedPayload,
     });
     const response = await sapService.request({
       method: "GET",
-      url: `/BusinessPartners('${encodeURIComponent(cardCode)}')`,
+      url: sapService.buildStringKeyPath("BusinessPartners", cardCode),
     });
     res.json(await enrichBP(response.data));
   } catch (err) {
@@ -378,10 +452,29 @@ const lookupBPGroups = async (req, res) => {
 
     const rows = await businessPartnerDbService.getBusinessPartnerGroups(req.query.query || "", {
       databaseName: databaseName || undefined,
+      bpType: req.query.bpType || "",
     });
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: "Could not load BP groups: " + err.message });
+  }
+};
+
+const lookupBPProperties = async (req, res) => {
+  try {
+    let databaseName = '';
+
+    if (req.auth?.userId && req.auth?.companyId) {
+      const assignedCompany = await authDbService.getAssignedCompanyForUser(req.auth.userId, req.auth.companyId);
+      databaseName = String(assignedCompany?.DbName || '').trim();
+    }
+
+    const rows = await businessPartnerDbService.getBusinessPartnerProperties({
+      databaseName: databaseName || undefined,
+    });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: "Could not load BP properties: " + err.message });
   }
 };
 
@@ -577,6 +670,7 @@ module.exports = {
   updateBP,
   searchBP,
   lookupBPGroups,
+  lookupBPProperties,
   lookupPaymentTerms,
   lookupSalesPersons,
   lookupPriceLists,

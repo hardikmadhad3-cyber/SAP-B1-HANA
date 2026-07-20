@@ -8,10 +8,13 @@ import FormSettingsPanel from '../../components/purchase-order/FormSettingsPanel
 import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import CopyFromModal from './components/CopyFromModal';
 import ItemSelectionModal from './components/ItemSelectionModal';
-import ReferenceInformationModal from './components/ReferenceInformationModal';
+import ReferenceInformationModal, {
+  getInventoryReferenceDocumentTypeLabel,
+} from './components/ReferenceInformationModal';
 import BatchAllocationModal from '../../components/BatchAllocationModal';
 import DistributionRuleAssignmentModal from '../../components/DistributionRuleAssignmentModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import {
   BATCH_QTY_TOLERANCE,
   getRequiredBatchQty,
@@ -25,6 +28,7 @@ import {
   fetchGoodsReceiptGoodsIssues,
   fetchGoodsReceiptItems,
   fetchGoodsReceiptMetadata,
+  fetchGoodsReceiptNextBatchNumber,
   fetchGoodsReceiptSeries,
   fetchGoodsReceiptWarehouses,
   submitGoodsReceipt,
@@ -32,6 +36,10 @@ import {
 } from '../../api/goodsReceiptApi';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
+import {
+  getDefaultInventoryPriceList,
+  getInventoryItemPrice,
+} from '../../utils/inventoryPriceLists';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   GOODS_RECEIPT_FORM_SETTINGS_STORAGE_KEY,
@@ -39,6 +47,8 @@ import {
   normalizeUdfState,
   readSavedFormSettings,
 } from '../../config/inventoryDocumentForm';
+import { openLinkedReferenceDocument } from '../../utils/sapLinkedNavigation';
+import { replaceRouteStatePreservingWindow } from '../../utils/copyToState';
 
 const TAB_NAMES = ['Contents', 'Attachments'];
 const today = () => new Date().toISOString().split('T')[0];
@@ -55,6 +65,7 @@ const createLine = (rowUdfFields = []) => ({
   quantity: '',
   unitPrice: '',
   total: '',
+  binLocationAllocation: '',
   warehouse: '',
   accountCode: '',
   itemCost: '',
@@ -124,6 +135,7 @@ const buildDistributionDimensions = (rules = []) => {
 function GoodsReceipt() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { upsertTask } = useSapWindowTaskbarActions();
   const fileInputRef = useRef(null);
   const attachmentsRef = useRef([]);
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
@@ -178,6 +190,8 @@ function GoodsReceipt() {
     error: '',
   });
   const [referenceModalOpen, setReferenceModalOpen] = useState(false);
+  const [referenceDocuments, setReferenceDocuments] = useState([]);
+  const [referenceDocumentsChanged, setReferenceDocumentsChanged] = useState(false);
   const [itemModal, setItemModal] = useState({
     open: false,
     lineIndex: -1,
@@ -206,11 +220,52 @@ function GoodsReceipt() {
     : currentDocEntry
       ? updateActionLabel
       : 'Add';
+  useEffect(() => {
+    const draft = location.state?.goodsReceiptDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setHeader(draft.header || createHeader());
+    setLines(Array.isArray(draft.lines) && draft.lines.length ? draft.lines : [createLine(rowUdfFields)]);
+    setHeaderUdfs(draft.headerUdfs || {});
+    setReferenceDocuments(Array.isArray(draft.referenceDocuments) ? draft.referenceDocuments : []);
+    setReferenceDocumentsChanged(Boolean(draft.referenceDocumentsChanged));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [location.state, navigate, location.pathname, rowUdfFields]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    goodsReceiptDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      referenceDocuments,
+      referenceDocumentsChanged,
+      activeTab,
+      isDirty,
+    },
+  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged]);
+
+  const openReferenceDocumentLink = useCallback((row) => {
+    openLinkedReferenceDocument({
+      transactionType: row?.transactionType,
+      docEntry: row?.docEntry,
+      docNumber: row?.docNumber,
+      sourcePath: location.pathname,
+      sourceTitle: `Goods Receipt${header.number || currentDocEntry ? ` #${header.number || currentDocEntry}` : ''}`,
+      sourceRestoreState: buildLinkedRestoreState(),
+      navigate,
+      upsertTask,
+    });
+  }, [buildLinkedRestoreState, currentDocEntry, header.number, location.pathname, navigate, upsertTask]);
+
   const markDirty = (event) => {
     if (event?.target?.closest?.('[data-document-dirty-ignore="true"]')) return;
     if (currentDocEntry) setIsDirty(true);
   };
-  const defaultPriceList = priceLists[0] || null;
+  const defaultPriceList = getDefaultInventoryPriceList(priceLists);
   const defaultBranch = branches[0] || null;
   const getBranchName = useCallback(
     (branchValue) => {
@@ -261,11 +316,7 @@ function GoodsReceipt() {
   };
 
   const getItemPrice = (item, priceList) => {
-    if (!item) return 0;
-    if (priceList && item.prices && item.prices[String(priceList)] != null) {
-      return Number(item.prices[String(priceList)] || 0);
-    }
-    return Number(item.lastPurchasePrice || 0);
+    return getInventoryItemPrice(item, priceList);
   };
 
   const normalizeLine = (line) => {
@@ -327,7 +378,8 @@ function GoodsReceipt() {
     }
 
     const itemFlags = getItemFlags(item);
-    const warehouseCode = line.warehouse || item.defaultWarehouse || '';
+    const fallbackWarehouse = branchFilteredWarehouses[0]?.whsCode || warehouses[0]?.whsCode || '';
+    const warehouseCode = line.warehouse || item.defaultWarehouse || fallbackWarehouse;
     return normalizeLine({
       ...line,
       itemCode: item.itemCode,
@@ -391,8 +443,9 @@ function GoodsReceipt() {
           return warehouse?.locationCode != null ? String(warehouse.locationCode) : '';
         };
         const loadedSeries = seriesResponse.data || [];
-        const defaultSeries = loadedSeries[0] || null;
-        const nextDefaultPriceList = metadata.priceLists?.[0] || null;
+        const defaultSeries =
+          loadedSeries.find((series) => series.isDefault) || loadedSeries[0] || null;
+        const nextDefaultPriceList = getDefaultInventoryPriceList(metadata.priceLists);
         const nextDefaultBranch = metadata.branches?.[0] || null;
 
         setItems(loadedItems);
@@ -511,6 +564,8 @@ function GoodsReceipt() {
           ...createHeader(),
           ...document.header,
         }));
+        setReferenceDocuments(document.reference_documents || document.referenceDocuments || []);
+        setReferenceDocumentsChanged(false);
         setHeaderUdfs(document.headerUdfs || {});
         setLines(
           Array.isArray(document.lines) && document.lines.length
@@ -840,6 +895,28 @@ function GoodsReceipt() {
     });
   };
 
+  const applyBatchValidation = (line, rowErrors) => {
+    if (line.serialManaged) {
+      rowErrors.batches = 'Serial-managed items are not yet supported.';
+    }
+    if (line.batchManaged) {
+      if (!Array.isArray(line.batches) || line.batches.length === 0) {
+        rowErrors.batches = 'Batch allocation is required.';
+      } else {
+        const requiredBatchQty = getRequiredBatchQty(line);
+        const assignedBatchQty = sumBatchQty(line.batches);
+        const inventoryUOM = line.inventoryUOM || line.uomName || line.uomCode || 'Base UoM';
+        if (Math.abs(assignedBatchQty - requiredBatchQty) > BATCH_QTY_TOLERANCE) {
+          rowErrors.quantity = `Batch quantity (${assignedBatchQty.toFixed(
+            2
+          )} ${inventoryUOM}) must match line quantity (${requiredBatchQty.toFixed(
+            2
+          )} ${inventoryUOM})`;
+        }
+      }
+    }
+  };
+
   const validateDocument = () => {
     const nextErrors = { lines: {}, form: '' };
     const activeLines = lines.filter((line) => line.itemCode || line.baseEntry != null);
@@ -850,32 +927,21 @@ function GoodsReceipt() {
 
     lines.forEach((line, index) => {
       if (!line.itemCode && line.baseEntry == null) return;
-      if (line.baseEntry != null) return;
 
       const rowErrors = {};
+      if (line.baseEntry != null) {
+        applyBatchValidation(line, rowErrors);
+        if (Object.keys(rowErrors).length) {
+          nextErrors.lines[index] = rowErrors;
+        }
+        return;
+      }
+
       if (!line.itemCode) rowErrors.itemCode = 'Item required';
       if (line.itemCode && !getItem(line.itemCode)) rowErrors.itemCode = 'Invalid item';
       if (Number(line.quantity || 0) <= 0) rowErrors.quantity = 'Qty > 0';
       if (line.itemCode && !line.warehouse) rowErrors.warehouse = 'Warehouse required';
-      if (line.serialManaged) {
-        rowErrors.batches = 'Serial-managed items are not yet supported.';
-      }
-      if (line.batchManaged) {
-        if (!Array.isArray(line.batches) || line.batches.length === 0) {
-          rowErrors.batches = 'Batch allocation is required.';
-        } else {
-          const requiredBatchQty = getRequiredBatchQty(line);
-          const assignedBatchQty = sumBatchQty(line.batches);
-          const inventoryUOM = line.inventoryUOM || line.uomName || line.uomCode || 'Base UoM';
-          if (Math.abs(assignedBatchQty - requiredBatchQty) > BATCH_QTY_TOLERANCE) {
-            rowErrors.quantity = `Batch quantity (${assignedBatchQty.toFixed(
-              2
-            )} ${inventoryUOM}) must match line quantity (${requiredBatchQty.toFixed(
-              2
-            )} ${inventoryUOM})`;
-          }
-        }
-      }
+      applyBatchValidation(line, rowErrors);
 
       if (Object.keys(rowErrors).length) {
         nextErrors.lines[index] = rowErrors;
@@ -901,6 +967,8 @@ function GoodsReceipt() {
       branch: nextBranch,
     }));
     setHeaderUdfs(normalizeUdfState(headerUdfFields));
+    setReferenceDocuments([]);
+    setReferenceDocumentsChanged(false);
     setLines([{ ...createLine(rowUdfFields), location: '', branch: nextBranch }]);
     attachmentsRef.current.forEach((attachment) => {
       if (attachment.previewUrl) {
@@ -1101,6 +1169,26 @@ function GoodsReceipt() {
     closeBatchModal();
   };
 
+  const saveReferenceDocuments = (rows) => {
+    setReferenceDocuments(rows);
+    setReferenceDocumentsChanged(true);
+    if (currentDocEntry) setIsDirty(true);
+  };
+
+  const openFirstBatchErrorModal = () => {
+    const lineIndex = lines.findIndex((line) => {
+      if (!line.itemCode || !line.batchManaged || line.serialManaged) return false;
+      if (!Array.isArray(line.batches) || line.batches.length === 0) return true;
+      const requiredBatchQty = getRequiredBatchQty(line);
+      const assignedBatchQty = sumBatchQty(line.batches);
+      return Math.abs(assignedBatchQty - requiredBatchQty) > BATCH_QTY_TOLERANCE;
+    });
+
+    if (lineIndex < 0) return;
+    setActiveTab('Contents');
+    window.setTimeout(() => openBatchModal(lineIndex), 0);
+  };
+
   const openCopyFromModal = () => {
     setSelectedCopyDocEntry(null);
     setCopyFromModal(true);
@@ -1184,6 +1272,7 @@ function GoodsReceipt() {
         error: 'Fix the highlighted line errors before saving.',
         success: '',
       }));
+      openFirstBatchErrorModal();
       return;
     }
 
@@ -1193,6 +1282,9 @@ function GoodsReceipt() {
       const payload = {
         header,
         header_udfs: normalizeUdfState(headerUdfFields, headerUdfs),
+        reference_documents: referenceDocuments,
+        reference_documents_changed:
+          referenceDocumentsChanged || (!currentDocEntry && referenceDocuments.length > 0),
         lines: lines
           .filter((line) => line.itemCode || line.baseEntry != null)
           .map((line) => ({
@@ -1252,6 +1344,7 @@ function GoodsReceipt() {
         setCurrentDocEntry(Number(result.docEntry));
       }
       setIsDirty(false);
+      setReferenceDocumentsChanged(false);
       setHeader((current) => ({
         ...current,
         number: result.docNum != null ? String(result.docNum) : current.number,
@@ -1285,31 +1378,42 @@ function GoodsReceipt() {
   const visibleHeaderUdfFields = headerUdfFields.filter(
     (field) => formSettings.headerUdfs?.[field.key]?.visible !== false
   );
+  const isRightSidebarOpen = sidebarOpen || formSettingsOpen;
+  const primaryReferenceDocument = referenceDocuments.find(
+    (row) => String(row.transactionType || row.docNumber || row.docEntry || '').trim()
+  );
+  const referencedDocumentDisplay = header.referencedDocument
+    ? `${header.referencedDocument.sourceLabel} ${header.referencedDocument.docNum}`
+    : primaryReferenceDocument
+      ? `${getInventoryReferenceDocumentTypeLabel(primaryReferenceDocument.transactionType)} ${
+          primaryReferenceDocument.docNumber || primaryReferenceDocument.docEntry
+        }`
+      : '';
 
   return (
-    <form className={`po-page gr-goods-receipt__page inventory-document-page${sidebarOpen || formSettingsOpen ? ' inventory-document-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
-      <div className="po-toolbar">
-        <div className="po-toolbar__title">
+    <form className={`po-page sap-document-page gr-goods-receipt__page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+      <div className="po-toolbar sap-document-toolbar">
+        <span className="po-toolbar__title sap-document-toolbar__title">
           Goods Receipt{currentDocEntry ? ` - #${header.number || currentDocEntry}` : ''}
-        </div>
+        </span>
         <span className={`po-mode-badge po-mode-badge--${currentDocEntry ? 'update' : 'add'}`}>
           {currentDocEntry ? 'Update' : 'Add'} Mode
         </span>
-        <button type="submit" className="po-btn po-btn--primary" disabled={pageState.posting} title={primaryActionLabel}>
+        <button type="submit" className="po-btn po-btn--primary sap-document-toolbar__primary" disabled={pageState.posting} title={primaryActionLabel}>
           {primaryActionLabel}
         </button>
         <button
           type="button"
-          className="po-btn po-btn--danger"
+          className="po-btn sap-document-toolbar__cancel"
           onClick={resetForm}
           disabled={pageState.posting}
         >
           Cancel
         </button>
-        <button type="button" className="po-btn" onClick={() => navigate('/goods-receipt/find')}>
+        <button type="button" className="po-btn sap-document-toolbar__find" onClick={() => navigate('/goods-receipt/find')}>
           Find
         </button>
-        <button type="button" className="po-btn" onClick={resetForm}>
+        <button type="button" className="po-btn sap-document-toolbar__new" onClick={resetForm}>
           New
         </button>
         <button
@@ -1320,7 +1424,7 @@ function GoodsReceipt() {
         >
           Duplicate
         </button>
-        <button type="button" className="po-btn" onClick={() => {
+        <button type="button" className="po-btn sap-document-toolbar__udf" onClick={() => {
           setFormSettingsOpen(false);
           setSidebarOpen((open) => !open);
         }}>
@@ -1328,7 +1432,7 @@ function GoodsReceipt() {
         </button>
         <button
           type="button"
-          className="po-btn"
+          className="po-btn sap-document-toolbar__settings"
           onClick={() => {
             setSidebarOpen(false);
             setFormSettingsOpen((open) => !open);
@@ -1352,7 +1456,7 @@ function GoodsReceipt() {
               if (!isActive) dropdown.classList.add('active');
             }}
           >
-            Copy From v
+            Copy From
           </button>
           <div className="po-dropdown-menu">
             <button
@@ -1380,6 +1484,8 @@ function GoodsReceipt() {
       {pageState.error && <div className="po-alert po-alert--error">{pageState.error}</div>}
       {pageState.success && <div className="po-alert po-alert--success">{pageState.success}</div>}
 
+      <div className={`po-layout${isRightSidebarOpen ? ' is-sidebar-open' : ''}`}>
+        <div className="po-layout__main">
       <div className="po-header-card">
         <div className="gr-goods-receipt__header-grid">
           <div className="po-field-grid" style={{ gridTemplateColumns: '1fr' }}>
@@ -1469,11 +1575,7 @@ function GoodsReceipt() {
                 <input
                   className="po-field__input"
                   readOnly
-                  value={
-                    header.referencedDocument
-                      ? `${header.referencedDocument.sourceLabel} ${header.referencedDocument.docNum}`
-                      : ''
-                  }
+                  value={referencedDocumentDisplay}
                 />
                 <button
                   type="button"
@@ -1576,6 +1678,32 @@ function GoodsReceipt() {
         </div>
       </div>
 
+        </div>
+
+        <HeaderUdfSidebar
+          className="po-layout__sidebar"
+          isOpen={sidebarOpen}
+          fields={visibleHeaderUdfFields}
+          formSettings={formSettings}
+          values={headerUdfs}
+          disabled={pageState.posting}
+          onFieldChange={handleHeaderUdfChange}
+          onClose={() => setSidebarOpen(false)}
+        />
+
+        <FormSettingsPanel
+          variant="sidebar"
+          className="po-layout__sidebar"
+          isOpen={formSettingsOpen}
+          onClose={() => setFormSettingsOpen(false)}
+          matrixFields={GOODS_RECEIPT_MATRIX_COLUMNS}
+          headerUdfFields={headerUdfFields}
+          rowUdfFields={rowUdfFields}
+          formSettings={formSettings}
+          onSettingChange={updateFormSetting}
+        />
+      </div>
+
       <CopyFromModal
         isOpen={copyFromModal}
         goodsIssues={goodsIssues}
@@ -1589,10 +1717,13 @@ function GoodsReceipt() {
       <ReferenceInformationModal
         isOpen={referenceModalOpen}
         onClose={() => setReferenceModalOpen(false)}
+        onSave={saveReferenceDocuments}
+        referenceDocuments={referenceDocuments}
         referencedDocument={header.referencedDocument}
         documentDate={header.documentDate}
         remarks={header.remarks}
         documentTotal={documentTotal}
+        onOpenDocument={openReferenceDocumentLink}
       />
 
       <ItemSelectionModal
@@ -1629,31 +1760,9 @@ function GoodsReceipt() {
         availableBatches={batchModal.availableBatches}
         loading={batchModal.loading}
         error={batchModal.error}
+        onGenerateBatchNumber={() => fetchGoodsReceiptNextBatchNumber('JKL')}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
-      />
-
-      <HeaderUdfSidebar
-        className="inventory-document-sidebar"
-        isOpen={sidebarOpen}
-        fields={visibleHeaderUdfFields}
-        formSettings={formSettings}
-        values={headerUdfs}
-        disabled={pageState.posting}
-        onFieldChange={handleHeaderUdfChange}
-        onClose={() => setSidebarOpen(false)}
-      />
-
-      <FormSettingsPanel
-        variant="sidebar"
-        className="inventory-document-sidebar"
-        isOpen={formSettingsOpen}
-        onClose={() => setFormSettingsOpen(false)}
-        matrixFields={GOODS_RECEIPT_MATRIX_COLUMNS}
-        headerUdfFields={headerUdfFields}
-        rowUdfFields={rowUdfFields}
-        formSettings={formSettings}
-        onSettingChange={updateFormSetting}
       />
 
       <input

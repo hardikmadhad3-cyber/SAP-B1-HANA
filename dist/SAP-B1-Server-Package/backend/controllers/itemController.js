@@ -43,8 +43,8 @@ const getDuplicateSourceItemCode = (data = {}) =>
   ).trim();
 
 const validateItemCodeFormatValue = (itemCode) => {
-  if (!/^[a-zA-Z0-9\-_]+$/.test(itemCode)) {
-    return "Item Code can only contain letters, numbers, hyphens, and underscores.";
+  if (/[\u0000-\u001F\u007F]/.test(itemCode)) {
+    return "Item Code cannot contain control characters.";
   }
   if (itemCode.length < 3) {
     return "Item Code must be at least 3 characters long.";
@@ -201,32 +201,6 @@ const createItem = async (req, res) => {
   };
   validateUoMConsistency();
   
-  // === Validate Manage Item By configuration ===
-  const manageItemBy = data.ManageItemBy || "None";
-  
-  if (manageItemBy === "Serial") {
-    if (!data.SerialGenerationType) {
-      return res.status(400).json({ message: "Serial Generation Type is required for serial items." });
-    }
-    if (data.SerialGenerationType === "Auto") {
-      if (!data.SerialNumberLength || isNaN(data.SerialNumberLength) || parseInt(data.SerialNumberLength) <= 0) {
-        return res.status(400).json({ message: "Serial Number Length is required and must be a positive number for auto-generated serials." });
-      }
-      if (!data.StartingSerialNumber || data.StartingSerialNumber.trim() === "") {
-        return res.status(400).json({ message: "Starting Serial Number is required for auto-generated serials." });
-      }
-    }
-  }
-  
-  if (manageItemBy === "Batch") {
-    if (!data.BatchGenerationType) {
-      return res.status(400).json({ message: "Batch Generation Type is required for batch items." });
-    }
-    if (data.BatchGenerationType === "Auto" && (!data.BatchNumberPrefix || data.BatchNumberPrefix.trim() === "")) {
-      return res.status(400).json({ message: "Batch Number Prefix is required for auto-generated batches." });
-    }
-  }
-  
   // === Item Code Format Validation ===
   const validateItemCodeFormat = () => {
     const itemCode = data.ItemCode.trim();
@@ -372,32 +346,6 @@ const updateItem = async (req, res) => {
     }
   };
   validateUoMConsistency();
-  
-  // === Validate Manage Item By configuration ===
-  const manageItemBy = data.ManageItemBy || "None";
-  
-  if (manageItemBy === "Serial") {
-    if (!data.SerialGenerationType) {
-      return res.status(400).json({ message: "Serial Generation Type is required for serial items." });
-    }
-    if (data.SerialGenerationType === "Auto") {
-      if (!data.SerialNumberLength || isNaN(data.SerialNumberLength) || parseInt(data.SerialNumberLength) <= 0) {
-        return res.status(400).json({ message: "Serial Number Length is required and must be a positive number for auto-generated serials." });
-      }
-      if (!data.StartingSerialNumber || data.StartingSerialNumber.trim() === "") {
-        return res.status(400).json({ message: "Starting Serial Number is required for auto-generated serials." });
-      }
-    }
-  }
-  
-  if (manageItemBy === "Batch") {
-    if (!data.BatchGenerationType) {
-      return res.status(400).json({ message: "Batch Generation Type is required for batch items." });
-    }
-    if (data.BatchGenerationType === "Auto" && (!data.BatchNumberPrefix || data.BatchNumberPrefix.trim() === "")) {
-      return res.status(400).json({ message: "Batch Number Prefix is required for auto-generated batches." });
-    }
-  }
   
   try {
     const result = await itemService.updateItem(itemCode, data);

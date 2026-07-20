@@ -13,8 +13,10 @@ const COLUMN_WIDTHS = {
   quantity: 110,
   unitPrice: 110,
   unitPriceUdf: 110,
+  price: 110,
   stdDiscount: 90,
   taxCode: 115,
+  taxCodeRepeat: 110,
   taxAmount: 120,
   totalBeforeTax: 135,
   totalLC: 115,
@@ -26,6 +28,11 @@ const COLUMN_WIDTHS = {
   loc: 115,
   branch: 115,
   blanketAgreementNo: 150,
+  U_Cost_Sheet: 125,
+  U_PackingType: 140,
+  U_ContainerType: 145,
+  U_GrossWt: 110,
+  U_TotalPackage: 130,
   sellerBrokerageAmtPer: 160,
   sellerBrokeragePercent: 175,
   buyerPaymentTerms: 175,
@@ -35,6 +42,8 @@ const COLUMN_WIDTHS = {
   freightProviderName: 165,
   documentCreated: 140,
   brokerageNumber: 145,
+  U_Fix_Brock_B: 135,
+  U_Fix_Brock_S: 140,
 };
 
 const INDEX_COL_WIDTH = 42;
@@ -61,6 +70,35 @@ const formatDateDisplay = (value) => {
   return String(value).split('T')[0];
 };
 
+const normalizeLookupToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, '')
+    .replace(/[^A-Z0-9]/g, '');
+
+const findUdfFieldForColumn = (column = {}, rowUdfFields = []) => {
+  const columnTokens = [
+    column.key,
+    column.sapField,
+    column.fieldName,
+    column.label,
+  ].map(normalizeLookupToken).filter(Boolean);
+
+  return (rowUdfFields || []).find((field) => {
+    const fieldTokens = [
+      field.key,
+      field.sapField,
+      field.aliasId,
+      field.label,
+      field.description,
+      field.Descr,
+    ].map(normalizeLookupToken).filter(Boolean);
+
+    return columnTokens.some((token) => fieldTokens.includes(token));
+  });
+};
+
 export default function ContentsTab({
   lines,
   onLineChange,
@@ -76,16 +114,38 @@ export default function ContentsTab({
   onOpenItemModal,
   getBranchName,
   formSettings = {},
+  matrixFields = BASE_MATRIX_COLUMNS,
   rowUdfFields = [],
   onRowUdfChange,
 }) {
   const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
+  const baseMatrixFields = Array.isArray(matrixFields) && matrixFields.length ? matrixFields : BASE_MATRIX_COLUMNS;
+  const representedUdfTokens = new Set(
+    baseMatrixFields.flatMap((column) => [
+      column.key,
+      column.sapField,
+      column.fieldName,
+      column.label,
+    ].map(normalizeLookupToken).filter(Boolean))
+  );
+  const extraRowUdfFields = rowUdfFields.filter((field) => {
+    const tokens = [
+      field.key,
+      field.sapField,
+      field.aliasId,
+      field.label,
+      field.description,
+      field.Descr,
+    ].map(normalizeLookupToken).filter(Boolean);
+
+    return !tokens.some((token) => representedUdfTokens.has(token));
+  });
   const matrixColumns = [
-    ...BASE_MATRIX_COLUMNS.map((column) => ({
+    ...baseMatrixFields.map((column) => ({
       ...column,
       minWidth: COLUMN_WIDTHS[column.key] || 125,
     })),
-    ...rowUdfFields.map((field) => ({
+    ...extraRowUdfFields.map((field) => ({
       key: field.key,
       label: field.label || field.key,
       minWidth: field.type === 'textarea' ? 180 : 125,
@@ -188,6 +248,42 @@ export default function ContentsTab({
       </td>
     );
 
+    const shouldUseSapUdfLookup =
+      ['taxCodeRepeat', 'price'].includes(column.key) ||
+      [column.key, column.sapField, column.fieldName].some((value) =>
+        String(value || '').trim().toUpperCase().startsWith('U_')
+      );
+    const sapUdfField = shouldUseSapUdfLookup ? findUdfFieldForColumn(column, rowUdfFields) : null;
+    if (sapUdfField?.type === 'select' || sapUdfField?.options?.length) {
+      return (
+        <td key={column.key}>
+          <select
+            className="so-grid__input"
+            name={column.key}
+            value={line[column.key] || ''}
+            disabled={sapUdfField.readOnly || formSettings.rowUdfs?.[sapUdfField.key]?.active === false}
+            onChange={(e) => onLineChange(i, e)}
+          >
+            <option value=""></option>
+            {(sapUdfField.options || []).map((option) => {
+              const normalizedOption = typeof option === 'object' ? option : { value: option, label: option };
+              return (
+                <option key={normalizedOption.value} value={normalizedOption.value}>
+                  {normalizedOption.label}
+                </option>
+              );
+            })}
+            {line[column.key] && !(sapUdfField.options || []).some((option) => {
+              const normalizedOption = typeof option === 'object' ? option : { value: option, label: option };
+              return String(normalizedOption.value || '') === String(line[column.key] || '');
+            }) && (
+              <option value={line[column.key]}>{line[column.key]}</option>
+            )}
+          </select>
+        </td>
+      );
+    }
+
     const cellRenderers = {
       itemNo: () => (
         <td key="itemNo">
@@ -263,6 +359,18 @@ export default function ContentsTab({
             style={{ width: '100%', textAlign: 'left' }}
             name="taxCode"
             value={line.taxCode || ''}
+            onChange={(e) => onLineChange(i, e)}
+            taxCodes={effectiveTaxCodes}
+          />
+        </td>
+      ),
+      taxCodeRepeat: () => (
+        <td key="taxCodeRepeat">
+          <TaxCodeLookup
+            className="so-grid__input"
+            style={{ width: '100%', textAlign: 'left' }}
+            name="taxCodeRepeat"
+            value={line.taxCodeRepeat || ''}
             onChange={(e) => onLineChange(i, e)}
             taxCodes={effectiveTaxCodes}
           />
@@ -371,6 +479,11 @@ export default function ContentsTab({
       'sellerBillDiscount',
       'freightPurchase',
       'freightSales',
+      'price',
+      'U_GrossWt',
+      'U_TotalPackage',
+      'U_Fix_Brock_B',
+      'U_Fix_Brock_S',
     ]);
 
     return cellRenderers[column.key]

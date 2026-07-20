@@ -1,5 +1,6 @@
 const db = require('../db/odbc');
 const { getHeaderUdfValues, getLineUdfValues } = require('./udfMetadataService');
+const { mapInventoryPriceLists } = require('./inventoryPriceListUtils');
 
 const safe = async (promise) => {
   try {
@@ -30,6 +31,39 @@ const getTableColumns = async (tableName) => {
   return new Set(rows.map((row) => row.COLUMN_NAME));
 };
 
+const quoteSqlIdentifier = (identifier) => `[${String(identifier || '').replace(/]/g, ']]')}]`;
+
+const getColumnName = (columns, columnName) => (
+  [...columns].find((candidate) => String(candidate).toLowerCase() === String(columnName).toLowerCase())
+);
+
+const optionalColumn = (columns, tableAlias, columnName, alias, fallback = 'NULL') => {
+  const actualColumnName = getColumnName(columns, columnName);
+  return actualColumnName
+    ? `${tableAlias}.${quoteSqlIdentifier(actualColumnName)} AS ${quoteSqlIdentifier(alias)}`
+    : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
+};
+
+const getDefaultSeriesSql = async () => {
+  const numberingColumns = await getTableColumns('ONNM');
+  const defaultSeriesColumn = getColumnName(numberingColumns, 'DfltSeries');
+
+  if (!defaultSeriesColumn) {
+    return {
+      join: '',
+      select: '0',
+      order: 'T0.SeriesName',
+    };
+  }
+
+  const quotedDefaultSeriesColumn = quoteSqlIdentifier(defaultSeriesColumn);
+  return {
+    join: `LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode AND DEF.${quotedDefaultSeriesColumn} = T0.Series`,
+    select: `CASE WHEN DEF.${quotedDefaultSeriesColumn} IS NOT NULL THEN 1 ELSE 0 END`,
+    order: 'IsDefault DESC, T0.SeriesName',
+  };
+};
+
 const getItems = async () => {
   const [itemRows, priceRows] = await Promise.all([
     safe(
@@ -42,6 +76,7 @@ const getItems = async () => {
           T0.DfltWH AS DefaultWarehouse,
           CAST(ISNULL(T0.OnHand, 0) AS DECIMAL(19, 2)) AS InStock,
           CAST(ISNULL(T0.LastPurPrc, 0) AS DECIMAL(19, 6)) AS LastPurchasePrice,
+          CAST(COALESCE(T0.LstEvlPric, T0.AvgPrice, 0) AS DECIMAL(19, 6)) AS LastEvaluatedPrice,
           CAST(ISNULL(T0.AvgPrice, 0) AS DECIMAL(19, 6)) AS ItemCost
         FROM OITM T0
         WHERE T0.InvntItem = 'Y'
@@ -80,6 +115,7 @@ const getItems = async () => {
     inStock: Number(row.InStock || 0),
     InStock: Number(row.InStock || 0),
     lastPurchasePrice: Number(row.LastPurchasePrice || 0),
+    lastEvaluatedPrice: Number(row.LastEvaluatedPrice || 0),
     itemCost: Number(row.ItemCost || 0),
     prices: priceMap[row.ItemCode] || {},
   }));
@@ -87,7 +123,10 @@ const getItems = async () => {
 
 const getWarehouses = async () => {
   const warehouseColumns = await getTableColumns('OWHS');
-  const locationExpression = warehouseColumns.has('Location') ? '[Location]' : 'NULL';
+  const locationColumn = getColumnName(warehouseColumns, 'Location');
+  const branchColumn = getColumnName(warehouseColumns, 'BPLId') || getColumnName(warehouseColumns, 'BPLid');
+  const locationExpression = locationColumn ? quoteSqlIdentifier(locationColumn) : 'NULL';
+  const branchExpression = branchColumn ? quoteSqlIdentifier(branchColumn) : 'NULL';
 
   return safe(
     db.query(`
@@ -95,7 +134,7 @@ const getWarehouses = async () => {
         WhsCode,
         WhsName,
         City,
-        BPLId AS BranchId,
+        ${branchExpression} AS BranchId,
         ${locationExpression} AS LocationCode
       FROM OWHS
       WHERE ISNULL(Inactive, 'N') <> 'Y'
@@ -112,18 +151,22 @@ const getWarehouses = async () => {
   );
 };
 
-const getSeries = async () =>
-  safe(
+const getSeries = async () => {
+  const defaultSeriesSql = await getDefaultSeriesSql();
+
+  return safe(
     db.query(`
       SELECT
         T0.Series,
         T0.SeriesName,
         T0.Indicator,
-        T0.NextNumber
+        T0.NextNumber,
+        ${defaultSeriesSql.select} AS IsDefault
       FROM NNM1 T0
+      ${defaultSeriesSql.join}
       WHERE T0.ObjectCode = '67'
         AND T0.Locked = 'N'
-      ORDER BY T0.SeriesName
+      ORDER BY ${defaultSeriesSql.order}
     `)
   ).then((rows) =>
     rows.map((row) => ({
@@ -131,8 +174,10 @@ const getSeries = async () =>
       seriesName: row.SeriesName,
       indicator: row.Indicator || '',
       nextNumber: row.NextNumber != null ? String(row.NextNumber) : '',
+      isDefault: Number(row.IsDefault) === 1,
     }))
   );
+};
 
 const getPriceLists = async () =>
   safe(
@@ -143,22 +188,24 @@ const getPriceLists = async () =>
       FROM OPLN
       ORDER BY ListNum
     `)
-  ).then((rows) =>
-    rows.map((row) => ({
-      id: String(row.ListNum),
-      name: row.ListName,
-    }))
-  );
+  ).then(mapInventoryPriceLists);
 
-const getBranches = async () =>
-  safe(
+const getBranches = async () => {
+  const branchColumns = await getTableColumns('OBPL');
+  const idColumn = getColumnName(branchColumns, 'BPLId') || getColumnName(branchColumns, 'BPLID');
+  const nameColumn = getColumnName(branchColumns, 'BPLName');
+  const disabledColumn = getColumnName(branchColumns, 'Disabled');
+
+  if (!idColumn || !nameColumn) return [];
+
+  return safe(
     db.query(`
       SELECT
-        BPLId,
-        BPLName
+        ${quoteSqlIdentifier(idColumn)} AS BPLId,
+        ${quoteSqlIdentifier(nameColumn)} AS BPLName
       FROM OBPL
-      WHERE ISNULL(Disabled, 'N') <> 'Y'
-      ORDER BY BPLName
+      ${disabledColumn ? `WHERE ISNULL(${quoteSqlIdentifier(disabledColumn)}, 'N') <> 'Y'` : ''}
+      ORDER BY ${quoteSqlIdentifier(nameColumn)}
     `)
   ).then((rows) =>
     rows.map((row) => ({
@@ -166,6 +213,7 @@ const getBranches = async () =>
       name: row.BPLName,
     }))
   );
+};
 
 const getBusinessPartners = async () =>
   safe(
@@ -299,6 +347,7 @@ const getInventoryTransferList = async () =>
   );
 
 const getInventoryTransfer = async (docEntry) => {
+  const headerColumns = await getTableColumns('OWTR');
   const headerRows = await safe(
     db.query(
       `
@@ -315,7 +364,7 @@ const getInventoryTransfer = async (docEntry) => {
           C1.Name AS ContactPersonName,
           T0.ShipToCode,
           T0.Address,
-          T0.BPLId AS BranchId,
+          ${optionalColumn(headerColumns, 'T0', 'BPLId', 'BranchId')},
           C2.ListNum AS PriceListNum,
           T0.Filler AS FromWarehouse,
           T0.ToWhsCode AS ToWarehouse,

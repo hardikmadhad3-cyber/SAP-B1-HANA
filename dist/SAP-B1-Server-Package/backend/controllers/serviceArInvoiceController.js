@@ -7,7 +7,8 @@ const getErrorPayload = (error, fallbackMessage) => ({
 
 const getReferenceData = async (req, res) => {
   try {
-    res.json(await serviceArInvoiceService.getReferenceData(req.query.company_id));
+    const data = await serviceArInvoiceService.getReferenceData(req.query.company_id, req.auth?.userId);
+    res.json(data);
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load Service A/R Invoice reference data.'));
   }
@@ -69,7 +70,11 @@ const updateServiceARInvoice = async (req, res) => {
 
 const getDocumentSeries = async (req, res) => {
   try {
-    const result = await serviceArInvoiceService.getDocumentSeries(req.query.date || null, req.query.transactionType || '');
+    const result = await serviceArInvoiceService.getDocumentSeries(
+      req.query.date || null,
+      req.query.transactionType || '',
+      req.query.branch || req.query.branchId || ''
+    );
     res.json({ series: Array.isArray(result) ? result : (result?.series || []) });
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load document series.'));

@@ -412,6 +412,28 @@ const renderField = (column, value, selectedRecord, isCreating, lookups, handleF
     );
   }
 
+  if (Array.isArray(column.options) && column.options.length) {
+    return (
+      <div key={column.name} className="admin-form-field">
+        <label htmlFor={fieldId}>{column.label}</label>
+        <select
+          id={fieldId}
+          className="admin-panel-input"
+          value={value ?? ''}
+          onChange={(event) => handleFieldChange(column, event.target.value)}
+        >
+          <option value="">Select {column.label}</option>
+          {column.options.map((option) => (
+            <option key={`${column.name}-${option.value}`} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        {column.helpText ? <small>{column.helpText}</small> : null}
+      </div>
+    );
+  }
+
   if (column.isForeignKey) {
     return (
       <div key={column.name} className="admin-form-field">

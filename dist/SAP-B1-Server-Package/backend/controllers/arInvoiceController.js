@@ -28,7 +28,7 @@ const getReferenceData = async (req, res) => {
     const data = await arInvoiceService.getReferenceData(req.query.company_id);
     res.json(data);
   } catch (error) {
-    res.status(500).json(getErrorPayload(error, 'Failed to load AR invoice reference data.'));
+    res.status(Number(error?.status) || 500).json(getErrorPayload(error, 'Failed to load AR invoice reference data.'));
   }
 };
 
