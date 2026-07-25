@@ -13,7 +13,7 @@ import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import ReferenceDocumentsModal from './components/ReferenceDocumentsModal';
 import AddressModal from '../../components/document/AddressComponentModal';
-import { mapAddressFields } from '../../utils/documentAddress';
+import { mapAddressFields, normalizeBusinessPartnerAddress } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import StateSelectionModal from '../../components/common/StateSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
@@ -1589,10 +1589,16 @@ function SalesOrder() {
         try {
             const r = await fetchSalesOrderCustomerDetails(code);
 
-            const contacts = r.data.contacts || [];
-            const payToAddresses = r.data.pay_to_addresses || [];
-            const shipToAddresses = r.data.ship_to_addresses || [];
-            const billToAddresses = r.data.bill_to_addresses || [];
+            const normalizeAddresses = (rows) => (Array.isArray(rows) ? rows : [])
+                .map((address) => normalizeBusinessPartnerAddress(address, code))
+                .filter((address) => address.Address);
+            const contacts = (Array.isArray(r.data.contacts) ? r.data.contacts : []).map((contact) => ({
+                ...contact,
+                CardCode: String(contact.CardCode || code).trim(),
+            }));
+            const payToAddresses = normalizeAddresses(r.data.pay_to_addresses);
+            const shipToAddresses = normalizeAddresses(r.data.ship_to_addresses);
+            const billToAddresses = normalizeAddresses(r.data.bill_to_addresses);
             setRefData(p => ({
                 ...p,
                 contacts: contacts,

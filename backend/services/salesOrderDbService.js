@@ -11,6 +11,9 @@ const {
   getMarketingDocumentUdfs,
   getUdfDefinitions,
 } = require('./udfMetadataService');
+const {
+  splitBusinessPartnerAddresses,
+} = require('./businessPartnerAddressDbUtils');
 
 const safe = async (promise) => {
   try {
@@ -2066,27 +2069,26 @@ const getContactsByCustomer = async (cardCode) => {
   return result;
 };
 const getAddressesByCustomer = async (cardCode) => {
-  const crd1FieldMetadata = await getTableFieldMetadata('CRD1');
-  const optionalCrd1Column = (candidates, alias, fallback = "''") => {
-    const resolvedColumn = candidates
-      .map((candidate) => resolveTableColumnName(crd1FieldMetadata, candidate))
-      .find(Boolean);
-    return resolvedColumn
-      ? `T0.${quoteSqlIdentifier(resolvedColumn)} AS ${quoteSqlIdentifier(alias)}`
-      : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
-  };
+  const normalizedCardCode = String(cardCode || '').trim();
+  if (!normalizedCardCode) return [];
 
-  return safe(db.query(`
-    SELECT T0.*, T0.CardCode, T0.AdresType, T0.Address,
-           T0.Street, T0.StreetNo, T0.Block, T0.Building,
-           T0.Address2, T0.Address3,
-           T0.City, T0.County, T0.State, T0.ZipCode, T0.Country,
-           ${optionalCrd1Column(['GSTRegnNo', 'GSTIN'], 'GSTIN')},
-           ${optionalCrd1Column(['GSTType'], 'GSTType')}
-    FROM   CRD1 T0
-    WHERE  T0.CardCode = @cardCode
-    ORDER  BY T0.AdresType, T0.Address
-  `, { cardCode }));
+  try {
+    const result = await db.query(`
+      SELECT T0.*
+      FROM CRD1 T0
+      WHERE UPPER(LTRIM(RTRIM(T0.CardCode))) = UPPER(LTRIM(RTRIM(@cardCode)))
+      ORDER BY T0.AdresType, T0.Address
+    `, { cardCode: normalizedCardCode });
+
+    return result.recordset || [];
+  } catch (error) {
+    const dialect = await db.getDialect().catch(() => 'unknown');
+    console.error(
+      `[Sales Order DB] Failed to load CRD1 addresses for ${normalizedCardCode} using ${dialect}:`,
+      error.message,
+    );
+    throw error;
+  }
 };
 
 const getStateFromAddress = async (cardCode, addressCode) => {
@@ -2258,19 +2260,26 @@ const getReferenceData = async () => {
 };
 
 const getCustomerDetails = async (cardCode) => {
-  
+  const normalizedCardCode = String(cardCode || '').trim();
+  if (!normalizedCardCode) {
+    return {
+      contacts: [],
+      bill_to_addresses: [],
+      pay_to_addresses: [],
+      ship_to_addresses: [],
+    };
+  }
+
   const [contacts, addresses] = await Promise.all([
-    
-    getContactsByCustomer(cardCode),
-    getAddressesByCustomer(cardCode),
+    getContactsByCustomer(normalizedCardCode),
+    getAddressesByCustomer(normalizedCardCode),
   ]);
 
-  const billTo = addresses.filter(a => a.AdresType === 'B');
-  const shipTo = addresses.filter(a => a.AdresType === 'S');
+  const { billTo, shipTo } = splitBusinessPartnerAddresses(addresses, normalizedCardCode);
 
   return {
     contacts: contacts.map(c => ({
-      CardCode:    c.CardCode,
+      CardCode:    String(c.CardCode || normalizedCardCode).trim(),
       CntctCode:   c.CntctCode,
       Name:        c.Name || `${c.FirstName || ''} ${c.LastName || ''}`.trim(),
       FirstName:   c.FirstName,

@@ -978,11 +978,7 @@ const getCustomerDetails = async (customerCode) => {
     return data;
   } catch (error) {
     console.error('[Sales Order Service] Failed to load customer details via ODBC:', error);
-    return {
-      contacts: [],
-      bill_to_addresses: [],
-      pay_to_addresses: [],
-    };
+    throw error;
   }
 };
 
