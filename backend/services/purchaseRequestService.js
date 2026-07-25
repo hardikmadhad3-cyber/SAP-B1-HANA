@@ -1,5 +1,6 @@
 const sapService = require('./sapService');
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const purchaseOrderDb = require('./purchaseOrderDbService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
@@ -125,7 +126,7 @@ const getVendorDetails = async (vendorCode) => {
     };
   }
 
-  const [contacts, addresses] = await Promise.all([
+  const [contacts, addressGroups] = await Promise.all([
     safeQuery(
       `
         SELECT
@@ -143,38 +144,10 @@ const getVendorDetails = async (vendorCode) => {
       `,
       { vendorCode }
     ),
-    safeQuery(
-      `
-        SELECT T0.*,
-          T0.CardCode,
-          T0.Address,
-          T0.AdresType,
-          T0.Street,
-          T0.StreetNo,
-          T0.Block,
-          T0.Building,
-          T0.Address2,
-          T0.Address3,
-          T0.City,
-          T0.County,
-          T0.State,
-          T0.ZipCode,
-          T0.Country,
-          T0.GSTRegnNo AS GSTIN
-        FROM CRD1 T0
-        WHERE T0.CardCode = @vendorCode
-        ORDER BY T0.Address
-      `,
-      { vendorCode }
-    ),
+    loadBusinessPartnerAddresses(db, vendorCode, { context: 'Purchase Request' }),
   ]);
 
-  const billToAddresses = addresses.filter(
-    (address) => address.AdresType === 'B' || address.AdresType === 'bo_BillTo'
-  );
-  const shipToAddresses = addresses.filter(
-    (address) => address.AdresType === 'S' || address.AdresType === 'bo_ShipTo'
-  );
+  const { billTo: billToAddresses, shipTo: shipToAddresses } = addressGroups;
 
   return {
     contacts,

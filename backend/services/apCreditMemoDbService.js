@@ -1,4 +1,5 @@
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
@@ -285,27 +286,10 @@ const getContactsByVendor = async (cardCode) => safe(db.query(`
   ORDER BY T0.Name
 `, { cardCode }));
 
-const getAddressesByVendor = async (cardCode) => safe(db.query(`
-  SELECT T0.*,
-    T0.CardCode,
-    T0.Address,
-    T0.AdresType,
-    T0.Street,
-    T0.StreetNo,
-    T0.Block,
-    T0.Building,
-    T0.Address2,
-    T0.Address3,
-    T0.City,
-    T0.County,
-    T0.State,
-    T0.ZipCode,
-    T0.Country,
-    T0.GSTRegnNo AS GSTIN
-  FROM CRD1 T0
-  WHERE T0.CardCode = @cardCode
-  ORDER BY T0.Address
-`, { cardCode }));
+const getAddressesByVendor = async (cardCode) => {
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'AP Credit Memo' });
+  return addresses;
+};
 
 const getVendorGSTProfile = async (cardCode) => {
   const rows = await safe(db.query(`

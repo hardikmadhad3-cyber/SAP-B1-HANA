@@ -12,6 +12,7 @@ const {
   getUdfDefinitions,
 } = require('./udfMetadataService');
 const {
+  loadBusinessPartnerAddresses,
   splitBusinessPartnerAddresses,
 } = require('./businessPartnerAddressDbUtils');
 
@@ -2069,26 +2070,8 @@ const getContactsByCustomer = async (cardCode) => {
   return result;
 };
 const getAddressesByCustomer = async (cardCode) => {
-  const normalizedCardCode = String(cardCode || '').trim();
-  if (!normalizedCardCode) return [];
-
-  try {
-    const result = await db.query(`
-      SELECT T0.*
-      FROM CRD1 T0
-      WHERE UPPER(LTRIM(RTRIM(T0.CardCode))) = UPPER(LTRIM(RTRIM(@cardCode)))
-      ORDER BY T0.AdresType, T0.Address
-    `, { cardCode: normalizedCardCode });
-
-    return result.recordset || [];
-  } catch (error) {
-    const dialect = await db.getDialect().catch(() => 'unknown');
-    console.error(
-      `[Sales Order DB] Failed to load CRD1 addresses for ${normalizedCardCode} using ${dialect}:`,
-      error.message,
-    );
-    throw error;
-  }
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'Sales Order' });
+  return addresses;
 };
 
 const getStateFromAddress = async (cardCode, addressCode) => {

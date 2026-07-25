@@ -61,14 +61,8 @@ const getVendorDetails = async (vendorCode) => {
     const result = await grpoDb.getVendorDetails(vendorCode);
     return result;
   } catch (error) {
-    return {
-      contacts: [],
-      pay_to_addresses: [],
-      ship_to_addresses: [],
-      bill_to_addresses: [],
-      gstin: '',
-      vendorState: '',
-    };
+    console.error('[GRPO Service] Failed to load vendor details:', error);
+    throw error;
   }
 };
 

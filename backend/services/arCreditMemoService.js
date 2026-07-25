@@ -206,12 +206,8 @@ const getCustomerDetails = async (customerCode) => {
     const data = await arCreditMemoDb.getCustomerDetails(customerCode);
     return data;
   } catch (error) {
-   return {
-      customer: null,
-      contacts: [],
-      pay_to_addresses: [],
-      ship_to_addresses: [],
-    };
+    console.error('[AR Credit Memo Service] Failed to load customer details:', error);
+    throw error;
   }
 };
 

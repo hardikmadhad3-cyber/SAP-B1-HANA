@@ -286,8 +286,9 @@ const getReferenceData = async () => {
 const getVendorDetails = async (vendorCode) => {
   try {
     return await apInvoiceDb.getVendorDetails(vendorCode);
-  } catch (_error) {
-    return { contacts: [], pay_to_addresses: [], gstin: '', vendorState: '' };
+  } catch (error) {
+    console.error('[AP Invoice Service] Failed to load vendor details:', error);
+    throw error;
   }
 };
 

@@ -1,5 +1,12 @@
 const normalizeKey = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
+const BUSINESS_PARTNER_ADDRESS_SQL = `
+  SELECT T0.*
+  FROM CRD1 T0
+  WHERE UPPER(LTRIM(RTRIM(T0.CardCode))) = UPPER(LTRIM(RTRIM(@cardCode)))
+  ORDER BY T0.AdresType, T0.Address
+`;
+
 const getRowValue = (row = {}, aliases = []) => {
   const entries = Object.entries(row || {});
   for (const alias of aliases) {
@@ -63,8 +70,43 @@ const splitBusinessPartnerAddresses = (rows = [], fallbackCardCode = '') => {
   };
 };
 
+const buildBusinessPartnerAddressResponse = ({ billTo = [], shipTo = [] } = {}) => ({
+  pay_to_addresses: billTo,
+  bill_to_addresses: billTo,
+  ship_to_addresses: shipTo,
+});
+
+const loadBusinessPartnerAddresses = async (db, cardCode, options = {}) => {
+  const normalizedCardCode = normalizeText(cardCode);
+  if (!normalizedCardCode) {
+    return splitBusinessPartnerAddresses([], '');
+  }
+  if (!db || typeof db.query !== 'function') {
+    throw new TypeError('A database query service is required to load business partner addresses.');
+  }
+
+  try {
+    const result = await db.query(BUSINESS_PARTNER_ADDRESS_SQL, { cardCode: normalizedCardCode });
+    const rows = Array.isArray(result) ? result : (result?.recordset || []);
+    return splitBusinessPartnerAddresses(rows, normalizedCardCode);
+  } catch (error) {
+    const dialect = typeof db.getDialect === 'function'
+      ? await db.getDialect().catch(() => 'unknown')
+      : 'unknown';
+    const context = normalizeText(options.context) || 'Business Partner';
+    console.error(
+      `[${context} DB] Failed to load CRD1 addresses for ${normalizedCardCode} using ${dialect}:`,
+      error.message,
+    );
+    throw error;
+  }
+};
+
 module.exports = {
+  BUSINESS_PARTNER_ADDRESS_SQL,
+  buildBusinessPartnerAddressResponse,
   getRowValue,
+  loadBusinessPartnerAddresses,
   normalizeAddressType,
   normalizeBusinessPartnerAddress,
   splitBusinessPartnerAddresses,
