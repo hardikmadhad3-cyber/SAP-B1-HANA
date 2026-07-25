@@ -1,0 +1,61 @@
+/* Route Loading Styles */
+
+.route-loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  padding: 2rem;
+}
+
+.route-loading-container .spinner-border {
+  width: 3rem;
+  height: 3rem;
+}
+
+.route-loading-container .loading-text {
+  margin-top: 1rem;
+  color: #6c757d;
+  font-size: 1rem;
+}
+
+/* Error Container Styles */
+
+.error-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  padding: 2rem;
+  text-align: center;
+}
+
+.error-container h2 {
+  color: #dc3545;
+  margin-bottom: 1rem;
+}
+
+.error-container p {
+  color: #6c757d;
+  margin-bottom: 1.5rem;
+}
+
+.error-container button {
+  padding: 0.5rem 1.5rem;
+}
+
+/* Fade-in animation for lazy-loaded content */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.lazy-loaded-route {
+  animation: fadeIn 0.3s ease-in;
+}

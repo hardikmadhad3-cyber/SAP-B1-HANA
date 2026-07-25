@@ -1,0 +1,1132 @@
+import React from 'react';
+import TaxCodeLookup from '../../../components/TaxCodeLookup';
+import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
+import { getLineTotalsForDisplay } from '../../../utils/lineTotals';
+import { DELIVERY_WORKBOOK_COLUMNS } from '../../../config/workbookMatrixColumns';
+
+const TABLE_MIN_WIDTH = 4800;
+
+const MATRIX_COLS = DELIVERY_WORKBOOK_COLUMNS;
+
+const parseNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const formatDateDisplay = (value) => {
+  if (!value) return '';
+  return String(value).split('T')[0];
+};
+
+const pickerButtonStyle = {
+  padding: '0 6px',
+  fontSize: 11,
+  border: '1px solid #a0aab4',
+  background: 'linear-gradient(180deg, #fff 0%, #e8ecf0 100%)',
+  minWidth: '24px',
+  height: '22px',
+  cursor: 'pointer',
+  borderRadius: '2px',
+};
+
+const getLineFieldValue = (line = {}, key = '') => {
+  if (key === 'itemNo') {
+    return line.itemNo || line.ItemCode || line.itemCode || '';
+  }
+  if (key === 'itemDescription') {
+    return line.itemDescription || line.ItemDescription || line.Dscription || line.description || line.itemName || '';
+  }
+  return line[key] || '';
+};
+
+const compactColumnToken = (value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+const getColumnValueKey = (column = {}) => column.valueKey || column.rendererKey || column.key || '';
+
+const getUdfToken = (value) => String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
+
+const getLineUdfValue = (line = {}, key = '') => {
+  const udfValues = line.udf || {};
+  if (Object.prototype.hasOwnProperty.call(udfValues, key)) return udfValues[key];
+
+  const token = getUdfToken(key);
+  if (!token) return undefined;
+
+  const match = Object.entries(udfValues).find(([udfKey]) => getUdfToken(udfKey) === token);
+  return match ? match[1] : undefined;
+};
+
+const dedupeColumns = (columns = []) => {
+  const seen = new Set();
+  return columns.filter((column) => {
+    if (!column?.key) return false;
+    const identity = compactColumnToken(column.key || column.label || getColumnValueKey(column));
+    if (!identity) return false;
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+};
+
+const getPriceAfterDiscount = (line = {}) => {
+  const unitPrice = parseNumber(line.unitPrice);
+  const discountPercent = parseNumber(line.stdDiscount);
+  if (!unitPrice) return '';
+  return (unitPrice * (1 - (discountPercent / 100))).toFixed(2);
+};
+
+const formatSapAmountWithCurrency = (value, currency = '', decimals = 6) => {
+  if (value === undefined || value === null || String(value).trim() === '') return '';
+  const numericValue = Number(value);
+  const formattedValue = Number.isFinite(numericValue)
+    ? numericValue.toFixed(decimals)
+    : String(value);
+  const normalizedCurrency = String(currency || '').trim();
+  return normalizedCurrency ? `${formattedValue} ${normalizedCurrency}` : formattedValue;
+};
+
+const getGenericUdfField = (column = {}) => {
+  const key = column.valueKey || column.rendererKey || column.key;
+  if (!String(key || '').startsWith('U_')) return null;
+
+  return {
+    key,
+    label: column.label || key,
+    type: column.type || (column.numeric ? 'number' : 'text'),
+    options: column.options,
+    readOnly: column.readOnly,
+  };
+};
+
+export default function ContentsTab({
+  lines,
+  onLineChange,
+  onNumBlur,
+  lineItemOptions,
+  onAddLine,
+  onRemoveLine,
+  onOpenBatchModal,
+  onOpenHSNModal,
+  onOpenItemModal,
+  onOpenQualityModal,
+  onOpenPaymentTermsModal,
+  getUomOptions,
+  effectiveTaxCodes,
+  effectiveWarehouses,
+  fmtTaxLabel,
+  getBranchName,
+  valErrors,
+  distributionRules = [],
+  formSettings = {},
+  matrixFields = MATRIX_COLS,
+  rowUdfFields = [],
+  onRowUdfChange,
+  currency = '',
+}) {
+  const sapItemTab = useSapItemCodeTab({ lineItemOptions, onLineChange, onOpenItemModal });
+  const getTaxAmountDisplay = (line) => {
+    if (String(line.taxAmount ?? '').trim()) return line.taxAmount;
+    const totals = getLineTotalsForDisplay(line, effectiveTaxCodes);
+    if (!totals.beforeTax || !totals.total) return '';
+    return (parseNumber(totals.total) - parseNumber(totals.beforeTax)).toFixed(2);
+  };
+
+  const validMatrixFields = Array.isArray(matrixFields) ? matrixFields.filter((field) => field && field.key) : [];
+  const safeRowUdfFields = Array.isArray(rowUdfFields) ? rowUdfFields.filter((field) => field && field.key) : [];
+  const sourceMatrixFields = validMatrixFields.length ? validMatrixFields : MATRIX_COLS;
+  const usesMetadataDrivenMatrix = sourceMatrixFields.some((field) => field?.sapControlled || field?.importedLayout);
+  const rowUdfByKey = new Map(safeRowUdfFields.map((field) => [field.key, field]));
+  const rowUdfByToken = new Map(safeRowUdfFields.map((field) => [getUdfToken(field.key), field]));
+  const baseColumnByKey = new Map(MATRIX_COLS.map((field) => [field.key, field]));
+  const isVisibleBySetting = (field = {}, setting = {}) => (
+    setting?.visible !== undefined ? setting.visible !== false : field.visible !== false
+  );
+  const matrixColumns = [
+    ...sourceMatrixFields.map((field, index) => {
+      const rendererKey = field.rendererKey || field.valueKey || field.key;
+      return {
+        ...(baseColumnByKey.get(rendererKey) || {}),
+        ...field,
+        key: field.key,
+        rendererKey,
+        valueKey: field.valueKey || rendererKey,
+        minWidth: field.minWidth || field.width || baseColumnByKey.get(rendererKey)?.minWidth || 125,
+        order: Number(field.order ?? field.columnOrder ?? index + 1),
+        field: field.isUdf
+          ? (
+            rowUdfByKey.get(field.valueKey || field.key) ||
+            rowUdfByKey.get(field.key) ||
+            rowUdfByToken.get(getUdfToken(field.valueKey || field.key)) ||
+            rowUdfByToken.get(getUdfToken(field.key)) ||
+            field.field
+          )
+          : field.field,
+      };
+    }),
+    ...(usesMetadataDrivenMatrix ? [] : safeRowUdfFields.map((field) => ({
+      key: field.key,
+      label: field.label || field.key,
+      minWidth: field.type === 'textarea' ? 180 : 125,
+      isUdf: true,
+      field,
+    }))),
+  ];
+
+  const visibleColumns = dedupeColumns(matrixColumns).filter((col) => {
+    const setting = formSettings.matrixColumns?.[col.key];
+    if (col.isUdf) {
+      return isVisibleBySetting(col, formSettings.rowUdfs?.[col.key] || {});
+    }
+    return isVisibleBySetting(col, setting || {});
+  }).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+  // Ensure actions column is always present as the trailing column
+  const visibleColumnsWithActions = [
+    ...visibleColumns,
+    { key: '__actions', label: '', minWidth: 48, order: Number.MAX_SAFE_INTEGER },
+  ];
+  const isBatchColumn = (column = {}) => ['BATCH', 'BATCHES'].includes(compactColumnToken(
+    column.rendererKey || column.valueKey || column.key || column.label
+  ));
+  const hasBatchColumn = visibleColumns.some(isBatchColumn);
+
+  const isColumnVisible = (columnKey) => {
+    const setting = formSettings.matrixColumns?.[columnKey];
+    return setting?.visible !== false;
+  };
+
+  const renderBatchCell = (line, i) => {
+    const lineErrors = valErrors.lines[i] || {};
+    const hasItem = !!line.itemNo;
+    const hasWarehouse = !!line.whse;
+    const hasQty = !!line.quantity && parseFloat(line.quantity) > 0;
+    const canOpenBatch = line.batchManaged && hasItem && hasWarehouse && hasQty && line.hasBatchesAvailable !== false;
+    const buttonTitle = !hasItem
+      ? 'Select Item first'
+      : !hasWarehouse
+        ? 'Select Warehouse first'
+        : !hasQty
+          ? 'Enter quantity'
+          : line.hasBatchesAvailable === false
+            ? 'No batches available'
+            : 'Assign batches';
+
+    if (!line.batchManaged) {
+      return <span style={{ color: '#888', fontSize: 11 }}>Not Batch Item</span>;
+    }
+
+    if (line.batchManaged && line.hasBatchesAvailable === false) {
+      return <span style={{ color: '#888', fontSize: 11 }}>No Batches Available</span>;
+    }
+
+    if (!hasItem || !hasWarehouse || !hasQty) {
+      return (
+        <button
+          type="button"
+          className="del-btn"
+          disabled
+          style={{ fontSize: 11, padding: '2px 8px', opacity: 0.6, cursor: 'not-allowed' }}
+          title={buttonTitle}
+        >
+          Assign Batch
+        </button>
+      );
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <button
+          type="button"
+          className="del-btn"
+          style={{ fontSize: 11, padding: '2px 8px' }}
+          onClick={() => onOpenBatchModal(i)}
+          disabled={!canOpenBatch}
+          title={buttonTitle}
+        >
+          {line.batches?.length ? `${line.batches.length} Assigned` : 'Assign Batch'}
+        </button>
+        {lineErrors.batches ? (
+          <span style={{ color: '#d9534f', fontSize: 11, lineHeight: 1.2 }}>
+            {lineErrors.batches}
+          </span>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderCell = (column, line, i, uomOpts, lineTotals) => {
+    const columnKey = typeof column === 'object' ? column.key : column;
+    const rendererKey = typeof column === 'object' ? (column.rendererKey || column.valueKey || column.key) : column;
+    const udfColumn = typeof column === 'object' && column.isUdf
+      ? (
+        column.field ||
+        safeRowUdfFields.find((field) => field.key === (column.valueKey || column.key)) ||
+        rowUdfByToken.get(getUdfToken(column.valueKey || column.key)) ||
+        getGenericUdfField(column)
+      )
+      : safeRowUdfFields.find((field) => field.key === columnKey);
+    const columnObject = typeof column === 'object' ? column : { key: columnKey };
+    const renderGenericCell = () => {
+      const valueKey = getColumnValueKey(columnObject) || columnKey;
+      const fieldKey = udfColumn?.key || valueKey;
+      const disabled = Boolean(
+        columnObject.readOnly ||
+        columnObject.active === false ||
+        udfColumn?.readOnly ||
+        formSettings.rowUdfs?.[fieldKey]?.active === false
+      );
+      const value = udfColumn
+        ? (getLineUdfValue(line, fieldKey) ?? line[fieldKey] ?? '')
+        : (line[valueKey] ?? line[columnKey] ?? '');
+      const fieldType = String(udfColumn?.type || columnObject.type || (columnObject.numeric ? 'number' : 'text')).trim();
+      const fieldTypeKind = fieldType.toLowerCase();
+      const centeredInputStyle = {
+        textAlign: 'center',
+        textAlignLast: 'center',
+        minWidth: 0,
+        height: 26,
+        lineHeight: '24px',
+      };
+      const updateValue = (nextValue) => {
+        if (disabled) return;
+        if (udfColumn) {
+          onRowUdfChange && onRowUdfChange(i, fieldKey, nextValue);
+          return;
+        }
+        onLineChange(i, { target: { name: valueKey, value: nextValue } });
+      };
+
+      return (
+        <td key={columnKey} style={{ verticalAlign: 'middle' }}>
+          {fieldTypeKind === 'select' && Array.isArray(udfColumn?.options) && udfColumn.options.length > 0 ? (
+            <select
+              className="del-grid__input"
+              style={centeredInputStyle}
+              value={value}
+              disabled={disabled}
+              onChange={(e) => updateValue(e.target.value)}
+            >
+              <option value=""></option>
+              {(udfColumn.options || []).map((option) => {
+                const normalizedOption = typeof option === 'object' ? option : { value: option, label: option };
+                return (
+                  <option key={normalizedOption.value} value={normalizedOption.value}>
+                    {normalizedOption.label}
+                  </option>
+                );
+              })}
+            </select>
+          ) : fieldTypeKind === 'checkbox' ? (
+            <input
+              type="checkbox"
+              checked={['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(value || '').trim().toUpperCase())}
+              disabled={disabled}
+              onChange={(e) => updateValue(e.target.checked ? 'Y' : 'N')}
+            />
+          ) : ['yesno'].includes(fieldTypeKind) ? (
+            <select
+              className="del-grid__input"
+              style={centeredInputStyle}
+              value={value}
+              disabled={disabled}
+              onChange={(e) => updateValue(e.target.value)}
+            >
+              <option value=""></option>
+              <option value="Y">Yes</option>
+              <option value="N">No</option>
+            </select>
+          ) : (
+            <input
+              className="del-grid__input"
+              type={fieldTypeKind === 'date' ? 'date' : fieldTypeKind === 'number' ? 'number' : 'text'}
+              value={value}
+              readOnly={disabled}
+              style={disabled ? { background: '#f5f8fc', ...centeredInputStyle } : centeredInputStyle}
+              onChange={(e) => updateValue(e.target.value)}
+            />
+          )}
+        </td>
+      );
+    };
+
+    if (udfColumn) return renderGenericCell();
+
+    if (!isColumnVisible(columnKey)) return <td key={columnKey} />;
+
+    const cellRenderers = {
+      itemNo: () => (
+        <td key="itemNo">
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="del-grid__input"
+              style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.itemNo ? '1px solid #c00' : undefined }}
+              name="itemNo"
+              data-sap-lookup="item"
+              data-sap-row-index={i}
+              onKeyDown={(e) => sapItemTab.handleItemCodeTab(e, i)}
+              value={getLineFieldValue(line, 'itemNo')}
+              onChange={(e) => onLineChange(i, e)}
+              placeholder="Item Code"
+            />
+            <button
+              type="button"
+              onClick={() => onOpenItemModal && onOpenItemModal(i)}
+              style={pickerButtonStyle}
+              title="Select Item"
+            >
+              ...
+            </button>
+          </div>
+          {valErrors.lines[i]?.itemNo && (
+            <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].itemNo}</div>
+          )}
+        </td>
+      ),
+      itemDescription: () => (
+        <td key="itemDescription">
+          <input
+            className="del-grid__input"
+            name="itemDescription"
+            value={getLineFieldValue(line, 'itemDescription')}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      sellerQuality: () => (
+        <td key="sellerQuality">
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="del-grid__input"
+              style={{ flex: 1 }}
+              name="sellerQuality"
+              value={line.sellerQuality || ''}
+              onChange={(e) => onLineChange(i, e)}
+            />
+            <button
+              type="button"
+              onClick={() => onOpenQualityModal && onOpenQualityModal('sellerQuality', i)}
+              style={pickerButtonStyle}
+              title="Select Seller Quality"
+            >
+              ...
+            </button>
+          </div>
+        </td>
+      ),
+      buyerQuality: () => (
+        <td key="buyerQuality">
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="del-grid__input"
+              style={{ flex: 1 }}
+              name="buyerQuality"
+              value={line.buyerQuality || ''}
+              onChange={(e) => onLineChange(i, e)}
+            />
+            <button
+              type="button"
+              onClick={() => onOpenQualityModal && onOpenQualityModal('buyerQuality', i)}
+              style={pickerButtonStyle}
+              title="Select Buyer Quality"
+            >
+              ...
+            </button>
+          </div>
+        </td>
+      ),
+      quantity: () => (
+        <td key="quantity">
+          <input
+            className="del-grid__input"
+            style={{ border: valErrors.lines[i]?.quantity ? '1px solid #c00' : undefined }}
+            name="quantity"
+            value={line.quantity}
+            onChange={(e) => onLineChange(i, e)}
+            onBlur={() => onNumBlur('quantity', 'line', i)}
+          />
+          {valErrors.lines[i]?.quantity && (
+            <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].quantity}</div>
+          )}
+        </td>
+      ),
+      unitPrice: () => (
+        <td key="unitPrice">
+          <input
+            className="del-grid__input"
+            style={{ border: valErrors.lines[i]?.unitPrice ? '1px solid #c00' : undefined }}
+            name="unitPrice"
+            value={line.unitPrice}
+            onChange={(e) => onLineChange(i, e)}
+            onBlur={() => onNumBlur('unitPrice', 'line', i)}
+          />
+          {valErrors.lines[i]?.unitPrice && (
+            <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].unitPrice}</div>
+          )}
+        </td>
+      ),
+      uomCode: () => (
+        <td key="uomCode">
+          <select
+            className="del-grid__input"
+            name="uomCode"
+            value={line.uomCode || ''}
+            onChange={(e) => onLineChange(i, e)}
+          >
+            <option value=""></option>
+            {uomOpts.map((uom) => (
+              <option key={uom} value={uom}>
+                {uom}
+              </option>
+            ))}
+            {line.uomCode && !uomOpts.includes(line.uomCode) && (
+              <option value={line.uomCode}>{line.uomCode}</option>
+            )}
+          </select>
+        </td>
+      ),
+      uomName: () => (
+        <td key="uomName">
+          <input
+            className="del-grid__input"
+            value={line.uomName || line.uomCode || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      sellerPrice: () => (
+        <td key="sellerPrice">
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="del-grid__input"
+              style={{ flex: 1 }}
+              name="sellerPrice"
+              value={line.sellerPrice || ''}
+              onChange={(e) => onLineChange(i, e)}
+            />
+            <button
+              type="button"
+              onClick={() => onOpenQualityModal && onOpenQualityModal('sellerPrice', i)}
+              style={pickerButtonStyle}
+              title="Select Seller Price"
+            >
+              ...
+            </button>
+          </div>
+        </td>
+      ),
+      buyerPrice: () => (
+        <td key="buyerPrice">
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="del-grid__input"
+              style={{ flex: 1 }}
+              name="buyerPrice"
+              value={line.buyerPrice || ''}
+              onChange={(e) => onLineChange(i, e)}
+            />
+            <button
+              type="button"
+              onClick={() => onOpenQualityModal && onOpenQualityModal('buyerPrice', i)}
+              style={pickerButtonStyle}
+              title="Select Buyer Price"
+            >
+              ...
+            </button>
+          </div>
+        </td>
+      ),
+      sellerDelivery: () => (
+        <td key="sellerDelivery">
+          <input
+            className="del-grid__input"
+            name="sellerDelivery"
+            value={line.sellerDelivery || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      buyerDelivery: () => (
+        <td key="buyerDelivery">
+          <input
+            className="del-grid__input"
+            name="buyerDelivery"
+            value={line.buyerDelivery || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      sellerBrokerageAmtPer: () => (
+        <td key="sellerBrokerageAmtPer">
+          <select
+            className="del-grid__input"
+            name="sellerBrokerageAmtPer"
+            value={line.sellerBrokerageAmtPer || ''}
+            onChange={(e) => onLineChange(i, e)}
+          >
+            <option value=""></option>
+            <option value="Amount">Amount</option>
+            <option value="Percentage">Percentage</option>
+          </select>
+        </td>
+      ),
+      sellerBrokeragePercent: () => (
+        <td key="sellerBrokeragePercent">
+          <input
+            className="del-grid__input"
+            name="sellerBrokeragePercent"
+            value={line.sellerBrokeragePercent || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      sellerBrokerage: () => (
+        <td key="sellerBrokerage">
+          <input
+            className="del-grid__input"
+            name="sellerBrokerage"
+            value={line.sellerBrokerage || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      buyerBrokerage: () => (
+        <td key="buyerBrokerage">
+          <input
+            className="del-grid__input"
+            name="buyerBrokerage"
+            value={line.buyerBrokerage || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      deliveredQty: () => (
+        <td key="deliveredQty">
+          <input
+            className="del-grid__input"
+            value={line.deliveredQty || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      stdDiscount: () => (
+        <td key="stdDiscount">
+          <input
+            className="del-grid__input"
+            name="stdDiscount"
+            value={line.stdDiscount}
+            onChange={(e) => onLineChange(i, e)}
+            onBlur={() => onNumBlur('stdDiscount', 'line', i)}
+          />
+        </td>
+      ),
+      stcode: () => (
+        <td key="stcode">
+          <input
+            className="del-grid__input"
+            name="stcode"
+            value={line.stcode || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      taxCode: () => (
+        <td key="taxCode">
+          <TaxCodeLookup
+            className="del-grid__input"
+            style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.taxCode ? '1px solid #c00' : undefined }}
+            name="taxCode"
+            value={line.taxCode || ''}
+            onChange={(e) => onLineChange(i, e)}
+            taxCodes={effectiveTaxCodes}
+            error={Boolean(valErrors.lines[i]?.taxCode)}
+          />
+        </td>
+      ),
+      taxCodeRepeat: () => (
+        <td key="taxCodeRepeat">
+          <input
+            className="del-grid__input"
+            value={line.taxCode || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      price: () => (
+        <td key="price">
+          <input
+            className="del-grid__input"
+            value={line.price || line.unitPrice || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      priceAfterDiscount: () => (
+        <td key="priceAfterDiscount">
+          <input
+            className="del-grid__input"
+            value={line.priceAfterDiscount || getPriceAfterDiscount(line)}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      itemCost: () => (
+        <td key="itemCost">
+          <input
+            className="del-grid__input"
+            value={formatSapAmountWithCurrency(line.itemCost, currency, 6)}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      binLocationAllocation: () => (
+        <td key="binLocationAllocation">
+          {hasBatchColumn ? (
+            <input
+              className="del-grid__input"
+              value={line.binLocationAllocation || ''}
+              readOnly
+              style={{ background: '#f5f8fc' }}
+            />
+          ) : renderBatchCell(line, i)}
+        </td>
+      ),
+      batch: () => (
+        <td key="batch">
+          {renderBatchCell(line, i)}
+        </td>
+      ),
+      taxAmount: () => (
+        <td key="taxAmount">
+          <input
+            className="del-grid__input"
+            value={getTaxAmountDisplay(line)}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      totalLC: () => (
+        <td key="totalLC">
+          <input
+            className="del-grid__input"
+            value={lineTotals.beforeTax}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      whse: () => (
+        <td key="whse">
+          <select
+            className="del-grid__input"
+            style={{ width: '100%', textAlign: 'left', border: valErrors.lines[i]?.whse ? '1px solid #c00' : undefined }}
+            name="whse"
+            value={line.whse || ''}
+            onChange={(e) => onLineChange(i, e)}
+          >
+            <option value="">Select</option>
+            {effectiveWarehouses.map((warehouse) => (
+              <option key={warehouse.WhsCode} value={warehouse.WhsCode}>
+                {warehouse.WhsCode}
+              </option>
+            ))}
+            {line.whse && !effectiveWarehouses.some((warehouse) => warehouse.WhsCode === line.whse) && (
+              <option value={line.whse}>{line.whse}</option>
+            )}
+          </select>
+          {valErrors.lines[i]?.whse && (
+            <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].whse}</div>
+          )}
+        </td>
+      ),
+      distRule: () => (
+        <td key="distRule">
+          <select
+            className="del-grid__input"
+            style={{ width: '100%', textAlign: 'left' }}
+            name="distRule"
+            value={line.distRule || ''}
+            onChange={(e) => onLineChange(i, e)}
+          >
+            <option value="">Select</option>
+            {distributionRules.map((rule) => (
+              <option key={rule.FactorCode} value={rule.FactorCode}>
+                {rule.FactorCode}{rule.FactorDescription ? ` - ${rule.FactorDescription}` : ''}
+              </option>
+            ))}
+          </select>
+        </td>
+      ),
+      openQty: () => (
+        <td key="openQty">
+          <input
+            className="del-grid__input"
+            value={line.openQty || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      loc: () => (
+        <td key="loc">
+          <input
+            className="del-grid__input"
+            value={getBranchName ? getBranchName(line.branch) : line.loc || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      countryOfOrigin: () => (
+        <td key="countryOfOrigin">
+          <input
+            className="del-grid__input"
+            name="countryOfOrigin"
+            style={{ textTransform: 'uppercase' }}
+            value={line.countryOfOrigin || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      branch: () => (
+        <td key="branch">
+          <input
+            className="del-grid__input"
+            value={getBranchName ? getBranchName(line.branch) : line.branch || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      hsnCode: () => (
+        <td key="hsnCode">
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="del-grid__input"
+              style={{ flex: 1, textAlign: 'left', border: valErrors.lines[i]?.hsnCode ? '1px solid #c00' : undefined }}
+              name="hsnCode"
+              value={line.hsnCode}
+              onChange={(e) => onLineChange(i, e)}
+              placeholder="HSN"
+            />
+            <button
+              type="button"
+              onClick={() => onOpenHSNModal && onOpenHSNModal(i)}
+              style={pickerButtonStyle}
+              title="Select HSN Code"
+            >
+              ...
+            </button>
+          </div>
+          {valErrors.lines[i]?.hsnCode && (
+            <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.lines[i].hsnCode}</div>
+          )}
+        </td>
+      ),
+      unitPriceRepeat: () => (
+        <td key="unitPriceRepeat">
+          <input
+            className="del-grid__input"
+            value={line.unitPrice || ''}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      sacCode: () => (
+        <td key="sacCode">
+          <input
+            className="del-grid__input"
+            name="sacCode"
+            value={line.sacCode || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      specialRebate: () => (
+        <td key="specialRebate">
+          <input
+            className="del-grid__input"
+            name="specialRebate"
+            value={line.specialRebate || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      commission: () => (
+        <td key="commission">
+          <input
+            className="del-grid__input"
+            name="commission"
+            value={line.commission || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      sellerBrokeragePerQty: () => (
+        <td key="sellerBrokeragePerQty">
+          <input
+            className="del-grid__input"
+            name="sellerBrokeragePerQty"
+            value={line.sellerBrokeragePerQty || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      buyerPaymentTerms: () => (
+        <td key="buyerPaymentTerms">
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="del-grid__input"
+              style={{ flex: 1 }}
+              name="buyerPaymentTerms"
+              value={line.buyerPaymentTerms || ''}
+              onChange={(e) => onLineChange(i, e)}
+            />
+            <button
+              type="button"
+              onClick={() => onOpenPaymentTermsModal && onOpenPaymentTermsModal('buyerPaymentTerms', i)}
+              style={pickerButtonStyle}
+              title="Select Buyer Terms of Payment"
+            >
+              ...
+            </button>
+          </div>
+        </td>
+      ),
+      sellerPaymentTerms: () => (
+        <td key="sellerPaymentTerms">
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <input
+              className="del-grid__input"
+              style={{ flex: 1 }}
+              name="sellerPaymentTerms"
+              value={line.sellerPaymentTerms || ''}
+              onChange={(e) => onLineChange(i, e)}
+            />
+            <button
+              type="button"
+              onClick={() => onOpenPaymentTermsModal && onOpenPaymentTermsModal('sellerPaymentTerms', i)}
+              style={pickerButtonStyle}
+              title="Select Seller Terms of Payment"
+            >
+              ...
+            </button>
+          </div>
+        </td>
+      ),
+      buyerSpecialInstruction: () => (
+        <td key="buyerSpecialInstruction">
+          <input
+            className="del-grid__input"
+            name="buyerSpecialInstruction"
+            value={line.buyerSpecialInstruction || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      sellerSpecialInstruction: () => (
+        <td key="sellerSpecialInstruction">
+          <input
+            className="del-grid__input"
+            name="sellerSpecialInstruction"
+            value={line.sellerSpecialInstruction || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      buyerBillDiscount: () => (
+        <td key="buyerBillDiscount">
+          <input
+            className="del-grid__input"
+            name="buyerBillDiscount"
+            value={line.buyerBillDiscount || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      sellerBillDiscount: () => (
+        <td key="sellerBillDiscount">
+          <input
+            className="del-grid__input"
+            name="sellerBillDiscount"
+            value={line.sellerBillDiscount || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      sellerItem: () => (
+        <td key="sellerItem">
+          <input
+            className="del-grid__input"
+            name="sellerItem"
+            value={line.sellerItem || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      sellerQty: () => (
+        <td key="sellerQty">
+          <input
+            className="del-grid__input"
+            name="sellerQty"
+            value={line.sellerQty || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      freightPurchase: () => (
+        <td key="freightPurchase">
+          <input
+            className="del-grid__input"
+            name="freightPurchase"
+            value={line.freightPurchase || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      freightSales: () => (
+        <td key="freightSales">
+          <input
+            className="del-grid__input"
+            name="freightSales"
+            value={line.freightSales || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      freightProvider: () => (
+        <td key="freightProvider">
+          <input
+            className="del-grid__input"
+            name="freightProvider"
+            value={line.freightProvider || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      freightProviderName: () => (
+        <td key="freightProviderName">
+          <input
+            className="del-grid__input"
+            name="freightProviderName"
+            value={line.freightProviderName || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+      documentCreated: () => (
+        <td key="documentCreated">
+          <input
+            className="del-grid__input"
+            value={formatDateDisplay(line.documentCreated)}
+            readOnly
+            style={{ background: '#f5f8fc' }}
+          />
+        </td>
+      ),
+      brokerageNumber: () => (
+        <td key="brokerageNumber">
+          <input
+            className="del-grid__input"
+            name="brokerageNumber"
+            value={line.brokerageNumber || ''}
+            onChange={(e) => onLineChange(i, e)}
+          />
+        </td>
+      ),
+    };
+
+    const renderedCell = cellRenderers[rendererKey] ? cellRenderers[rendererKey]() : renderGenericCell();
+    return React.cloneElement(renderedCell, { key: columnKey });
+  };
+
+  return (
+    <div className="sap-tab-panel del-tab-panel">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div className="del-section-title">Document Lines</div>
+        <button type="button" className="del-btn del-btn--primary" onClick={onAddLine}>
+          + Add Line
+        </button>
+      </div>
+
+      <div 
+        className="del-grid-wrap del-grid-wrap--contents"
+        style={{ border: '1px solid #d7dde5' }}
+      >
+        <div 
+          className="del-grid-wrap__scroller del-grid-wrap__scroller--contents"
+          style={{
+            overflowX: 'auto',
+            overflowY: 'auto',
+            maxHeight: '400px'
+          }}
+        >
+          <table
+            className="del-grid del-grid--contents"
+            style={{
+              width: 'max-content',
+              minWidth: TABLE_MIN_WIDTH,
+              tableLayout: 'auto'
+            }}
+          >
+            <colgroup>
+              <col style={{ width: 42 }} />
+              {visibleColumnsWithActions.map((column) => (
+                <col key={column.key} style={{ width: column.minWidth }} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr>
+                <th style={{ width: 42 }}>#</th>
+                {visibleColumnsWithActions.map((column) => (
+                  <th key={column.key} style={{ minWidth: column.minWidth }}>
+                    {column.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line, i) => {
+                const uomOpts = getUomOptions(line);
+                const lineTotals = getLineTotalsForDisplay(line, effectiveTaxCodes);
+
+                return (
+                  <tr key={i}>
+                    <td className="del-grid__cell--muted" style={{ textAlign: 'center', fontSize: 11 }}>
+                      {i + 1}
+                    </td>
+
+                    {visibleColumnsWithActions.map((col) => {
+                      if (String(col.key) === '__actions') {
+                        return (
+                          <td key="__actions">
+                            <button
+                              type="button"
+                              className="del-btn del-btn--danger"
+                              style={{ padding: '2px 8px', fontSize: 14 }}
+                              onClick={() => onRemoveLine(i)}
+                            >
+                              x
+                            </button>
+                          </td>
+                        );
+                      }
+
+                      return renderCell(col, line, i, uomOpts, lineTotals);
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,44 @@
+/* Warehouse-specific styles that extend the project theme */
+
+/* General Tab Layout */
+.wh-general-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.wh-general-left {
+  padding-right: 12px;
+}
+
+.wh-general-right {
+  padding-left: 12px;
+  border-left: 1px solid #e0e6ed;
+}
+
+/* Accounting Tab */
+.wh-accounting-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 24px;
+  max-width: 900px;
+}
+
+.wh-accounting-grid .im-field__label {
+  flex: 0 0 160px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  .wh-general-layout,
+  .wh-accounting-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .wh-general-right {
+    border-left: none;
+    border-top: 1px solid #e0e6ed;
+    padding-left: 0;
+    padding-top: 12px;
+  }
+}

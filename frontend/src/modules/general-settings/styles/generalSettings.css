@@ -1,0 +1,68 @@
+.general-settings-page__grid {
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+}
+
+.general-settings-page__table {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) minmax(220px, 1fr) minmax(220px, 1fr);
+  gap: 8px 12px;
+  align-items: center;
+  padding: 14px;
+}
+
+.general-settings-page__table-head {
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.general-settings-page__document-label {
+  color: #111827;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.general-settings-page__assignment .admin-form-grid {
+  max-width: 900px;
+}
+
+.general-settings-page__field {
+  margin: 0;
+}
+
+.general-settings-page__summary {
+  margin-top: 12px;
+}
+
+.general-settings-page__summary-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) minmax(220px, 1fr) minmax(220px, 1fr);
+  gap: 8px 16px;
+  color: #1f2937;
+  font-size: 12px;
+}
+
+.general-settings-page__summary-grid span {
+  color: #4b5563;
+}
+
+.general-settings-page__summary-grid strong {
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .general-settings-page__grid,
+  .general-settings-page__table,
+  .general-settings-page__summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .general-settings-page__table-head {
+    display: none;
+  }
+
+  .general-settings-page__document-label {
+    margin-top: 8px;
+  }
+}

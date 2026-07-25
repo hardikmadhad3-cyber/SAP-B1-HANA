@@ -1,0 +1,626 @@
+/* SAP Business One Sales Order - Exact UI Clone */
+
+.sales-order-page {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 11px;
+  color: #000;
+  background: #f0f0f0;
+  padding: 8px;
+  min-height: 100vh;
+}
+
+/* Toolbar */
+.so-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(180deg, #f5f5f5 0%, #e8e8e8 100%);
+  border: 1px solid #a0a0a0;
+  border-radius: 3px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+}
+
+.so-toolbar-left,
+.so-toolbar-right {
+  display: flex;
+  gap: 4px;
+}
+
+.so-btn {
+  padding: 3px 12px;
+  font-size: 11px;
+  border: 1px solid #a0a0a0;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #ffffff 0%, #e8e8e8 100%);
+  color: #000;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.so-btn:hover {
+  background: linear-gradient(180deg, #e8f4fc 0%, #d0e8f8 100%);
+  border-color: #0078d7;
+}
+
+.so-btn:active {
+  background: #d0e8f8;
+}
+
+.so-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.so-btn-icon {
+  padding: 3px 8px;
+  font-size: 14px;
+}
+
+.so-btn-sm {
+  padding: 2px 8px;
+  font-size: 10px;
+}
+
+.so-btn-primary {
+  background: linear-gradient(180deg, #0078d7 0%, #005a9e 100%);
+  color: #fff;
+  border-color: #004a80;
+}
+
+.so-btn-primary:hover {
+  background: linear-gradient(180deg, #1084d8 0%, #0070c0 100%);
+}
+
+.so-btn-secondary {
+  background: linear-gradient(180deg, #ffffff 0%, #e8e8e8 100%);
+}
+
+.so-btn-danger {
+  background: linear-gradient(180deg, #e81123 0%, #c50f1f 100%);
+  color: #fff;
+  border-color: #a80000;
+}
+
+/* Title Bar */
+.so-title-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.so-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #003366;
+  margin: 0;
+}
+
+.so-doc-number {
+  font-size: 14px;
+  color: #666;
+}
+
+/* Alerts */
+.so-alert {
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.so-alert-info {
+  background: #d1ecf1;
+  border: 1px solid #bee5eb;
+  color: #0c5460;
+}
+
+.so-alert-error {
+  background: #f8d7da;
+  border: 1px solid #f5c6cb;
+  color: #721c24;
+}
+
+.so-alert-success {
+  background: #d4edda;
+  border: 1px solid #c3e6cb;
+  color: #155724;
+}
+
+/* Layout */
+.so-form {
+  background: #fff;
+  border: 1px solid #a0a0a0;
+  border-radius: 3px;
+}
+
+.so-layout {
+  display: flex;
+  gap: 0;
+}
+
+.so-main-panel {
+  flex: 1;
+  padding: 12px;
+  border-right: 1px solid #d0d0d0;
+}
+
+/* Header Section */
+.so-header-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  padding: 12px;
+  background: #f8f8f8;
+  border: 1px solid #d0d0d0;
+  border-radius: 3px;
+  margin-bottom: 12px;
+}
+
+.so-header-left,
+.so-header-right {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Form Groups */
+.so-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.so-form-group-flex {
+  flex: 1;
+}
+
+.so-form-group-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.so-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* Input with Icon (Dropdown) */
+.so-input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.so-input-with-icon select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 24px;
+}
+
+.so-dropdown-icon {
+  position: absolute;
+  right: 6px;
+  pointer-events: none;
+  font-size: 8px;
+  color: #666;
+}
+
+.so-dropdown-icon-sm {
+  position: absolute;
+  right: 4px;
+  pointer-events: none;
+  font-size: 7px;
+  color: #666;
+}
+
+/* Number Group (No. field with auto number) */
+.so-number-group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.so-input-number {
+  flex: 1;
+  min-width: 100px;
+}
+
+.so-input-auto {
+  width: 60px;
+}
+
+.so-input-auto select {
+  width: 100%;
+  padding: 2px 18px 2px 4px;
+}
+
+.so-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #333;
+}
+
+.so-label-sm {
+  font-size: 10px;
+  font-weight: 600;
+  color: #333;
+}
+
+.so-required {
+  color: #e81123;
+  margin-left: 2px;
+}
+
+/* Inputs */
+.so-input {
+  padding: 3px 6px;
+  font-size: 11px;
+  border: 1px solid #a0a0a0;
+  border-radius: 2px;
+  background: #fff;
+  color: #000;
+}
+
+.so-input:focus {
+  outline: none;
+  border-color: #0078d7;
+  box-shadow: 0 0 0 1px #0078d7;
+}
+
+.so-input-sm {
+  padding: 2px 4px;
+  font-size: 10px;
+}
+
+.so-input-readonly {
+  background: #f0f0f0;
+  color: #666;
+}
+
+.so-input-right {
+  text-align: right;
+}
+
+.so-input-error {
+  border-color: #e81123;
+}
+
+.so-error-text {
+  font-size: 10px;
+  color: #e81123;
+  margin-top: 2px;
+}
+
+.so-textarea {
+  padding: 3px 6px;
+  font-size: 11px;
+  border: 1px solid #a0a0a0;
+  border-radius: 2px;
+  background: #fff;
+  color: #000;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  resize: vertical;
+}
+
+.so-textarea:focus {
+  outline: none;
+  border-color: #0078d7;
+  box-shadow: 0 0 0 1px #0078d7;
+}
+
+.so-textarea-sm {
+  padding: 2px 4px;
+  font-size: 10px;
+}
+
+/* Tabs */
+.so-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 2px solid #0078d7;
+  margin-bottom: 12px;
+}
+
+.so-tab {
+  padding: 6px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid #d0d0d0;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+  background: #e8e8e8;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.so-tab:hover {
+  background: #f0f0f0;
+}
+
+.so-tab-active {
+  background: #fff;
+  color: #0078d7;
+  border-color: #0078d7;
+  border-bottom: 2px solid #fff;
+  margin-bottom: -2px;
+}
+
+/* Tab Content */
+.so-tab-content {
+  min-height: 300px;
+  margin-bottom: 16px;
+}
+
+/* Matrix */
+.so-matrix-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.so-matrix-header h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #003366;
+  margin: 0;
+}
+
+.so-matrix-wrapper {
+  overflow-x: auto;
+  border: 1px solid #d0d0d0;
+  border-radius: 3px;
+}
+
+.so-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.so-matrix thead {
+  background: linear-gradient(180deg, #f0f0f0 0%, #e0e0e0 100%);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.so-matrix th {
+  padding: 4px 6px;
+  text-align: left;
+  font-weight: 600;
+  color: #003366;
+  border: 1px solid #c0c0c0;
+  white-space: nowrap;
+}
+
+.so-matrix td {
+  padding: 2px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+}
+
+.so-matrix tbody tr:hover {
+  background: #f8f8f8;
+}
+
+.so-matrix-cell-center {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.so-matrix-input {
+  width: 100%;
+  padding: 2px 4px;
+  font-size: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #000;
+}
+
+.so-matrix-input:focus {
+  border-color: #0078d7;
+  background: #fff;
+  outline: none;
+}
+
+.so-matrix-input-right {
+  text-align: right;
+}
+
+.so-matrix-input-readonly {
+  background: #f8f8f8;
+  color: #666;
+}
+
+/* Totals Section */
+.so-totals-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 12px;
+  background: #f8f8f8;
+  border: 1px solid #d0d0d0;
+  border-radius: 3px;
+  margin-bottom: 12px;
+}
+
+.so-totals-left {
+  display: flex;
+  flex-direction: column;
+}
+
+.so-totals-right {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.so-tax-summary {
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #d0d0d0;
+  border-radius: 3px;
+}
+
+.so-tax-summary-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #003366;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #d0d0d0;
+}
+
+.so-tax-summary-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  padding: 2px 0;
+}
+
+.so-totals-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.so-totals-row {
+  display: grid;
+  grid-template-columns: 1fr 200px;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.so-totals-row-total {
+  border-top: 2px solid #0078d7;
+  padding-top: 6px;
+  margin-top: 4px;
+  font-weight: 600;
+  color: #003366;
+}
+
+.so-input-total {
+  font-weight: 600;
+  color: #003366;
+  background: #e8f4fc !important;
+}
+
+/* Actions */
+.so-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid #d0d0d0;
+}
+
+/* Right Panel */
+.so-right-panel {
+  width: 280px;
+  background: #f8f8f8;
+  border-left: 1px solid #d0d0d0;
+  display: flex;
+  flex-direction: column;
+}
+
+.so-right-panel-header {
+  padding: 8px 12px;
+  background: linear-gradient(180deg, #f0f0f0 0%, #e0e0e0 100%);
+  border-bottom: 1px solid #d0d0d0;
+}
+
+.so-right-panel-header h3 {
+  font-size: 11px;
+  font-weight: 600;
+  color: #003366;
+  margin: 0;
+}
+
+.so-right-panel-content {
+  padding: 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Tax Summary Table */
+.so-tax-summary-section {
+  margin-top: 16px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #d0d0d0;
+  border-radius: 3px;
+}
+
+.so-tax-summary-section h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #003366;
+  margin: 0 0 8px 0;
+}
+
+.so-tax-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.so-tax-summary-table th {
+  padding: 4px 6px;
+  text-align: left;
+  font-weight: 600;
+  color: #003366;
+  background: #f0f0f0;
+  border: 1px solid #d0d0d0;
+}
+
+.so-tax-summary-table td {
+  padding: 4px 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.so-tax-summary-total {
+  font-weight: 600;
+  background: #f8f8f8;
+  border-top: 2px solid #0078d7;
+}
+
+.so-text-right {
+  text-align: right;
+}
+
+/* Attachments */
+.so-attachments-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+  .so-layout {
+    flex-direction: column;
+  }
+
+  .so-right-panel {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid #d0d0d0;
+  }
+
+  .so-header-section {
+    grid-template-columns: 1fr;
+  }
+
+  .so-totals-section {
+    grid-template-columns: 1fr;
+  }
+}

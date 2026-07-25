@@ -1,0 +1,117 @@
+.sap-address-modal__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(16, 24, 32, 0.48);
+}
+
+.sap-address-modal {
+  width: min(540px, calc(100vw - 32px));
+  max-height: min(680px, calc(100vh - 32px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #9badbe;
+  border-radius: 4px;
+  background: #f7f9fb;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  color: #17324d;
+  font-size: 12px;
+}
+
+.sap-address-modal__header {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px 0 14px;
+  background: #2d5878;
+  color: #fff;
+  font-weight: 700;
+}
+
+.sap-address-modal__header button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+
+.sap-address-modal__body {
+  overflow-y: auto;
+  padding: 10px 14px;
+}
+
+.sap-address-modal__field {
+  display: grid;
+  grid-template-columns: minmax(150px, 42%) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.sap-address-modal__field > span {
+  text-align: right;
+}
+
+.sap-address-modal__field input,
+.sap-address-modal__field select {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 2px 7px;
+  border: 1px solid #9fb0c1;
+  border-radius: 2px;
+  background: #fff;
+  color: #172b3d;
+  font: inherit;
+}
+
+.sap-address-modal__field input:focus,
+.sap-address-modal__field select:focus {
+  border-color: #0876bf;
+  outline: 1px solid #0876bf;
+}
+
+.sap-address-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 9px 14px;
+  border-top: 1px solid #ccd6df;
+  background: #eef3f7;
+}
+
+.sap-address-modal__footer button {
+  min-width: 72px;
+  height: 28px;
+  border: 1px solid #90a3b5;
+  border-radius: 3px;
+  background: #fff;
+  color: #17324d;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sap-address-modal__footer .sap-address-modal__primary {
+  border-color: #00689f;
+  background: #0876ae;
+  color: #fff;
+}
+
+@media (max-width: 600px) {
+  .sap-address-modal__field {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .sap-address-modal__field > span {
+    text-align: left;
+  }
+}

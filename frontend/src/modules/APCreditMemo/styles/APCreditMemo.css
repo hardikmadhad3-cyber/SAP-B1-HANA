@@ -1,0 +1,16 @@
+@import '../../purchase-order/styles/purchaseOrder.css';
+
+/* A/P Credit Memo uses the shared purchase-side document shell. Page-specific overrides should live here only when the credit memo workflow truly differs. */
+.ap-credit-memo-page .po-btn--danger.sap-document-toolbar__cancel,
+.ap-credit-memo-page .po-bottom-actions .po-btn--danger {
+  color: #1a1a1a;
+}
+
+.ap-credit-memo-page .po-field,
+.ap-credit-memo-page .po-grid,
+.ap-credit-memo-page .po-grid__input,
+.ap-credit-memo-page .po-layout__sidebar .po-udf-sidebar-card .form-control,
+.ap-credit-memo-page .po-layout__sidebar .po-udf-sidebar-card .form-control-sm {
+  font-size: 11px;
+}
+

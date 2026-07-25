@@ -1,0 +1,830 @@
+.ip-payments-page {
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 13px;
+  color: #1a1a1a;
+  background: #f0f2f5;
+  min-height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.sap-window {
+  border: 0;
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: visible;
+  background: #f0f2f5;
+}
+
+.sap-readonly-fieldset:disabled {
+  color: inherit;
+}
+
+.sap-window--readonly input:disabled,
+.sap-window--readonly select:disabled,
+.sap-window--readonly textarea:disabled,
+.sap-window--readonly button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.sap-window--readonly input:disabled,
+.sap-window--readonly select:disabled,
+.sap-window--readonly textarea:disabled,
+.sap-window--readonly .sap-cell-input:disabled {
+  background: #edf0f3;
+  color: #1a1a1a;
+}
+
+.sap-account-grid th:nth-child(1),
+.sap-account-grid td:nth-child(1) {
+  width: 44px;
+  text-align: center;
+}
+
+.sap-account-grid {
+  width: 100%;
+  min-width: 1040px;
+}
+
+.sap-account-grid th:nth-child(2),
+.sap-account-grid td:nth-child(2) { min-width: 150px; }
+.sap-account-grid th:nth-child(3),
+.sap-account-grid td:nth-child(3) { min-width: 260px; }
+.sap-account-grid th:nth-child(4),
+.sap-account-grid td:nth-child(4) { min-width: 240px; }
+.sap-account-grid th:nth-child(5),
+.sap-account-grid td:nth-child(5) { min-width: 170px; }
+.sap-account-grid th:nth-child(6),
+.sap-account-grid td:nth-child(6) { min-width: 140px; }
+.sap-account-grid th:nth-child(7),
+.sap-account-grid td:nth-child(7) { min-width: 120px; }
+
+.ip-payments-page .po-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #e8edf2;
+  border-bottom: 1px solid #c8d0da;
+  min-width: 0;
+}
+
+.ip-payments-page .po-toolbar__title {
+  margin-right: auto;
+  color: #003366;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ip-payments-page .po-btn {
+  height: 24px;
+  padding: 3px 14px;
+  border: 1px solid #a0aab4;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ip-payments-page .po-btn:hover {
+  background: linear-gradient(180deg, #f0f4f8 0%, #dde3ea 100%);
+}
+
+.ip-payments-page .po-btn:disabled {
+  color: #8894a0;
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.ip-payments-page .po-btn--primary {
+  border-color: #004a80;
+  background: linear-gradient(180deg, #0070c0 0%, #005a9e 100%);
+  color: #ffffff;
+}
+
+.ip-payments-page .po-btn--primary:hover {
+  background: linear-gradient(180deg, #0080d0 0%, #0060aa 100%);
+}
+
+.sap-hidden-lookup {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sap-header-area {
+  display: grid;
+  grid-template-columns: minmax(520px, 620px) minmax(320px, 360px);
+  justify-content: space-between;
+  align-items: start;
+  gap: 18px;
+  min-height: 0;
+  margin: 8px 12px 0;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid #c8d0da;
+  border-radius: 3px;
+}
+
+.sap-header-left,
+.sap-header-right {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sap-bp-row {
+  display: grid;
+  grid-template-columns: 435px 132px;
+  gap: 16px;
+}
+
+.sap-field-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: start;
+  min-height: 24px;
+  gap: 5px;
+}
+
+.sap-field-row > span {
+  padding-top: 3px;
+  color: #444;
+  font-weight: 400;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sap-field-row input,
+.sap-field-row select,
+.sap-field-row textarea,
+.sap-payment-row input,
+.sap-summary input {
+  width: 100%;
+  height: 22px;
+  min-height: 22px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  padding: 0 5px;
+  background: #ffffff;
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  box-sizing: border-box;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.sap-field-row input:focus,
+.sap-field-row select:focus,
+.sap-field-row textarea:focus,
+.sap-payment-row input:focus,
+.sap-summary input:focus,
+.sap-cell-input:focus {
+  outline: none;
+  border-color: #0070c0;
+  box-shadow: 0 0 0 2px rgba(0,112,192,0.15);
+}
+
+.sap-field-row input:read-only,
+.sap-field-row textarea:read-only {
+  background: #f0f2f5;
+  color: #555;
+}
+
+.sap-yellow {
+  background: #f7fafc !important;
+}
+
+.sap-lookup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: stretch;
+}
+
+.sap-lookup__arrow {
+  width: 32px;
+  min-height: 22px;
+  border: 1px solid #a0aab4;
+  border-left: 0;
+  border-radius: 0 2px 2px 0;
+  color: #003366;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
+  font-weight: 700;
+  font-size: 11px;
+  line-height: 20px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sap-lookup__arrow:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #d7e4ef 100%);
+  border-color: #7f94a8;
+}
+
+.sap-lookup__arrow:disabled {
+  color: #7a8794;
+  cursor: default;
+}
+
+.sap-lookup input {
+  border-radius: 2px 0 0 2px;
+}
+
+.sap-lookup:focus-within input,
+.sap-lookup:focus-within .sap-lookup__arrow {
+  border-color: #0070c0;
+}
+
+.sap-bill-to {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  gap: 5px;
+}
+
+.sap-bill-to textarea {
+  height: 54px;
+  min-height: 54px;
+  resize: vertical;
+  line-height: 1.4;
+  padding: 4px 5px;
+}
+
+.sap-account-pay-to {
+  height: 54px;
+  min-height: 54px;
+  resize: vertical;
+  line-height: 1.4;
+  padding: 4px 5px;
+}
+
+.sap-radio-stack {
+  padding: 0;
+}
+
+.sap-radio-stack label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 23px;
+  color: #444;
+  font-weight: 400;
+}
+
+.sap-radio-stack input {
+  width: 15px;
+  height: 15px;
+}
+
+.sap-header-right .sap-field-row {
+  grid-template-columns: 116px minmax(0, 1fr);
+}
+
+.sap-header-left .sap-field-row > input,
+.sap-header-left .sap-field-row > select,
+.sap-header-left .sap-field-row > textarea,
+.sap-header-left .sap-field-row > .sap-lookup,
+.sap-header-left .sap-field-row > .sap-bill-to {
+  width: 320px;
+  max-width: 320px;
+  justify-self: start;
+}
+
+.sap-header-right .sap-field-row > input,
+.sap-header-right .sap-field-row > select,
+.sap-header-right .sap-field-row > textarea,
+.sap-header-right .sap-field-row > .sap-lookup,
+.sap-header-right .sap-field-row > .sap-dual {
+  width: 220px;
+  max-width: 220px;
+  justify-self: start;
+}
+
+.sap-header-right .sap-dual {
+  grid-template-columns: 1fr 1fr;
+}
+
+.sap-dual {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.sap-mid-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  min-height: 38px;
+  margin: 0 12px;
+  padding: 5px 12px 7px;
+  background: #fff;
+  border-left: 1px solid #c8d0da;
+  border-right: 1px solid #c8d0da;
+  border-bottom: 1px solid #c8d0da;
+  border-radius: 0 0 3px 3px;
+}
+
+.sap-mid-row > .sap-field-row {
+  width: 435px;
+}
+
+.sap-mid-left {
+  width: 435px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sap-mid-left .sap-field-row {
+  width: 435px;
+}
+
+.sap-match-address {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  color: #444;
+  font-weight: 400;
+}
+
+.sap-branch-right {
+  width: 386px;
+}
+
+.sap-branch-right .sap-field-row {
+  grid-template-columns: 146px minmax(0, 1fr);
+}
+
+.sap-mid-row > .sap-field-row > input,
+.sap-mid-row > .sap-field-row > select,
+.sap-mid-row > .sap-field-row > textarea,
+.sap-mid-row > .sap-field-row > .sap-lookup,
+.sap-mid-left .sap-field-row > input,
+.sap-mid-left .sap-field-row > select,
+.sap-mid-left .sap-field-row > textarea,
+.sap-mid-left .sap-field-row > .sap-lookup {
+  width: 320px;
+  max-width: 320px;
+  justify-self: start;
+}
+
+.sap-branch-right .sap-field-row > input,
+.sap-branch-right .sap-field-row > select,
+.sap-branch-right .sap-field-row > textarea,
+.sap-branch-right .sap-field-row > .sap-lookup {
+  width: 220px;
+  max-width: 220px;
+  justify-self: start;
+}
+
+.sap-tabs {
+  height: 28px;
+  display: flex;
+  align-items: end;
+  margin: 8px 12px 0;
+  padding-left: 0;
+  border-bottom: 2px solid #0070c0;
+}
+
+.sap-tabs button {
+  min-width: 150px;
+  height: 28px;
+  border: 1px solid #c8d0da;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+  background: #e8edf2;
+  color: #444;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sap-tabs button.is-active {
+  background: #ffffff;
+  color: #003366;
+  font-weight: 700;
+  border-color: #0070c0;
+  border-bottom: 2px solid #fff;
+  margin-bottom: -2px;
+}
+
+.sap-grid-wrap {
+  margin: 0 12px;
+  height: 210px;
+  overflow: auto;
+  border: 1px solid #c8d0da;
+  border-top: 0;
+  border-radius: 0 0 3px 3px;
+  background: #fff;
+}
+
+.sap-grid-wrap--account {
+  height: 142px;
+}
+
+.sap-grid {
+  width: max-content;
+  min-width: 1720px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.sap-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 24px;
+  padding: 4px 6px;
+  border: 1px solid #c8d0da;
+  color: #003366;
+  background: #e8edf2;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sap-grid td {
+  height: 24px;
+  min-width: 58px;
+  padding: 1px 4px;
+  border: 1px solid #e0e6ed;
+  background: #ffffff;
+  white-space: nowrap;
+}
+
+.sap-grid tbody tr.is-selected td {
+  background: #e8f2fb;
+}
+
+.sap-grid tbody tr.is-selected td.sap-cell--editable {
+  background: #dfeefa;
+}
+
+.sap-grid tbody tr.sap-blank-row td {
+  background: #fafbfc;
+}
+
+.sap-grid th:nth-child(1),
+.sap-grid td:nth-child(1) {
+  min-width: 72px;
+  text-align: center;
+}
+
+.sap-grid th:nth-child(2),
+.sap-grid td:nth-child(2) { min-width: 104px; }
+.sap-grid th:nth-child(3),
+.sap-grid td:nth-child(3) { min-width: 86px; }
+.sap-grid th:nth-child(4),
+.sap-grid td:nth-child(4) { min-width: 112px; }
+.sap-grid th:nth-child(5),
+.sap-grid td:nth-child(5),
+.sap-grid th:nth-child(6),
+.sap-grid td:nth-child(6) { min-width: 88px; }
+.sap-grid th:nth-child(7),
+.sap-grid td:nth-child(7) {
+  min-width: 42px;
+  text-align: center;
+}
+.sap-grid th:nth-child(8),
+.sap-grid td:nth-child(8) { min-width: 92px; }
+.sap-grid th:nth-child(9),
+.sap-grid td:nth-child(9) { min-width: 112px; }
+.sap-grid th:nth-child(10),
+.sap-grid td:nth-child(10) { min-width: 112px; }
+.sap-grid th:nth-child(11),
+.sap-grid td:nth-child(11) { min-width: 108px; }
+.sap-grid th:nth-child(12),
+.sap-grid td:nth-child(12) {
+  min-width: 70px;
+  text-align: center;
+}
+.sap-grid th:nth-child(13),
+.sap-grid td:nth-child(13) { min-width: 128px; }
+.sap-grid th:nth-child(14),
+.sap-grid td:nth-child(14) { min-width: 168px; }
+.sap-grid th:nth-child(15),
+.sap-grid td:nth-child(15) { min-width: 132px; }
+.sap-grid th:nth-child(16),
+.sap-grid td:nth-child(16) { min-width: 120px; }
+.sap-grid th:nth-child(18),
+.sap-grid td:nth-child(18) { min-width: 132px; }
+.sap-grid th:nth-child(19),
+.sap-grid td:nth-child(19) { min-width: 148px; }
+
+.sap-link-cell {
+  color: #003366;
+  font-weight: 700;
+}
+
+.sap-doc-arrow {
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 2px;
+  background: #e8edf2;
+  color: #003366;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.sap-money {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sap-cell--readonly {
+  background: #eef1f4 !important;
+  color: #28394d;
+}
+
+.sap-cell--editable {
+  background: #f7fafc !important;
+}
+
+.sap-cell-input {
+  width: 118px;
+  height: 20px;
+  min-height: 20px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: #ffffff;
+  padding: 0 4px;
+  text-align: right;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sap-cell-input:focus {
+  background: #ffffff;
+}
+
+.sap-cell-input--text {
+  width: 110px;
+  text-align: left;
+}
+
+.sap-grid:not(.sap-account-grid) .sap-lookup {
+  width: 112px;
+  min-width: 112px;
+  grid-template-columns: minmax(0, 1fr) 24px;
+}
+
+.sap-grid:not(.sap-account-grid) .sap-lookup input {
+  width: 100%;
+  height: 20px;
+  min-height: 20px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px 0 0 2px;
+  background: #ffffff;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 11px;
+}
+
+.sap-grid:not(.sap-account-grid) .sap-lookup__arrow {
+  width: 24px;
+  min-height: 20px;
+  height: 20px;
+  line-height: 18px;
+}
+
+.sap-empty {
+  height: 92px !important;
+  text-align: center;
+  color: #687991;
+}
+
+.sap-alert {
+  margin: 8px 18px 0;
+  padding: 7px 12px;
+  border: 1px solid #f5a0a0;
+  border-radius: 3px;
+  background: #fde8e8;
+  color: #c00;
+}
+
+.sap-alert--success {
+  border-color: #8bc49a;
+  background: #e6f4ea;
+  color: #1a7a30;
+}
+
+.sap-alert--top {
+  margin: 8px 12px 0;
+}
+
+.sap-payment-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin: 4px 12px 0;
+}
+
+.sap-payment-on-account {
+  display: grid;
+  grid-template-columns: max-content 160px;
+  gap: 6px;
+  align-items: center;
+}
+
+.sap-payment-on-account label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: #444;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.sap-payment-on-account input[type="checkbox"] {
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  min-height: 14px;
+  padding: 0;
+}
+
+
+.sap-footer-area {
+  display: grid;
+  grid-template-columns: minmax(390px, 1fr) 360px;
+  gap: 20px;
+  align-items: end;
+  margin: 0 12px;
+  padding: 10px 12px 12px;
+  background: #fff;
+}
+
+.sap-footer-left .sap-field-row {
+  grid-template-columns: 140px minmax(170px, 252px);
+}
+
+.sap-created {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 5px;
+  color: #8a8a8a;
+  font-weight: 700;
+}
+
+.sap-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sap-summary .sap-field-row {
+  grid-template-columns: 145px 1fr;
+}
+
+.sap-summary input {
+  text-align: right;
+  background: #f7fafc;
+  font-variant-numeric: tabular-nums;
+}
+
+.sap-amount-with-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+}
+
+.sap-amount-with-button input {
+  border-radius: 2px 0 0 2px;
+}
+
+.sap-amount-with-button button {
+  height: 22px;
+  border: 1px solid #a0aab4;
+  border-left: 0;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
+  color: #003366;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  padding: 0;
+  cursor: pointer;
+}
+
+@media (max-width: 1120px) {
+  .sap-header-area,
+  .sap-footer-area {
+    grid-template-columns: 1fr;
+  }
+
+  .sap-header-right,
+  .sap-summary {
+    width: min(390px, 100%);
+    margin-left: auto;
+  }
+
+  .sap-footer-area {
+    padding-top: 12px;
+  }
+}
+
+@media (max-width: 760px) {
+  .sap-mid-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sap-bp-row,
+  .sap-field-row,
+  .sap-header-right .sap-field-row,
+  .sap-branch-right .sap-field-row,
+  .sap-summary .sap-field-row,
+  .sap-footer-left .sap-field-row,
+  .sap-payment-row,
+  .sap-payment-on-account {
+    grid-template-columns: 1fr;
+  }
+
+  .sap-mid-row > .sap-field-row,
+  .sap-branch-right,
+  .sap-mid-left,
+  .sap-payment-row {
+    width: 100%;
+  }
+
+  .sap-header-left .sap-field-row > input,
+  .sap-header-left .sap-field-row > select,
+  .sap-header-left .sap-field-row > textarea,
+  .sap-header-left .sap-field-row > .sap-lookup,
+  .sap-header-left .sap-field-row > .sap-bill-to,
+  .sap-header-right .sap-field-row > input,
+  .sap-header-right .sap-field-row > select,
+  .sap-header-right .sap-field-row > textarea,
+  .sap-header-right .sap-field-row > .sap-lookup,
+  .sap-header-right .sap-field-row > .sap-dual,
+  .sap-mid-row > .sap-field-row > input,
+  .sap-mid-row > .sap-field-row > select,
+  .sap-mid-row > .sap-field-row > textarea,
+  .sap-mid-row > .sap-field-row > .sap-lookup,
+  .sap-mid-left .sap-field-row > input,
+  .sap-mid-left .sap-field-row > select,
+  .sap-mid-left .sap-field-row > textarea,
+  .sap-mid-left .sap-field-row > .sap-lookup,
+  .sap-branch-right .sap-field-row > input,
+  .sap-branch-right .sap-field-row > select,
+  .sap-branch-right .sap-field-row > textarea,
+  .sap-branch-right .sap-field-row > .sap-lookup {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .sap-payment-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+.sap-account-grid .sap-lookup {
+  width: 138px;
+  min-width: 138px;
+}
+
+.sap-account-grid .sap-lookup input,
+.sap-account-grid select,
+.sap-account-text-input {
+  width: 100%;
+  height: 20px;
+  min-height: 20px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: #ffffff;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 11px;
+}
+
+.sap-account-grid select {
+  width: 126px;
+}
+
+.sap-account-grid .sap-cell-input {
+  width: 112px;
+}

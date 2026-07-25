@@ -1,0 +1,351 @@
+You are working inside my existing production React + Node.js + SQLite project that connects with SAP Business One companies. Implement a production-level dynamic SAP Business One document field layout system.
+
+Goal:
+My web app must render SAP Business One Sales Order and Delivery Contents tab fields exactly like SAP Business One for the selected company and user:
+
+* Same visible fields
+* Same hidden fields
+* Same column order
+* Same field captions
+* Same company-wise layout
+* When I change company/database, the layout must automatically change as per that company
+* Do not render fields using Object.keys(row)
+* Do not hardcode one fixed layout only
+* Use SAP-style metadata-driven rendering
+
+Important SAP Business One information:
+
+* Sales Order form type: 139
+* Sales Order line matrix/item id: 38
+* Sales Order header table: ORDR
+* Sales Order line table: RDR1
+* Delivery form type: 140
+* Delivery line matrix/item id: 38
+* Delivery header table: ODLN
+* Delivery line table: DLN1
+* UDF fields are stored with prefix U_
+* UDF metadata can be read from CUFD
+* Exact SAP visible/hidden/order settings must come from a saved layout metadata source, because SQL tables alone cannot fully reproduce SAP Form Settings.
+
+Implementation requirement:
+Create a complete layout metadata system with database tables, backend APIs, services, and frontend rendering.
+
+Architecture:
+
+1. Backend must expose layout APIs.
+2. Backend must support layout records by:
+
+   * companyDb
+   * userCode
+   * documentType
+   * formType
+   * matrixId
+   * tableName
+3. Frontend must call the layout API whenever company/user/document type changes.
+4. React table must render only layout columns where visible = true.
+5. React table must sort columns by columnOrder.
+6. If a field is missing in row data, show blank, not an error.
+7. If layout is missing, use safe fallback layout but also log warning.
+8. Add error handling, loading state, and empty state.
+9. Add horizontal scroll and SAP-like column widths.
+10. Keep implementation compatible with current project structure and coding style.
+
+Database:
+Add SQLite migration/table creation for:
+
+sap_form_layout_columns:
+
+* id INTEGER PRIMARY KEY AUTOINCREMENT
+* companyDb TEXT NOT NULL
+* userCode TEXT NOT NULL
+* documentType TEXT NOT NULL
+* formType TEXT NOT NULL
+* matrixId TEXT NOT NULL
+* tableName TEXT NOT NULL
+* columnUid TEXT NOT NULL
+* fieldName TEXT
+* columnTitle TEXT NOT NULL
+* visible INTEGER NOT NULL DEFAULT 1
+* editable INTEGER NOT NULL DEFAULT 1
+* columnOrder INTEGER NOT NULL DEFAULT 0
+* width INTEGER DEFAULT 120
+* dataType TEXT
+* isUdf INTEGER DEFAULT 0
+* source TEXT DEFAULT 'manual'
+* createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+* updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+
+Add a unique index on:
+companyDb, userCode, documentType, formType, matrixId, columnUid
+
+sap_form_layout_sync_runs:
+
+* id INTEGER PRIMARY KEY AUTOINCREMENT
+* companyDb TEXT NOT NULL
+* userCode TEXT NOT NULL
+* documentType TEXT NOT NULL
+* status TEXT NOT NULL
+* message TEXT
+* startedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+* completedAt DATETIME
+
+Backend APIs:
+Create these endpoints using existing routing/controller/service pattern:
+
+GET /api/sap/layout/document
+Query params:
+
+* companyDb
+* userCode
+* documentType
+
+documentType values:
+
+* SALES_ORDER
+* DELIVERY
+
+Response format:
+{
+"success": true,
+"companyDb": "...",
+"userCode": "...",
+"documentType": "SALES_ORDER",
+"formType": "139",
+"matrixId": "38",
+"tableName": "RDR1",
+"columns": [
+{
+"columnUid": "1",
+"fieldName": "ItemCode",
+"columnTitle": "Item No.",
+"visible": true,
+"editable": true,
+"columnOrder": 1,
+"width": 140,
+"dataType": "string",
+"isUdf": false
+}
+]
+}
+
+POST /api/sap/layout/import
+Purpose:
+Import layout metadata exported from SAP B1 UI API add-on or manually prepared company layout JSON.
+
+Request body:
+{
+"companyDb": "...",
+"userCode": "manager",
+"documentType": "SALES_ORDER",
+"formType": "139",
+"matrixId": "38",
+"tableName": "RDR1",
+"columns": [...]
+}
+
+This endpoint must upsert layout records.
+
+POST /api/sap/layout/sync-udfs
+Purpose:
+Read UDF metadata from SAP company database using CUFD and append missing UDF columns to layout.
+For SQL Server:
+SELECT FieldID, AliasID, Descr, TypeID, SizeID, EditType FROM CUFD WHERE TableID = 'RDR1' ORDER BY FieldID
+For HANA:
+SELECT "FieldID", "AliasID", "Descr", "TypeID", "SizeID", "EditType" FROM "CUFD" WHERE "TableID" = 'RDR1' ORDER BY "FieldID"
+
+For Delivery use DLN1.
+
+Important:
+UDF sync is only fallback/helper. Exact visible/order must come from imported UI layout or stored layout metadata.
+
+Backend document data:
+Where Sales Order or Delivery line data is fetched, ensure response includes line data keys matching layout fieldName.
+For Sales Order, line table is RDR1.
+For Delivery, line table is DLN1.
+Do not rename fields inconsistently.
+If frontend column fieldName is ItemCode, each row must contain row.ItemCode.
+If HANA is used, normalize quoted column names into same JavaScript object keys.
+
+Fallback layouts:
+If no saved layout exists, return a safe SAP-style fallback.
+
+Sales Order fallback visible order:
+
+1. LineNum as #
+2. ItemCode as Item No.
+3. Dscription as Item Description
+4. Quantity
+5. UomName as UoM Name
+6. HSN or HsnCode as HSN
+7. Price as Unit Price
+8. VatGroup as Tax Code
+9. LineTotal as Total
+10. U_PackingType as Packing-Type
+11. U_GrossWt as GrossWt
+12. U_TotalPackage as Total-Package
+13. DiscPrcnt as Discount %
+14. DelivrdQty as Delivered Qty
+15. WhsCode as Whse
+
+Delivery fallback visible order:
+
+1. LineNum as #
+2. ItemCode as Item No.
+3. Dscription as Item Description
+4. Quantity
+5. UomName as UoM Name
+6. HSN or HsnCode as HSN
+7. Price as Unit Price
+8. VatGroup as Tax Code
+9. LineTotal as Total
+10. U_PackingType as Packing-Type
+11. U_GrossWt as GrossWt
+12. U_TotalPackage as Total-Package
+13. DiscPrcnt as Discount %
+14. WhsCode as Whse
+
+Frontend:
+Find the existing Sales Order page/component and Delivery page/component.
+Replace any dynamic Object.keys(row) table rendering with metadata-driven rendering.
+
+Create reusable component:
+DocumentLinesTable.jsx
+
+Props:
+
+* rows
+* columns
+* loading
+* error
+* onCellChange optional
+* readOnly optional
+
+Rendering rules:
+
+* const visibleColumns = columns.filter(c => c.visible).sort((a,b) => a.columnOrder - b.columnOrder)
+* Render th using columnTitle
+* Render td using row[column.fieldName] ?? ""
+* Use width from metadata
+* Support horizontal scroll
+* Keep first line number column narrow
+* Do not crash on missing fields
+* Show loading while layout/data loading
+* Show “No columns configured” if no visible columns
+* Show “No rows found” if no lines
+
+Create frontend API helper:
+getDocumentLayout({ companyDb, userCode, documentType })
+
+When selected company changes:
+
+* Re-fetch layout
+* Re-fetch document data
+* Clear previous company layout from state before rendering new one
+* Do not show old company fields during loading
+
+Validation:
+
+* companyDb, userCode, documentType are required
+* documentType must be SALES_ORDER or DELIVERY
+* columns must be an array
+* columnUid and columnTitle are required
+* columnOrder must be numeric
+* visible/editable must be converted to boolean/integer safely
+
+Error handling:
+
+* Backend returns proper 400 for invalid input
+* Backend returns 500 with safe message for server/database errors
+* Frontend shows user-friendly error
+* Console logs should include enough detail for developer debugging
+* Do not expose DB password or connection string in API response
+
+Security:
+
+* Never expose SAP database credentials to frontend
+* Only backend connects to SAP DB
+* Sanitize companyDb and userCode inputs
+* Avoid raw SQL injection
+* Use parameterized queries where possible
+
+Need SAP B1 UI API add-on compatibility:
+Create a documented JSON format that a Windows SAP B1 UI API add-on can send to POST /api/sap/layout/import.
+
+Expected UI API export JSON example:
+{
+"companyDb": "COMPANY_DB",
+"userCode": "manager",
+"documentType": "SALES_ORDER",
+"formType": "139",
+"matrixId": "38",
+"tableName": "RDR1",
+"columns": [
+{
+"columnUid": "1",
+"fieldName": "ItemCode",
+"columnTitle": "Item No.",
+"visible": true,
+"editable": true,
+"columnOrder": 1,
+"width": 140,
+"dataType": "string",
+"isUdf": false,
+"source": "sap-ui-api"
+}
+]
+}
+
+Add documentation:
+Create docs/sap-live-layout.md explaining:
+
+* Why SQL alone cannot exactly match SAP Form Settings
+* How layout import works
+* How company-wise/user-wise layout works
+* How to sync UDFs
+* How to add SAP B1 UI API add-on later
+* Form type and table mapping:
+  SALES_ORDER = formType 139, matrixId 38, table RDR1
+  DELIVERY = formType 140, matrixId 38, table DLN1
+
+Testing:
+Add simple backend tests if test framework exists.
+At minimum test:
+
+* fallback layout returned if no DB layout exists
+* imported layout is returned in correct order
+* hidden columns are not rendered on frontend
+* company A and company B can have different layout
+* missing row field does not crash table
+
+Acceptance criteria:
+
+1. Sales Order Contents tab does not use Object.keys(row) for columns.
+2. Delivery Contents tab does not use Object.keys(row) for columns.
+3. Layout changes when companyDb changes.
+4. Hidden fields are not shown.
+5. Column order follows saved SAP layout metadata.
+6. UDF columns can be imported or synced.
+7. Missing layout falls back safely.
+8. No runtime crash if a column field does not exist in row data.
+9. Code follows existing project style.
+10. Provide final summary of changed files and how to test.
+
+Implementation steps:
+
+1. Inspect project structure.
+2. Find existing database initialization/migration pattern.
+3. Add layout tables.
+4. Add layout model/repository/service/controller/routes.
+5. Register routes in backend server/app.
+6. Add frontend layout API helper.
+7. Create reusable DocumentLinesTable component.
+8. Update Sales Order page to use layout API.
+9. Update Delivery page to use layout API.
+10. Add fallback layouts.
+11. Add docs/sap-live-layout.md.
+12. Run lint/build/tests if available.
+13. Fix all errors before final response.
+
+Do not remove existing functionality.
+Do not break existing sales order creation, delivery creation, or company login flow.
+Prefer small, clean, production-level changes.

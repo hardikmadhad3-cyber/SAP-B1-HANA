@@ -1,0 +1,267 @@
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS Companies (
+  CompanyId INTEGER PRIMARY KEY AUTOINCREMENT,
+  CompanyName TEXT NOT NULL,
+  DbDialect TEXT NOT NULL DEFAULT 'sqlserver',
+  DbName TEXT NOT NULL,
+  DbUser TEXT NULL,
+  DbPassword TEXT NULL,
+  ServerName TEXT NULL,
+  LicenseServer TEXT NULL,
+  SAPVersion TEXT NULL,
+  IsActive INTEGER DEFAULT 1,
+  CreatedAt TEXT DEFAULT CURRENT_TIMESTAMP,
+  Port INTEGER NULL,
+  AuthDbName TEXT NULL,
+  SapBaseUrl TEXT NULL,
+  SapUsername TEXT NULL,
+  SapPassword TEXT NULL,
+  SapCompanyDb TEXT NULL,
+  SapRejectUnauthorized INTEGER NULL,
+  ReportServiceBaseUrl TEXT NULL,
+  ReportServiceUsername TEXT NULL,
+  ReportServicePassword TEXT NULL,
+  ReportServiceCompanyDb TEXT NULL,
+  ReportServiceDbInstance TEXT NULL,
+  ReportServiceDefaultSchema TEXT NULL,
+  ReportServiceRejectUnauthorized INTEGER NULL,
+  DbServer TEXT NULL,
+  DbPort INTEGER NULL,
+  DbEncrypt INTEGER NULL,
+  DbTrustCert INTEGER NULL,
+  SalesOrderDefaultToVendorCode TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS Users (
+  UserId INTEGER PRIMARY KEY AUTOINCREMENT,
+  Username TEXT NOT NULL UNIQUE,
+  PasswordHash TEXT NOT NULL,
+  FullName TEXT NULL,
+  Email TEXT NULL,
+  IsActive INTEGER DEFAULT 1,
+  CreatedAt TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS Roles (
+  RoleId INTEGER PRIMARY KEY AUTOINCREMENT,
+  RoleName TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS UserCompanies (
+  Id INTEGER PRIMARY KEY AUTOINCREMENT,
+  UserId INTEGER NOT NULL,
+  CompanyId INTEGER NOT NULL,
+  IsDefault INTEGER DEFAULT 0,
+  FOREIGN KEY (UserId) REFERENCES Users(UserId),
+  FOREIGN KEY (CompanyId) REFERENCES Companies(CompanyId)
+);
+
+CREATE TABLE IF NOT EXISTS UserRoles (
+  Id INTEGER PRIMARY KEY AUTOINCREMENT,
+  UserId INTEGER NOT NULL,
+  RoleId INTEGER NOT NULL,
+  CompanyId INTEGER NOT NULL,
+  FOREIGN KEY (UserId) REFERENCES Users(UserId),
+  FOREIGN KEY (RoleId) REFERENCES Roles(RoleId),
+  FOREIGN KEY (CompanyId) REFERENCES Companies(CompanyId)
+);
+
+CREATE TABLE IF NOT EXISTS Menus (
+  MenuId INTEGER PRIMARY KEY AUTOINCREMENT,
+  MenuName TEXT NULL,
+  MenuPath TEXT NULL,
+  ParentId INTEGER NULL,
+  Icon TEXT NULL,
+  SortOrder INTEGER NULL,
+  ReportId INTEGER NULL
+);
+
+CREATE TABLE IF NOT EXISTS RoleRights (
+  Id INTEGER PRIMARY KEY AUTOINCREMENT,
+  RoleId INTEGER NOT NULL,
+  MenuId INTEGER NOT NULL,
+  CanView INTEGER DEFAULT 0,
+  CanAdd INTEGER DEFAULT 0,
+  CanEdit INTEGER DEFAULT 0,
+  CanDelete INTEGER DEFAULT 0,
+  FOREIGN KEY (RoleId) REFERENCES Roles(RoleId),
+  FOREIGN KEY (MenuId) REFERENCES Menus(MenuId)
+);
+
+CREATE TABLE IF NOT EXISTS CompanyReports (
+  Id INTEGER PRIMARY KEY AUTOINCREMENT,
+  CompanyId INTEGER NULL,
+  ReportId INTEGER NULL,
+  IsActive INTEGER DEFAULT 1,
+  FOREIGN KEY (CompanyId) REFERENCES Companies(CompanyId),
+  FOREIGN KEY (ReportId) REFERENCES Reports(ReportId)
+);
+
+CREATE TABLE IF NOT EXISTS MenuReports (
+  Id INTEGER PRIMARY KEY AUTOINCREMENT,
+  MenuId INTEGER NULL,
+  ReportId INTEGER NULL,
+  FOREIGN KEY (MenuId) REFERENCES Menus(MenuId),
+  FOREIGN KEY (ReportId) REFERENCES Reports(ReportId)
+);
+
+CREATE TABLE IF NOT EXISTS ReportMenus (
+  ReportMenuId INTEGER PRIMARY KEY AUTOINCREMENT,
+  MenuName TEXT NULL,
+  ParentId INTEGER NULL,
+  Icon TEXT NULL,
+  SortOrder INTEGER DEFAULT 0,
+  CreatedBy INTEGER NULL,
+  CompanyId INTEGER NULL,
+  CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedAt TEXT NULL,
+  FOREIGN KEY (ParentId) REFERENCES ReportMenus(ReportMenuId)
+);
+
+CREATE TABLE IF NOT EXISTS Reports (
+  ReportId INTEGER PRIMARY KEY AUTOINCREMENT,
+  ReportName TEXT NULL,
+  ReportCode TEXT NULL,
+  ApiUrl TEXT NULL,
+  ReportType TEXT DEFAULT 'GET',
+  IsActive INTEGER DEFAULT 1,
+  CreatedAt TEXT DEFAULT CURRENT_TIMESTAMP,
+  ReportMenuId INTEGER NULL,
+  CreatedBy INTEGER NULL,
+  CompanyId INTEGER NULL,
+  IsPublic INTEGER NOT NULL DEFAULT 0,
+  UpdatedAt TEXT NULL,
+  FOREIGN KEY (ReportMenuId) REFERENCES ReportMenus(ReportMenuId)
+);
+
+CREATE TABLE IF NOT EXISTS ReportParameters (
+  ParamId INTEGER PRIMARY KEY AUTOINCREMENT,
+  ReportId INTEGER NULL,
+  ParamName TEXT NULL,
+  DisplayName TEXT NULL,
+  ParamType TEXT NULL,
+  IsRequired INTEGER DEFAULT 0,
+  SortOrder INTEGER DEFAULT 0,
+  CreatedBy INTEGER NULL,
+  DefaultValue TEXT NULL,
+  CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedAt TEXT NULL,
+  FOREIGN KEY (ReportId) REFERENCES Reports(ReportId)
+);
+
+CREATE TABLE IF NOT EXISTS UserFormSettings (
+  FormSettingId INTEGER PRIMARY KEY AUTOINCREMENT,
+  UserId INTEGER NOT NULL,
+  CompanyId INTEGER NOT NULL,
+  FormKey TEXT NOT NULL,
+  SettingsJson TEXT NOT NULL,
+  CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (UserId, CompanyId, FormKey)
+);
+
+CREATE TABLE IF NOT EXISTS UserGeneralSettings (
+  UserGeneralSettingId INTEGER PRIMARY KEY AUTOINCREMENT,
+  UserId INTEGER NOT NULL,
+  CompanyId INTEGER NOT NULL,
+  SettingsJson TEXT NOT NULL,
+  CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (UserId, CompanyId)
+);
+
+CREATE TABLE IF NOT EXISTS sap_form_layout_columns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  companyDb TEXT NOT NULL,
+  userCode TEXT NOT NULL,
+  documentType TEXT NOT NULL,
+  formType TEXT NOT NULL,
+  matrixId TEXT NOT NULL,
+  tableName TEXT NOT NULL,
+  columnUid TEXT NOT NULL,
+  fieldName TEXT,
+  columnTitle TEXT NOT NULL,
+  visible INTEGER NOT NULL DEFAULT 1,
+  editable INTEGER NOT NULL DEFAULT 1,
+  columnOrder INTEGER NOT NULL DEFAULT 0,
+  width INTEGER DEFAULT 120,
+  dataType TEXT,
+  isUdf INTEGER DEFAULT 0,
+  source TEXT DEFAULT 'manual',
+  createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sap_form_layout_sync_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  companyDb TEXT NOT NULL,
+  userCode TEXT NOT NULL,
+  documentType TEXT NOT NULL,
+  status TEXT NOT NULL,
+  message TEXT,
+  startedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completedAt TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ReportLayoutMenuEntries (
+  MenuEntryID INTEGER PRIMARY KEY AUTOINCREMENT,
+  MenuCode TEXT NOT NULL UNIQUE,
+  MenuName TEXT NOT NULL,
+  MenuCategory TEXT NOT NULL,
+  MenuSequence INTEGER NULL,
+  ReportCode TEXT NOT NULL,
+  EntryType TEXT NOT NULL DEFAULT 'Report',
+  SearchKeywords TEXT NULL,
+  IsSystem INTEGER NOT NULL DEFAULT 0,
+  CreatedBy TEXT NOT NULL,
+  CreatedDate TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedBy TEXT NULL,
+  UpdatedDate TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ReportLayouts (
+  LayoutID INTEGER PRIMARY KEY AUTOINCREMENT,
+  MenuEntryID INTEGER NULL,
+  LayoutName TEXT NOT NULL,
+  ReportCode TEXT NOT NULL,
+  LayoutJSON TEXT NOT NULL,
+  IsDefault INTEGER NOT NULL DEFAULT 0,
+  AssignedUserId INTEGER NULL,
+  AssignedRoleId INTEGER NULL,
+  CreatedBy TEXT NOT NULL,
+  CreatedDate TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedBy TEXT NULL,
+  UpdatedDate TEXT NULL,
+  FOREIGN KEY (MenuEntryID) REFERENCES ReportLayoutMenuEntries(MenuEntryID)
+);
+
+CREATE TABLE IF NOT EXISTS ReportLayoutVersions (
+  VersionID INTEGER PRIMARY KEY AUTOINCREMENT,
+  LayoutID INTEGER NOT NULL,
+  VersionNo INTEGER NOT NULL,
+  LayoutJSON TEXT NOT NULL,
+  ChangeNote TEXT NULL,
+  ChangedBy TEXT NOT NULL,
+  ChangedDate TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (LayoutID) REFERENCES ReportLayouts(LayoutID)
+);
+
+CREATE INDEX IF NOT EXISTS IX_RLME_Category
+  ON ReportLayoutMenuEntries (MenuCategory, MenuName, ReportCode);
+CREATE INDEX IF NOT EXISTS IX_ReportLayouts_MenuEntry
+  ON ReportLayouts (MenuEntryID, ReportCode, IsDefault);
+CREATE INDEX IF NOT EXISTS IX_ReportLayoutVersions_LayoutID
+  ON ReportLayoutVersions (LayoutID, VersionNo);
+CREATE INDEX IF NOT EXISTS IX_ReportMenus_CompanyOwner
+  ON ReportMenus (CompanyId, CreatedBy, ParentId, SortOrder, MenuName);
+CREATE INDEX IF NOT EXISTS IX_ReportParameters_Report
+  ON ReportParameters (ReportId, SortOrder, ParamId);
+CREATE INDEX IF NOT EXISTS IX_Reports_CompanyOwner
+  ON Reports (CompanyId, CreatedBy, IsPublic, ReportMenuId, ReportName);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_sap_form_layout_columns_scope
+  ON sap_form_layout_columns (companyDb, userCode, documentType, formType, matrixId, columnUid);
+CREATE INDEX IF NOT EXISTS IX_sap_form_layout_columns_lookup
+  ON sap_form_layout_columns (companyDb, userCode, documentType, formType, matrixId, columnOrder, id);
+CREATE INDEX IF NOT EXISTS IX_sap_form_layout_sync_runs_lookup
+  ON sap_form_layout_sync_runs (companyDb, userCode, documentType, startedAt);

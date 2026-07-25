@@ -1,0 +1,1151 @@
+const axios = require('axios');
+const https = require('https');
+const env = require('../config/env');
+const authDbService = require('./authDbService');
+const reportService = require('./reportService');
+const { syncReportMenuSidebarMenuById } = require('./reportMenuSidebarSyncService');
+
+const VALID_PARAM_TYPES = new Set(['date', 'string', 'number']);
+const VALID_REPORT_TYPES = new Set(['GET', 'POST', 'API', 'API_GET', 'API_POST']);
+const DEFAULT_SAP_REPORT_SERVICE_API_PATH = '/rs/v1/ExportPDFData';
+
+let schemaReadyPromise = null;
+let relaxedHttpsAgent = null;
+
+const createHttpError = (statusCode, message) => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+};
+
+const normalizeText = (value) => String(value || '').trim();
+const toInt = (value) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+};
+
+const getRelaxedHttpsAgent = () => {
+  if (!relaxedHttpsAgent) {
+    relaxedHttpsAgent = new https.Agent({
+      rejectUnauthorized: false,
+    });
+  }
+
+  return relaxedHttpsAgent;
+};
+
+const escapePdfText = (value) =>
+  String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
+
+const formatPdfLine = (key, value) => `${key}: ${value == null ? '' : String(value)}`;
+
+const buildSimplePdfBase64 = ({ title, lines }) => {
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const marginLeft = 40;
+  const startY = 800;
+  const lineHeight = 14;
+  const maxLines = 48;
+  const pageLines = lines.slice(0, maxLines);
+  const body = [
+    'BT',
+    '/F1 16 Tf',
+    `${marginLeft} ${startY} Td`,
+    `(${escapePdfText(title)}) Tj`,
+    '/F1 10 Tf',
+    `0 -22 Td`,
+    ...pageLines.map((line, index) => `${index === 0 ? '' : 'T* ' }(${escapePdfText(line)}) Tj`.trim()),
+    'ET',
+  ].join('\n');
+
+  const objects = [
+    '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
+    '2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj',
+    `3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj`,
+    `4 0 obj << /Length ${Buffer.byteLength(body, 'utf8')} >> stream\n${body}\nendstream endobj`,
+    '5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj',
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+
+  objects.forEach((objectText) => {
+    offsets.push(Buffer.byteLength(pdf, 'utf8'));
+    pdf += `${objectText}\n`;
+  });
+
+  const xrefStart = Buffer.byteLength(pdf, 'utf8');
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  for (let index = 1; index <= objects.length; index += 1) {
+    pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+
+  return Buffer.from(pdf, 'utf8').toString('base64');
+};
+
+const normalizeVisibleReport = (row) => ({
+  reportId: row.ReportId,
+  reportName: row.ReportName,
+  reportCode: row.ReportCode,
+  reportMenuId: row.ReportMenuId,
+  apiUrl: normalizeText(row.ApiUrl) || DEFAULT_SAP_REPORT_SERVICE_API_PATH,
+  reportType: row.ReportType,
+  companyId: row.CompanyId,
+  createdBy: row.CreatedBy,
+  isPublic: Boolean(row.IsPublic),
+  createdAt: row.CreatedAt,
+  updatedAt: row.UpdatedAt,
+});
+
+const normalizeParameter = (row) => ({
+  parameterId: row.ParameterId,
+  reportId: row.ReportId,
+  paramName: row.ParamName,
+  displayName: row.DisplayName,
+  paramType: String(row.ParamType || '').toLowerCase(),
+  isRequired: Boolean(row.IsRequired),
+  sortOrder: Number(row.SortOrder || 0),
+  defaultValue: row.DefaultValue || '',
+  options: [],
+  lookup: null,
+  createdBy: row.CreatedBy,
+  createdAt: row.CreatedAt,
+  updatedAt: row.UpdatedAt,
+});
+
+const normalizeFetchedParameter = (parameter, index = 0) => {
+  const paramName = normalizeText(parameter?.paramName || parameter?.ParamName);
+  const displayName = normalizeText(parameter?.displayName || parameter?.DisplayName || paramName);
+  const paramType = normalizeText(parameter?.paramType || parameter?.ParamType).toLowerCase();
+  const isRequired = Boolean(parameter?.isRequired ?? parameter?.IsRequired);
+  const sortOrder = toInt(parameter?.sortOrder ?? parameter?.SortOrder) ?? index;
+  const defaultValue = normalizeText(parameter?.defaultValue || parameter?.DefaultValue);
+
+  if (!paramName || !displayName || !VALID_PARAM_TYPES.has(paramType)) {
+    throw createHttpError(400, 'Invalid parameter metadata was returned for the selected report code.');
+  }
+
+  return {
+    paramName,
+    displayName,
+    paramType,
+    isRequired,
+    sortOrder,
+    defaultValue,
+    options: Array.isArray(parameter?.options) ? parameter.options : [],
+    lookup: parameter?.lookup && typeof parameter.lookup === 'object' ? parameter.lookup : null,
+  };
+};
+
+const mergeStoredAndLiveParameters = (storedRows, liveParameters = []) => {
+  const storedParameters = storedRows.map(normalizeParameter);
+  const storedByName = new Map(
+    storedParameters.map((parameter) => [
+      String(parameter.paramName || '').trim().toLowerCase(),
+      parameter,
+    ]),
+  );
+
+  const mergedParameters = liveParameters.map((parameter) => {
+    const stored = storedByName.get(String(parameter.paramName || '').trim().toLowerCase());
+
+    return {
+      ...stored,
+      ...parameter,
+      parameterId: stored?.parameterId ?? null,
+      reportId: stored?.reportId ?? null,
+      createdBy: stored?.createdBy ?? null,
+      createdAt: stored?.createdAt ?? null,
+      updatedAt: stored?.updatedAt ?? null,
+    };
+  });
+
+  const liveNames = new Set(
+    mergedParameters.map((parameter) => String(parameter.paramName || '').trim().toLowerCase()),
+  );
+
+  return [
+    ...mergedParameters,
+    ...storedParameters.filter(
+      (parameter) => !liveNames.has(String(parameter.paramName || '').trim().toLowerCase()),
+    ),
+  ];
+};
+
+const getDraftParametersForReport = async (payload, reportCode) => {
+  if (Array.isArray(payload?.parameters) && payload.parameters.length) {
+    return payload.parameters.map((parameter, index) => normalizeFetchedParameter(parameter, index));
+  }
+
+  if (!reportCode) {
+    return [];
+  }
+
+  const loadedParameters = await reportService.loadReportParameters(reportCode);
+  return loadedParameters.map((parameter, index) => normalizeFetchedParameter(parameter, index));
+};
+
+const insertReportParameters = async (db, reportId, parameters, createdBy) => {
+  for (const parameter of parameters) {
+    await db.query(`
+      INSERT INTO dbo.ReportParameters (
+        ReportId,
+        ParamName,
+        DisplayName,
+        ParamType,
+        IsRequired,
+        SortOrder,
+        DefaultValue,
+        CreatedBy,
+        CreatedAt
+      )
+      VALUES (
+        @reportId,
+        @paramName,
+        @displayName,
+        @paramType,
+        @isRequired,
+        @sortOrder,
+        @defaultValue,
+        @createdBy,
+        SYSUTCDATETIME()
+      )
+    `, {
+      reportId,
+      paramName: parameter.paramName,
+      displayName: parameter.displayName,
+      paramType: parameter.paramType,
+      isRequired: parameter.isRequired ? 1 : 0,
+      sortOrder: parameter.sortOrder,
+      defaultValue: parameter.defaultValue || null,
+      createdBy,
+    });
+  }
+};
+
+const loadStoredReportParameters = async (reportId) =>
+  authDbService.queryRows(`
+    SELECT ParamId AS ParameterId, ReportId, ParamName, DisplayName, ParamType, IsRequired, SortOrder, DefaultValue, CreatedBy, CreatedAt, UpdatedAt
+    FROM dbo.ReportParameters
+    WHERE ReportId = @reportId
+    ORDER BY SortOrder ASC, ParamId ASC
+  `, { reportId });
+
+const isSapReportServiceApiUrl = (url) => {
+  const normalized = String(url || '').trim().toLowerCase();
+  return !normalized || normalized.includes('/rs/v1/exportpdfdata');
+};
+
+const normalizeReportApiUrl = (url) => {
+  const normalized = normalizeText(url);
+  if (!normalized || isSapReportServiceApiUrl(normalized)) {
+    return DEFAULT_SAP_REPORT_SERVICE_API_PATH;
+  }
+
+  return normalized;
+};
+
+const serializeParameterSignature = (parameters = []) =>
+  JSON.stringify(
+    parameters.map((parameter) => ({
+      paramName: String(parameter.paramName || '').trim().toLowerCase(),
+      displayName: String(parameter.displayName || '').trim().toLowerCase(),
+      paramType: String(parameter.paramType || '').trim().toLowerCase(),
+      isRequired: Boolean(parameter.isRequired),
+      sortOrder: Number(parameter.sortOrder || 0),
+      defaultValue: String(parameter.defaultValue || '').trim(),
+    })),
+  );
+
+const syncSapReportParameters = async (reportRow) => {
+  const reportId = Number(reportRow?.ReportId);
+  const reportCode = normalizeText(reportRow?.ReportCode).toUpperCase();
+
+  if (!reportId || !reportCode || !isSapReportServiceApiUrl(reportRow?.ApiUrl)) {
+    return loadStoredReportParameters(reportId);
+  }
+
+  const storedRows = await loadStoredReportParameters(reportId);
+  const storedParameters = storedRows.map(normalizeParameter);
+  const sourceParameters = (await reportService.loadReportParameters(reportCode))
+    .map((parameter, index) => normalizeFetchedParameter(parameter, index));
+
+  if (serializeParameterSignature(storedParameters) === serializeParameterSignature(sourceParameters)) {
+    return storedRows;
+  }
+
+  await authDbService.transaction(async (db) => {
+    await db.query(`
+      DELETE FROM dbo.ReportParameters
+      WHERE ReportId = @reportId
+    `, { reportId });
+
+    await insertReportParameters(db, reportId, sourceParameters, toInt(reportRow?.CreatedBy));
+  });
+
+  return loadStoredReportParameters(reportId);
+};
+
+const buildMenuTree = (menus = [], reports = []) => {
+  const menuMap = new Map(
+    menus.map((menu) => [
+      menu.MenuId,
+      {
+        menuId: menu.MenuId,
+        menuName: menu.MenuName,
+        parentId: menu.ParentId,
+        sortOrder: Number(menu.SortOrder || 0),
+        createdBy: menu.CreatedBy,
+        companyId: menu.CompanyId,
+        reports: [],
+        children: [],
+      },
+    ]),
+  );
+
+  const roots = [];
+
+  menuMap.forEach((menu) => {
+    if (menu.parentId && menuMap.has(menu.parentId)) {
+      menuMap.get(menu.parentId).children.push(menu);
+    } else {
+      roots.push(menu);
+    }
+  });
+
+  reports.forEach((report) => {
+    const normalized = normalizeVisibleReport(report);
+    if (normalized.reportMenuId && menuMap.has(normalized.reportMenuId)) {
+      menuMap.get(normalized.reportMenuId).reports.push(normalized);
+    }
+  });
+
+  const sortNode = (node) => {
+    node.children.sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+      return left.menuName.localeCompare(right.menuName);
+    });
+    node.reports.sort((left, right) => left.reportName.localeCompare(right.reportName));
+    node.children.forEach(sortNode);
+    return node;
+  };
+
+  return roots
+    .sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+      return left.menuName.localeCompare(right.menuName);
+    })
+    .map(sortNode);
+};
+
+const findSingleReportMenuTarget = (menus = [], targetMenuId) => {
+  const normalizedTargetMenuId = toInt(targetMenuId);
+  if (!normalizedTargetMenuId) {
+    return null;
+  }
+
+  for (const menu of menus) {
+    if (Number(menu.menuId) === normalizedTargetMenuId) {
+      const childCount = Array.isArray(menu.children) ? menu.children.length : 0;
+      const reportCount = Array.isArray(menu.reports) ? menu.reports.length : 0;
+
+      if (childCount === 0 && reportCount === 1) {
+        return menu.reports[0];
+      }
+
+      return null;
+    }
+
+    const nestedMatch = findSingleReportMenuTarget(menu.children || [], normalizedTargetMenuId);
+    if (nestedMatch) {
+      return nestedMatch;
+    }
+  }
+
+  return null;
+};
+
+const appendAncestorMenus = (visibleMenus, allMenus) => {
+  const menuMap = new Map(allMenus.map((menu) => [menu.MenuId, menu]));
+  const resultMap = new Map(visibleMenus.map((menu) => [menu.MenuId, menu]));
+
+  visibleMenus.forEach((menu) => {
+    let cursor = menu;
+    while (cursor?.ParentId && menuMap.has(cursor.ParentId)) {
+      const parent = menuMap.get(cursor.ParentId);
+      if (!resultMap.has(parent.MenuId)) {
+        resultMap.set(parent.MenuId, parent);
+      }
+      cursor = parent;
+    }
+  });
+
+  return [...resultMap.values()];
+};
+
+const loadMenusAndReportsForCompany = async (companyId) => {
+  const [menus, reports] = await Promise.all([
+    authDbService.queryRows(`
+      SELECT ReportMenuId AS MenuId, MenuName, ParentId, SortOrder, CreatedBy, CompanyId
+      FROM dbo.ReportMenus
+      WHERE CompanyId = @companyId
+      ORDER BY SortOrder ASC, MenuName ASC, ReportMenuId ASC
+    `, { companyId }),
+    authDbService.queryRows(`
+      SELECT ReportId, ReportName, ReportCode, ReportMenuId, ApiUrl, ReportType, CompanyId, CreatedBy, IsPublic, CreatedAt, UpdatedAt
+      FROM dbo.Reports
+      WHERE CompanyId = @companyId
+      ORDER BY ReportName ASC, ReportId ASC
+    `, { companyId }),
+  ]);
+
+  return { menus, reports };
+};
+
+const getAuthorizedReportMenuIds = async (roleId, companyId) => {
+  if (!toInt(roleId) || !toInt(companyId)) {
+    return new Set();
+  }
+
+  const rows = await authDbService.queryRows(`
+    SELECT DISTINCT RM.ReportMenuId
+    FROM dbo.ReportMenus RM
+    INNER JOIN dbo.Menus M
+      ON LOWER(LTRIM(RTRIM(COALESCE(M.MenuPath, '')))) =
+         LOWER(CONCAT('/reportlayoutmanager/menu/', RM.ReportMenuId))
+    INNER JOIN dbo.RoleRights RR
+      ON RR.MenuId = M.MenuId
+      AND RR.RoleId = @roleId
+      AND RR.CanView = 1
+    WHERE RM.CompanyId = @companyId
+  `, { roleId: toInt(roleId), companyId: toInt(companyId) });
+
+  return new Set(rows.map((row) => Number(row.ReportMenuId)).filter(Number.isInteger));
+};
+
+const filterAuthorizedReportCatalog = (menus, reports, authorizedMenuIds) => {
+  const menuById = new Map(menus.map((menu) => [Number(menu.MenuId), menu]));
+  const visibleMenuIds = new Set(authorizedMenuIds);
+
+  for (const menuId of authorizedMenuIds) {
+    let current = menuById.get(Number(menuId));
+    while (current?.ParentId && menuById.has(Number(current.ParentId))) {
+      visibleMenuIds.add(Number(current.ParentId));
+      current = menuById.get(Number(current.ParentId));
+    }
+  }
+
+  return {
+    menus: menus.filter((menu) => visibleMenuIds.has(Number(menu.MenuId))),
+    reports: reports.filter((report) => authorizedMenuIds.has(Number(report.ReportMenuId))),
+  };
+};
+
+const loadSharedMenusAndReports = async () => {
+  const [menus, reports] = await Promise.all([
+    authDbService.queryRows(`
+      SELECT ReportMenuId AS MenuId, MenuName, ParentId, SortOrder, CreatedBy, CompanyId
+      FROM dbo.ReportMenus
+      ORDER BY CompanyId ASC, SortOrder ASC, MenuName ASC, ReportMenuId ASC
+    `),
+    authDbService.queryRows(`
+      SELECT ReportId, ReportName, ReportCode, ReportMenuId, ApiUrl, ReportType, CompanyId, CreatedBy, IsPublic, CreatedAt, UpdatedAt
+      FROM dbo.Reports
+      ORDER BY CompanyId ASC, ReportName ASC, ReportId ASC
+    `),
+  ]);
+
+  return { menus, reports };
+};
+
+const ensureSchema = async () => {
+  if (!schemaReadyPromise) {
+    schemaReadyPromise = authDbService.ensureSchema().catch((error) => {
+      schemaReadyPromise = null;
+      throw error;
+    });
+  }
+
+  return schemaReadyPromise;
+};
+
+const getVisibleMenusAndReports = async ({ userId, companyId, roleId }) => {
+  await ensureSchema();
+
+  const { menus: allMenus, reports: allReports } = await loadMenusAndReportsForCompany(companyId);
+  const authorizedMenuIds = await getAuthorizedReportMenuIds(roleId, companyId);
+  const { menus: visibleMenus, reports: visibleReports } =
+    filterAuthorizedReportCatalog(allMenus, allReports, authorizedMenuIds);
+  const completeVisibleMenus = appendAncestorMenus(visibleMenus, allMenus);
+  const menuTree = buildMenuTree(completeVisibleMenus, visibleReports);
+
+  return {
+    menus: menuTree,
+    flatMenus: completeVisibleMenus
+      .map((menu) => ({
+        menuId: menu.MenuId,
+        menuName: menu.MenuName,
+        parentId: menu.ParentId,
+        sortOrder: menu.SortOrder,
+        createdBy: menu.CreatedBy,
+      }))
+      .sort((left, right) => {
+        if (Number(left.sortOrder || 0) !== Number(right.sortOrder || 0)) {
+          return Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
+        }
+        return String(left.menuName || '').localeCompare(String(right.menuName || ''));
+      }),
+    singleReportMenuTargets: menuTree
+      .flatMap(function collectMenuTargets(menu) {
+        const currentTarget = findSingleReportMenuTarget([menu], menu.menuId);
+        const childTargets = (menu.children || []).flatMap(collectMenuTargets);
+        return currentTarget
+          ? [{ menuId: menu.menuId, reportId: currentTarget.reportId }, ...childTargets]
+          : childTargets;
+      }),
+  };
+};
+
+const listReportMenus = async (auth) => {
+  const userId = toInt(auth?.userId);
+  const companyId = toInt(auth?.companyId);
+  const roleId = toInt(auth?.roleId);
+  if (!userId || !companyId || !roleId) {
+    throw createHttpError(401, 'A valid company session is required.');
+  }
+
+  return getVisibleMenusAndReports({ userId, companyId, roleId });
+};
+
+const listAuthorizedReportCodes = async (auth, query = '') => {
+  const userId = toInt(auth?.userId);
+  const companyId = toInt(auth?.companyId);
+  if (!userId || !companyId) {
+    throw createHttpError(401, 'A valid company session is required.');
+  }
+
+  return {
+    items: await reportService.loadAuthorizedCrList(query),
+  };
+};
+
+const listReportCodeParameters = async (auth, docCode) => {
+  const userId = toInt(auth?.userId);
+  const companyId = toInt(auth?.companyId);
+  if (!userId || !companyId) {
+    throw createHttpError(401, 'A valid company session is required.');
+  }
+
+  const reportCode = normalizeText(docCode).toUpperCase();
+  if (!reportCode) {
+    throw createHttpError(400, 'DocCode is required.');
+  }
+
+  return {
+    reportCode,
+    parameters: await reportService.loadReportParameters(reportCode),
+  };
+};
+
+const createReportMenu = async (payload, auth) => {
+  const userId = toInt(auth?.userId);
+  const companyId = toInt(auth?.companyId);
+  if (!userId || !companyId) {
+    throw createHttpError(401, 'A valid company session is required.');
+  }
+
+  await ensureSchema();
+
+  const menuName = normalizeText(payload?.menuName || payload?.MenuName);
+  const parentId = toInt(payload?.parentId ?? payload?.ParentId);
+  const icon = normalizeText(payload?.icon || payload?.Icon) || null;
+  const sortOrder = toInt(payload?.sortOrder ?? payload?.SortOrder) ?? 0;
+
+  if (!menuName) {
+    throw createHttpError(400, 'MenuName is required.');
+  }
+
+  if (parentId) {
+    const parent = await authDbService.queryOne(`
+      SELECT ReportMenuId AS MenuId, CompanyId, CreatedBy
+      FROM dbo.ReportMenus
+      WHERE ReportMenuId = @menuId
+    `, { menuId: parentId });
+
+    if (!parent || Number(parent.CompanyId) !== companyId || Number(parent.CreatedBy) !== userId) {
+      throw createHttpError(403, 'You can only create child menus under your own menus in the selected company.');
+    }
+  }
+
+  const inserted = await authDbService.transaction(async (db) => {
+    const result = await db.query(`
+      INSERT INTO dbo.ReportMenus (
+        MenuName,
+        ParentId,
+        Icon,
+        SortOrder,
+        CreatedBy,
+        CompanyId,
+        CreatedAt
+      )
+      OUTPUT INSERTED.ReportMenuId AS MenuId
+      VALUES (
+        @menuName,
+        @parentId,
+        @icon,
+        @sortOrder,
+        @createdBy,
+        @companyId,
+        SYSUTCDATETIME()
+      )
+    `, {
+      menuName,
+      parentId,
+      icon,
+      sortOrder,
+      createdBy: userId,
+      companyId,
+    });
+
+    const insertedMenuId = result.recordset?.[0]?.MenuId;
+    if (!insertedMenuId) {
+      throw createHttpError(500, 'Failed to create report menu.');
+    }
+
+    await syncReportMenuSidebarMenuById(db, insertedMenuId);
+    return result;
+  });
+
+  return {
+    menuId: inserted.recordset?.[0]?.MenuId,
+    menuName,
+    parentId,
+    icon,
+    sortOrder,
+    createdBy: userId,
+    companyId,
+  };
+};
+
+const createReport = async (payload, auth) => {
+  const userId = toInt(auth?.userId);
+  const companyId = toInt(auth?.companyId);
+  if (!userId || !companyId) {
+    throw createHttpError(401, 'A valid company session is required.');
+  }
+
+  await ensureSchema();
+
+  const reportName = normalizeText(payload?.reportName || payload?.ReportName);
+  const reportCode = normalizeText(payload?.reportCode || payload?.ReportCode).toUpperCase();
+  const reportMenuId = toInt(payload?.reportMenuId ?? payload?.ReportMenuId);
+  const apiUrl = normalizeReportApiUrl(payload?.apiUrl || payload?.ApiUrl);
+  const reportTypeRaw = normalizeText(payload?.reportType || payload?.ReportType).toUpperCase() || 'GET';
+  const reportType = VALID_REPORT_TYPES.has(reportTypeRaw) ? reportTypeRaw : 'GET';
+  const isPublic = Boolean(payload?.isPublic ?? payload?.IsPublic);
+
+  if (!reportName || !reportCode || !reportMenuId) {
+    throw createHttpError(400, 'ReportName, ReportCode, and ReportMenuId are required.');
+  }
+
+  const menu = await authDbService.queryOne(`
+    SELECT ReportMenuId AS MenuId, CompanyId, CreatedBy
+    FROM dbo.ReportMenus
+    WHERE ReportMenuId = @menuId
+  `, { menuId: reportMenuId });
+
+  if (!menu || Number(menu.CompanyId) !== companyId || Number(menu.CreatedBy) !== userId) {
+    throw createHttpError(403, 'You can only create reports under your own menus in the selected company.');
+  }
+
+  const duplicate = await authDbService.queryOne(`
+    SELECT ReportId
+    FROM dbo.Reports
+    WHERE CompanyId = @companyId
+      AND CreatedBy = @createdBy
+      AND ReportCode = @reportCode
+  `, { companyId, createdBy: userId, reportCode });
+
+  if (duplicate) {
+    throw createHttpError(409, 'You already created a report with this code in the selected company.');
+  }
+
+  const draftParameters = await getDraftParametersForReport(payload, reportCode);
+
+  const reportId = await authDbService.transaction(async (db) => {
+    const inserted = await db.query(`
+      INSERT INTO dbo.Reports (
+        ReportName,
+        ReportCode,
+        ReportMenuId,
+        ApiUrl,
+        ReportType,
+        CompanyId,
+        CreatedBy,
+        IsPublic,
+        CreatedAt
+      )
+      OUTPUT INSERTED.ReportId
+      VALUES (
+        @reportName,
+        @reportCode,
+        @reportMenuId,
+        @apiUrl,
+        @reportType,
+        @companyId,
+        @createdBy,
+        @isPublic,
+        SYSUTCDATETIME()
+      )
+    `, {
+      reportName,
+      reportCode,
+      reportMenuId,
+      apiUrl,
+      reportType,
+      companyId,
+      createdBy: userId,
+      isPublic: isPublic ? 1 : 0,
+    });
+
+    const insertedReportId = inserted.recordset?.[0]?.ReportId;
+    if (!insertedReportId) {
+      throw createHttpError(500, 'Failed to create report.');
+    }
+
+    await insertReportParameters(db, insertedReportId, draftParameters, userId);
+    return insertedReportId;
+  });
+
+  return getReportById(reportId, auth);
+};
+
+const addReportParameter = async (payload, auth) => {
+  const userId = toInt(auth?.userId);
+  const companyId = toInt(auth?.companyId);
+  if (!userId || !companyId) {
+    throw createHttpError(401, 'A valid company session is required.');
+  }
+
+  await ensureSchema();
+
+  const reportId = toInt(payload?.reportId ?? payload?.ReportId);
+  const paramName = normalizeText(payload?.paramName || payload?.ParamName);
+  const displayName = normalizeText(payload?.displayName || payload?.DisplayName);
+  const paramType = normalizeText(payload?.paramType || payload?.ParamType).toLowerCase();
+  const isRequired = Boolean(payload?.isRequired ?? payload?.IsRequired);
+  const sortOrder = toInt(payload?.sortOrder ?? payload?.SortOrder) ?? 0;
+  const defaultValue = normalizeText(payload?.defaultValue || payload?.DefaultValue);
+
+  if (!reportId || !paramName || !displayName || !VALID_PARAM_TYPES.has(paramType)) {
+    throw createHttpError(400, 'ReportId, ParamName, DisplayName, and a valid ParamType are required.');
+  }
+
+  const report = await authDbService.queryOne(`
+    SELECT ReportId, CompanyId, CreatedBy
+    FROM dbo.Reports
+    WHERE ReportId = @reportId
+  `, { reportId });
+
+  if (!report || Number(report.CompanyId) !== companyId || Number(report.CreatedBy) !== userId) {
+    throw createHttpError(403, 'You can only add parameters to your own reports in the selected company.');
+  }
+
+  const duplicate = await authDbService.queryOne(`
+    SELECT ParamId AS ParameterId
+    FROM dbo.ReportParameters
+    WHERE ReportId = @reportId
+      AND ParamName = @paramName
+  `, { reportId, paramName });
+
+  if (duplicate) {
+    throw createHttpError(409, 'This parameter name already exists for the selected report.');
+  }
+
+  await authDbService.query(`
+    INSERT INTO dbo.ReportParameters (
+      ReportId,
+      ParamName,
+      DisplayName,
+      ParamType,
+      IsRequired,
+      SortOrder,
+      DefaultValue,
+      CreatedBy,
+      CreatedAt
+    )
+    VALUES (
+      @reportId,
+      @paramName,
+      @displayName,
+      @paramType,
+      @isRequired,
+      @sortOrder,
+      @defaultValue,
+      @createdBy,
+      SYSUTCDATETIME()
+    )
+  `, {
+    reportId,
+    paramName,
+    displayName,
+    paramType,
+    isRequired: isRequired ? 1 : 0,
+    sortOrder,
+    defaultValue: defaultValue || null,
+    createdBy: userId,
+  });
+
+  return getReportById(reportId, auth);
+};
+
+const getReportById = async (reportId, auth) => {
+  const userId = toInt(auth?.userId);
+  const companyId = toInt(auth?.companyId);
+  const roleId = toInt(auth?.roleId);
+  if (!userId || !companyId || !roleId) {
+    throw createHttpError(401, 'A valid company session is required.');
+  }
+
+  await ensureSchema();
+
+  const reportRow = await authDbService.queryOne(`
+    SELECT ReportId, ReportName, ReportCode, ReportMenuId, ApiUrl, ReportType, CompanyId, CreatedBy, IsPublic, CreatedAt, UpdatedAt
+    FROM dbo.Reports
+    WHERE ReportId = @reportId
+      AND CompanyId = @companyId
+  `, { reportId, companyId, userId });
+
+  if (!reportRow) {
+    throw createHttpError(404, 'Report not found.');
+  }
+
+  const authorizedMenuIds = await getAuthorizedReportMenuIds(roleId, companyId);
+  if (!authorizedMenuIds.has(Number(reportRow.ReportMenuId))) {
+    throw createHttpError(403, 'You do not have permission to run this report.');
+  }
+
+  let parameterRows = await loadStoredReportParameters(reportId);
+  let liveParameters = null;
+  const normalizedReportCode = normalizeText(reportRow.ReportCode);
+
+  if (normalizedReportCode) {
+    try {
+      if (isSapReportServiceApiUrl(reportRow.ApiUrl)) {
+        parameterRows = await syncSapReportParameters(reportRow);
+      }
+
+      liveParameters = await reportService.loadReportParameters(normalizedReportCode);
+    } catch (_error) {
+      // Fall back to the stored metadata if the SAP parameter load fails.
+    }
+  }
+
+  return {
+    report: normalizeVisibleReport(reportRow),
+    parameters: Array.isArray(liveParameters) && liveParameters.length
+      ? mergeStoredAndLiveParameters(parameterRows, liveParameters)
+      : parameterRows.map(normalizeParameter),
+  };
+};
+
+const normalizeParameterInput = (parameter, rawValue) => {
+  if (rawValue == null || rawValue === '') {
+    return parameter.defaultValue || '';
+  }
+
+  if (parameter.paramType === 'number') {
+    const numeric = Number(rawValue);
+    if (!Number.isFinite(numeric)) {
+      throw createHttpError(400, `${parameter.displayName} must be a valid number.`);
+    }
+    return numeric;
+  }
+
+  if (parameter.paramType === 'date') {
+    const text = normalizeText(rawValue);
+    if (!text) return '';
+    const parsed = new Date(text);
+    if (Number.isNaN(parsed.getTime())) {
+      throw createHttpError(400, `${parameter.displayName} must be a valid date.`);
+    }
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  const textValue = String(rawValue);
+  const identity = `${parameter?.displayName || ''} ${parameter?.paramName || ''}`.toLowerCase();
+  if (
+    textValue.includes(' - ')
+    && (
+      identity.includes('item') ||
+      identity.includes('product') ||
+      identity.includes('customer') ||
+      identity.includes('vendor') ||
+      identity.includes('buyer') ||
+      identity.includes('seller') ||
+      identity.includes('business partner') ||
+      identity.includes('card code') ||
+      identity.includes('cardcode')
+    )
+  ) {
+    return textValue.split(' - ')[0].trim();
+  }
+
+  return textValue;
+};
+
+const isOptionalLookupFilterParameter = (parameter) => {
+  const identity = `${parameter?.displayName || ''} ${parameter?.paramName || ''}`.toLowerCase();
+  return (
+    identity.includes('item') ||
+    identity.includes('product') ||
+    identity.includes('customer') ||
+    identity.includes('vendor') ||
+    identity.includes('buyer') ||
+    identity.includes('seller') ||
+    identity.includes('business partner') ||
+    identity.includes('card code') ||
+    identity.includes('cardcode') ||
+    identity.includes('enter type') ||
+    identity.includes('type')
+  );
+};
+
+const resolveSubmittedParameterValue = (payload, parameter) => {
+  const parameterBag = payload?.parameters || {};
+  const compactDisplayName = normalizeText(parameter?.displayName).replace(/\s+/g, '');
+  const compactParamName = normalizeText(parameter?.paramName).replace(/\s+/g, '');
+  const normalizedParamName = compactParamName.replace(/@+$/, '');
+
+  const candidateKeys = [
+    parameter?.paramName,
+    normalizedParamName,
+    parameter?.displayName,
+    compactDisplayName,
+    compactParamName,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+
+  for (const key of candidateKeys) {
+    if (Object.prototype.hasOwnProperty.call(parameterBag, key)) {
+      return parameterBag[key];
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload || {}, key)) {
+      return payload[key];
+    }
+  }
+
+  return undefined;
+};
+
+const resolveApiUrl = (apiUrl) => {
+  if (/^https?:\/\//i.test(apiUrl)) {
+    return apiUrl;
+  }
+
+  if (apiUrl.startsWith('/')) {
+    return `http://localhost:${env.port}${apiUrl}`;
+  }
+
+  return `http://localhost:${env.port}/${apiUrl}`;
+};
+
+const buildRequestAgentOptions = (url) => {
+  if (!/^https:\/\//i.test(String(url || ''))) {
+    return {};
+  }
+
+  const shouldRelaxTls =
+    env.reportServiceRejectUnauthorized === false ||
+    env.sapRejectUnauthorized === false;
+
+  if (!shouldRelaxTls) {
+    return {};
+  }
+
+  return {
+    httpsAgent: getRelaxedHttpsAgent(),
+  };
+};
+
+const isSapReportServiceUrl = isSapReportServiceApiUrl;
+
+const collectReportLines = (data) => {
+  if (Buffer.isBuffer(data)) {
+    return [`Binary payload (${data.length} bytes)`];
+  }
+
+  if (Array.isArray(data)) {
+    return data.flatMap((row, index) => {
+      if (row && typeof row === 'object') {
+        return [
+          `Row ${index + 1}`,
+          ...Object.entries(row).map(([key, value]) => formatPdfLine(key, value)),
+          '',
+        ];
+      }
+      return [`Row ${index + 1}: ${String(row)}`];
+    });
+  }
+
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.rows)) {
+      return collectReportLines(data.rows);
+    }
+
+    return Object.entries(data).map(([key, value]) => formatPdfLine(key, typeof value === 'object' ? JSON.stringify(value) : value));
+  }
+
+  return [String(data ?? '')];
+};
+
+const executeReportSource = async ({ report, parameters, values, authHeader }) => {
+  const normalizedType = String(report.reportType || 'GET').toUpperCase();
+  const method = normalizedType.includes('POST') ? 'post' : 'get';
+  const isSapReportServiceReport = isSapReportServiceUrl(report.apiUrl);
+
+  if (isSapReportServiceReport) {
+    const sapResponse = await reportService.exportReportPdf({
+      docCode: report.reportCode,
+      parameters: parameters.map((parameter) => ({
+        name: parameter.paramName,
+        type: parameter.paramType,
+        value: values[parameter.paramName],
+      })),
+      fileName: `${report.reportCode || report.reportName}.pdf`,
+    });
+
+    return {
+      pdfBase64: sapResponse.base64Pdf,
+      sourceType: 'sap-report-service',
+    };
+  }
+
+  const url = resolveApiUrl(report.apiUrl);
+  const response = await axios({
+    method,
+    url,
+    params: method === 'get' ? values : undefined,
+    data: method === 'post' ? values : undefined,
+    responseType: 'arraybuffer',
+    headers: authHeader ? { Authorization: authHeader } : undefined,
+    validateStatus: (status) => status >= 200 && status < 300,
+    ...buildRequestAgentOptions(url),
+  });
+
+  const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
+  const rawBuffer = Buffer.from(response.data);
+
+  if (contentType.includes('application/pdf')) {
+    return {
+      pdfBase64: rawBuffer.toString('base64'),
+      sourceType: 'pdf',
+    };
+  }
+
+  const textPayload = rawBuffer.toString('utf8');
+
+  if (reportService.isProbablyBase64(textPayload)) {
+    return {
+      pdfBase64: String(textPayload).trim(),
+      sourceType: 'raw-base64',
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(textPayload);
+    const embeddedBase64 = parsed?.pdfBase64 || parsed?.base64Pdf || parsed?.data?.pdfBase64 || parsed?.data?.base64Pdf;
+    if (embeddedBase64) {
+      return {
+        pdfBase64: embeddedBase64,
+        sourceType: 'embedded-pdf',
+      };
+    }
+
+    const parameterSummaryLines = parameters.map((parameter) =>
+      formatPdfLine(parameter.displayName, values[parameter.paramName] ?? ''),
+    );
+    const reportLines = collectReportLines(parsed);
+
+    return {
+      pdfBase64: buildSimplePdfBase64({
+        title: report.reportName,
+        lines: [
+          `Report Code: ${report.reportCode}`,
+          `Company ID: ${report.companyId}`,
+          'Parameters',
+          ...parameterSummaryLines,
+          '',
+          'Data',
+          ...reportLines,
+        ],
+      }),
+      sourceType: 'generated-from-json',
+    };
+  } catch (_error) {
+    return {
+      pdfBase64: buildSimplePdfBase64({
+        title: report.reportName,
+        lines: [
+          `Report Code: ${report.reportCode}`,
+          'Response',
+          textPayload.slice(0, 5000),
+        ],
+      }),
+      sourceType: 'generated-from-text',
+    };
+  }
+};
+
+const runReport = async (payload, auth, authHeader) => {
+  const reportId = toInt(payload?.reportId ?? payload?.ReportId);
+  if (!reportId) {
+    throw createHttpError(400, 'ReportId is required.');
+  }
+
+  const detail = await getReportById(reportId, auth);
+  const values = {};
+
+  detail.parameters.forEach((parameter) => {
+    const inputValue = resolveSubmittedParameterValue(payload, parameter);
+    const normalized = normalizeParameterInput(parameter, inputValue);
+    if (parameter.isRequired && !isOptionalLookupFilterParameter(parameter) && (normalized === '' || normalized == null)) {
+      throw createHttpError(400, `${parameter.displayName} is required.`);
+    }
+    values[parameter.paramName] = normalized;
+  });
+
+  const execution = await executeReportSource({
+    report: detail.report,
+    parameters: detail.parameters,
+    values,
+    authHeader,
+  });
+
+  return {
+    reportId: detail.report.reportId,
+    reportName: detail.report.reportName,
+    fileName: `${detail.report.reportCode || detail.report.reportName}.pdf`,
+    pdfBase64: execution.pdfBase64,
+    sourceType: execution.sourceType,
+  };
+};
+
+module.exports = {
+  ensureSchema,
+  listReportMenus,
+  listAuthorizedReportCodes,
+  listReportCodeParameters,
+  createReportMenu,
+  createReport,
+  addReportParameter,
+  getReportById,
+  runReport,
+};

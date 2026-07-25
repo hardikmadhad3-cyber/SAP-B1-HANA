@@ -1,0 +1,186 @@
+/* ── Branches Setup Page (SAP B1 Style) ── */
+.br-page {
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 12px;
+  color: #1a1a1a;
+  background: #f0f2f5;
+  min-height: 100vh;
+}
+
+/* ── Toolbar ── */
+.br-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #e8edf2;
+  border-bottom: 1px solid #c8d0da;
+}
+
+.br-toolbar__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #003366;
+  margin-right: auto;
+}
+
+/* ── Buttons ── */
+.br-btn {
+  padding: 4px 14px;
+  font-size: 12px;
+  border: 1px solid #a0aab4;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecf0 100%);
+  color: #1a1a1a;
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 70px;
+}
+
+.br-btn:hover {
+  background: linear-gradient(180deg, #f0f4f8 0%, #dde3ea 100%);
+}
+
+.br-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.br-btn--primary {
+  background: linear-gradient(180deg, #0070c0 0%, #005a9e 100%);
+  color: #fff;
+  border-color: #004a80;
+}
+
+.br-btn--primary:hover {
+  background: linear-gradient(180deg, #0080d0 0%, #0060aa 100%);
+}
+
+.br-btn--small {
+  padding: 3px 10px;
+  min-width: 60px;
+}
+
+/* ── Alert ── */
+.br-alert {
+  margin: 8px 12px 0;
+  padding: 7px 12px;
+  border-radius: 3px;
+  font-size: 12px;
+  border: 1px solid;
+}
+
+.br-alert--success {
+  background: #e6f4ea;
+  color: #1a7a30;
+  border-color: #8bc49a;
+}
+
+.br-alert--error {
+  background: #fde8e8;
+  color: #c00;
+  border-color: #f5a0a0;
+}
+
+/* ── Grid Section ── */
+.br-grid-section {
+  margin: 10px 12px;
+  background: #fff;
+  border: 1px solid #c8d0da;
+  border-radius: 3px;
+  padding: 10px;
+}
+
+.br-grid-wrap {
+  overflow-x: auto;
+  margin-bottom: 8px;
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+}
+
+.br-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 1000px;
+}
+
+.br-grid th {
+  background: #d0d0d0;
+  border: 1px solid #999;
+  padding: 6px 8px;
+  text-align: left;
+  font-weight: bold;
+  color: #1a1a1a;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.br-grid td {
+  background: #ffffff;
+  border: 1px solid #ccc;
+  padding: 2px 4px;
+  height: 26px;
+  vertical-align: middle;
+}
+
+.br-grid tbody tr:hover td {
+  background: #e8f0fe;
+}
+
+.br-grid__cell--center {
+  text-align: center;
+}
+
+.br-grid__empty {
+  text-align: center;
+  padding: 40px 20px !important;
+  color: #888;
+  font-style: italic;
+}
+
+.br-grid__input {
+  width: 100%;
+  height: 22px;
+  padding: 0 5px;
+  font-size: 12px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #1a1a1a;
+  box-sizing: border-box;
+}
+
+.br-grid__input:focus {
+  outline: none;
+  border-color: #0070c0;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(0, 112, 192, 0.15);
+}
+
+.br-grid__readonly {
+  color: #888;
+  font-style: italic;
+  font-size: 11px;
+}
+
+.br-grid__checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.br-grid-actions {
+  display: flex;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+/* ── Responsive ── */
+@media (max-width: 991px) {
+  .br-grid-wrap {
+    max-height: calc(100vh - 200px);
+  }
+}

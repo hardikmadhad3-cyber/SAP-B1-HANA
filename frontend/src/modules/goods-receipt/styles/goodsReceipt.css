@@ -1,0 +1,227 @@
+.gr-goods-receipt__page .po-grid__input--text {
+  text-align: left;
+}
+
+.gr-goods-receipt__page .po-grid select.po-grid__input,
+.gr-goods-receipt__page .po-grid input.po-grid__input {
+  height: 22px;
+  background: #fff;
+}
+
+.gr-goods-receipt__page .po-grid td,
+.gr-goods-receipt__page .po-grid tbody tr,
+.gr-goods-receipt__page .po-grid tbody tr:nth-child(even),
+.gr-goods-receipt__page .po-grid tbody tr:hover,
+.gr-goods-receipt__page .po-grid tbody tr:nth-child(even):hover {
+  background: #fff;
+}
+
+.gr-goods-receipt__grid-wrap {
+  max-height: calc(100vh - 390px);
+}
+
+.gr-goods-receipt__row--active td {
+  background: #fff !important;
+}
+
+.gr-goods-receipt__row--active td.gr-goods-receipt__cell--readonly {
+  background: #fff !important;
+}
+
+.gr-goods-receipt__row--active td.gr-goods-receipt__cell--readonly .po-grid__input {
+  background: #fff !important;
+}
+
+.gr-goods-receipt__input--error {
+  border-color: #dc3545 !important;
+  background: #fff5f5 !important;
+}
+
+.gr-goods-receipt__lookup-btn {
+  min-width: 24px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid #a0aab4;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fff 0%, #e8ecf0 100%);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.gr-goods-receipt__grid th {
+  white-space: normal;
+  line-height: 1.15;
+}
+
+.gr-goods-receipt__header-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.gr-goods-receipt__selector {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+
+.gr-goods-receipt__selector .po-field__input {
+  flex: 1;
+}
+
+.gr-goods-receipt__footer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 18px;
+  align-items: end;
+}
+
+.gr-goods-receipt__footer-card {
+  margin-bottom: 0;
+}
+
+.gr-goods-receipt__footer-right {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.gr-goods-receipt__action-bar {
+  justify-content: space-between;
+  margin: 10px 12px 12px;
+  border: 1px solid #c8d0da;
+  border-radius: 3px;
+}
+
+.gr-goods-receipt__action-left,
+.gr-goods-receipt__action-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.gr-goods-receipt__total-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gr-goods-receipt__total-box .po-field__input {
+  width: 120px;
+  text-align: right;
+  font-weight: 700;
+}
+
+.gr-reference-modal {
+  width: 1040px;
+  max-width: min(96vw, calc(100vw - 340px));
+}
+
+.gr-reference-modal__overlay {
+  left: 300px;
+  width: auto;
+}
+
+body.sap-route-window-maximized .gr-reference-modal__overlay,
+body.sap-floating-window-maximized .gr-reference-modal__overlay {
+  left: 0;
+}
+
+body:has(.sidebar-shell.is-collapsed) .gr-reference-modal__overlay {
+  left: 70px;
+}
+
+.gr-reference-modal__body {
+  padding-top: 10px;
+}
+
+.gr-reference-modal__tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 0;
+}
+
+.gr-reference-modal__panel {
+  border: 1px solid #c8d0da;
+  padding: 12px;
+}
+
+.gr-reference-modal__grid-wrap {
+  max-height: 420px;
+  margin-bottom: 10px;
+}
+
+.gr-reference-modal__checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #1a1a1a;
+}
+
+.gr-reference-modal__doc-number-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 6px;
+  align-items: center;
+}
+
+.gr-reference-modal__lookup-btn {
+  min-width: 36px;
+  padding-inline: 0;
+}
+
+.gr-reference-modal__picker-overlay {
+  z-index: 1200;
+}
+
+.gr-reference-picker {
+  width: 920px;
+  max-width: min(94vw, calc(100vw - 340px));
+}
+
+.gr-reference-picker__search {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.gr-reference-picker__search .po-field__label {
+  width: auto;
+  text-align: left;
+}
+
+@media (max-width: 991px) {
+  .gr-reference-modal__overlay {
+    left: 70px;
+  }
+
+  .gr-reference-modal,
+  .gr-reference-picker {
+    max-width: calc(100vw - 94px);
+  }
+}
+
+.gr-reference-picker__grid-wrap {
+  max-height: 420px;
+}
+
+@media (max-width: 1100px) {
+  .gr-goods-receipt__header-grid,
+  .gr-goods-receipt__footer {
+    grid-template-columns: 1fr;
+  }
+
+  .gr-goods-receipt__action-bar {
+    align-items: flex-start;
+  }
+
+  .gr-goods-receipt__action-left,
+  .gr-goods-receipt__action-right {
+    width: 100%;
+  }
+}

@@ -1,0 +1,3 @@
+@import '../../sales-order/styles/salesOrder.css';
+
+/* Sales Quotation uses the shared sales-side document shell. Keep only workflow-specific overrides here. */

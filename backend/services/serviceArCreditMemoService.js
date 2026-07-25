@@ -1,0 +1,431 @@
+const sapService = require('./sapService');
+const serviceArCreditMemoDb = require('./serviceArCreditMemoDbService');
+const arInvoiceService = require('./arInvoiceService');
+const hsnCodeDbService = require('./hsnCodeDbService');
+const { getUdfDefinitions } = require('./udfMetadataService');
+const { isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
+
+const parseNum = (value, fallback = 0) => {
+  const parsed = Number(String(value ?? '').replace(/,/g, ''));
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const formatDateForSAP = (value) => {
+  if (!value) return '';
+  return String(value).split('T')[0];
+};
+
+const optString = (value) => {
+  const text = String(value ?? '').trim();
+  return text || undefined;
+};
+
+const optNumber = (value) => {
+  const text = String(value ?? '').trim();
+  if (!text) return undefined;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const yesNo = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['y', 'yes', 'true', '1', 'tyes'].includes(normalized) ? 'tYES' : 'tNO';
+};
+
+const GST_TRANSACTION_TYPE_MAP = new Map([
+  ['--', 'gsttrantyp_BillOfSupply'],
+  ['billofsupply', 'gsttrantyp_BillOfSupply'],
+  ['ga', 'gsttrantyp_GSTTaxInvoice'],
+  ['gsttaxinvoice', 'gsttrantyp_GSTTaxInvoice'],
+  ['gd', 'gsttrantyp_GSTDebitMemo'],
+  ['gstdebitmemo', 'gsttrantyp_GSTDebitMemo'],
+]);
+
+const resolveGstTransactionType = (value) => {
+  const text = String(value || 'GST Tax Invoice').trim();
+  if (/^gsttrantyp_/i.test(text)) return text;
+  const normalized = text.toLowerCase().replace(/[^a-z0-9-]/g, '');
+  return GST_TRANSACTION_TYPE_MAP.get(normalized) || 'gsttrantyp_GSTTaxInvoice';
+};
+
+const requiresTaxInvoiceReference = (gstTransactionType) =>
+  gstTransactionType !== 'gsttrantyp_BillOfSupply';
+
+const normalizeBranchId = (value) => {
+  const normalized = String(value ?? '').trim();
+  if (!normalized || normalized === '-1' || normalized === '0') return undefined;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const resolveDocumentSeries = async (header, series, isManualSeries) => {
+  if (isManualSeries) return { series, branchId: normalizeBranchId(header.branch) };
+  if (!(series > 0)) throw new Error('Select a numbering series before adding the document');
+
+  const postingDate = header.postingDate || header.documentDate;
+  const result = await serviceArCreditMemoDb.getDocumentSeries({
+    date: postingDate,
+    branch: header.branch || '',
+  });
+  const selectedSeries = (Array.isArray(result) ? result : result?.series || [])
+    .find((row) => Number(row.Series) === series);
+
+  if (!selectedSeries) {
+    throw new Error(`The selected numbering series is not valid for posting date ${postingDate}. Select a series for that financial year and branch.`);
+  }
+
+  return {
+    series,
+    branchId: normalizeBranchId(header.branch) ?? normalizeBranchId(selectedSeries.BPLId),
+  };
+};
+
+const getUdfDefinitionsByKey = async (tableId) => {
+  const definitions = await getUdfDefinitions(tableId);
+  return new Map(definitions.map((field) => [field.key, field]));
+};
+
+const normalizeKey = (value) =>
+  String(value || '')
+    .replace(/^U_/i, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase();
+
+const normalizeForCompare = (value) =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase();
+
+const resolveUdfOptionValue = (field, value) => {
+  const text = String(value ?? '').trim();
+  if (!text || !Array.isArray(field?.options) || !field.options.length) return text;
+
+  const exactValue = field.options.find((option) => normalizeForCompare(option.value) === normalizeForCompare(text));
+  if (exactValue) return String(exactValue.value);
+
+  const exactLabel = field.options.find((option) => normalizeForCompare(option.label) === normalizeForCompare(text));
+  if (exactLabel) return String(exactLabel.value);
+
+  return text;
+};
+
+const coerceUdfValue = (field, value, key = '') => {
+  if (value === undefined || value === null) return undefined;
+  const normalizedValue = normalizeUdfValue(value, field, key || field?.key);
+  return normalizedValue === null ? undefined : normalizedValue;
+};
+
+const setUdfValue = (target, udfDefinitionsByKey, aliases, value) => {
+  if (value === undefined) return;
+
+  const normalizedAliases = aliases.map(normalizeKey);
+  const matchedKey = Array.from(udfDefinitionsByKey.keys()).find((key) => normalizedAliases.includes(normalizeKey(key)));
+  if (!matchedKey) return;
+
+  if (isBlankUdfValue(value)) {
+    target[matchedKey] = null;
+    return;
+  }
+
+  const coercedValue = coerceUdfValue(udfDefinitionsByKey.get(matchedKey), value, matchedKey);
+  if (coercedValue !== undefined) target[matchedKey] = coercedValue;
+};
+
+const applyExplicitUdfs = (target, values = {}, udfDefinitionsByKey) => {
+  Object.entries(values || {}).forEach(([key, value]) => {
+    if (!udfDefinitionsByKey.has(key)) return;
+    if (isBlankUdfValue(value)) {
+      target[key] = null;
+      return;
+    }
+    const coercedValue = coerceUdfValue(udfDefinitionsByKey.get(key), value, key);
+    if (coercedValue !== undefined) target[key] = coercedValue;
+  });
+};
+
+const LINE_UDF_ALIASES = {
+  saudaNodeRef: ['SaudaNodeRef', 'SaudaNodhRef', 'SaudaNode'],
+  costSheet: ['Cost_Sheet', 'CostSheet', 'COSTSHEET'],
+  packingType: ['PackingType', 'Packing_Type'],
+  containerType: ['ContainerType', 'Container_Type'],
+  grossWt: ['GrossWt', 'Gross_Wt', 'GrossWeight'],
+  totalPackage: ['TotalPackage', 'Total_Package'],
+  taxCodeRepeat: ['TAXCODE', 'TaxCode'],
+  price: ['PRICE', 'Price'],
+  apInvDocKey: ['APInvDocKey', 'APInvDocEntry'],
+  apInvDocNum: ['APInvDocNum'],
+  apInvLineNum: ['APInvLineNum'],
+  rg23DNo: ['RG23DNo', 'RG23DNO'],
+  specialRebate: ['SpecialRebate', 'SPLRBT'],
+  commision: ['Commision', 'Commission', 'COMPRC'],
+  brokPerQty: ['BrokPerQty', 'S_BrokPerQty', 'S_BROKPERQTY'],
+  sItem: ['S_Item', 'SItem'],
+  sQty: ['S_Qty', 'SQty'],
+  sellerBrokerage: ['SellerBrokerage', 'Brok_Seller', 'BROK_SELLER'],
+  buyerBrokerage: ['BuyerBrokerage', 'Brok_Buyer', 'BROK_BUYER'],
+  buyerDelivery: ['BuyerDelivery', 'Buyer_Delivery', 'BUYER_DELIVERY'],
+  sellerDelivery: ['SellerDelivery', 'Seller_Delivery', 'SELLER_DELIVERY'],
+  buyerQuality: ['BuyerQuality', 'Buyer_Quality', 'BUYER_QUALITY'],
+  sellerQuality: ['SellerQuality', 'Seller_Quality', 'SELLER_QUALITY'],
+  buyerPrice: ['BuyerPrice', 'Buyer_Price', 'BUYER_PRICE'],
+  sellerPrice: ['SellerPrice', 'Seller_Price', 'SELLER_PRICE'],
+  buyerSpecialInstruction: ['BuyerSpecialInstruction', 'BuyerSplInst', 'Buyer_SPINS', 'BUYER_SPINS'],
+  sellerSpecialInstruction: ['SellerSpecialInstruction', 'SellerSplInst', 'Seller_SPINS', 'SELLER_SPINS'],
+  sellerBrokerageAmtPer: ['SellerBrokerageAmtPer', 'SellBrkAmtPer', 'Sel_Brok_AP', 'SEL_BROK_AP'],
+  sellerBrokeragePercentage: ['SellerBrokeragePercentage', 'SellerBrkPct', 'Seller_Brok_Per', 'SELLER_BROK_PER'],
+  buyerBillDiscount: ['BuyerBillDiscount'],
+  sellerBillDiscount: ['SellerBillDiscount'],
+  stcode: ['STCODE', 'STCode', 'SELLTCODE'],
+  buyerTermsOfPayment: ['BuyerTermsOfPayment', 'BuyerPayTerms', 'Buyer_Payment_Terms', 'BUYER_PAYMENT_TERMS'],
+  sellerTermsOfPayment: ['SellerTermsOfPayment', 'SellerPayTerms', 'Seller_Payment_Term', 'Seller_Payment_Terms'],
+  sellerTermsOfPaymentRepeat: ['SellerTermsOfPayment', 'SellerPayTerms', 'Seller_Payment_Term', 'Seller_Payment_Terms'],
+  fixBrokBuyer: ['Fix_Brock_B', 'Fix_Brok_B', 'FixBrokBuyer', 'FixBrockBuyer'],
+  fixBrockSeller: ['Fix_Brock_S', 'Fix_Brok_S', 'FixBrokSeller', 'FixBrockSeller'],
+  freightPurchase: ['FreightPurchase'],
+  freightSales: ['FreightSales'],
+  freightProvider: ['FreightProvider'],
+  freightProviderName: ['FreightProviderName'],
+  documentCreated: ['DocumentCreated'],
+  brokerageNumber: ['BrokerageNumber', 'BrokerageNo'],
+};
+
+const HEADER_UDF_ALIASES = {
+  transactionType: ['TransactionType', 'DocType'],
+  placeOfSupply: ['PlaceOfSupply', 'PlaceOfSupplyCode'],
+  indicator: ['Indicator'],
+  bFromDate: ['B_FromDate', 'BFromDate'],
+  bToDate: ['B_ToDate', 'BToDate'],
+};
+
+const applyKnownLineUdfs = (target, source, lineUdfDefinitionsByKey) => {
+  Object.entries(LINE_UDF_ALIASES).forEach(([field, aliases]) => {
+    setUdfValue(target, lineUdfDefinitionsByKey, aliases, source[field]);
+  });
+};
+
+const applyKnownHeaderUdfs = (target, source, headerUdfDefinitionsByKey) => {
+  Object.entries(HEADER_UDF_ALIASES).forEach(([field, aliases]) => {
+    setUdfValue(target, headerUdfDefinitionsByKey, aliases, source[field]);
+  });
+};
+
+const resolveSacEntry = async (value) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return undefined;
+  const resolved = await hsnCodeDbService.resolveSACCodeToAbsEntry(normalized);
+  return resolved == null ? undefined : resolved;
+};
+
+const resolveLocationCode = (line) => {
+  const rawCode = String(line.locCode ?? '').trim();
+  if (rawCode && /^\d+$/.test(rawCode)) return Number(rawCode);
+
+  const rawLoc = String(line.loc ?? '').trim();
+  if (rawLoc && /^\d+$/.test(rawLoc)) return Number(rawLoc);
+
+  return undefined;
+};
+
+const validatePayload = async (payload, docEntry = null) => {
+  const { header = {}, lines = [] } = payload || {};
+  const customerCode = String(header.vendor || header.customerCode || '').trim();
+  if (!customerCode) throw new Error('Customer is required');
+
+  const postingDate = formatDateForSAP(header.postingDate);
+  if (!postingDate) throw new Error('Posting Date is required');
+
+  const documentDate = formatDateForSAP(header.documentDate);
+  if (!documentDate) throw new Error('Document Date is required');
+
+  const dueDate = formatDateForSAP(header.deliveryDate || header.postingDate);
+  if (!dueDate) throw new Error('Due Date is required');
+  if (dueDate < postingDate) throw new Error('Due Date must be greater than or equal to Posting Date');
+
+  const populatedLines = lines.filter((line) =>
+    String(line.description || line.glAccount || line.totalLC || line.unitPrice || '').trim()
+  );
+  if (!populatedLines.length) throw new Error('At least one service line is required');
+
+  const customer = await serviceArCreditMemoDb.getCustomerValidation(customerCode);
+  if (!customer || customer.CardType !== 'C' || String(customer.FrozenFor || '').toUpperCase() === 'Y') {
+    throw new Error('Invalid customer');
+  }
+
+  const postingPeriod = await serviceArCreditMemoDb.getPostingPeriodValidation(postingDate);
+  if (!postingPeriod) throw new Error('Posting Date must be within open posting period');
+
+  const branchesEnabled = await serviceArCreditMemoDb.getBranchEnabled();
+  if (branchesEnabled && !String(header.branch || '').trim()) {
+    throw new Error('Branch is required');
+  }
+
+  populatedLines.forEach((line, index) => {
+    if (!String(line.description || '').trim()) throw new Error(`Description is required on line ${index + 1}`);
+    if (!String(line.glAccount || '').trim()) throw new Error(`G/L Account is required on line ${index + 1}`);
+    if (!String(line.taxCode || '').trim()) throw new Error(`Tax Code is required on line ${index + 1}`);
+    if (parseNum(line.totalLC || line.unitPrice) <= 0) throw new Error(`Total (LC) is required on line ${index + 1}`);
+  });
+
+  for (const line of populatedLines) {
+    const taxCode = String(line.taxCode || '').trim();
+    const taxCodeRow = await serviceArCreditMemoDb.getTaxCodeValidation(taxCode);
+    if (!taxCodeRow) throw new Error(`Tax code '${taxCode}' is not valid`);
+  }
+
+  return { header, lines: populatedLines };
+};
+
+const buildSapPayload = async (payload, includeSeries = true, docEntry = null) => {
+  const { header, lines } = await validatePayload(payload, docEntry);
+  const [headerUdfDefinitionsByKey, lineUdfDefinitionsByKey] = await Promise.all([
+    getUdfDefinitionsByKey('ORIN'),
+    getUdfDefinitionsByKey('RIN1'),
+  ]);
+
+  const customerCode = String(header.vendor || header.customerCode || '').trim();
+  const isManualSeries = ['manual', '-1'].includes(String(header.series ?? '').trim().toLowerCase());
+  const manualDocNum = optNumber(header.docNo || header.nextNumber);
+  const series = optNumber(header.series);
+  const contactPersonCode = optNumber(header.contactPerson);
+  const salesPersonCode = String(header.salesEmployee ?? '').trim() === '-1' ? undefined : optNumber(header.salesEmployee);
+  const paymentGroupCode = optNumber(header.paymentTerms);
+  const gstTransactionType = resolveGstTransactionType(header.transactionType || header.GSTTransactionType);
+  let taxInvoiceNo = optString(header.taxInvoiceNo || header.TaxInvoiceNo || header.originalInvoiceNo);
+  let taxInvoiceDate = formatDateForSAP(header.taxInvoiceDate || header.TaxInvoiceDate || header.originalInvoiceDate) || undefined;
+
+  if ((!taxInvoiceNo || !taxInvoiceDate) && requiresTaxInvoiceReference(gstTransactionType)) {
+    const baseInvoiceEntries = [...new Set(lines
+      .filter((line) => optNumber(line.baseType) === 13 && optNumber(line.baseEntry) !== undefined)
+      .map((line) => optNumber(line.baseEntry)))];
+
+    if (baseInvoiceEntries.length === 1) {
+      const baseReference = await serviceArCreditMemoDb.getARInvoiceTaxReference(baseInvoiceEntries[0]);
+      taxInvoiceNo = taxInvoiceNo || optString(baseReference?.taxInvoiceNo);
+      taxInvoiceDate = taxInvoiceDate || formatDateForSAP(baseReference?.taxInvoiceDate) || undefined;
+    }
+  }
+
+  if (requiresTaxInvoiceReference(gstTransactionType) && (!taxInvoiceNo || !taxInvoiceDate)) {
+    throw new Error('Original Invoice No. and Original Invoice Date are required for a GST credit memo. Enter them on the Tax tab or use Copy From A/R Invoice.');
+  }
+
+  if (includeSeries && isManualSeries && manualDocNum === undefined) {
+    throw new Error('Document number is required when Series is Manual');
+  }
+
+  const resolvedSeries = includeSeries
+    ? await resolveDocumentSeries(header, series, isManualSeries)
+    : { series, branchId: normalizeBranchId(header.branch) };
+
+  const sapPayload = {
+    DocType: 'dDocument_Service',
+    CardCode: customerCode,
+    ...(includeSeries && isManualSeries ? { Series: -1, DocNum: manualDocNum } : {}),
+    ...(includeSeries && !isManualSeries ? { Series: resolvedSeries.series } : {}),
+    DocDate: header.postingDate || header.documentDate,
+    DocDueDate: header.deliveryDate || header.postingDate || header.documentDate,
+    TaxDate: header.documentDate || header.postingDate,
+    GSTTransactionType: gstTransactionType,
+    TaxInvoiceNo: taxInvoiceNo,
+    TaxInvoiceDate: taxInvoiceDate,
+    ContactPersonCode: contactPersonCode,
+    SalesPersonCode: salesPersonCode,
+    BPLId: resolvedSeries.branchId,
+    BPL_IDAssignedToInvoice: resolvedSeries.branchId,
+    PaymentGroupCode: paymentGroupCode,
+    NumAtCard: optString(header.salesContractNo || header.customerRefNo),
+    Comments: optString(header.remarks || header.otherInstruction || header.comments),
+    JournalMemo: optString(header.journalRemark),
+    DiscountPercent: header.discount ? parseNum(header.discount) : undefined,
+    DocumentLines: [],
+  };
+
+  applyExplicitUdfs(sapPayload, payload.header_udfs, headerUdfDefinitionsByKey);
+  applyKnownHeaderUdfs(sapPayload, header, headerUdfDefinitionsByKey);
+
+  for (const line of lines) {
+    const quantity = parseNum(line.sQty, 0) > 0 ? parseNum(line.sQty) : 1;
+    const unitPrice = parseNum(line.unitPrice, 0) > 0
+      ? parseNum(line.unitPrice)
+      : parseNum(line.totalLC, 0) / quantity;
+    const sapLine = {
+      AccountCode: String(line.glAccount || '').trim(),
+      ItemDescription: String(line.description || '').trim(),
+      Quantity: quantity,
+      UnitPrice: unitPrice,
+      TaxCode: optString(line.taxCode),
+      CostingCode: optString(line.distRule),
+      WTLiable: yesNo(line.wtaxLiable),
+    };
+
+    const sacEntry = await resolveSacEntry(line.sac);
+    if (sacEntry !== undefined) sapLine.SACEntry = sacEntry;
+
+    const locationCode = resolveLocationCode(line);
+    if (locationCode !== undefined) sapLine.LocationCode = locationCode;
+
+    const agreementNo = optNumber(line.blanketAgreementNo);
+    if (agreementNo !== undefined) sapLine.AgreementNo = agreementNo;
+
+    const baseType = optNumber(line.baseType);
+    const baseEntry = optNumber(line.baseEntry);
+    const baseLine = optNumber(line.baseLine);
+    if (baseType !== undefined && baseEntry !== undefined && baseLine !== undefined) {
+      sapLine.BaseType = baseType;
+      sapLine.BaseEntry = baseEntry;
+      sapLine.BaseLine = baseLine;
+    }
+
+    applyExplicitUdfs(sapLine, line.udf, lineUdfDefinitionsByKey);
+    applyKnownLineUdfs(sapLine, line, lineUdfDefinitionsByKey);
+    sapPayload.DocumentLines.push(sapLine);
+  }
+
+  return sapPayload;
+};
+
+const submitServiceARCreditMemo = async (payload) => {
+  const sapPayload = await buildSapPayload(payload, true);
+  const response = await sapService.request({
+    method: 'post',
+    url: '/CreditNotes',
+    data: sapPayload,
+  });
+
+  return {
+    message: 'Service A/R Credit Memo created successfully',
+    doc_num: response.data?.DocNum,
+    doc_entry: response.data?.DocEntry,
+    DocNum: response.data?.DocNum,
+    DocEntry: response.data?.DocEntry,
+  };
+};
+
+const updateServiceARCreditMemo = async (docEntry, payload) => {
+  const sapPayload = await buildSapPayload(payload, false, docEntry);
+  await sapService.request({
+    method: 'patch',
+    url: `/CreditNotes(${docEntry})`,
+    data: sapPayload,
+  });
+
+  return {
+    message: 'Service A/R Credit Memo updated successfully',
+    doc_entry: docEntry,
+  };
+};
+
+module.exports = {
+  getReferenceData: serviceArCreditMemoDb.getReferenceData,
+  getCustomerDetails: serviceArCreditMemoDb.getCustomerDetails,
+  getCustomerFilterOptions: arInvoiceService.getCustomerFilterOptions,
+  getDocumentSeries: serviceArCreditMemoDb.getDocumentSeries,
+  getNextNumber: serviceArCreditMemoDb.getNextNumber,
+  getServiceARCreditMemoList: serviceArCreditMemoDb.getServiceARCreditMemoList,
+  getServiceARCreditMemo: serviceArCreditMemoDb.getServiceARCreditMemo,
+  submitServiceARCreditMemo,
+  updateServiceARCreditMemo,
+  getOpenServiceARInvoices: async (customerCode) => ({ documents: await serviceArCreditMemoDb.getOpenServiceARInvoices(customerCode) }),
+  getServiceARInvoiceForCopy: serviceArCreditMemoDb.getServiceARInvoiceForCopy,
+};
+
