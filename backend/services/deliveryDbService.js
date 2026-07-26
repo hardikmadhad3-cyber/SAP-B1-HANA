@@ -8,6 +8,10 @@ const masterDataDbService = require('./masterDataDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
 const {
+  buildAddressExtensionSelectFields,
+  buildDocumentAddressComponents,
+} = require('./documentAddressDbUtils');
+const {
   getHeaderUdfValues,
   getLineUdfValues,
   getMarketingDocumentUdfs,
@@ -97,6 +101,14 @@ const getLineDiscountPercent = (discountAmount, unitPrice, fallbackDiscountPerce
 
 const hasNonBlankValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
 
+const formatSapDate = (value) => {
+  if (!value) return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().split('T')[0];
+  }
+  return String(value).split('T')[0];
+};
+
 const getUdfAliasValue = (values = {}, aliases = []) => {
   for (const alias of aliases) {
     if (hasNonBlankValue(values[alias])) return values[alias];
@@ -149,7 +161,7 @@ const buildDeliverySellerExpression = (columnNames, fallbackExpression) => {
 
 const getCustomers = () => safe(db.query(`
   SELECT CardCode, CardName, CardType, Currency,
-         VatGroup, GroupNum AS PayTermsGrpCode
+         VatGroup, GroupNum AS PayTermsGrpCode, PymCode
   FROM   OCRD
   WHERE  CardType = 'C'
     AND  frozenFor <> 'Y'
@@ -190,6 +202,79 @@ const getPaymentTerms = () => safe(db.query(`
   FROM   OCTG
   ORDER  BY PymntGroup
 `));
+
+const getPaymentMethods = () => safe(db.query(`
+  SELECT PayMethCod AS Code, Descript AS Description
+  FROM   OPYM
+  ORDER  BY PayMethCod
+`));
+
+const pickFirstValue = (row = {}, candidates = []) => {
+  for (const candidate of candidates) {
+    if (Object.prototype.hasOwnProperty.call(row, candidate) && row[candidate] != null && row[candidate] !== '') {
+      return row[candidate];
+    }
+  }
+  return '';
+};
+
+const getDeliveryReferenceDocuments = async (docEntry) => {
+  const fieldMetadata = await getTableFieldMetadata('DLN21');
+  if (!fieldMetadata?.DocEntry) return [];
+
+  const orderBy = fieldMetadata.LineNum ? 'ORDER BY [LineNum]' : '';
+  const rows = await safe(db.query(`
+    SELECT TOP 200 *
+    FROM [DLN21]
+    WHERE [DocEntry] = @DocEntry
+    ${orderBy}
+  `, { DocEntry: docEntry }));
+
+  return rows.map((row, index) => {
+    const transactionType = pickFirstValue(row, [
+      'RefObjType',
+      'RefType',
+      'ObjType',
+      'ObjectType',
+      'RefObjCode',
+      'RefObj',
+    ]);
+    const docEntryValue = pickFirstValue(row, [
+      'RefDocEntr',
+      'RefDocEntry',
+      'RefDocEnt',
+      'RefDocEn',
+      'LinkedDocEntry',
+    ]);
+    const docNumber = pickFirstValue(row, [
+      'RefDocNum',
+      'RefDocNo',
+      'RefDocNumber',
+      'DocNum',
+      'RefDoc',
+    ]);
+    const extDocNumber = pickFirstValue(row, [
+      'ExtDocNum',
+      'ExtDocNo',
+      'ExtDocNumber',
+      'ExternalRefNo',
+      'ExternalReferencedDocNumber',
+    ]);
+
+    return {
+      lineNum: row.LineNum != null ? Number(row.LineNum) : index,
+      direction: 'to',
+      transactionType: transactionType != null ? String(transactionType) : '',
+      docEntry: docEntryValue != null ? String(docEntryValue) : '',
+      docNumber: docNumber != null ? String(docNumber) : '',
+      extDocNumber: extDocNumber != null ? String(extDocNumber) : '',
+      issueDate: formatSapDate(row.IssueDate || row.RefDate || row.DocDate),
+      remark: String(pickFirstValue(row, ['Remark', 'Remarks', 'Comments']) || ''),
+    };
+  }).filter((row) => (
+    String(row.transactionType || row.docEntry || row.docNumber || row.extDocNumber || '').trim()
+  ));
+};
 
 const getSalesEmployees = () => safe(db.query(`
   SELECT SlpCode, SlpName, Memo, Commission, Active
@@ -1100,19 +1185,51 @@ const getDeliveryForCopyToCreditMemo = async (docEntry) => {
 // ── BATCHES ───────────────────────────────────────────────────────────────────
 
 const getBatchesByItem = async (itemCode, whsCode) => {
-  const result = await safe(db.query(`
+  const selectedWarehouse = String(whsCode || '').trim();
+  const baseSelect = `
     SELECT 
       T0.BatchNum AS BatchNumber,
       T0.Quantity AS AvailableQty,
-      T0.ExpDate AS ExpiryDate
+      T0.ExpDate AS ExpiryDate,
+      T0.WhsCode AS WhsCode,
+      W.WhsName AS WhsName
     FROM OIBT T0
+    LEFT JOIN OWHS W ON W.WhsCode = T0.WhsCode
     WHERE T0.ItemCode = @itemCode
-      AND T0.WhsCode = @whsCode
       AND T0.Quantity > 0
-    ORDER BY T0.ExpDate
-  `, { itemCode, whsCode }));
+  `;
 
-  return { batches: result };
+  if (selectedWarehouse) {
+    const selectedResult = await safe(db.query(`
+      ${baseSelect}
+        AND T0.WhsCode = @whsCode
+      ORDER BY T0.ExpDate
+    `, { itemCode, whsCode: selectedWarehouse }));
+
+    if (selectedResult.length) {
+      return {
+        batches: selectedResult,
+        selectedWarehouse,
+        hasSelectedWarehouseBatches: true,
+        fallbackToOtherWarehouses: false,
+      };
+    }
+  }
+
+  const result = await safe(db.query(`
+    ${baseSelect}
+    ORDER BY
+      CASE WHEN T0.WhsCode = @whsCode THEN 0 ELSE 1 END,
+      T0.WhsCode,
+      T0.ExpDate
+  `, { itemCode, whsCode: selectedWarehouse }));
+
+  return {
+    batches: result,
+    selectedWarehouse,
+    hasSelectedWarehouseBatches: !selectedWarehouse ? result.length > 0 : false,
+    fallbackToOtherWarehouses: Boolean(selectedWarehouse && result.length),
+  };
 };
 
 // ── DELIVERY LIST ─────────────────────────────────────────────────────────────
@@ -1247,6 +1364,13 @@ const getDelivery = async (docEntry) => {
 
   const resolvedDocEntry = resolvedDocument.DocEntry;
   const odlnFieldMetadata = await getTableFieldMetadata('ODLN');
+  const addressExtensionFieldMetadata = await getTableFieldMetadata('DLN12');
+  const addressExtensionSelectFields = buildAddressExtensionSelectFields({
+    fieldMetadata: addressExtensionFieldMetadata,
+    tableAlias: 'T12',
+    quoteIdentifier: quoteSqlIdentifier,
+    quoteAlias: quoteSqlIdentifier,
+  });
   const optionalHeaderColumn = (candidates, alias, fallback = "''") => {
     const columnName = candidates.map((candidate) => resolveColumnName(odlnFieldMetadata, candidate)).find(Boolean);
     return columnName
@@ -1284,6 +1408,7 @@ const getDelivery = async (docEntry) => {
       T0.PayToCode,
       T0.Address,
       T0.Address2,
+      ${addressExtensionSelectFields.join(',\n      ')},
       T0.EDocGenTyp AS EDocGenerationType,
       T0.EDocExpFrm AS EDocExportFormat,
       T0.EDocStatus,
@@ -1322,6 +1447,7 @@ const getDelivery = async (docEntry) => {
         ELSE T0.DocStatus
       END AS DocumentStatus
     FROM ODLN T0
+    LEFT JOIN DLN12 T12 ON T12.DocEntry = T0.DocEntry
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '15' AND NNM.Series = T0.Series
     LEFT JOIN OHEM EMP ON EMP.empID = ${hasTableField(odlnFieldMetadata, 'OwnerCode') ? 'T0.OwnerCode' : 'NULL'}
@@ -1333,6 +1459,8 @@ const getDelivery = async (docEntry) => {
   }
 
   const header = headerRows[0];
+  const shipToAddressComponents = buildDocumentAddressComponents(header, 'ShipTo');
+  const billToAddressComponents = buildDocumentAddressComponents(header, 'BillTo');
 
   const attachmentRows = header.AttachmentEntry == null || Number(header.AttachmentEntry) < 0
     ? []
@@ -1462,9 +1590,10 @@ const getDelivery = async (docEntry) => {
     }
   }
 
-  let [headerUdfs, dynamicLineUdfs] = await Promise.all([
+  let [headerUdfs, dynamicLineUdfs, referenceDocuments] = await Promise.all([
     getHeaderUdfValues({ tableId: 'ODLN', keyValue: resolvedDocEntry }),
     getLineUdfValues({ tableId: 'DLN1', keyValue: resolvedDocEntry }),
+    getDeliveryReferenceDocuments(resolvedDocEntry),
   ]);
 
   let lineUdfs = {};
@@ -1654,8 +1783,10 @@ const getDelivery = async (docEntry) => {
         payToCode: header.PayToCode || '',
         shipTo: header.Address2 || '',
         shipToAddress: header.Address2 || '',
+        shipToAddressComponents,
         payTo: header.Address || '',
         billToAddress: header.Address || '',
+        billToAddressComponents,
         billToCode: header.PayToCode || '',
         postingDate: header.PostingDate ? header.PostingDate.toISOString().split('T')[0] : '',
         deliveryDate: header.DeliveryDate ? header.DeliveryDate.toISOString().split('T')[0] : '',
@@ -1821,6 +1952,7 @@ const getDelivery = async (docEntry) => {
         };
       }),
       header_udfs: headerUdfs,
+      reference_documents: referenceDocuments,
       attachments: attachmentRows.map((row, index) => ({
         id: Number(row.Line ?? index) + 1,
         targetPath: row.TrgtPath || row.SrcPath || '',
@@ -1921,6 +2053,18 @@ const getSavedDeliveryQuantities = async (docEntry) => {
 
 const getDocumentSeries = async (targetDate = null) => {
   const effectiveTargetDate = targetDate || new Date().toISOString().split('T')[0];
+  const numberingMetadata = await getTableFieldMetadata('ONNM');
+  const defaultSeriesColumn = hasTableField(numberingMetadata, 'DfltSeries')
+    ? 'DfltSeries'
+    : hasTableField(numberingMetadata, 'DfltSerie')
+      ? 'DfltSerie'
+      : '';
+  const defaultSeriesJoin = defaultSeriesColumn
+    ? `LEFT JOIN ONNM T2 ON T2.ObjectCode = T0.ObjectCode AND T2.${defaultSeriesColumn} = T0.Series`
+    : '';
+  const defaultSeriesSelect = defaultSeriesColumn
+    ? `CASE WHEN T2.${defaultSeriesColumn} IS NOT NULL THEN 1 ELSE 0 END`
+    : '0';
 
   let result = await safe(db.query(`
     SELECT 
@@ -1928,16 +2072,18 @@ const getDocumentSeries = async (targetDate = null) => {
     T0.SeriesName,
     T0.Indicator,
     T0.NextNumber,
+    ${defaultSeriesSelect} AS IsDefault,
     T1.Name AS FinancialYear,
     T1.F_RefDate AS FromDate,
     T1.T_RefDate AS ToDate
 FROM NNM1 T0
 INNER JOIN OFPR T1 
     ON T0.Indicator = T1.Indicator
+${defaultSeriesJoin}
 WHERE T0.ObjectCode = '15'
     AND T0.Locked = 'N'
     AND CAST(@targetDate AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate
-ORDER BY T0.SeriesName
+ORDER BY IsDefault DESC, T0.SeriesName
   `, { targetDate: effectiveTargetDate }));
 
   if (!result.length) {
@@ -1947,17 +2093,25 @@ ORDER BY T0.SeriesName
         T0.SeriesName,
         T0.Indicator,
         T0.NextNumber,
+        ${defaultSeriesSelect} AS IsDefault,
         NULL AS FinancialYear,
         NULL AS FromDate,
         NULL AS ToDate
       FROM NNM1 T0
+      ${defaultSeriesJoin}
       WHERE T0.ObjectCode = '15'
         AND T0.Locked = 'N'
-      ORDER BY T0.SeriesName
+      ORDER BY IsDefault DESC, T0.SeriesName
     `));
   }
 
-  return { series: result };
+  return {
+    series: result.map((row) => ({
+      ...row,
+      IsDefault: Number(row.IsDefault || 0) === 1,
+      isDefault: Number(row.IsDefault || 0) === 1,
+    })),
+  };
 };
 
 const getNextNumber = async (series) => {
@@ -1999,6 +2153,7 @@ const loadReferenceDataUncached = async () => {
     items,
     warehouses,
     paymentTerms,
+    paymentMethods,
     shippingTypes,
     salesEmployees,
     branches,
@@ -2021,6 +2176,7 @@ const loadReferenceDataUncached = async () => {
     getItems(),
     getWarehouses(),
     getPaymentTerms(),
+    getPaymentMethods(),
     getShippingTypes(),
     getSalesEmployees(),
     getBranches(),
@@ -2108,6 +2264,10 @@ const loadReferenceDataUncached = async () => {
     company_address: { Address: companyInfo.address, State: companyInfo.state },
     tax_codes: taxCodes,
     payment_terms: paymentTerms,
+    payment_methods: paymentMethods.map(method => ({
+      Code: method.Code || '',
+      Description: method.Description || method.Code || '',
+    })).filter(method => method.Code),
     shipping_types: shippingTypes,
     sales_employees: salesEmployees.map(e => ({
       SlpCode: e.SlpCode,
@@ -2375,6 +2535,7 @@ const getUomConversionFactor = async (itemCode, uomCode) => {
 
 const BATCH_QTY_TOLERANCE = 0.001;
 const SAP_YES_VALUES = new Set(['Y', 'YES', 'TRUE', 'TYES', '1']);
+const MANUAL_UOM_PLACEHOLDER = 'MANUAL';
 
 const parseBatchQtyNumber = (value) => {
   const num = Number(value);
@@ -2383,6 +2544,25 @@ const parseBatchQtyNumber = (value) => {
 
 const isSapYes = (value) => SAP_YES_VALUES.has(String(value || '').trim().toUpperCase());
 const isBlank = (value) => value === undefined || value === null || String(value).trim() === '';
+const isManualUomPlaceholder = (value) =>
+  String(value || '').trim().toUpperCase() === MANUAL_UOM_PLACEHOLDER;
+
+const getEffectiveLineUomCode = (line = {}, item = {}) => {
+  const rawUomCode = String(line.uomCode || '').trim();
+  if (!isManualUomPlaceholder(rawUomCode)) {
+    return rawUomCode;
+  }
+
+  return String(
+    line.inventoryUOM
+      || line.inventoryUom
+      || line.InventoryUOM
+      || line.uomName
+      || item.SalUnitMsr
+      || item.InvntryUom
+      || rawUomCode
+  ).trim();
+};
 
 const getLineUomFactor = (line = {}) => {
   const explicitFactor = parseBatchQtyNumber(line.uomFactor);
@@ -2409,7 +2589,6 @@ const validateLineMasterData = async (lines = []) => {
     const itemCode = String(line.itemNo || '').trim();
     const whsCode = String(line.whse || '').trim();
     const taxCode = String(line.taxCode || '').trim();
-    const uomCode = String(line.uomCode || '').trim();
     const hsnCode = String(line.hsnCode || '').trim();
     const quantity = Number(line.quantity);
     const unitPrice = Number(line.unitPrice);
@@ -2461,6 +2640,7 @@ const validateLineMasterData = async (lines = []) => {
       errors.push(`Line ${lineNo}: HSN is required for item ${itemCode}`);
     }
 
+    const uomCode = getEffectiveLineUomCode(line, item);
     if (!uomCode) {
       errors.push(`Line ${lineNo}: UoM Name is required for item ${itemCode}`);
     } else {

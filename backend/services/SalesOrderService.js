@@ -36,6 +36,76 @@ const validateRequiredBranchAndWarehouse = (payload = {}, options = {}) => {
 
 // ───────── HELPERS ─────────
 
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
+const firstPresent = (...values) => values.find((value) => value !== undefined && value !== null);
+const toSapString = (value) => (value === undefined || value === null ? undefined : String(value));
+const addIfPresent = (target, key, value) => {
+  if (value === undefined || value === null) return;
+  target[key] = String(value);
+};
+
+const ADDRESS_EXTENSION_FIELDS = {
+  ShipTo: {
+    streetPoBox: 'ShipToStreet',
+    streetNo: 'ShipToStreetNo',
+    buildingFloorRoom: 'ShipToBuilding',
+    block: 'ShipToBlock',
+    city: 'ShipToCity',
+    zipCode: 'ShipToZipCode',
+    county: 'ShipToCounty',
+    state: 'ShipToState',
+    countryRegion: 'ShipToCountry',
+    addressName2: 'ShipToAddress2',
+    addressName3: 'ShipToAddress3',
+    gln: 'ShipToGlobalLocationNumber',
+  },
+  BillTo: {
+    streetPoBox: 'BillToStreet',
+    streetNo: 'BillToStreetNo',
+    buildingFloorRoom: 'BillToBuilding',
+    block: 'BillToBlock',
+    city: 'BillToCity',
+    zipCode: 'BillToZipCode',
+    county: 'BillToCounty',
+    state: 'BillToState',
+    countryRegion: 'BillToCountry',
+    addressName2: 'BillToAddress2',
+    addressName3: 'BillToAddress3',
+    gln: 'BillToGlobalLocationNumber',
+  },
+};
+
+const addAddressExtensionFields = (target, prefix, components = {}) => {
+  const fieldMap = ADDRESS_EXTENSION_FIELDS[prefix] || {};
+  Object.entries(fieldMap).forEach(([sourceKey, sapKey]) => {
+    if (hasOwn(components, sourceKey)) {
+      target[sapKey] = String(components[sourceKey] ?? '');
+    }
+  });
+};
+
+const buildSalesOrderAddressPayload = (header = {}) => {
+  const addressPayload = {};
+  const shipToCode = firstPresent(header.shipToCode);
+  const payToCode = firstPresent(header.billToCode, header.payToCode);
+  const shipToAddress = firstPresent(header.shipToAddress, header.shipTo);
+  const billToAddress = firstPresent(header.billToAddress, header.payTo);
+
+  addIfPresent(addressPayload, 'ShipToCode', shipToCode);
+  addIfPresent(addressPayload, 'PayToCode', payToCode);
+  if (shipToAddress !== undefined) addressPayload.Address = toSapString(shipToAddress);
+  if (billToAddress !== undefined) addressPayload.Address2 = toSapString(billToAddress);
+
+  const addressExtension = {};
+  addAddressExtensionFields(addressExtension, 'ShipTo', header.shipToAddressComponents);
+  addAddressExtensionFields(addressExtension, 'BillTo', header.billToAddressComponents);
+  if (Object.keys(addressExtension).length) {
+    addressPayload.AddressExtension = addressExtension;
+  }
+
+  return addressPayload;
+};
+
 /**
  * Convert Sales Employee name to code using ODBC data
  * @param {string|number} input - Sales Employee name or code
@@ -268,9 +338,12 @@ const formatDocumentStatus = (value) => {
 const hasValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
 
 const toOptionalNumber = (value) => {
+  if (!hasValue(value)) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 };
+
+const toSapYesNo = (value) => (value ? 'tYES' : 'tNO');
 
 const toRequiredNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -1144,6 +1217,9 @@ const submitSalesOrder = async (payload) => {
       PaymentGroupCode: payload.header.paymentTerms ? Number(payload.header.paymentTerms) : undefined,
       ...(payload.header.paymentMethod ? { PaymentMethod: payload.header.paymentMethod } : {}),
       ...(JournalRemark ? { JournalMemo: JournalRemark } : {}),
+      ...(toOptionalNumber(payload.header.shippingType) !== undefined ? { TransportationCode: toOptionalNumber(payload.header.shippingType) } : {}),
+      ...(toOptionalNumber(payload.header.language) !== undefined ? { LanguageCode: toOptionalNumber(payload.header.language) } : {}),
+      ...(hasOwn(payload.header, 'confirmed') ? { Confirmed: toSapYesNo(payload.header.confirmed) } : {}),
 
       // ✅ Add Sales Employee if present (converted from name to code)
       ...(SlpCode !== null && SlpCode !== undefined ? { SalesPersonCode: SlpCode } : {}),
@@ -1157,6 +1233,7 @@ const submitSalesOrder = async (payload) => {
       // ✅ Add Freight
       ...(documentAdditionalExpenses.length > 0 ? { DocumentAdditionalExpenses: documentAdditionalExpenses } : {}),
       ...(payload.reference_documents_changed ? { DocumentReferences: documentReferences } : {}),
+      ...buildSalesOrderAddressPayload(payload.header),
 
       // ✅ Add NumAtCard for customer reference
       NumAtCard: payload.header.customerRefNo || payload.header.salesContractNo || undefined,
@@ -1335,12 +1412,16 @@ const updateSalesOrder = async (docEntry, payload) => {
         : undefined,
       ...(payload.header.paymentMethod ? { PaymentMethod: payload.header.paymentMethod } : {}),
       ...(JournalRemark ? { JournalMemo: JournalRemark } : {}),
+      ...(toOptionalNumber(payload.header.shippingType) !== undefined ? { TransportationCode: toOptionalNumber(payload.header.shippingType) } : {}),
+      ...(toOptionalNumber(payload.header.language) !== undefined ? { LanguageCode: toOptionalNumber(payload.header.language) } : {}),
+      ...(hasOwn(payload.header, 'confirmed') ? { Confirmed: toSapYesNo(payload.header.confirmed) } : {}),
 
       ...(SlpCode !== null && SlpCode !== undefined && { SalesPersonCode: SlpCode }),
       ...(OwnerCode !== null && OwnerCode !== undefined && { DocumentsOwner: OwnerCode }),
       ...(Remarks && { Comments: Remarks }),
       ...(documentAdditionalExpenses.length > 0 ? { DocumentAdditionalExpenses: documentAdditionalExpenses } : {}),
       ...(payload.reference_documents_changed ? { DocumentReferences: documentReferences } : {}),
+      ...buildSalesOrderAddressPayload(payload.header),
       NumAtCard: payload.header.customerRefNo || payload.header.salesContractNo || undefined,
 
       DocumentLines: documentLines

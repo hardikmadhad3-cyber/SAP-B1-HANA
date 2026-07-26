@@ -10,13 +10,82 @@ const salesQuotationDb = require('./salesQuotationDbService');
 const deliveryDb = require('./deliveryDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
+const {
+  buildAddressExtensionSelectFields,
+  buildDocumentAddressComponents,
+} = require('./documentAddressDbUtils');
 
 const safe = async (promise) => {
   try {
     const r = await promise;
     return r.recordset || [];
   } catch (e) {
+    if (e?.status === 503 || /\bis busy\b/i.test(String(e?.message || ''))) {
+      throw e;
+    }
     return [];
+  }
+};
+
+const REFERENCE_DATA_CACHE_TTL_MS = Number(
+  process.env.AR_INVOICE_REFERENCE_DATA_CACHE_TTL_MS || 5 * 60 * 1000,
+);
+const REFERENCE_DATA_BATCH_SIZE = Math.max(
+  1,
+  Math.min(4, Number(process.env.AR_INVOICE_REFERENCE_QUERY_BATCH_SIZE) || 3),
+);
+const referenceDataCache = new Map();
+
+const cloneReferenceData = (data) => JSON.parse(JSON.stringify(data || {}));
+
+const getReferenceDataCacheKey = async () => {
+  try {
+    return String(await db.resolveDatabaseName() || 'default');
+  } catch (_error) {
+    return 'default';
+  }
+};
+
+const runReferenceDataTasks = async (tasks) => {
+  const values = [];
+  for (let index = 0; index < tasks.length; index += REFERENCE_DATA_BATCH_SIZE) {
+    const batch = tasks.slice(index, index + REFERENCE_DATA_BATCH_SIZE);
+    values.push(...await Promise.all(batch.map((task) => task())));
+  }
+  return values;
+};
+
+const getCachedReferenceData = async (loadData) => {
+  if (!Number.isFinite(REFERENCE_DATA_CACHE_TTL_MS) || REFERENCE_DATA_CACHE_TTL_MS <= 0) {
+    return loadData();
+  }
+
+  const cacheKey = await getReferenceDataCacheKey();
+  const now = Date.now();
+  const cached = referenceDataCache.get(cacheKey);
+
+  if (cached?.data && cached.expiresAt > now) {
+    return cloneReferenceData(cached.data);
+  }
+  if (cached?.pending) {
+    return cloneReferenceData(await cached.pending);
+  }
+
+  const pending = loadData();
+  referenceDataCache.set(cacheKey, { pending, expiresAt: now + REFERENCE_DATA_CACHE_TTL_MS });
+
+  try {
+    const data = await pending;
+    referenceDataCache.set(cacheKey, {
+      data,
+      expiresAt: Date.now() + REFERENCE_DATA_CACHE_TTL_MS,
+    });
+    return cloneReferenceData(data);
+  } catch (error) {
+    if (referenceDataCache.get(cacheKey)?.pending === pending) {
+      referenceDataCache.delete(cacheKey);
+    }
+    throw error;
   }
 };
 
@@ -30,7 +99,7 @@ const getTableFieldMetadata = async (tableName) => {
   const cacheKey = `${databaseName || 'default'}:${normalizedTableName}`;
 
   if (!tableFieldMetadataPromises.has(cacheKey)) {
-    tableFieldMetadataPromises.set(cacheKey, safe(db.query(`
+    const metadataPromise = safe(db.query(`
       SELECT COLUMN_NAME, DATA_TYPE
       FROM INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_NAME = @tableName
@@ -40,7 +109,11 @@ const getTableFieldMetadata = async (tableName) => {
       if (!columnName) return acc;
       acc[columnName] = String(row.DATA_TYPE || '').trim().toLowerCase();
       return acc;
-    }, {})));
+    }, {})).catch((error) => {
+      tableFieldMetadataPromises.delete(cacheKey);
+      throw error;
+    });
+    tableFieldMetadataPromises.set(cacheKey, metadataPromise);
   }
 
   return tableFieldMetadataPromises.get(cacheKey);
@@ -625,6 +698,8 @@ const filterSeriesByTransactionType = (series = [], transactionType = '') => {
       row.DocumentType,
       row.Indicator,
       row.SeriesName,
+      row.RawSeriesName,
+      row.BeginStr,
     ].map(normalizeSeriesText).filter(Boolean);
 
     return candidates.some((candidate) => (
@@ -650,6 +725,24 @@ const preferRegularInvoiceSeries = (series = [], transactionType = '') => {
   return regularSeries.length ? regularSeries : series;
 };
 
+const resolveSeriesDocSubType = (transactionType = '') => {
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (normalizedType.includes('gstdebitmemo') || normalizedType.includes('debitmemo')) return 'GD';
+  if (normalizedType.includes('gsttaxinvoice') || normalizedType.includes('taxinvoice')) return 'GA';
+  if (normalizedType.includes('billofsupply')) return '--';
+  return '';
+};
+
+const keepSapVisibleNumberingSeries = (series = []) => {
+  const rows = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (rows.length <= 1) return rows;
+
+  const defaultRows = rows.filter((row) => row.IsDefault || row.isDefault);
+  if (defaultRows.length) return defaultRows;
+
+  return [rows[0]];
+};
+
 const getDocumentSeries = async (targetDate = null, transactionType = '', branch = '') => {
   const effectiveTargetDate = targetDate || new Date().toISOString().split('T')[0];
   const [seriesMetadata, numberingMetadata] = await Promise.all([
@@ -664,73 +757,87 @@ const getDocumentSeries = async (targetDate = null, transactionType = '', branch
       : '';
   const branchId = Number(branch);
   const hasBranchFilter = hasSeriesBranch && Number.isFinite(branchId) && String(branch || '').trim() !== '';
-  const seriesParams = hasBranchFilter ? { targetDate: effectiveTargetDate, branchId } : { targetDate: effectiveTargetDate };
-  const fallbackSeriesParams = hasBranchFilter ? { branchId } : {};
-  const branchFilter = hasBranchFilter
-    ? 'AND (T0.BPLId IS NULL OR T0.BPLId IN (-1, 0) OR T0.BPLId = @branchId)'
-    : '';
   const defaultSeriesJoin = defaultSeriesColumn
     ? `LEFT JOIN ONNM T2 ON T2.ObjectCode = T0.ObjectCode AND T2.${defaultSeriesColumn} = T0.Series`
     : '';
   const defaultSeriesSelect = defaultSeriesColumn
     ? `CASE WHEN T2.${defaultSeriesColumn} IS NOT NULL THEN 1 ELSE 0 END`
     : '0';
+  const beginStrRef = sqlColumnRef(seriesMetadata, 'T0', 'BeginStr');
+  const lastNumRef = sqlColumnRef(seriesMetadata, 'T0', 'LastNum');
+  const seriesLabelSelect = beginStrRef
+    ? `COALESCE(NULLIF(LTRIM(RTRIM(CAST(${beginStrRef} AS NVARCHAR(50)))), ''), T0.SeriesName) AS SeriesLabel`
+    : 'T0.SeriesName AS SeriesLabel';
+  const numberRangeFilter = lastNumRef
+    ? `AND (${lastNumRef} IS NULL OR ${lastNumRef} = 0 OR T0.NextNumber <= ${lastNumRef})`
+    : '';
+  const requestedDocSubType = resolveSeriesDocSubType(transactionType);
+  const docSubTypeRef = sqlColumnRef(seriesMetadata, 'T0', 'DocSubType');
+  const docSubTypeFilter = requestedDocSubType && docSubTypeRef
+    ? `AND COALESCE(NULLIF(${docSubTypeRef}, ''), '--') = @docSubType`
+    : '';
   const docSubTypeSelect = optionalColumn(seriesMetadata, 'T0', 'DocSubType', 'DocSubType', "''");
+  const branchSeriesFilter = hasBranchFilter ? 'AND T0.BPLId = @branchId' : '';
+  const globalSeriesFilter = hasBranchFilter ? 'AND (T0.BPLId IS NULL OR T0.BPLId IN (-1, 0))' : '';
+  const datedParams = hasBranchFilter ? { targetDate: effectiveTargetDate, branchId } : { targetDate: effectiveTargetDate };
+  const fallbackParams = hasBranchFilter ? { branchId } : {};
+  const withDocSubTypeParam = (params) => (docSubTypeFilter ? { ...params, docSubType: requestedDocSubType } : params);
 
-  let result = await safe(db.query(`
-    SELECT 
-    T0.Series,
-    T0.SeriesName,
-    T0.Indicator,
-    T0.NextNumber,
-    ${docSubTypeSelect},
-    ${optionalColumn(seriesMetadata, 'T0', 'BPLId', 'BPLId', 'NULL')},
-    ${defaultSeriesSelect} AS IsDefault,
-    T1.Name AS FinancialYear,
-    T1.F_RefDate AS FromDate,
-    T1.T_RefDate AS ToDate
-FROM NNM1 T0
-INNER JOIN OFPR T1 
-    ON T0.Indicator = T1.Indicator
-${defaultSeriesJoin}
-WHERE T0.ObjectCode = '13'
-    AND T0.Locked = 'N'
-    ${branchFilter}
-    AND CAST(@targetDate AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate
-ORDER BY
-    IsDefault DESC,
-    T0.SeriesName,
-    T0.Series
-  `, seriesParams));
+  const runSeriesQuery = (withPeriod, branchFilterSql, params) => safe(db.query(`
+    SELECT
+      T0.Series,
+      T0.SeriesName,
+      ${seriesLabelSelect},
+      ${optionalColumn(seriesMetadata, 'T0', 'BeginStr', 'BeginStr', "''")},
+      ${optionalColumn(seriesMetadata, 'T0', 'EndStr', 'EndStr', "''")},
+      T0.Indicator,
+      T0.NextNumber,
+      ${docSubTypeSelect},
+      ${optionalColumn(seriesMetadata, 'T0', 'BPLId', 'BPLId', 'NULL')},
+      ${defaultSeriesSelect} AS IsDefault,
+      ${withPeriod ? 'T1.Name' : 'NULL'} AS FinancialYear,
+      ${withPeriod ? 'T1.F_RefDate' : 'NULL'} AS FromDate,
+      ${withPeriod ? 'T1.T_RefDate' : 'NULL'} AS ToDate
+    FROM NNM1 T0
+    ${withPeriod ? 'INNER JOIN OFPR T1 ON T0.Indicator = T1.Indicator' : ''}
+    ${defaultSeriesJoin}
+    WHERE T0.ObjectCode = '13'
+      AND T0.Locked = 'N'
+      ${branchFilterSql}
+      ${numberRangeFilter}
+      ${docSubTypeFilter}
+      ${withPeriod ? 'AND CAST(@targetDate AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate' : ''}
+    ORDER BY
+      IsDefault DESC,
+      T0.SeriesName,
+      T0.Series
+  `, params));
+
+  let result = hasBranchFilter
+    ? await runSeriesQuery(true, branchSeriesFilter, withDocSubTypeParam(datedParams))
+    : await runSeriesQuery(true, '', withDocSubTypeParam(datedParams));
+
+  if (!result.length && hasBranchFilter) {
+    result = await runSeriesQuery(true, globalSeriesFilter, withDocSubTypeParam(datedParams));
+  }
 
   if (!result.length) {
-    result = await safe(db.query(`
-      SELECT
-        T0.Series,
-        T0.SeriesName,
-        T0.Indicator,
-        T0.NextNumber,
-        ${docSubTypeSelect},
-        ${optionalColumn(seriesMetadata, 'T0', 'BPLId', 'BPLId', 'NULL')},
-        ${defaultSeriesSelect} AS IsDefault,
-        NULL AS FinancialYear,
-        NULL AS FromDate,
-        NULL AS ToDate
-      FROM NNM1 T0
-      ${defaultSeriesJoin}
-      WHERE T0.ObjectCode = '13'
-        AND T0.Locked = 'N'
-        ${branchFilter}
-      ORDER BY
-        IsDefault DESC,
-        T0.SeriesName,
-        T0.Series
-    `, fallbackSeriesParams));
+    result = hasBranchFilter
+      ? await runSeriesQuery(false, branchSeriesFilter, withDocSubTypeParam(fallbackParams))
+      : await runSeriesQuery(false, '', withDocSubTypeParam(fallbackParams));
+  }
+
+  if (!result.length && hasBranchFilter) {
+    result = await runSeriesQuery(false, globalSeriesFilter, withDocSubTypeParam(fallbackParams));
   }
 
   const series = preferRegularInvoiceSeries(result, transactionType).map(s => ({
     Series: s.Series,
-    SeriesName: s.SeriesName,
+    SeriesName: s.SeriesName || s.SeriesLabel || s.BeginStr,
+    DisplayName: s.SeriesName || s.SeriesLabel || s.BeginStr,
+    RawSeriesName: s.SeriesName || '',
+    BeginStr: s.BeginStr || '',
+    EndStr: s.EndStr || '',
     NextNumber: s.NextNumber,
     Indicator: s.Indicator,
     DocSubType: s.DocSubType || '',
@@ -741,7 +848,7 @@ ORDER BY
     ToDate: s.ToDate || null,
   }));
 
-  return filterSeriesByTransactionType(series, transactionType);
+  return keepSapVisibleNumberingSeries(filterSeriesByTransactionType(series, transactionType));
 };
 
 const getNextNumber = async (series) => {
@@ -831,7 +938,7 @@ const getOpenDeliveries = (customerCode = null) => {
 
 // ── Main Functions ────────────────────────────────────────────────────────────
 
-const getReferenceData = async () => {
+const loadReferenceDataUncached = async () => {
   const [
     customers,
     items,
@@ -843,8 +950,6 @@ const getReferenceData = async () => {
     taxCodes,
     uomGroups,
     salesEmployees,
-    openSalesOrders,
-    openDeliveries,
     udfMetadata,
     lineFieldMetadata,
     currentSeries,
@@ -852,26 +957,24 @@ const getReferenceData = async () => {
     distributionRules,
     companyRows,
     withholdingTaxCodes,
-  ] = await Promise.all([
-    getCustomers(),
-    getItems(),
-    getWarehouses(),
-    getPaymentTerms(),
-    getShippingTypes(),
-    getBranches(),
-    getStates(),
-    getTaxCodes(),
-    getUomGroups(),
-    getSalesEmployees(),
-    getOpenSalesOrders(),
-    getOpenDeliveries(),
-    getMarketingDocumentUdfs({ headerTable: 'OINV', lineTable: 'INV1' }),
-    getARInvoiceLineFieldMetadata(),
-    getDocumentSeries(),
-    masterDataDbService.searchAccounts('', '', 5000, 0),
-    masterDataDbService.lookupDistributionRules(),
-    getCompanyInfo(),
-    getWithholdingTaxCodes(),
+  ] = await runReferenceDataTasks([
+    () => getCustomers(),
+    () => getItems(),
+    () => getWarehouses(),
+    () => getPaymentTerms(),
+    () => getShippingTypes(),
+    () => getBranches(),
+    () => getStates(),
+    () => getTaxCodes(),
+    () => getUomGroups(),
+    () => getSalesEmployees(),
+    () => getMarketingDocumentUdfs({ headerTable: 'OINV', lineTable: 'INV1' }),
+    () => getARInvoiceLineFieldMetadata(),
+    () => getDocumentSeries(),
+    () => masterDataDbService.searchAccounts('', '', 5000, 0),
+    () => masterDataDbService.lookupDistributionRules(),
+    () => getCompanyInfo(),
+    () => getWithholdingTaxCodes(),
   ]);
   const effectiveUdfMetadata = applyLineColumnPreferencesToUdfs(
     udfMetadata,
@@ -945,8 +1048,8 @@ const getReferenceData = async () => {
     uom_groups: processedUomGroups,
     transaction_types: extractTransactionTypes(udfMetadata, currentSeries),
     base_documents: {
-      sales_orders: openSalesOrders,
-      deliveries: openDeliveries,
+      sales_orders: [],
+      deliveries: [],
     },
     decimal_settings: {
       QtyDec: 2,
@@ -1146,6 +1249,13 @@ const getARInvoice = async (docEntry) => {
     getTableFieldMetadata('OINV'),
     getTableFieldMetadata('INV1'),
   ]);
+  const addressExtensionFieldMetadata = await getTableFieldMetadata('INV12');
+  const addressExtensionSelectFields = buildAddressExtensionSelectFields({
+    fieldMetadata: addressExtensionFieldMetadata,
+    tableAlias: 'T12',
+    quoteIdentifier: sqlAlias,
+    quoteAlias: sqlAlias,
+  });
   const requestedDocId = Number(docEntry);
 
   if (!Number.isFinite(requestedDocId)) {
@@ -1208,6 +1318,7 @@ const getARInvoice = async (docEntry) => {
       ${optionalColumn(headerFieldMetadata, 'T0', 'PayToCode', 'PayToCode', "''")},
       ${optionalColumn(headerFieldMetadata, 'T0', 'Address', 'ShipToAddress', "''")},
       ${optionalColumn(headerFieldMetadata, 'T0', 'Address2', 'BillToAddress', "''")},
+      ${addressExtensionSelectFields.join(',\n      ')},
       ${optionalColumn(headerFieldMetadata, 'T0', 'TrnspCode', 'ShippingType', 'NULL')},
       ${optionalColumn(headerFieldMetadata, 'T0', 'Confirmed', 'Confirmed', "''")},
       ${optionalColumn(headerFieldMetadata, 'T0', 'PeyMethod', 'PaymentMethod', "''")},
@@ -1231,6 +1342,7 @@ const getARInvoice = async (docEntry) => {
         ELSE T0.DocStatus
       END AS DocumentStatus
     FROM OINV T0
+    LEFT JOIN INV12 T12 ON T12.DocEntry = T0.DocEntry
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '13' AND NNM.Series = T0.Series
     LEFT JOIN OHEM EMP ON EMP.empID = ${hasTableField(headerFieldMetadata, 'OwnerCode') ? 'T0.OwnerCode' : 'NULL'}
@@ -1261,6 +1373,8 @@ const getARInvoice = async (docEntry) => {
   }
 
   const header = headerRows[0];
+  const shipToAddressComponents = buildDocumentAddressComponents(header, 'ShipTo');
+  const billToAddressComponents = buildDocumentAddressComponents(header, 'BillTo');
   const resolvedDocEntry = Number(header.DocEntry);
 
   const lineSacExpression = sqlColumnRef(lineFieldMetadata, 'T0', 'SacEntry')
@@ -1309,6 +1423,8 @@ const getARInvoice = async (docEntry) => {
       ${optionalColumn(lineFieldMetadata, 'T0', 'EnSetCost', 'EnableSettingCost', "'N'")},
       ${optionalColumn(lineFieldMetadata, 'T0', 'RetCost', 'ReturnCost', 'NULL')},
       ${lineSacExpression} AS SACCode,
+      ITM.ManBtchNum AS BatchManaged,
+      ITM.InvntryUom AS InventoryUOM,
       T0.BaseEntry,
       T0.BaseType,
       T0.BaseLine,
@@ -1354,16 +1470,40 @@ const getARInvoice = async (docEntry) => {
         ${optionalColumn(lineFieldMetadata, 'T0', 'EnSetCost', 'EnableSettingCost', "'N'")},
         ${optionalColumn(lineFieldMetadata, 'T0', 'RetCost', 'ReturnCost', 'NULL')},
         ${lineSacExpression} AS SACCode,
+        ITM.ManBtchNum AS BatchManaged,
+        ITM.InvntryUom AS InventoryUOM,
         T0.BaseEntry,
         T0.BaseType,
         T0.BaseLine,
         '' AS HSNCode
       FROM INV1 T0
+      LEFT JOIN OITM ITM ON ITM.ItemCode = T0.ItemCode
       ${lineUomJoin}
       WHERE T0.DocEntry = @docEntry
       ORDER BY T0.LineNum
     `, { docEntry: resolvedDocEntry }));
   }
+
+  const batchRows = await safe(db.query(`
+    SELECT
+      BaseLinNum AS BaseLineNum,
+      BatchNum,
+      ABS(Quantity) AS Quantity
+    FROM IBT1
+    WHERE BaseType = 13
+      AND BaseEntry = @docEntry
+    ORDER BY BaseLinNum, BatchNum
+  `, { docEntry: resolvedDocEntry }));
+  const batchesByLine = batchRows.reduce((acc, batch) => {
+    const lineNum = batch.BaseLineNum;
+    if (!acc[lineNum]) acc[lineNum] = [];
+    acc[lineNum].push({
+      batchNumber: batch.BatchNum || '',
+      quantity: batch.Quantity != null ? String(batch.Quantity) : '',
+    });
+    return acc;
+  }, {});
+
   const [headerUdfs, lineUdfsByLineNum] = await Promise.all([
     getHeaderUdfValues({ tableId: 'OINV', keyValue: resolvedDocEntry }),
     getLineUdfValues({ tableId: 'INV1', keyValue: resolvedDocEntry }),
@@ -1398,6 +1538,8 @@ const getARInvoice = async (docEntry) => {
         payTo: header.BillToAddress || '',
         shipToAddress: header.ShipToAddress || '',
         billToAddress: header.BillToAddress || '',
+        shipToAddressComponents,
+        billToAddressComponents,
         shippingType: header.ShippingType != null ? String(header.ShippingType) : '',
         confirmed: String(header.Confirmed || '').toUpperCase() === 'Y',
         journalRemark: header.JournalRemark || '',
@@ -1470,6 +1612,11 @@ const getARInvoice = async (docEntry) => {
         UoMName: line.UoMName || line.UnitMsr || '',
         UomName: line.UoMName || line.UnitMsr || '',
         UnitMsr: line.UnitMsr || '',
+        inventoryUOM: line.InventoryUOM || line.UoMCode || '',
+        InventoryUOM: line.InventoryUOM || line.UoMCode || '',
+        batchManaged: String(line.BatchManaged || '').toUpperCase() === 'Y',
+        BatchManaged: line.BatchManaged || '',
+        batches: batchesByLine[line.LineNum] || [],
         countryOfOrigin: line.CountryOfOrigin || '',
         CountryOfOrigin: line.CountryOfOrigin || '',
         blanketAgreementNo: line.BlanketAgreementNo != null ? String(line.BlanketAgreementNo) : '',
@@ -1523,6 +1670,8 @@ const getWarehouseState = async (whsCode) => {
   };
 };
 
+const getReferenceData = async () => getCachedReferenceData(loadReferenceDataUncached);
+
 const getWarehouseBranch = async (whsCode) => {
   const normalizedWarehouseCode = String(whsCode || '').trim();
   if (!normalizedWarehouseCode) return { branchId: '' };
@@ -1553,6 +1702,117 @@ const getBatchesByItem = async (itemCode, whsCode) => {
   `, { itemCode, whsCode }));
 
   return { batches: result };
+};
+
+const BATCH_QTY_TOLERANCE = 0.001;
+const SAP_YES_VALUES = new Set(['Y', 'YES', 'TRUE', 'TYES', '1']);
+
+const parseBatchQtyNumber = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+};
+
+const isSapYes = (value) => SAP_YES_VALUES.has(String(value || '').trim().toUpperCase());
+
+const getLineUomFactor = (line = {}) => {
+  const explicitFactor = parseBatchQtyNumber(line.uomFactor);
+  if (explicitFactor > 0) return explicitFactor;
+
+  const rawUomCode = String(line.uomCode || '').trim();
+  const numericFactor = parseFloat(rawUomCode);
+  if (Number.isFinite(numericFactor) && numericFactor > 0) {
+    return numericFactor;
+  }
+
+  return 1;
+};
+
+const getRequiredBatchQty = (line = {}) =>
+  parseBatchQtyNumber(line.quantity) * getLineUomFactor(line);
+
+const validateBatchSelection = async (lines = []) => {
+  const errors = [];
+  const allocatedByStockBatch = new Map();
+
+  for (const line of lines || []) {
+    const itemCode = String(line.itemNo || line.ItemCode || '').trim();
+    if (!itemCode) continue;
+
+    const result = await safe(db.query(`
+      SELECT T0.InvntItem, T0.ManBtchNum, T0.ItemName
+      FROM OITM T0
+      WHERE T0.ItemCode = @ItemCode
+    `, { ItemCode: itemCode }));
+
+    const item = result[0];
+    if (!item || !isSapYes(item.InvntItem) || !isSapYes(item.ManBtchNum)) continue;
+
+    if (!Array.isArray(line.batches) || line.batches.length === 0) {
+      errors.push(`Batch selection is mandatory for batch-managed item ${itemCode}`);
+      continue;
+    }
+
+    const totalBatchQty = line.batches.reduce(
+      (sum, batch) => sum + parseBatchQtyNumber(batch.quantity),
+      0
+    );
+    const requiredBatchQty = getRequiredBatchQty(line);
+    const inventoryUOM = String(line.inventoryUOM || line.InventoryUOM || line.uomCode || 'Base UoM').trim();
+
+    if (Math.abs(totalBatchQty - requiredBatchQty) > BATCH_QTY_TOLERANCE) {
+      errors.push(
+        `Batch quantity must match base quantity for item ${itemCode}. Required: ${requiredBatchQty.toFixed(2)} ${inventoryUOM}, Allocated: ${totalBatchQty.toFixed(2)} ${inventoryUOM}`
+      );
+    }
+
+    for (const batch of line.batches) {
+      const batchNumber = String(batch.batchNumber || batch.BatchNumber || '').trim();
+      const batchQty = parseBatchQtyNumber(batch.quantity);
+      const whsCode = String(line.whse || line.WarehouseCode || line.warehouse || '').trim();
+
+      if (!batchNumber || batchQty <= 0) continue;
+
+      const key = JSON.stringify({ itemCode, whsCode, batchNumber });
+      const current = allocatedByStockBatch.get(key) || {
+        itemCode,
+        whsCode,
+        batchNumber,
+        inventoryUOM,
+        allocatedQty: 0,
+      };
+      current.allocatedQty += batchQty;
+      allocatedByStockBatch.set(key, current);
+    }
+  }
+
+  for (const entry of allocatedByStockBatch.values()) {
+    const batchResult = await safe(db.query(`
+      SELECT SUM(T0.Quantity) AS AvailableQty
+      FROM OIBT T0
+      WHERE T0.ItemCode = @ItemCode
+        AND T0.BatchNum = @BatchNum
+        AND T0.WhsCode = @WhsCode
+    `, {
+      ItemCode: entry.itemCode,
+      BatchNum: entry.batchNumber,
+      WhsCode: entry.whsCode,
+    }));
+
+    const availableQty = parseBatchQtyNumber(batchResult[0]?.AvailableQty);
+
+    if (availableQty <= 0) {
+      errors.push(`Batch ${entry.batchNumber} does not belong to warehouse ${entry.whsCode} for item ${entry.itemCode}`);
+      continue;
+    }
+
+    if (entry.allocatedQty - availableQty > BATCH_QTY_TOLERANCE) {
+      errors.push(
+        `Batch ${entry.batchNumber} exceeds available quantity for item ${entry.itemCode} in warehouse ${entry.whsCode}. Allocated across A/R Invoice: ${entry.allocatedQty.toFixed(2)} ${entry.inventoryUOM}, Available: ${availableQty.toFixed(2)} ${entry.inventoryUOM}`
+      );
+    }
+  }
+
+  return { errors, isValid: errors.length === 0 };
 };
 
 const getFreightCharges = (docEntry) => {
@@ -1693,6 +1953,7 @@ module.exports = {
   getWarehouseState,
   getWarehouseBranch,
   getBatchesByItem,
+  validateBatchSelection,
   getFreightCharges,
   getItemsForModal,
   getOpenSalesOrders,

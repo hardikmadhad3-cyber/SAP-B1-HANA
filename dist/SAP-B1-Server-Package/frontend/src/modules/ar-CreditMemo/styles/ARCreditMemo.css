@@ -1,4 +1,0 @@
-@import '../../sales-order/styles/salesOrder.css';
-@import '../../Delivery/styles/Delivery.css';
-
-/* A/R Credit Memo uses shared sales and delivery document shells because its tabs reuse del-* components. Keep only workflow-specific overrides here. */

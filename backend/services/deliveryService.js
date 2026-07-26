@@ -2,6 +2,8 @@ const sapService = require('./sapService');
 const deliveryDb = require('./deliveryDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { buildMarketingDocumentAddressPayload } = require('./documentAddressPayloadUtils');
+const { buildDocumentReferencesPayload } = require('./documentReferencesPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { getActiveCompanyConfig } = require('./companyConfigService');
 const { isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
@@ -14,6 +16,31 @@ const formatDateForSAP = (value) => {
 };
 
 const hasValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
+
+const isManualUomPlaceholder = (value) =>
+  String(value || '').trim().toUpperCase() === 'MANUAL';
+
+const getDeliveryLineRawUomValue = (line = {}) => (hasValue(line.uomEntry)
+  ? line.uomEntry
+  : hasValue(line.UoMEntry)
+    ? line.UoMEntry
+    : line.uomCode);
+
+const getDeliveryLineUomValue = (line = {}) => {
+  const rawValue = getDeliveryLineRawUomValue(line);
+
+  if (!isManualUomPlaceholder(rawValue)) {
+    return rawValue;
+  }
+
+  return line.inventoryUOM
+    || line.inventoryUom
+    || line.InventoryUOM
+    || line.uomName
+    || line.unitMsr
+    || line.MeasureUnit
+    || rawValue;
+};
 
 const normalizeBranchValue = (value) => {
   const normalized = String(value ?? '').trim();
@@ -476,14 +503,16 @@ const buildDocumentLinePayload = async (line = {}, fieldMetadata = {}, includeLi
   }
 
   if (!isBaseDocumentLine) {
+    const rawUomValue = getDeliveryLineRawUomValue(line);
+    const uomValue = getDeliveryLineUomValue(line);
     const resolvedUomEntry = await deliveryDb.resolveDeliveryLineUomEntry(
       line.itemNo,
-      line.uomEntry ?? line.UoMEntry ?? line.uomCode,
+      rawUomValue,
     );
     if (resolvedUomEntry !== null && resolvedUomEntry !== undefined) {
       documentLine.UoMEntry = resolvedUomEntry;
-    } else if (hasValue(line.uomCode)) {
-      documentLine.UoMCode = String(line.uomCode).trim();
+    } else if (hasValue(uomValue)) {
+      documentLine.UoMCode = String(uomValue).trim();
     }
 
     if (hasValue(line.taxCode)) {
@@ -895,6 +924,10 @@ const submitDelivery = async (payload) => {
     const customerCode = resolveHeaderCustomerCode(header);
 console.log("Payload:", payload );
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
+    const documentReferences = payload.reference_documents_changed
+      ? buildDocumentReferencesPayload(payload.reference_documents)
+      : [];
+    const hasDocumentReferences = documentReferences.length > 0;
     const [documentLines, headerUdfDefinitionsByKey] = await Promise.all([
       buildDocumentLinesPayload(lines),
       getUdfDefinitionsByKey('ODLN'),
@@ -916,6 +949,8 @@ console.log("Payload:", payload );
       NumAtCard: header.salesContractNo || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(header, { shipAddressField: 'Address2', billAddressField: 'Address' }),
+      ...(hasDocumentReferences ? { DocumentReferences: documentReferences } : {}),
       DocumentLines: documentLines,
     };
 console.log("SAP Payload:", sapPayload);
@@ -926,6 +961,7 @@ console.log("SAP Payload:", sapPayload);
     sapPayload.BPLId = normalizeBranchId(header.branch);
     sapPayload.BPL_IDAssignedToInvoice = normalizeBranchId(header.branch);
     if (header.paymentTerms) sapPayload.PaymentGroupCode = parseInt(header.paymentTerms);
+    if (header.paymentMethod) sapPayload.PaymentMethod = header.paymentMethod;
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
     if (salesPersonCode !== undefined) sapPayload.SalesPersonCode = salesPersonCode;
@@ -1027,6 +1063,10 @@ const updateDelivery = async (docEntry, payload) => {
     const { lines, header_udfs } = payload;
     const header = normalizeHeaderBranch(payload.header);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
+    const documentReferences = payload.reference_documents_changed
+      ? buildDocumentReferencesPayload(payload.reference_documents)
+      : [];
+    const hasDocumentReferences = documentReferences.length > 0;
     const [documentLines, headerUdfDefinitionsByKey] = await Promise.all([
       includeDocumentLines ? buildDocumentLinesPayload(lines, true, false) : Promise.resolve([]),
       getUdfDefinitionsByKey('ODLN'),
@@ -1043,9 +1083,12 @@ const updateDelivery = async (docEntry, payload) => {
       JournalMemo: header.journalRemark || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(header, { shipAddressField: 'Address2', billAddressField: 'Address' }),
+      ...(hasDocumentReferences ? { DocumentReferences: documentReferences } : {}),
     };
     if (includeDocumentLines) sapPayload.DocumentLines = documentLines;
 
+    if (header.paymentMethod) sapPayload.PaymentMethod = header.paymentMethod;
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
     if (salesPersonCode !== undefined) sapPayload.SalesPersonCode = salesPersonCode;

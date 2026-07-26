@@ -10,6 +10,10 @@ const deliveryDb = require('./deliveryDbService');
 const arInvoiceDb = require('./arInvoiceDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
+const {
+  buildAddressExtensionSelectFields,
+  buildDocumentAddressComponents,
+} = require('./documentAddressDbUtils');
 
 const safe = async (promise) => {
   try {
@@ -50,13 +54,45 @@ const hasTableField = (metadata, columnName) => {
   return Object.keys(metadata).some((fieldName) => fieldName.toLowerCase() === normalizedColumnName);
 };
 
+const getTableFieldName = (metadata, columnName) => {
+  const normalizedColumnName = String(columnName || '').trim().toLowerCase();
+  if (!metadata || !normalizedColumnName) return '';
+  return Object.keys(metadata).find((fieldName) => fieldName.toLowerCase() === normalizedColumnName) || '';
+};
+
 const sqlAlias = (alias) => `[${String(alias || '').replace(/]/g, ']]')}]`;
 
+const sqlColumnRef = (metadata, tableAlias, columnName) => {
+  const physicalName = getTableFieldName(metadata, columnName);
+  return physicalName ? `${tableAlias}.[${physicalName}]` : '';
+};
+
 const optionalColumn = (metadata, tableAlias, columnName, alias, fallback = 'NULL') => (
-  hasTableField(metadata, columnName)
-    ? `${tableAlias}.[${columnName}] AS ${sqlAlias(alias)}`
+  sqlColumnRef(metadata, tableAlias, columnName)
+    ? `${sqlColumnRef(metadata, tableAlias, columnName)} AS ${sqlAlias(alias)}`
     : `${fallback} AS ${sqlAlias(alias)}`
 );
+
+const keepSapVisibleNumberingSeries = (series = []) => {
+  const rows = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (rows.length <= 1) return rows;
+
+  const defaultRows = rows.filter((row) => row.IsDefault || row.isDefault);
+  if (defaultRows.length) return defaultRows;
+
+  return [rows[0]];
+};
+
+const normalizeSeriesText = (value) =>
+  String(value || '').toUpperCase().replace(/FY/g, '').replace(/[-/\s]/g, '');
+
+const resolveSeriesDocSubType = (transactionType = '') => {
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (normalizedType.includes('GSTDEBITMEMO') || normalizedType.includes('DEBITMEMO')) return 'GD';
+  if (normalizedType.includes('GSTTAXINVOICE') || normalizedType.includes('TAXINVOICE')) return 'GA';
+  if (normalizedType.includes('BILLOFSUPPLY')) return '--';
+  return '';
+};
 
 const firstUdfValue = (udf = {}, aliases = []) => {
   for (const alias of aliases) {
@@ -292,6 +328,13 @@ const getARCreditMemoList = async ({
 
 const getARCreditMemo = async (docEntry) => {
   const headerFieldMetadata = await getTableFieldMetadata('ORIN');
+  const addressExtensionFieldMetadata = await getTableFieldMetadata('RIN12');
+  const addressExtensionSelectFields = buildAddressExtensionSelectFields({
+    fieldMetadata: addressExtensionFieldMetadata,
+    tableAlias: 'T12',
+    quoteIdentifier: sqlAlias,
+    quoteAlias: sqlAlias,
+  });
   const headerRows = await safe(db.query(`
     SELECT
       T0.DocEntry,
@@ -317,6 +360,11 @@ const getARCreditMemo = async (docEntry) => {
       T0.VatSum AS Tax,
       ${optionalColumn(headerFieldMetadata, 'T0', 'RoundDif', 'RoundingAmount', '0')},
       T0.DocTotal AS TotalPaymentDue,
+      ${optionalColumn(headerFieldMetadata, 'T0', 'ShipToCode', 'ShipToCode', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'PayToCode', 'PayToCode', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'Address', 'ShipToAddress', "''")},
+      ${optionalColumn(headerFieldMetadata, 'T0', 'Address2', 'BillToAddress', "''")},
+      ${addressExtensionSelectFields.join(',\n      ')},
       T0.SlpCode AS SalesEmployeeCode,
       SLP.SlpName AS SalesEmployeeName,
       CASE T0.DocStatus
@@ -325,6 +373,7 @@ const getARCreditMemo = async (docEntry) => {
         ELSE T0.DocStatus
       END AS DocumentStatus
     FROM ORIN T0
+    LEFT JOIN RIN12 T12 ON T12.DocEntry = T0.DocEntry
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '14' AND NNM.Series = T0.Series
     WHERE T0.DocEntry = @docEntry
@@ -335,6 +384,8 @@ const getARCreditMemo = async (docEntry) => {
   }
 
   const header = headerRows[0];
+  const shipToAddressComponents = buildDocumentAddressComponents(header, 'ShipTo');
+  const billToAddressComponents = buildDocumentAddressComponents(header, 'BillTo');
   if (String(header.DocType || 'I').trim().toUpperCase() === 'S') {
     const error = new Error('This A/R Credit Memo is a Service type document. Open it in the Service A/R Credit Memo page.');
     error.status = 400;
@@ -609,6 +660,15 @@ const getARCreditMemo = async (docEntry) => {
         rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
         roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
+        shipToCode: header.ShipToCode || '',
+        payToCode: header.PayToCode || '',
+        billToCode: header.PayToCode || '',
+        shipTo: header.ShipToAddress || '',
+        payTo: header.BillToAddress || '',
+        shipToAddress: header.ShipToAddress || '',
+        billToAddress: header.BillToAddress || '',
+        shipToAddressComponents,
+        billToAddressComponents,
         salesEmployee: header.SalesEmployeeCode ? String(header.SalesEmployeeCode) : '',
         purchaser: header.SalesEmployeeName || '',
       },
@@ -621,32 +681,106 @@ const getARCreditMemo = async (docEntry) => {
 
 // ── DOCUMENT SERIES ───────────────────────────────────────────────────────────
 
-const getDocumentSeries = async (targetDate = null) => {
+const getDocumentSeries = async (targetDate = null, transactionType = '', branch = '') => {
   const effectiveTargetDate = targetDate || new Date().toISOString().split('T')[0];
-  const result = await safe(db.query(`
-   SELECT 
-    T0.Series,
-    T0.SeriesName,
-    T0.Indicator,
-    T0.NextNumber,
-    T1.Name AS FinancialYear,
-    T1.F_RefDate AS FromDate,
-    T1.T_RefDate AS ToDate
-FROM NNM1 T0
-INNER JOIN OFPR T1 
-    ON T0.Indicator = T1.Indicator
-WHERE T0.ObjectCode = '14'
-    AND T0.Locked = 'N'
-    AND CAST(@targetDate AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate
-ORDER BY T0.SeriesName
-  `, { targetDate: effectiveTargetDate }));
+  const [seriesMetadata, numberingMetadata] = await Promise.all([
+    getTableFieldMetadata('NNM1'),
+    getTableFieldMetadata('ONNM'),
+  ]);
+  const hasSeriesBranch = hasTableField(seriesMetadata, 'BPLId');
+  const defaultSeriesColumn = hasTableField(numberingMetadata, 'DfltSeries')
+    ? 'DfltSeries'
+    : hasTableField(numberingMetadata, 'DfltSerie')
+      ? 'DfltSerie'
+      : '';
+  const branchId = Number(branch);
+  const hasBranchFilter = hasSeriesBranch && Number.isFinite(branchId) && String(branch || '').trim() !== '';
+  const defaultSeriesJoin = defaultSeriesColumn
+    ? `LEFT JOIN ONNM T2 ON T2.ObjectCode = T0.ObjectCode AND T2.${defaultSeriesColumn} = T0.Series`
+    : '';
+  const defaultSeriesSelect = defaultSeriesColumn
+    ? `CASE WHEN T2.${defaultSeriesColumn} IS NOT NULL THEN 1 ELSE 0 END`
+    : '0';
+  const beginStrRef = sqlColumnRef(seriesMetadata, 'T0', 'BeginStr');
+  const lastNumRef = sqlColumnRef(seriesMetadata, 'T0', 'LastNum');
+  const seriesLabelSelect = beginStrRef
+    ? `COALESCE(NULLIF(LTRIM(RTRIM(CAST(${beginStrRef} AS NVARCHAR(50)))), ''), T0.SeriesName) AS SeriesLabel`
+    : 'T0.SeriesName AS SeriesLabel';
+  const numberRangeFilter = lastNumRef
+    ? `AND (${lastNumRef} IS NULL OR ${lastNumRef} = 0 OR T0.NextNumber <= ${lastNumRef})`
+    : '';
+  const requestedDocSubType = resolveSeriesDocSubType(transactionType);
+  const docSubTypeRef = sqlColumnRef(seriesMetadata, 'T0', 'DocSubType');
+  const docSubTypeFilter = requestedDocSubType && docSubTypeRef
+    ? `AND COALESCE(NULLIF(${docSubTypeRef}, ''), '--') = @docSubType`
+    : '';
+  const branchSeriesFilter = hasBranchFilter ? 'AND T0.BPLId = @branchId' : '';
+  const globalSeriesFilter = hasBranchFilter ? 'AND (T0.BPLId IS NULL OR T0.BPLId IN (-1, 0))' : '';
+  const datedParams = hasBranchFilter ? { targetDate: effectiveTargetDate, branchId } : { targetDate: effectiveTargetDate };
+  const fallbackParams = hasBranchFilter ? { branchId } : {};
+  const withDocSubTypeParam = (params) => (docSubTypeFilter ? { ...params, docSubType: requestedDocSubType } : params);
 
-  return result.map(s => ({
+  const runSeriesQuery = (withPeriod, branchFilterSql, queryParams) => safe(db.query(`
+    SELECT
+      T0.Series,
+      T0.SeriesName,
+      ${seriesLabelSelect},
+      ${optionalColumn(seriesMetadata, 'T0', 'BeginStr', 'BeginStr', "''")},
+      ${optionalColumn(seriesMetadata, 'T0', 'EndStr', 'EndStr', "''")},
+      T0.Indicator,
+      T0.NextNumber,
+      ${optionalColumn(seriesMetadata, 'T0', 'BPLId', 'BPLId', 'NULL')},
+      ${defaultSeriesSelect} AS IsDefault,
+      ${withPeriod ? 'T1.Name' : 'NULL'} AS FinancialYear,
+      ${withPeriod ? 'T1.F_RefDate' : 'NULL'} AS FromDate,
+      ${withPeriod ? 'T1.T_RefDate' : 'NULL'} AS ToDate
+    FROM NNM1 T0
+    ${withPeriod ? 'INNER JOIN OFPR T1 ON T0.Indicator = T1.Indicator' : ''}
+    ${defaultSeriesJoin}
+    WHERE T0.ObjectCode = '14'
+      AND T0.Locked = 'N'
+      ${branchFilterSql}
+      ${numberRangeFilter}
+      ${docSubTypeFilter}
+      ${withPeriod ? 'AND CAST(@targetDate AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate' : ''}
+    ORDER BY IsDefault DESC, T0.SeriesName, T0.Series
+  `, queryParams));
+
+  let result = hasBranchFilter
+    ? await runSeriesQuery(true, branchSeriesFilter, withDocSubTypeParam(datedParams))
+    : await runSeriesQuery(true, '', withDocSubTypeParam(datedParams));
+
+  if (!result.length && hasBranchFilter) {
+    result = await runSeriesQuery(true, globalSeriesFilter, withDocSubTypeParam(datedParams));
+  }
+
+  if (!result.length) {
+    result = hasBranchFilter
+      ? await runSeriesQuery(false, branchSeriesFilter, withDocSubTypeParam(fallbackParams))
+      : await runSeriesQuery(false, '', withDocSubTypeParam(fallbackParams));
+  }
+
+  if (!result.length && hasBranchFilter) {
+    result = await runSeriesQuery(false, globalSeriesFilter, withDocSubTypeParam(fallbackParams));
+  }
+
+  const series = result.map(s => ({
     Series: s.Series,
-    SeriesName: s.SeriesName,
+    SeriesName: s.SeriesName || s.SeriesLabel || s.BeginStr,
+    DisplayName: s.SeriesName || s.SeriesLabel || s.BeginStr,
+    RawSeriesName: s.SeriesName || '',
+    BeginStr: s.BeginStr || '',
+    EndStr: s.EndStr || '',
     NextNumber: s.NextNumber,
     Indicator: s.Indicator,
+    BPLId: s.BPLId != null ? String(s.BPLId) : '',
+    IsDefault: Number(s.IsDefault || 0) === 1,
+    FinancialYear: s.FinancialYear || '',
+    FromDate: s.FromDate || null,
+    ToDate: s.ToDate || null,
   }));
+
+  return keepSapVisibleNumberingSeries(series);
 };
 
 const getNextNumber = async (series) => {
@@ -693,6 +827,22 @@ const getWarehouseState = async (whsCode) => {
   }
 
   return { state: '' };
+};
+
+const getWarehouseBranch = async (whsCode) => {
+  const normalizedWarehouseCode = String(whsCode || '').trim();
+  if (!normalizedWarehouseCode) return { branchId: '' };
+
+  const result = await safe(db.query(`
+    SELECT TOP 1 BPLid AS BPLId
+    FROM OWHS
+    WHERE WhsCode = @whsCode
+      AND Inactive <> 'Y'
+  `, { whsCode: normalizedWarehouseCode }));
+
+  return {
+    branchId: result[0]?.BPLId != null ? String(result[0].BPLId) : '',
+  };
 };
 
 // ── FREIGHT CHARGES ───────────────────────────────────────────────────────────
@@ -1492,6 +1642,7 @@ module.exports = {
   getNextNumber,
   getStateFromAddress,
   getWarehouseState,
+  getWarehouseBranch,
   getFreightCharges,
   getItemsForModal,
   getBatchesByItem,

@@ -1,6 +1,7 @@
 const sapService = require('./sapService');
 const salesQuotationDb = require('./salesQuotationDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { buildMarketingDocumentAddressPayload } = require('./documentAddressPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { normalizeUdfValue, normalizeUdfValues, applyUdfsRobust } = require('./udfPayloadUtils');
 
@@ -377,6 +378,7 @@ const submitSalesQuotation = async (payload) => {
       ...(Remarks ? { Comments: Remarks } : {}),
       ...(Freight > 0 ? { TotalExpenses: Freight } : {}),
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(payload.header),
       NumAtCard: payload.header.customerRefNo || undefined,
       DocumentLines: documentLines,
     };
@@ -472,6 +474,7 @@ const updateSalesQuotation = async (docEntry, payload) => {
       ...(Remarks && { Comments: Remarks }),
       ...(Freight > 0 && { TotalExpenses: Freight }),
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(payload.header),
       DocumentLines: documentLines,
     };
 
