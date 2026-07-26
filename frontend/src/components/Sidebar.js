@@ -34,6 +34,8 @@ const TOP_LEVEL_MENU_PRIORITY = new Map([
   ['reports', 8],
   ['report layout manager', 9],
   ['reportlayoutmanager', 9],
+  ['analytics report', 9.5],
+  ['tools', 9.6],
   ['settings', 10],
   ['general settings', 10],
   ['admin panel', 11],
@@ -126,6 +128,8 @@ const ICON_PATHS = {
   transfer: ['M7 7h12', 'M15 3l4 4-4 4', 'M17 17H5', 'M9 13l-4 4 4 4'],
   payments: ['M4 7h16v10H4z', 'M4 10h16', 'M8 15h4'],
   report: ['M4 19h16', 'M7 16V9', 'M12 16V5', 'M17 16v-4'],
+  analytics: ['M4 19h16', 'M7 16V9', 'M12 16V5', 'M17 16v-4', 'M3 3l3 3', 'M18 3l3 3'],
+  tools: ['M14.7 5.3a4 4 0 0 0 4.8 4.8l-7.8 7.8a2.3 2.3 0 0 1-3.2-3.2z', 'M6 18l-2 2'],
   default: ['M5 5h14v14H5z', 'M8 9h8', 'M8 13h8', 'M8 17h5'],
 };
 

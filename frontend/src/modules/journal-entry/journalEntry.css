@@ -69,7 +69,7 @@
   grid-column: 1;
   grid-row: 1;
   display: grid;
-  grid-template-columns: 118px 116px 166px 166px 166px minmax(220px, 1fr);
+  grid-template-columns: 95px 85px 135px 135px 135px minmax(140px, 1fr);
   align-content: start;
   column-gap: 7px;
   row-gap: 3px;

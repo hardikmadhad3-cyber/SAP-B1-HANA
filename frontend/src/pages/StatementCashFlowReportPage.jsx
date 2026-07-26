@@ -225,7 +225,7 @@ function StatementCashFlowReportPage() {
               {message ? <div className="scf-message">{message}</div> : null}
             </div>
             <footer className="scf-footer">
-              <button type="button" className="sales-analysis__sap-btn" onClick={runReport} disabled={loading}>{loading ? "Loading..." : "OK"}</button>
+              <button type="button" className="sales-analysis__sap-btn sap-report-btn--primary" onClick={runReport} disabled={loading}>{loading ? "Loading..." : "OK"}</button>
               <button type="button" className="sales-analysis__sap-btn sales-analysis__sap-btn--secondary" onClick={resetCriteria}>Cancel</button>
             </footer>
           </>

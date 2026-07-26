@@ -356,6 +356,7 @@ module.exports = {
   getItemGroups: itemDbService.getItemGroups,
   getManufacturers: itemDbService.getManufacturers,
   getHSNCodes: itemDbService.getHSNCodes,
+  getSACCodes: itemDbService.getSACCodes,
   getPriceLists: itemDbService.getPriceLists,
   getVendors: itemDbService.getVendors,
   getWarehouses: itemDbService.getWarehouses,

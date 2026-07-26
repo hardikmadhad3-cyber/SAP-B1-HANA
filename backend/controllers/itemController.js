@@ -429,6 +429,15 @@ const lookupHSNCodes = async (req, res) => {
   }
 };
 
+const lookupSACCodes = async (req, res) => {
+  try {
+    res.json(await itemService.getSACCodes(req.query.query || ""));
+  } catch (err) {
+    console.error('[SAC Lookup Global Error]', err.message);
+    res.json([]);
+  }
+};
+
 const createItemGroup = async (req, res) => {
   try {
     const data = req.body;
@@ -596,6 +605,7 @@ module.exports = {
   getItemPrices, getItemStock,
   lookupItemGroups, createItemGroup, lookupManufacturers, createManufacturer, lookupPriceLists, lookupVendors, lookupWarehouses, lookupGLAccounts,
   lookupHSNCodes,
+  lookupSACCodes,
   lookupUoMGroups, lookupCustomsGroups, lookupItemProperties, lookupItemCodePrefixes,
   getAttachments, uploadAttachment, deleteAttachment, serveAttachment,
 };

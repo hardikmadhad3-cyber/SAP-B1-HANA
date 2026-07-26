@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../../modules/item-master/styles/itemMaster.css";
 import "../../modules/sales-order/styles/salesOrder.css";
@@ -6,6 +6,7 @@ import "../../styles/salesAnalysis.css";
 import "../../styles/sales-analysis-report.css";
 import SapLookupModal from "../../components/common/SapLookupModal";
 import SalesAnalysisPropertiesModal from "../../components/reports/SalesAnalysisPropertiesModal";
+import { ReportWindowControls, ReportBackButton } from "../../components/reports/ReportWindowControls";
 import useFloatingWindow from "../../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../../components/SapWindowTaskbarContext";
 import { exportPurchaseDetailPdf, exportPurchaseSummaryPdf } from "../../utils/analysisPdf";
@@ -21,8 +22,33 @@ import {
 } from "../../services/purchaseAnalysisApi";
 
 const today = new Date();
-const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
-const todayIso = today.toISOString().slice(0, 10);
+
+const formatSapShortDate = (date) => {
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = String(date.getFullYear()).slice(-2);
+  return `${day}/${month}/${year}`;
+};
+
+const parseSapDateToIso = (value) => {
+  const match = String(value || "").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (!match) return String(value || "").trim();
+
+  const [, dayText, monthText, yearText] = match;
+  const year = yearText.length === 2 ? `20${yearText}` : yearText;
+  return `${year}-${monthText.padStart(2, "0")}-${dayText.padStart(2, "0")}`;
+};
+
+const formatIsoToDisplayDate = (isoValue) => {
+  const match = String(isoValue || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "";
+
+  const [, year, month, day] = match;
+  return `${day}/${month}/${year.slice(2)}`;
+};
+
+const monthStartDisplay = formatSapShortDate(new Date(today.getFullYear(), today.getMonth(), 1));
+const todayDisplay = formatSapShortDate(today);
 
 const emptyRange = { codeFrom: "", codeTo: "" };
 
@@ -33,9 +59,9 @@ const createInitialCriteria = () => ({
   displayMode: "individual",
   totalType: "totalByCustomer",
   dateFilters: {
-    postingDate: { enabled: true, from: monthStart, to: todayIso },
-    dueDate: { enabled: false, from: monthStart, to: todayIso },
-    documentDate: { enabled: false, from: monthStart, to: todayIso },
+    postingDate: { enabled: true, from: monthStartDisplay, to: todayDisplay },
+    dueDate: { enabled: false, from: monthStartDisplay, to: todayDisplay },
+    documentDate: { enabled: false, from: monthStartDisplay, to: todayDisplay },
   },
   customer: {
     ...emptyRange,
@@ -203,6 +229,16 @@ export default function PurchaseAnalysisReport() {
     return "";
   };
 
+  const buildPayload = (source = criteria) => ({
+    ...source,
+    dateFilters: Object.fromEntries(
+      Object.entries(source.dateFilters).map(([key, range]) => [
+        key,
+        { ...range, from: parseSapDateToIso(range.from), to: parseSapDateToIso(range.to) },
+      ]),
+    ),
+  });
+
   const handleChange = (path, value) => {
     setCriteria((previous) => {
       const next = setDeepValue(previous, path, value);
@@ -212,6 +248,39 @@ export default function PurchaseAnalysisReport() {
       }
       return next;
     });
+  };
+
+  const datePickerRefs = useRef({});
+
+  const getDatePickerRef = (key, field) => {
+    const refKey = `${key}-${field}`;
+    if (!datePickerRefs.current[refKey]) {
+      datePickerRefs.current[refKey] = React.createRef();
+    }
+    return datePickerRefs.current[refKey];
+  };
+
+  const openDatePicker = (key, field) => {
+    const node = getDatePickerRef(key, field).current;
+    if (!node) return;
+
+    if (typeof node.showPicker === "function") {
+      try {
+        node.showPicker();
+        return;
+      } catch (_error) {
+        // fall back below
+      }
+    }
+
+    node.focus();
+    node.click();
+  };
+
+  const handleDatePickerChange = (key, field, isoValue) => {
+    const displayValue = formatIsoToDisplayDate(isoValue);
+    if (!displayValue) return;
+    handleChange(`dateFilters.${key}.${field}`, displayValue);
   };
 
   const handleCloseCriteriaWindow = () => {
@@ -246,7 +315,7 @@ export default function PurchaseAnalysisReport() {
     setDetailResult(null);
 
     try {
-      const result = await runPurchaseAnalysis(criteria);
+      const result = await runPurchaseAnalysis(buildPayload());
       setSummaryResult(result);
       if (result.message) setMessage(result.message);
     } catch (error) {
@@ -261,7 +330,7 @@ export default function PurchaseAnalysisReport() {
     setMessage("");
     try {
       const result = await runPurchaseAnalysis({
-        ...criteria,
+        ...buildPayload(),
         detailContext: {
           entityCode: row.entityCode,
           entityName: row.entityName,
@@ -329,17 +398,46 @@ export default function PurchaseAnalysisReport() {
             value={range.from}
             onChange={(event) => handleChange(`dateFilters.${key}.from`, event.target.value)}
           />
+          <button
+            type="button"
+            className="sales-analysis__picker-btn"
+            aria-label={`Open ${label} from date picker`}
+            onClick={() => openDatePicker(key, 'from')}
+          >
+            ...
+          </button>
           <span className="sales-analysis__field-label">To</span>
           <input
             type="text"
             value={range.to}
             onChange={(event) => handleChange(`dateFilters.${key}.to`, event.target.value)}
           />
-          {key === 'postingDate' ? (
-            <button type="button" className="sales-analysis__picker-btn" aria-label="Open picker">
-              ...
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="sales-analysis__picker-btn"
+            aria-label={`Open ${label} to date picker`}
+            onClick={() => openDatePicker(key, 'to')}
+          >
+            ...
+          </button>
+          <input
+            type="date"
+            ref={getDatePickerRef(key, 'from')}
+            className="sales-analysis__date-native-input"
+            value={parseSapDateToIso(range.from) || ''}
+            onChange={(event) => handleDatePickerChange(key, 'from', event.target.value)}
+            tabIndex={-1}
+            aria-hidden="true"
+          />
+          <input
+            type="date"
+            ref={getDatePickerRef(key, 'to')}
+            className="sales-analysis__date-native-input"
+            value={parseSapDateToIso(range.to) || ''}
+            onChange={(event) => handleDatePickerChange(key, 'to', event.target.value)}
+            tabIndex={-1}
+            aria-hidden="true"
+          />
         </div>
       </div>
     );
@@ -623,14 +721,10 @@ export default function PurchaseAnalysisReport() {
 
   const renderReportFooter = () => (
     <div className="sales-analysis-report__footer">
-      <button
-        type="button"
-        className="sales-analysis-report__back-btn"
+      <ReportBackButton
         onClick={detailResult ? () => setDetailResult(null) : handleBackToCriteria}
-        aria-label="Back"
-      >
-        &lt;
-      </button>
+        className="sales-analysis-report__back-btn"
+      />
       <div className="sales-analysis-report__action-group">
         <button
           type="button"
@@ -717,7 +811,7 @@ export default function PurchaseAnalysisReport() {
                             type="button"
                             className="sales-analysis-report__link-cell"
                             onClick={() => {
-                              navigate("/business-partner", { state: { cardCode: row.entityCode, cardType: "cSupplier", source: "purchase-analysis" } });
+                              navigate(`/business-partner?cardCode=${encodeURIComponent(row.entityCode)}`);
                             }}
                           >
                             <span className="sales-analysis-report__link-icon" aria-hidden="true">➜</span>
@@ -850,17 +944,12 @@ export default function PurchaseAnalysisReport() {
           <div className="sales-analysis-window__title sap-report-title">
             {result?.title || 'Purchase Analysis Report'}
           </div>
-          <div className="sales-analysis-window__controls">
-            <button
-              type="button"
-              aria-label={reportWindow.isMinimized ? 'Restore' : 'Minimize'}
-              onClick={handleMinimizeReportWindow}
-            >
-              {reportWindow.isMinimized ? '□' : '-'}
-            </button>
-            <button type="button" aria-label={reportWindow.isMaximized ? 'Restore' : 'Maximize'} title={reportWindow.isMaximized ? 'Restore' : 'Maximize'} onClick={reportWindow.toggleMaximize}>[]</button>
-            <button type="button" aria-label="Close" onClick={handleCloseReportWindow}>x</button>
-          </div>
+          <ReportWindowControls
+            windowFrame={reportWindow}
+            onMinimize={handleMinimizeReportWindow}
+            onClose={handleCloseReportWindow}
+            className="sales-analysis-window__controls"
+          />
         </div>
 
         <div className="sales-analysis-window__accent" />
@@ -897,17 +986,12 @@ export default function PurchaseAnalysisReport() {
       >
         <div className="sales-analysis-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}>
           <div className="sales-analysis-window__title sap-report-title">Purchase Analysis Report - Selection Criteria</div>
-          <div className="sales-analysis-window__controls">
-            <button
-              type="button"
-              aria-label={criteriaWindow.isMinimized ? 'Restore' : 'Minimize'}
-              onClick={handleMinimizeCriteriaWindow}
-            >
-              {criteriaWindow.isMinimized ? '□' : '-'}
-            </button>
-            <button type="button" aria-label={criteriaWindow.isMaximized ? 'Restore' : 'Maximize'} title={criteriaWindow.isMaximized ? 'Restore' : 'Maximize'} onClick={criteriaWindow.toggleMaximize}>[]</button>
-            <button type="button" aria-label="Close" onClick={handleCloseCriteriaWindow}>x</button>
-          </div>
+          <ReportWindowControls
+            windowFrame={criteriaWindow}
+            onMinimize={handleMinimizeCriteriaWindow}
+            onClose={handleCloseCriteriaWindow}
+            className="sales-analysis-window__controls"
+          />
         </div>
 
         <div className="sales-analysis-window__accent" />
@@ -1041,7 +1125,7 @@ export default function PurchaseAnalysisReport() {
             </div>
 
             <div className="sales-analysis-window__footer">
-              <button type="button" className="sales-analysis__sap-btn" onClick={handleRun}>OK</button>
+              <button type="button" className="sales-analysis__sap-btn sap-report-btn--primary" onClick={handleRun}>OK</button>
               <button type="button" className="sales-analysis__sap-btn sales-analysis__sap-btn--secondary" onClick={() => { setCriteria(createInitialCriteria()); setMessage(""); }}>Cancel</button>
             </div>
           </div>

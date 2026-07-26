@@ -1271,16 +1271,18 @@ const lookupHouseBankAccounts = async (bankCode = "", country = "") => {
   }));
 };
 
-const lookupSalesPersons = async (query = "") => {
+const lookupSalesPersons = async (query = "", top = 200, skip = 0) => {
+  const { top: limit, skip: offset } = pagingParams(top, skip);
   const trimmed = String(query || "").trim();
   const rows = await queryRows(`
-    SELECT TOP 200 SlpCode, SlpName, Memo
+    SELECT SlpCode, SlpName, Memo
     FROM OSLP
     WHERE @query = ''
       OR CAST(SlpCode AS NVARCHAR(50)) LIKE @like
       OR SlpName LIKE @like
     ORDER BY SlpCode
-  `, { query: trimmed, like: `%${trimmed}%` });
+    OFFSET @skip ROWS FETCH NEXT @top ROWS ONLY
+  `, { query: trimmed, like: `%${trimmed}%`, top: limit, skip: offset });
 
   return rows.map((row) => ({
     code: String(row.SlpCode),

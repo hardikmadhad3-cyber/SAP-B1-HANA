@@ -63,10 +63,8 @@ const getVendorDetails = async (vendorCode) => {
     const data = await purchaseQuotationDb.getVendorDetails(vendorCode);
     return data;
   } catch (error) {
-    return {
-      contacts: [],
-      pay_to_addresses: [],
-    };
+    console.error('[Purchase Quotation Service] Failed to load vendor details:', error);
+    throw error;
   }
 };
 

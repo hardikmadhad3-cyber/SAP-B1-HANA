@@ -66,10 +66,18 @@
   width: 24px;
   height: 22px;
   padding: 0;
-  border: 1px solid #ba8e14;
-  background: linear-gradient(180deg, #ffe8a3 0%, #f1c54f 100%);
-  color: #3f3216;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-xs, 4px);
+  background: linear-gradient(180deg, #ffffff 0%, #edf3f9 100%);
+  color: var(--sap-text, #223548);
   font-size: 11px;
+}
+
+.activity-overview-lookup-input button:hover,
+.activity-overview-chooser button:hover,
+.activity-overview-mini-btn:hover {
+  background: linear-gradient(180deg, #ffffff 0%, #dfe8f1 100%);
+  border-color: var(--sap-primary, #0a6ed1);
 }
 
 .activity-overview-from,
@@ -166,7 +174,7 @@
 }
 
 .activity-lookup-modal__backdrop {
-  position: fixed;
+  position: absolute;
   inset: 0;
   display: flex;
   align-items: flex-start;
@@ -178,7 +186,7 @@
 
 .activity-lookup-modal {
   width: min(560px, calc(100vw - 24px));
-  max-height: calc(100vh - 92px);
+  max-height: calc(100vh - var(--sap-topbar-height, 64px) - 92px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -333,10 +341,27 @@
 .activity-lookup-modal__action-btn {
   min-width: 82px;
   height: 26px;
-  border: 1px solid #ba8e14;
-  background: linear-gradient(180deg, #ffe8a3 0%, #f1c54f 100%);
-  color: #3f3216;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: linear-gradient(180deg, #ffffff 0%, #eef2f7 100%);
+  color: var(--sap-text, #223548);
   font-size: 12px;
+  font-weight: 600;
+}
+
+.activity-lookup-modal__action-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #e2ecf5 100%);
+  border-color: var(--sap-primary, #0a6ed1);
+}
+
+.activity-lookup-modal__action-btn--primary {
+  border-color: var(--sap-primary-dark, #0854a0);
+  background: linear-gradient(180deg, var(--sap-primary, #0a6ed1) 0%, var(--sap-primary-dark, #0854a0) 100%);
+  color: #ffffff;
+}
+
+.activity-lookup-modal__action-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #1b7ddb 0%, #0a5fac 100%);
 }
 
 @media (max-width: 760px) {

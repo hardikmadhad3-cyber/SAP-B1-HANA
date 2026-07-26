@@ -20,24 +20,6 @@
   color: #4b5563;
 }
 
-.crm-activities-page {
-  padding: 4px 8px 8px;
-  min-height: calc(100vh - 96px);
-  overflow: hidden;
-}
-
-.crm-activities-window {
-  width: calc(100vw - 16px);
-  max-width: none;
-  height: calc(100vh - 112px);
-  max-height: none;
-}
-
-.crm-activities-body {
-  padding: 8px 10px 12px;
-  background: #f2f2f2;
-}
-
 .crm-activities-options {
   display: flex;
   align-items: center;
@@ -138,24 +120,7 @@
   line-height: 1;
 }
 
-.crm-activities-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex: 0 0 auto;
-  padding-top: 30px;
-}
-
-.crm-activities-activity-btn {
-  min-width: 108px;
-}
-
 @media (max-width: 900px) {
-  .crm-activities-window {
-    width: calc(100vw - 12px);
-    height: calc(100vh - 96px);
-  }
-
   .crm-activities-options {
     align-items: flex-start;
     flex-direction: column;

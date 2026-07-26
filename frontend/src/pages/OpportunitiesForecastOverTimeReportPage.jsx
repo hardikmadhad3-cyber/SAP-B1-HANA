@@ -216,6 +216,7 @@ export default function OpportunitiesForecastOverTimeReportPage() {
     taskId: 'opportunities-forecast-over-time-criteria',
     taskTitle: 'Opportunities Forecast Over Time Report - Selection Criteria',
     taskPath: '/reports/crm/opportunities/forecast-over-time',
+    bounds: 'parent',
   });
   const reportWindow = useFloatingWindow({
     isOpen: hasReport,
@@ -223,6 +224,7 @@ export default function OpportunitiesForecastOverTimeReportPage() {
     taskId: 'opportunities-forecast-over-time-report',
     taskTitle: 'Opportunities Forecast Over Time Report',
     taskPath: '/reports/crm/opportunities/forecast-over-time',
+    bounds: 'parent',
   });
 
   useEffect(() => {

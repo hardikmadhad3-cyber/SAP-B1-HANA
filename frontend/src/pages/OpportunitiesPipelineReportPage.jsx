@@ -209,6 +209,7 @@ function MultiSelectLookupModal({
     taskId: `opportunities-pipeline-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
     taskTitle: title,
     taskPath: '/reports/crm/opportunities/pipeline',
+    bounds: 'parent',
   });
 
   useEffect(() => {
@@ -340,6 +341,7 @@ function RangeDialog({ isOpen, title, rows, value, onClose, onApply }) {
     taskId: `opportunities-pipeline-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
     taskTitle: title,
     taskPath: '/reports/crm/opportunities/pipeline',
+    bounds: 'parent',
   });
 
   useEffect(() => {
@@ -428,6 +430,7 @@ function BPPropertiesDialog({
     taskId: 'opportunities-pipeline-bp-properties',
     taskTitle: 'BP Properties',
     taskPath: '/reports/crm/opportunities/pipeline',
+    bounds: 'parent',
   });
 
   useEffect(() => {
@@ -534,6 +537,7 @@ function ExpandedSelectionDialog({ isOpen, value, lookups, onClose, onApply, onO
     taskId: 'opportunities-pipeline-expanded-selection',
     taskTitle: 'Expanded Selection Criteria',
     taskPath: '/reports/crm/opportunities/pipeline',
+    bounds: 'parent',
   });
 
   useEffect(() => {
@@ -686,6 +690,7 @@ export default function OpportunitiesPipelineReportPage() {
     taskId: 'opportunities-pipeline-report',
     taskTitle: 'Opportunities Pipeline',
     taskPath: '/reports/crm/opportunities/pipeline',
+    bounds: 'parent',
   });
 
   const rows = report?.data || [];

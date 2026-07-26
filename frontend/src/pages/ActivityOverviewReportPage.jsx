@@ -116,7 +116,7 @@ function SelectLookupModal({
   const [selected, setSelected] = useState(new Set(initialSelected));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 56 });
+  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 56, bounds: "parent" });
 
   const loadRows = async (search = "") => {
     setLoading(true);
@@ -181,7 +181,6 @@ function SelectLookupModal({
             <button type="button" aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"} onClick={windowFrame.toggleMinimize}>
               {windowFrame.isMinimized ? "[]" : "-"}
             </button>
-            <button type="button" aria-label="Restore" onClick={windowFrame.restoreWindow}>[]</button>
             <button type="button" aria-label="Close" onClick={onClose}>x</button>
           </div>
         </div>
@@ -243,7 +242,7 @@ function SelectLookupModal({
               </div>
             </div>
             <div className="activity-lookup-modal__footer">
-              <button type="button" className="activity-lookup-modal__action-btn" onClick={handleOk}>OK</button>
+              <button type="button" className="activity-lookup-modal__action-btn activity-lookup-modal__action-btn--primary" onClick={handleOk}>OK</button>
               <button type="button" className="activity-lookup-modal__action-btn" onClick={onClose}>Cancel</button>
             </div>
           </>
@@ -561,7 +560,7 @@ function ActivityOverviewReportPage() {
           {status ? <div className="sales-analysis__status">{status}</div> : null}
 
           <div className="sales-analysis-window__footer activity-overview-footer">
-            <button type="button" className="sales-analysis__sap-btn" onClick={handleRun}>OK</button>
+            <button type="button" className="sales-analysis__sap-btn sap-report-btn--primary" onClick={handleRun}>OK</button>
             <button type="button" className="sales-analysis__sap-btn" onClick={handleReset}>Cancel</button>
           </div>
         </div>
@@ -648,7 +647,7 @@ function ActivityOverviewReportPage() {
           <footer className="crm-activities-footer">
             <button type="button" className="sales-analysis-report__back-btn" onClick={() => setReport(null)}>&lt;</button>
             <div className="activity-overview-report-actions">
-              <button type="button" className="sales-analysis__sap-btn" onClick={() => setReport(null)}>OK</button>
+              <button type="button" className="sales-analysis__sap-btn sap-report-btn--primary" onClick={() => setReport(null)}>OK</button>
               <button type="button" className="sales-analysis__sap-btn" onClick={() => setReport(null)}>Cancel</button>
             </div>
           </footer>

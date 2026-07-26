@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import useFloatingWindow from "./useFloatingWindow";
 
+const PAGE_SIZE = 100;
+
 function GLAccountLookupModal({
   isOpen,
   accounts = [],
@@ -11,11 +13,13 @@ function GLAccountLookupModal({
 }) {
   const [searchText, setSearchText] = useState("");
   const [draftCodes, setDraftCodes] = useState([]);
-  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 54 });
+  const [page, setPage] = useState(0);
+  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 54, bounds: 'parent' });
 
   useEffect(() => {
     if (!isOpen) return;
     setSearchText("");
+    setPage(0);
     setDraftCodes(Array.isArray(selectedCodes) ? [...selectedCodes] : []);
   }, [isOpen, selectedCodes]);
 
@@ -29,6 +33,15 @@ function GLAccountLookupModal({
       `${account.code || ""} ${account.formatCode || ""} ${account.name || ""}`.toLowerCase().includes(query),
     );
   }, [accounts, searchText]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [searchText]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredAccounts.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+  const pageStart = currentPage * PAGE_SIZE;
+  const pagedAccounts = filteredAccounts.slice(pageStart, pageStart + PAGE_SIZE);
 
   const toggleCode = (code) => {
     setDraftCodes((current) => (
@@ -63,7 +76,6 @@ function GLAccountLookupModal({
             <button type="button" aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"} onClick={windowFrame.toggleMinimize}>
               {windowFrame.isMinimized ? "[]" : "-"}
             </button>
-            <button type="button" aria-label="Restore" onClick={windowFrame.restoreWindow}>[]</button>
             <button type="button" aria-label="Close" onClick={onClose}>x</button>
           </div>
         </div>
@@ -80,7 +92,7 @@ function GLAccountLookupModal({
                   onChange={(event) => setSearchText(event.target.value)}
                   autoFocus
                 />
-                <button type="button" onClick={() => setSearchText("")}>Clear</button>
+                <button type="button" className="sap-report-btn" onClick={() => setSearchText("")}>Clear</button>
               </div>
 
               <div className="ia-account-modal__grid-wrap">
@@ -94,17 +106,17 @@ function GLAccountLookupModal({
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredAccounts.length ? filteredAccounts.map((account, index) => {
+                    {pagedAccounts.length ? pagedAccounts.map((account, index) => {
                       const code = account.code || "";
                       const isSelected = selectedSet.has(code);
                       return (
                         <tr
-                          key={`${code}-${index}`}
+                          key={`${code}-${pageStart + index}`}
                           className={isSelected ? "is-selected" : ""}
                           onClick={() => toggleCode(code)}
                         >
                           <td className="is-check"><input type="checkbox" checked={isSelected} onChange={() => toggleCode(code)} onClick={(event) => event.stopPropagation()} /></td>
-                          <td className="is-index">{index + 1}</td>
+                          <td className="is-index">{pageStart + index + 1}</td>
                           <td>{account.formatCode || code}</td>
                           <td>{account.name || ""}</td>
                         </tr>
@@ -119,13 +131,32 @@ function GLAccountLookupModal({
               </div>
 
               <div className="ia-account-modal__actions">
-                <button type="button" onClick={() => setDraftCodes(filteredAccounts.map((account) => account.code).filter(Boolean))}>Select All</button>
-                <button type="button" onClick={() => setDraftCodes([])}>Clear Selection</button>
+                <button type="button" className="sap-report-btn" onClick={() => setDraftCodes(filteredAccounts.map((account) => account.code).filter(Boolean))}>Select All</button>
+                <button type="button" className="sap-report-btn" onClick={() => setDraftCodes([])}>Clear Selection</button>
+                <span className="ia-account-modal__page-info">
+                  {filteredAccounts.length ? `Showing ${pageStart + 1}-${pageStart + pagedAccounts.length} of ${filteredAccounts.length}` : ''}
+                </span>
+                <button
+                  type="button"
+                  className="sap-report-btn"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={currentPage === 0}
+                >
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  className="sap-report-btn"
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={currentPage >= totalPages - 1}
+                >
+                  Next
+                </button>
               </div>
             </div>
             <div className="ia-account-modal__footer">
-              <button type="button" onClick={handleSave}>OK</button>
-              <button type="button" onClick={onClose}>Cancel</button>
+              <button type="button" className="sap-report-btn sap-report-btn--primary" onClick={handleSave}>OK</button>
+              <button type="button" className="sap-report-btn" onClick={onClose}>Cancel</button>
             </div>
           </>
         ) : null}

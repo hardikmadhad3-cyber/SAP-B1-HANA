@@ -8,23 +8,31 @@ const TABLE_COLUMNS = [
   { key: 'remarks', label: 'Remarks', className: 'is-remarks' },
 ];
 
+const PAGE_SIZE = 100;
+
 function SalesEmployeeLookupModal({ isOpen, onClose, onSelect }) {
   const [searchText, setSearchText] = useState('');
   const [rows, setRows] = useState([]);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 48 });
+  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 48, bounds: 'parent' });
 
-  const loadRows = async (query = '') => {
+  const loadRows = async (query = '', pageToLoad = 0) => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetchSalesPersons(query);
-      setRows(Array.isArray(response) ? response : []);
+      const response = await fetchSalesPersons(query, PAGE_SIZE + 1, pageToLoad * PAGE_SIZE);
+      const list = Array.isArray(response) ? response : [];
+      setHasMore(list.length > PAGE_SIZE);
+      setRows(list.slice(0, PAGE_SIZE));
+      setPage(pageToLoad);
       setSelectedIndex(0);
     } catch (loadError) {
       setRows([]);
+      setHasMore(false);
       setError(loadError?.response?.data?.message || loadError?.message || 'Failed to load sales employees.');
     } finally {
       setLoading(false);
@@ -35,12 +43,14 @@ function SalesEmployeeLookupModal({ isOpen, onClose, onSelect }) {
     if (!isOpen) {
       setSearchText('');
       setRows([]);
+      setPage(0);
+      setHasMore(false);
       setSelectedIndex(0);
       setError('');
       return;
     }
 
-    loadRows('');
+    loadRows('', 0);
   }, [isOpen]);
 
   const normalizedRows = useMemo(
@@ -64,7 +74,7 @@ function SalesEmployeeLookupModal({ isOpen, onClose, onSelect }) {
   };
 
   const handleSearch = () => {
-    loadRows(searchText);
+    loadRows(searchText, 0);
   };
 
   const handleKeyDown = (event) => {
@@ -98,7 +108,6 @@ function SalesEmployeeLookupModal({ isOpen, onClose, onSelect }) {
             >
               {windowFrame.isMinimized ? '□' : '-'}
             </button>
-            <button type="button" aria-label="Restore" onClick={windowFrame.restoreWindow}>□</button>
             <button type="button" aria-label="Close" onClick={onClose}>x</button>
           </div>
         </div>
@@ -180,7 +189,7 @@ function SalesEmployeeLookupModal({ isOpen, onClose, onSelect }) {
             <div className="sales-employee-lookup-modal__footer">
               <button
                 type="button"
-                className="sales-employee-lookup-modal__action-btn"
+                className="sales-employee-lookup-modal__action-btn sales-employee-lookup-modal__action-btn--primary"
                 onClick={handleChoose}
                 disabled={!selectedRow}
               >
@@ -191,6 +200,25 @@ function SalesEmployeeLookupModal({ isOpen, onClose, onSelect }) {
               </button>
               <button type="button" className="sales-employee-lookup-modal__action-btn" disabled>
                 New
+              </button>
+              <span className="sales-employee-lookup-modal__page-info">
+                {rows.length ? `Showing ${page * PAGE_SIZE + 1}-${page * PAGE_SIZE + rows.length}` : ''}
+              </span>
+              <button
+                type="button"
+                className="sales-employee-lookup-modal__action-btn"
+                onClick={() => loadRows(searchText, page - 1)}
+                disabled={loading || page === 0}
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                className="sales-employee-lookup-modal__action-btn"
+                onClick={() => loadRows(searchText, page + 1)}
+                disabled={loading || !hasMore}
+              >
+                Next
               </button>
             </div>
           </>

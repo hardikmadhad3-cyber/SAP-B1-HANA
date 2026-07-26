@@ -1,0 +1,367 @@
+/* Shared with dashboard-studio.css, which reuses .aqm-btn* classes for its
+   own buttons without nesting inside .aqm-window - these must be globally
+   scoped, not window-scoped, or var(--aqm-primary) etc. resolve to nothing
+   outside Query Manager's own page (background falls back to transparent
+   while the button's hardcoded white text still applies). */
+:root {
+  --aqm-border: #b6c3d4;
+  --aqm-panel: #f4f6f9;
+  --aqm-panel-alt: #ffffff;
+  --aqm-ink: #1f2f46;
+  --aqm-muted: #5d6f89;
+  --aqm-primary: #28588d;
+  --aqm-primary-dark: #1f446c;
+  --aqm-danger: #a53a34;
+  --aqm-success: #2f7d4f;
+}
+
+.aqm-window {
+  min-height: calc(100vh - 112px);
+  display: flex;
+  flex-direction: column;
+  background: #eef3f8;
+}
+
+.aqm-window__titlebar {
+  padding: 14px 18px;
+  background: linear-gradient(180deg, #fdfefe 0%, #edf2f7 100%);
+  border-bottom: 1px solid var(--aqm-border);
+}
+
+.aqm-window__titlebar h2 {
+  margin: 0;
+  color: var(--aqm-ink);
+  font-size: 20px;
+}
+
+.aqm-window__body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 380px minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px;
+  min-height: 0;
+}
+
+.aqm-card {
+  background: var(--aqm-panel-alt);
+  border: 1px solid var(--aqm-border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.aqm-card__header {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--aqm-border);
+  background: var(--aqm-panel);
+}
+
+.aqm-card__header h3 {
+  margin: 0;
+  color: var(--aqm-ink);
+  font-size: 16px;
+}
+
+.aqm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  min-height: 0;
+}
+
+.aqm-list__header {
+  display: flex;
+  gap: 10px;
+}
+
+.aqm-list__header input {
+  flex: 1;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--aqm-border);
+  border-radius: 4px;
+}
+
+.aqm-list__table-wrap {
+  overflow-y: auto;
+  border: 1px solid var(--aqm-border);
+  border-radius: 4px;
+}
+
+.aqm-list__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.aqm-list__table th {
+  text-align: left;
+  padding: 8px 10px;
+  background: var(--aqm-panel);
+  border-bottom: 1px solid var(--aqm-border);
+  color: var(--aqm-muted);
+  position: sticky;
+  top: 0;
+}
+
+.aqm-list__table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e6ecf3;
+  color: var(--aqm-ink);
+}
+
+.aqm-list__table tr {
+  cursor: pointer;
+}
+
+.aqm-list__table tr:hover td {
+  background: #f7fafc;
+}
+
+.aqm-list__table tr.is-selected td {
+  background: #e3edf9;
+}
+
+.aqm-list__empty {
+  text-align: center;
+  color: var(--aqm-muted);
+  padding: 20px;
+}
+
+.aqm-status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.aqm-status-pill--draft {
+  background: #fff5ce;
+  color: #7a5b00;
+}
+
+.aqm-status-pill--published {
+  background: #e2f3e8;
+  color: var(--aqm-success);
+}
+
+.aqm-form {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.aqm-form__split {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.aqm-form__split--triple {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.aqm-field {
+  display: grid;
+  gap: 6px;
+  color: var(--aqm-ink);
+  font-size: 14px;
+}
+
+.aqm-field span {
+  font-weight: 600;
+}
+
+.aqm-field input,
+.aqm-field select {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--aqm-border);
+  border-radius: 4px;
+}
+
+.aqm-sql-editor {
+  border: 1px solid var(--aqm-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.aqm-sql-editor__loading {
+  padding: 20px;
+  color: var(--aqm-muted);
+  font-size: 13px;
+}
+
+.aqm-param-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--aqm-border);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.aqm-param-builder__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.aqm-param-builder__header h4 {
+  margin: 0;
+  color: var(--aqm-ink);
+  font-size: 14px;
+}
+
+.aqm-param-builder__empty {
+  color: var(--aqm-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.aqm-param-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 0.8fr 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.aqm-param-row input,
+.aqm-param-row select {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--aqm-border);
+  border-radius: 4px;
+}
+
+.aqm-param-row__required {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--aqm-muted);
+  white-space: nowrap;
+}
+
+.aqm-form__preview-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.aqm-preview {
+  border: 1px solid var(--aqm-border);
+  border-radius: 4px;
+  padding: 10px;
+}
+
+.aqm-preview__meta {
+  font-size: 12px;
+  color: var(--aqm-muted);
+  margin-bottom: 8px;
+}
+
+.aqm-preview__truncated {
+  color: var(--aqm-danger);
+  font-weight: 600;
+}
+
+.aqm-preview__status {
+  padding: 16px;
+  text-align: center;
+  color: var(--aqm-muted);
+}
+
+.aqm-preview__status--error {
+  color: var(--aqm-danger);
+}
+
+.aqm-preview__grid-wrap {
+  overflow: auto;
+  max-height: 320px;
+}
+
+.aqm-preview__grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.aqm-preview__grid th,
+.aqm-preview__grid td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #e6ecf3;
+  white-space: nowrap;
+}
+
+.aqm-preview__grid th {
+  background: var(--aqm-panel);
+  position: sticky;
+  top: 0;
+  text-align: left;
+}
+
+.aqm-form__error {
+  color: var(--aqm-danger);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.aqm-form__actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--aqm-border);
+}
+
+.aqm-btn {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 4px;
+  border: 1px solid var(--aqm-border);
+  background: var(--aqm-panel-alt);
+  color: var(--aqm-ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.aqm-btn:hover {
+  background: var(--aqm-panel);
+}
+
+.aqm-btn--primary {
+  background: var(--aqm-primary);
+  border-color: var(--aqm-primary-dark);
+  color: #ffffff;
+}
+
+.aqm-btn--primary:hover {
+  background: var(--aqm-primary-dark);
+}
+
+.aqm-btn--ghost {
+  background: transparent;
+}
+
+.aqm-btn--danger {
+  color: var(--aqm-danger);
+  border-color: var(--aqm-danger);
+  background: transparent;
+}
+
+.aqm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.aqm-empty-state {
+  padding: 40px;
+  text-align: center;
+  color: var(--aqm-muted);
+}

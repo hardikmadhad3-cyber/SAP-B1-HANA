@@ -12,7 +12,8 @@ export const fetchBPGroups      = (query = "", bpType = "") =>
   apiClient.get(`${BASE}/lookup/groups`, { params: { query, bpType } }).then((r) => r.data);
 export const fetchBPProperties  = () => apiClient.get(`${BASE}/lookup/properties`).then((r) => r.data);
 export const fetchPaymentTerms  = (query = "") => apiClient.get(`${BASE}/lookup/payment-terms`, { params: { query } }).then((r) => r.data);
-export const fetchSalesPersons  = (query = "") => apiClient.get(`${BASE}/lookup/sales-persons`, { params: { query } }).then((r) => r.data);
+export const fetchSalesPersons  = (query = "", top = 200, skip = 0) =>
+  apiClient.get(`${BASE}/lookup/sales-persons`, { params: { query, top, skip } }).then((r) => r.data);
 export const fetchBPPriceLists  = (query = "") => apiClient.get(`${BASE}/lookup/price-lists`,   { params: { query } }).then((r) => r.data);
 export const fetchCurrencies    = (query = "") => apiClient.get(`${BASE}/lookup/currencies`,    { params: { query } }).then((r) => r.data);
 export const fetchBPCountries   = (query = "") => apiClient.get(`${BASE}/lookup/countries`,     { params: { query } }).then((r) => r.data);

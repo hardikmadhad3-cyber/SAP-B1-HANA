@@ -261,7 +261,7 @@ function InactiveCustomersReportPage() {
             </div>
 
             <footer className="icr-criteria-footer sales-analysis-window__footer">
-              <button type="button" className="sales-analysis__sap-btn" onClick={handleOk} disabled={loading}>
+              <button type="button" className="sales-analysis__sap-btn sap-report-btn--primary" onClick={handleOk} disabled={loading}>
                 {loading ? "Loading..." : "OK"}
               </button>
               <button type="button" className="sales-analysis__sap-btn sales-analysis__sap-btn--secondary" onClick={handleCloseCriteria}>
@@ -355,12 +355,6 @@ function InactiveCustomersReportPage() {
             <div className="sales-analysis-report__footer">
               <button type="button" className="sales-analysis-report__back-btn" onClick={() => setReport(null)} aria-label="Back to selection criteria">
                 {"<"}
-              </button>
-              <button type="button" className="sales-analysis__sap-btn" onClick={() => setReport(null)}>
-                OK
-              </button>
-              <button type="button" className="sales-analysis__sap-btn sales-analysis__sap-btn--secondary" onClick={() => setReport(null)}>
-                Cancel
               </button>
             </div>
           </div>

@@ -6,7 +6,11 @@ import GLAccountLookupModal from "../components/reports/GLAccountLookupModal";
 import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
+import { ReportBackButton } from "../components/reports/ReportWindowControls";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
+import ReportPageShell from "../components/reports/ReportPageShell";
+import ReportWindow from "../components/reports/ReportWindow";
+import { ReportActionBar, ReportButton } from "../components/reports/ReportActionBar";
 import "../styles/inventory-audit-report.css";
 import "../styles/sales-analysis-report.css";
 import "../styles/inventory-report-common.css";
@@ -295,16 +299,6 @@ function InventoryAuditReportPage() {
     setLookupTarget("");
   };
 
-  const renderControls = (windowFrame, onClose) => (
-    <div className="ia-window__controls sales-analysis-window__controls">
-      <button type="button" aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"} onClick={windowFrame.toggleMinimize}>
-        {windowFrame.isMinimized ? "[]" : "-"}
-      </button>
-      <button type="button" aria-label={windowFrame.isMaximized ? "Restore Down" : "Maximize"} onClick={windowFrame.toggleMaximize}>[]</button>
-      <button type="button" aria-label="Close" onClick={onClose}>x</button>
-    </div>
-  );
-
   const renderWarehouseGrid = () => (
     <section className="ia-section">
       <div className="ia-section__title">Warehouses</div>
@@ -361,100 +355,103 @@ function InventoryAuditReportPage() {
   );
 
   const renderCriteriaWindow = () => (
-    <section className={`ia-window sales-analysis-window sap-report-window${criteriaWindow.isMinimized ? " is-minimized" : ""}${criteriaWindow.isMaximized ? " is-maximized" : ""}`} {...criteriaWindow.windowProps}>
-      <header className="ia-window__titlebar sales-analysis-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}>
-        <span className="sales-analysis-window__title sap-report-title">Inventory Audit Report - Selection Criteria</span>
-        {renderControls(criteriaWindow, handleCloseCriteria)}
-      </header>
-      <div className="ia-window__accent sales-analysis-window__accent" />
-      {!criteriaWindow.isMinimized ? (
-        <div className="ia-window__body sales-analysis-window__body">
-          <div className="ia-date-row">
-            <select value={criteria.dateType} onChange={(event) => setField("dateType", event.target.value)}>
-              <option value="system">System Date</option>
-              <option value="posting">Posting Date</option>
-            </select>
+    <ReportWindow
+      windowFrame={criteriaWindow}
+      onMinimize={criteriaWindow.toggleMinimize}
+      onClose={handleCloseCriteria}
+      title="Inventory Audit Report - Selection Criteria"
+      size="medium"
+    >
+      <div className="ia-criteria-columns">
+      <div className="ia-criteria-left-col">
+      <div className="ia-date-row">
+        <select value={criteria.dateType} onChange={(event) => setField("dateType", event.target.value)}>
+          <option value="system">System Date</option>
+          <option value="posting">Posting Date</option>
+        </select>
+        <span>From</span>
+        <input value={criteria.dateFrom} onChange={(event) => setField("dateFrom", event.target.value)} />
+        <span>To</span>
+        <input value={criteria.dateTo} onChange={(event) => setField("dateTo", event.target.value)} />
+      </div>
+
+      <section className="ia-section">
+        <div className="ia-section__title">Items</div>
+        <div className="ia-items-box">
+          <div className="ia-range-row">
+            <label>Code</label>
             <span>From</span>
-            <input value={criteria.dateFrom} onChange={(event) => setField("dateFrom", event.target.value)} />
-            <span>To</span>
-            <input value={criteria.dateTo} onChange={(event) => setField("dateTo", event.target.value)} />
-          </div>
-
-          <section className="ia-section">
-            <div className="ia-section__title">Items</div>
-            <div className="ia-items-box">
-              <div className="ia-range-row">
-                <label>Code</label>
-                <span>From</span>
-                <div className="ia-lookup">
-                  <input value={criteria.itemFrom} onChange={(event) => setField("itemFrom", event.target.value)} />
-                  <button type="button" onClick={() => setLookupTarget("itemFrom")}>...</button>
-                </div>
-                <span>To</span>
-                <div className="ia-lookup">
-                  <input value={criteria.itemTo} onChange={(event) => setField("itemTo", event.target.value)} />
-                  <button type="button" onClick={() => setLookupTarget("itemTo")}>...</button>
-                </div>
-              </div>
-              <div className="ia-group-row">
-                <label>Item Group</label>
-                <select value={criteria.groupCode} onChange={(event) => setField("groupCode", event.target.value)}>
-                  <option value="*">*</option>
-                  {groups.filter((group) => group.code !== "*").map((group) => (
-                    <option key={group.code} value={group.code}>{group.name || group.code}</option>
-                  ))}
-                  <option value="all">All</option>
-                </select>
-              </div>
-              <div className="ia-property-row">
-                <button type="button" className="ia-btn ia-btn--field sap-report-btn sap-report-property-btn" onClick={() => setShowProperties(true)}>Properties</button>
-                <input value={propertyLabel} readOnly />
-              </div>
+            <div className="ia-lookup">
+              <input value={criteria.itemFrom} onChange={(event) => setField("itemFrom", event.target.value)} />
+              <button type="button" onClick={() => setLookupTarget("itemFrom")}>...</button>
             </div>
-          </section>
-
-          <div className="ia-gl-row">
-            <label><input type="checkbox" checked={criteria.glAccountsEnabled} onChange={(event) => setField("glAccountsEnabled", event.target.checked)} /> G/L Accounts</label>
-            <button type="button" className="ia-small-btn" disabled={!criteria.glAccountsEnabled} onClick={() => setShowAccounts(true)}>...</button>
-            <input value={accountLabel} readOnly disabled={!criteria.glAccountsEnabled} />
+            <span>To</span>
+            <div className="ia-lookup">
+              <input value={criteria.itemTo} onChange={(event) => setField("itemTo", event.target.value)} />
+              <button type="button" onClick={() => setLookupTarget("itemTo")}>...</button>
+            </div>
           </div>
-
-          {renderWarehouseGrid()}
-
-          <div className="ia-display">
-            <div className="ia-display__title">Display</div>
-            <label><input type="radio" name="inventoryAuditDisplay" checked={criteria.displayMode === "byItems"} onChange={() => setDisplayMode("byItems")} /> By Items</label>
-            <label><input type="radio" name="inventoryAuditDisplay" checked={criteria.displayMode === "byAccount"} onChange={() => setDisplayMode("byAccount")} /> Summarize by Accounts</label>
+          <div className="ia-group-row">
+            <label>Item Group</label>
+            <select value={criteria.groupCode} onChange={(event) => setField("groupCode", event.target.value)}>
+              <option value="*">*</option>
+              {groups.filter((group) => group.code !== "*").map((group) => (
+                <option key={group.code} value={group.code}>{group.name || group.code}</option>
+              ))}
+              <option value="all">All</option>
+            </select>
           </div>
-
-          <div className="ia-options">
-            <label className={criteria.displayMode === "byAccount" ? "is-disabled" : ""}>
-              <input type="checkbox" checked={criteria.groupByWarehouses} disabled={criteria.displayMode === "byAccount"} onChange={(event) => setField("groupByWarehouses", event.target.checked)} />
-              Group by Warehouses
-            </label>
-            <label>
-              <input type="checkbox" checked={criteria.displayOpeningBalances} onChange={(event) => setField("displayOpeningBalances", event.target.checked)} />
-              Display OB for Items/Accounts with no Transactions
-            </label>
-            <label className={criteria.displayMode === "byAccount" ? "is-disabled" : ""}>
-              <input type="checkbox" checked={criteria.hideItemsWithCumulativeQuantityZero} disabled={criteria.displayMode === "byAccount"} onChange={(event) => setField("hideItemsWithCumulativeQuantityZero", event.target.checked)} />
-              Hide Items with Cumulative Quantity Zero
-            </label>
-            <label>
-              <input type="checkbox" checked={criteria.hideSerialBatchForNonSerialBatch} onChange={(event) => setField("hideSerialBatchForNonSerialBatch", event.target.checked)} />
-              Hide Serial/Batch Transactions If Current Item Valuation Method Is Not Serial/Batch
-            </label>
+          <div className="ia-property-row">
+            <button type="button" className="ia-btn ia-btn--field sap-report-btn sap-report-property-btn" onClick={() => setShowProperties(true)}>Properties</button>
+            <input value={propertyLabel} readOnly />
           </div>
-
-          {message ? <div className="ia-status">{message}</div> : null}
-
-          <footer className="ia-footer sales-analysis-window__footer">
-            <button type="button" className="ia-btn sap-report-btn sap-report-btn--primary" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</button>
-            <button type="button" className="ia-btn ia-btn--secondary sap-report-btn" onClick={handleCloseCriteria}>Cancel</button>
-          </footer>
         </div>
-      ) : null}
-    </section>
+      </section>
+
+      <div className="ia-gl-row">
+        <label><input type="checkbox" checked={criteria.glAccountsEnabled} onChange={(event) => setField("glAccountsEnabled", event.target.checked)} /> G/L Accounts</label>
+        <button type="button" className="ia-small-btn" disabled={!criteria.glAccountsEnabled} onClick={() => setShowAccounts(true)}>...</button>
+        <input value={accountLabel} readOnly disabled={!criteria.glAccountsEnabled} />
+      </div>
+
+      {renderWarehouseGrid()}
+      </div>
+
+      <div className="ia-criteria-right-col">
+      <div className="ia-display">
+        <div className="ia-display__title">Display</div>
+        <label><input type="radio" name="inventoryAuditDisplay" checked={criteria.displayMode === "byItems"} onChange={() => setDisplayMode("byItems")} /> By Items</label>
+        <label><input type="radio" name="inventoryAuditDisplay" checked={criteria.displayMode === "byAccount"} onChange={() => setDisplayMode("byAccount")} /> Summarize by Accounts</label>
+      </div>
+
+      <div className="ia-options">
+        <label className={criteria.displayMode === "byAccount" ? "is-disabled" : ""}>
+          <input type="checkbox" checked={criteria.groupByWarehouses} disabled={criteria.displayMode === "byAccount"} onChange={(event) => setField("groupByWarehouses", event.target.checked)} />
+          Group by Warehouses
+        </label>
+        <label>
+          <input type="checkbox" checked={criteria.displayOpeningBalances} onChange={(event) => setField("displayOpeningBalances", event.target.checked)} />
+          Display OB for Items/Accounts with no Transactions
+        </label>
+        <label className={criteria.displayMode === "byAccount" ? "is-disabled" : ""}>
+          <input type="checkbox" checked={criteria.hideItemsWithCumulativeQuantityZero} disabled={criteria.displayMode === "byAccount"} onChange={(event) => setField("hideItemsWithCumulativeQuantityZero", event.target.checked)} />
+          Hide Items with Cumulative Quantity Zero
+        </label>
+        <label>
+          <input type="checkbox" checked={criteria.hideSerialBatchForNonSerialBatch} onChange={(event) => setField("hideSerialBatchForNonSerialBatch", event.target.checked)} />
+          Hide Serial/Batch Transactions If Current Item Valuation Method Is Not Serial/Batch
+        </label>
+      </div>
+
+      {message ? <div className="ia-status">{message}</div> : null}
+      </div>
+      </div>
+
+      <ReportActionBar>
+        <ReportButton variant="primary" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</ReportButton>
+        <ReportButton onClick={handleCloseCriteria}>Cancel</ReportButton>
+      </ReportActionBar>
+    </ReportWindow>
   );
 
   const renderItemReport = () => (
@@ -551,29 +548,26 @@ function InventoryAuditReportPage() {
   );
 
   const renderReportWindow = () => report ? (
-    <section className={`ia-window ia-window--report sales-analysis-window sales-analysis-window--report sap-report-window${reportWindow.isMinimized ? " is-minimized" : ""}${reportWindow.isMaximized ? " is-maximized" : ""}`} {...reportWindow.windowProps}>
-      <header className="ia-window__titlebar sales-analysis-window__titlebar sap-report-titlebar" {...reportWindow.titleBarProps}>
-        <span className="sales-analysis-window__title sap-report-title">Inventory Audit Report</span>
-        {renderControls(reportWindow, () => setReport(null))}
-      </header>
-      <div className="ia-window__accent sales-analysis-window__accent" />
-      {!reportWindow.isMinimized ? (
-        <div className="ia-report-body sales-analysis-window__body sales-analysis-window__body--report">
-          <div className="ia-report-toolbar">
-            <label>Find <input value={findText} onChange={(event) => setFindText(event.target.value)} /></label>
-            <span>{report.sourceTable ? `Source: ${report.sourceTable}` : ""}</span>
-          </div>
-          {report.criteria?.displayMode === "byAccount" ? renderAccountReport() : renderItemReport()}
-          <div className="sales-analysis-report__footer">
-            <button type="button" className="ia-back sales-analysis-report__back-btn" aria-label="Back to selection criteria" onClick={() => setReport(null)}>{"<"}</button>
-          </div>
-        </div>
-      ) : null}
-    </section>
+    <ReportWindow
+      windowFrame={reportWindow}
+      onMinimize={reportWindow.toggleMinimize}
+      onClose={() => setReport(null)}
+      title="Inventory Audit Report"
+      size="wide"
+    >
+      <div className="ia-report-toolbar">
+        <label>Find <input value={findText} onChange={(event) => setFindText(event.target.value)} /></label>
+        <span>{report.sourceTable ? `Source: ${report.sourceTable}` : ""}</span>
+      </div>
+      {report.criteria?.displayMode === "byAccount" ? renderAccountReport() : renderItemReport()}
+      <ReportActionBar>
+        <ReportBackButton onClick={() => setReport(null)} />
+      </ReportActionBar>
+    </ReportWindow>
   ) : null;
 
   return (
-    <div className="ia-page sales-analysis-page sap-report-page">
+    <ReportPageShell className="ia-page">
       {renderCriteriaWindow()}
       {renderReportWindow()}
 
@@ -598,7 +592,7 @@ function InventoryAuditReportPage() {
         onClose={() => setShowAccounts(false)}
         onSave={(codes) => setField("selectedAccountCodes", codes)}
       />
-    </div>
+    </ReportPageShell>
   );
 }
 

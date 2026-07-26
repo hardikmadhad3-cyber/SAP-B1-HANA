@@ -44,6 +44,9 @@ export const fetchManufacturers = (query = "") =>
 export const fetchHSNCodes = (query = "") =>
   apiClient.get("/items/lookup/hsn-codes", { params: { query } }).then((r) => r.data);
 
+export const fetchSACCodes = (query = "") =>
+  apiClient.get("/items/lookup/sac-codes", { params: { query } }).then((r) => r.data);
+
 export const createManufacturer = (data) =>
   apiClient.post("/items/lookup/manufacturers", data).then((r) => r.data);
 

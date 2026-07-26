@@ -1,8 +1,8 @@
 body {
   margin: 0;
-  font-family: "Bahnschrift", "Segoe UI", "Trebuchet MS", sans-serif;
-  background: #edf2f6;
-  color: #132438;
+  font-family: "Segoe UI", "72", "Inter", "Helvetica Neue", Arial, sans-serif;
+  background: #f5f6f8;
+  color: #223548;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

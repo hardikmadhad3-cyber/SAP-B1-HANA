@@ -611,12 +611,8 @@ const getCustomerDetails = async (customerCode) => {
     const result = await deliveryDb.getCustomerDetails(customerCode);
     return result;
   } catch (error) {
-    return {
-      contacts: [],
-      pay_to_addresses: [],
-      ship_to_addresses: [],
-      bill_to_addresses: [],
-    };
+    console.error('[Delivery Service] Failed to load customer details:', error);
+    throw error;
   }
 };
 

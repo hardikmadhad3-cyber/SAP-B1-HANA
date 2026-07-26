@@ -181,6 +181,7 @@ export default function OpportunitiesForecastReportPage() {
     taskId: 'opportunities-forecast-criteria',
     taskTitle: 'Opportunities Forecast Report - Selection Criteria',
     taskPath: '/reports/crm/opportunities/forecast',
+    bounds: 'parent',
   });
   const reportWindow = useFloatingWindow({
     isOpen: hasReport,
@@ -188,6 +189,7 @@ export default function OpportunitiesForecastReportPage() {
     taskId: 'opportunities-forecast-report',
     taskTitle: 'Opportunities Forecast Report',
     taskPath: '/reports/crm/opportunities/forecast',
+    bounds: 'parent',
   });
 
   useEffect(() => {

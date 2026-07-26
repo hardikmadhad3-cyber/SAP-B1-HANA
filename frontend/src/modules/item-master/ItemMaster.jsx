@@ -65,6 +65,12 @@ const isYarnCottonGroup = (form = {}) =>
 const getTabs = (form = {}) =>
   isYarnCottonGroup(form) ? [YARN_COTTON_TAB, ...BASE_TABS] : BASE_TABS;
 
+// Item Category (Material/Service) is owned by the Item Group in SAP B1 — a
+// group set up for services (e.g. "Service") forces every item assigned to it
+// to be Service, everything else is locked to Material.
+const resolveItemClassForGroup = (groupName) =>
+  normalizeGroupName(groupName).includes("service") ? "itcService" : "itcMaterial";
+
 const clonePlain = (value) => {
   if (Array.isArray(value)) return value.map(clonePlain);
   if (value && typeof value === "object") {
@@ -125,6 +131,8 @@ const EMPTY_FORM = {
   Frozen: "tNO", FrozenFrom: "", FrozenTo: "", FrozenRemarks: "",
   LinkedResource: "",
   Excisable: "tNO",
+  NotificationSerialNo: "",
+  ProvisionalAssessmentNo: "",
   GSTRelevnt: "tNO",
   GSTMaterialType: "",
   ChapterID: "",
@@ -564,13 +572,14 @@ export default function ItemMaster() {
       if (label !== undefined) {
         updated[`${name}Name`] = label;
       }
-      
-      // Mutually exclusive: Excisable and GSTRelevnt
+
+      // Excisable and GST are mutually exclusive tax regimes in SAP B1 — an
+      // item is either liable for old Central Excise or GST, never both.
       if (type === "checkbox" && checked) {
         if (name === "Excisable") updated.GSTRelevnt = "tNO";
         if (name === "GSTRelevnt") updated.Excisable = "tNO";
       }
-      
+
       // Item code generation logic
       if (name === "ItemCodePrefix" || name === "ItemCodeNumber") {
         const prefix = name === "ItemCodePrefix" ? value : prev.ItemCodePrefix;
@@ -965,8 +974,14 @@ export default function ItemMaster() {
             <label className="im-field__label">Item Group</label>
             <LookupField name="ItemsGroupCode" value={form.ItemsGroupCode}
               displayValue={form.ItemsGroupName} onChange={handleChange}
-              onSelect={(r) => setForm((p) => ({ ...p, ItemsGroupCode: r.code, ItemsGroupName: r.name }))}
-              fetchOptions={fetchItemGroups} placeholder="Select group" 
+              onSelect={(r) => setForm((p) => ({
+                ...p,
+                ItemsGroupCode: r.code,
+                ItemsGroupName: r.name,
+                ItemClass: resolveItemClassForGroup(r.name),
+                ChapterID: "",
+              }))}
+              fetchOptions={fetchItemGroups} placeholder="Select group"
               style={{ background: getFieldBackground('ItemsGroupCode') }}
               onDefineNew={() => setShowItemGroupSetup(true)}
             />
@@ -1101,7 +1116,13 @@ export default function ItemMaster() {
         <ItemGroupSetup
           onClose={() => setShowItemGroupSetup(false)}
           onSave={(group) => {
-            setForm((p) => ({ ...p, ItemsGroupCode: group.code, ItemsGroupName: group.name }));
+            setForm((p) => ({
+              ...p,
+              ItemsGroupCode: group.code,
+              ItemsGroupName: group.name,
+              ItemClass: group.ItemClass || resolveItemClassForGroup(group.name),
+              ChapterID: "",
+            }));
           }}
           showAlert={showAlert}
         />
@@ -1186,7 +1207,7 @@ function buildPayload(form, prices = [], barcodes = [], uoms = [], prefVendors =
   if (opt(form.FrozenRemarks))p.FrozenRemarks= form.FrozenRemarks;
   if (opt(form.Excisable))    p.Excisable    = form.Excisable;
   if (opt(form.GSTRelevnt))   p.GSTRelevnt   = form.GSTRelevnt;
-  // GSTMaterialType is UI-only field, not sent to SAP (no corresponding field exists)
+  // GSTMaterialType, NotificationSerialNo, ProvisionalAssessmentNo are UI-only fields, not sent to SAP (no corresponding field exists)
   if (opt(form.ChapterID) && form.ChapterID !== "" && form.ChapterID !== "-1") {
     p.ChapterID = String(form.ChapterID).trim();
   }

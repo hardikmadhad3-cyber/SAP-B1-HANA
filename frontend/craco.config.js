@@ -1,5 +1,6 @@
 const CompressionPlugin = require("compression-webpack-plugin");
 const { BundleAnalyzerPlugin } = require("webpack-bundle-analyzer");
+const MonacoWebpackPlugin = require("monaco-editor-webpack-plugin");
 
 const shouldAnalyze = process.env.ANALYZE === "true";
 
@@ -26,6 +27,27 @@ module.exports = {
               name: "vendor-ui",
               chunks: "all",
               priority: 20,
+              enforce: true,
+            },
+            monacoVendor: {
+              test: /[\\/]node_modules[\\/](monaco-editor|@monaco-editor)[\\/]/,
+              name: "vendor-monaco",
+              chunks: "async",
+              priority: 25,
+              enforce: true,
+            },
+            echartsVendor: {
+              test: /[\\/]node_modules[\\/](echarts|zrender|echarts-for-react)[\\/]/,
+              name: "vendor-echarts",
+              chunks: "async",
+              priority: 25,
+              enforce: true,
+            },
+            gridLayoutVendor: {
+              test: /[\\/]node_modules[\\/]react-grid-layout[\\/]/,
+              name: "vendor-grid-layout",
+              chunks: "async",
+              priority: 25,
               enforce: true,
             },
             vendor: {
@@ -59,6 +81,15 @@ module.exports = {
           test: /\.(js|css|html|svg)$/,
           threshold: 10240,
           minRatio: 0.8,
+        }),
+      );
+
+      // Query Manager's SQL editor lazy-loads Monaco - restrict to the sql
+      // language so the (larger) typescript/json/css workers are never bundled.
+      webpackConfig.plugins.push(
+        new MonacoWebpackPlugin({
+          languages: ["sql"],
+          filename: "static/js/monaco/[name].worker.[contenthash:8].js",
         }),
       );
 

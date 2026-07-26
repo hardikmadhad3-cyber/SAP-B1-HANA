@@ -3,6 +3,7 @@
  * Reads data directly from SAP B1 SQL Server database
  */
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const {
@@ -184,29 +185,8 @@ const getContactsByVendor = async (cardCode) => {
 };
 
 const getAddressesByVendor = async (cardCode) => {
-  const result = await safe(db.query(`
-    SELECT T0.*,
-      T0.CardCode,
-      T0.Address,
-      T0.AdresType,
-      T0.Street,
-      T0.StreetNo,
-      T0.Block,
-      T0.Building,
-      T0.Address2,
-      T0.Address3,
-      T0.City,
-      T0.County,
-      T0.State,
-      T0.ZipCode,
-      T0.Country,
-      T0.GSTRegnNo AS GSTIN
-    FROM CRD1 T0
-    WHERE T0.CardCode = @cardCode
-    ORDER BY T0.Address
-  `, { cardCode }));
-
-  return result;
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'Purchase Quotation' });
+  return addresses;
 };
 
 // ── PURCHASE ORDER LIST ───────────────────────────────────────────────────────
@@ -752,6 +732,8 @@ const getVendorDetails = async (vendorCode) => {
     return {
       contacts: [],
       pay_to_addresses: [],
+      bill_to_addresses: [],
+      ship_to_addresses: [],
     };
   }
 
@@ -761,13 +743,18 @@ const getVendorDetails = async (vendorCode) => {
   ]);
 
   // Filter pay-to addresses (Bill To)
-  const payToAddresses = addresses.filter(a => 
+  const payToAddresses = addresses.filter(a =>
     a.AdresType === 'B' || a.AdresType === 'bo_BillTo'
+  );
+  const shipToAddresses = addresses.filter(a =>
+    a.AdresType === 'S' || a.AdresType === 'bo_ShipTo'
   );
 
   return {
     contacts,
     pay_to_addresses: payToAddresses,
+    bill_to_addresses: payToAddresses,
+    ship_to_addresses: shipToAddresses,
   };
 };
 

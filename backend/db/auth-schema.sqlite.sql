@@ -247,6 +247,80 @@ CREATE TABLE IF NOT EXISTS ReportLayoutVersions (
   FOREIGN KEY (LayoutID) REFERENCES ReportLayouts(LayoutID)
 );
 
+CREATE TABLE IF NOT EXISTS AnalyticsQueries (
+  QueryId INTEGER PRIMARY KEY AUTOINCREMENT,
+  QueryCode TEXT NOT NULL UNIQUE,
+  QueryName TEXT NOT NULL,
+  Category TEXT NULL,
+  Description TEXT NULL,
+  SqlText TEXT NOT NULL,
+  ParametersJson TEXT NOT NULL DEFAULT '[]',
+  MeasuresJson TEXT NOT NULL DEFAULT '[]',
+  Status TEXT NOT NULL DEFAULT 'Draft',
+  RowLimit INTEGER NOT NULL DEFAULT 500,
+  TimeoutMs INTEGER NOT NULL DEFAULT 15000,
+  ColumnMetaJson TEXT NULL,
+  VisibleRoleIdsJson TEXT NOT NULL DEFAULT '[]',
+  CreatedBy INTEGER NOT NULL,
+  CompanyId INTEGER NOT NULL,
+  CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedAt TEXT NULL,
+  FOREIGN KEY (CreatedBy) REFERENCES Users(UserId),
+  FOREIGN KEY (CompanyId) REFERENCES Companies(CompanyId)
+);
+
+CREATE TABLE IF NOT EXISTS AnalyticsQueryExecutionLog (
+  ExecutionId INTEGER PRIMARY KEY AUTOINCREMENT,
+  QueryId INTEGER NULL,
+  WidgetId INTEGER NULL,
+  UserId INTEGER NOT NULL,
+  CompanyId INTEGER NOT NULL,
+  ParametersJson TEXT NULL,
+  RowCount INTEGER NOT NULL DEFAULT 0,
+  DurationMs INTEGER NOT NULL DEFAULT 0,
+  Status TEXT NOT NULL,
+  ErrorMessage TEXT NULL,
+  ExecutedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (QueryId) REFERENCES AnalyticsQueries(QueryId),
+  FOREIGN KEY (UserId) REFERENCES Users(UserId),
+  FOREIGN KEY (CompanyId) REFERENCES Companies(CompanyId)
+);
+
+CREATE TABLE IF NOT EXISTS AnalyticsDashboards (
+  DashboardId INTEGER PRIMARY KEY AUTOINCREMENT,
+  DashboardCode TEXT NOT NULL UNIQUE,
+  DashboardName TEXT NOT NULL,
+  Description TEXT NULL,
+  LayoutJson TEXT NOT NULL DEFAULT '[]',
+  CanvasWidth INTEGER NOT NULL DEFAULT 1280,
+  CanvasHeight INTEGER NOT NULL DEFAULT 800,
+  FiltersJson TEXT NOT NULL DEFAULT '[]',
+  Status TEXT NOT NULL DEFAULT 'Draft',
+  VisibleRoleIdsJson TEXT NOT NULL DEFAULT '[]',
+  SortOrder INTEGER NOT NULL DEFAULT 0,
+  CreatedBy INTEGER NOT NULL,
+  CompanyId INTEGER NOT NULL,
+  CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedAt TEXT NULL,
+  FOREIGN KEY (CreatedBy) REFERENCES Users(UserId),
+  FOREIGN KEY (CompanyId) REFERENCES Companies(CompanyId)
+);
+
+CREATE TABLE IF NOT EXISTS AnalyticsDashboardWidgets (
+  WidgetId INTEGER PRIMARY KEY AUTOINCREMENT,
+  DashboardId INTEGER NOT NULL,
+  QueryId INTEGER NOT NULL,
+  WidgetType TEXT NOT NULL,
+  Title TEXT NULL,
+  FieldMappingJson TEXT NOT NULL DEFAULT '{}',
+  ParameterBindingsJson TEXT NOT NULL DEFAULT '{}',
+  SortOrder INTEGER NOT NULL DEFAULT 0,
+  CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedAt TEXT NULL,
+  FOREIGN KEY (DashboardId) REFERENCES AnalyticsDashboards(DashboardId),
+  FOREIGN KEY (QueryId) REFERENCES AnalyticsQueries(QueryId)
+);
+
 CREATE INDEX IF NOT EXISTS IX_RLME_Category
   ON ReportLayoutMenuEntries (MenuCategory, MenuName, ReportCode);
 CREATE INDEX IF NOT EXISTS IX_ReportLayouts_MenuEntry
@@ -265,3 +339,11 @@ CREATE INDEX IF NOT EXISTS IX_sap_form_layout_columns_lookup
   ON sap_form_layout_columns (companyDb, userCode, documentType, formType, matrixId, columnOrder, id);
 CREATE INDEX IF NOT EXISTS IX_sap_form_layout_sync_runs_lookup
   ON sap_form_layout_sync_runs (companyDb, userCode, documentType, startedAt);
+CREATE INDEX IF NOT EXISTS IX_AnalyticsQueries_CompanyOwner
+  ON AnalyticsQueries (CompanyId, Status, Category, QueryName);
+CREATE INDEX IF NOT EXISTS IX_AnalyticsQueryExecutionLog_Query
+  ON AnalyticsQueryExecutionLog (QueryId, ExecutedAt);
+CREATE INDEX IF NOT EXISTS IX_AnalyticsDashboards_CompanyOwner
+  ON AnalyticsDashboards (CompanyId, Status, SortOrder, DashboardName);
+CREATE INDEX IF NOT EXISTS IX_AnalyticsDashboardWidgets_Dashboard
+  ON AnalyticsDashboardWidgets (DashboardId, SortOrder, WidgetId);

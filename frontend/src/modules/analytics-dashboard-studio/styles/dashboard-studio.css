@@ -1,0 +1,421 @@
+.ads-window {
+  height: calc(100vh - 112px);
+  display: flex;
+  flex-direction: column;
+  background: #eef3f8;
+  overflow: hidden;
+}
+
+.ads-window__titlebar {
+  padding: 14px 18px;
+  background: linear-gradient(180deg, #fdfefe 0%, #edf2f7 100%);
+  border-bottom: 1px solid #b6c3d4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ads-window__titlebar h2 {
+  margin: 0;
+  color: #1f2f46;
+  font-size: 20px;
+}
+
+.ads-window__body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px;
+  min-height: 0;
+}
+
+.ads-designer {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  /* The canvas's own height grows with the number/size of widgets (react-grid-
+     layout sets its own height inline based on row count) - once that plus
+     the meta panel exceeds the space available under the titlebar, this
+     column scrolls on its own instead of pushing the whole page down. */
+  overflow-y: auto;
+}
+
+.ads-designer__meta {
+  background: #ffffff;
+  border: 1px solid #b6c3d4;
+  border-radius: 6px;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.ads-designer__meta-row {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ads-designer__toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ads-canvas {
+  flex: 1;
+  min-height: 400px;
+  background: #e4e9ef;
+  border: 1px solid #b6c3d4;
+  border-radius: 6px;
+  padding: 24px;
+  overflow: auto;
+}
+
+.ads-artboard {
+  /* margin: auto centers the artboard when it fits, and safely collapses to
+     0 (left-aligned, fully scrollable) when it's wider/taller than the
+     scroll container - unlike flex `justify-content: center`, which clips
+     the overflowing half instead of letting it scroll into view. */
+  margin: 0 auto;
+  background: #ffffff;
+  box-shadow: 0 2px 14px rgba(15, 32, 55, 0.15);
+  border: 1px solid #c7d2de;
+}
+
+.ads-designer__meta-row--canvas {
+  padding-top: 12px;
+  margin-top: 4px;
+  border-top: 1px solid #e1e7ee;
+}
+
+.ads-designer__filters {
+  padding-top: 12px;
+  margin-top: 4px;
+  border-top: 1px solid #e1e7ee;
+  display: grid;
+  gap: 8px;
+}
+
+.ads-designer__filters-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ads-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #b6c3d4;
+  border-radius: 14px;
+  background: #f4f6f9;
+  font-size: 12px;
+  color: #1f2f46;
+}
+
+.ads-filter-chip button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #a53a34;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+}
+
+.ads-window.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 200000;
+  height: 100vh;
+}
+
+/* react-grid-layout's own resize handle, themed to match the app's accent color instead of default gray. */
+.ads-artboard .react-resizable-handle::after {
+  border-right-color: #28588d;
+  border-bottom-color: #28588d;
+  width: 8px;
+  height: 8px;
+}
+
+.ads-modal__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 16px 0;
+  background: #f4f6f9;
+  border-bottom: 1px solid #b6c3d4;
+}
+
+.ads-modal__tab {
+  border: 1px solid #b6c3d4;
+  border-bottom: none;
+  background: #e9edf2;
+  color: #1f2f46;
+  padding: 8px 16px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ads-modal__tab.is-active {
+  background: #ffffff;
+  color: #28588d;
+}
+
+.ads-widget-tile {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #dde5ef;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.ads-widget-tile__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: #f4f6f9;
+  border-bottom: 1px solid #dde5ef;
+  cursor: move;
+  font-weight: 600;
+  font-size: 13px;
+  color: #1f2f46;
+}
+
+.ads-widget-tile__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.ads-widget-tile__btn {
+  border: none;
+  background: transparent;
+  color: #28588d;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.ads-widget-tile__btn:hover {
+  text-decoration: underline;
+}
+
+.ads-widget-tile__body {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+}
+
+.ads-visual-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ads-visual-picker__group-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5d6f89;
+}
+
+.ads-visual-picker__group-items {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ads-visual-picker__item {
+  padding: 8px 14px;
+  border: 1px solid #b6c3d4;
+  border-radius: 4px;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.ads-visual-picker__item.is-selected {
+  background: #28588d;
+  color: #ffffff;
+  border-color: #1f446c;
+}
+
+.ads-field {
+  display: grid;
+  gap: 6px;
+  color: #1f2f46;
+  font-size: 14px;
+}
+
+.ads-field span {
+  font-weight: 600;
+}
+
+.ads-field input,
+.ads-field select {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #b6c3d4;
+  border-radius: 4px;
+}
+
+.ads-field-mapping {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ads-field-mapping__label {
+  font-weight: 600;
+  font-size: 13px;
+  color: #1f2f46;
+}
+
+.ads-field-mapping__empty {
+  color: #5d6f89;
+  font-size: 13px;
+}
+
+.ads-measure-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.ads-measure-row__saved {
+  align-self: flex-start;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #b6c3d4;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #5d6f89;
+  background: #f4f6f9;
+}
+
+.ads-measure-row {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.ads-measure-row--combo {
+  grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr auto;
+}
+
+.ads-measure-row select,
+.ads-measure-row input {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #b6c3d4;
+  border-radius: 4px;
+}
+
+.ads-field-mapping__scatter,
+.ads-field-mapping__matrix {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ads-field-mapping__scatter {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.ads-field-mapping__scatter .ads-field {
+  min-width: 160px;
+}
+
+.ads-field-mapping__column-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ads-field-mapping__column-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.ads-role-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ads-role-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.ads-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 27, 45, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.ads-modal {
+  width: min(680px, calc(100% - 40px));
+  max-height: calc(100vh - 80px);
+  background: #ffffff;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ads-modal__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: #f4f6f9;
+  border-bottom: 1px solid #b6c3d4;
+  font-weight: 600;
+  color: #1f2f46;
+}
+
+.ads-modal__header button {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.ads-modal__body {
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ads-modal__footer {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid #b6c3d4;
+}

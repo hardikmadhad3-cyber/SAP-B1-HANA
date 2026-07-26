@@ -110,7 +110,7 @@
 
 .sap-find-page .form-control:focus,
 .sap-find-page .form-select:focus {
-  border-color: var(--sap-primary, #006fb8);
+  border-color: var(--sap-primary, #0a6ed1);
   box-shadow: 0 0 0 2px var(--sap-primary-soft, rgba(0, 111, 184, 0.15));
 }
 

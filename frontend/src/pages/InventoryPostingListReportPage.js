@@ -7,7 +7,11 @@ import BusinessPartnerLookupModal from "../components/reports/BusinessPartnerLoo
 import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
+import { ReportBackButton } from "../components/reports/ReportWindowControls";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
+import ReportPageShell from "../components/reports/ReportPageShell";
+import ReportWindow from "../components/reports/ReportWindow";
+import { ReportActionBar, ReportButton } from "../components/reports/ReportActionBar";
 import "../styles/item-list-report.css";
 import "../styles/inventory-posting-list-report.css";
 import "../styles/sales-analysis-report.css";
@@ -612,18 +616,6 @@ function InventoryPostingListReportPage() {
     }));
   };
 
-  const renderWindowControls = (windowFrame, onMinimize, onClose) => (
-    <div className="item-list-window__controls">
-      <button className="sap-report-window-control" type="button" aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"} onClick={onMinimize}>
-        {windowFrame.isMinimized ? "[]" : "-"}
-      </button>
-      <button className="sap-report-window-control" type="button" aria-label={windowFrame.isMaximized ? "Restore" : "Maximize"} onClick={windowFrame.toggleMaximize}>
-        []
-      </button>
-      <button className="sap-report-window-control" type="button" aria-label="Close" onClick={onClose}>x</button>
-    </div>
-  );
-
   const renderItemsTab = () => (
     <div className="ipl-criteria__left-panel">
       <div className="ipl-criteria__code-row">
@@ -953,7 +945,6 @@ function InventoryPostingListReportPage() {
           <div className="sap-report-titlebar ipl-expanded-modal__titlebar">
             <div className="sap-report-title">Expanded Selection Criteria</div>
             <div className="item-list-window__controls">
-              <button className="sap-report-window-control" type="button" aria-label="Minimize">-</button>
               <button className="sap-report-window-control" type="button" aria-label="Close" onClick={() => setShowExpanded(false)}>x</button>
             </div>
           </div>
@@ -1083,18 +1074,14 @@ function InventoryPostingListReportPage() {
   };
 
   const renderReportWindow = () => (
-    <div
-      className={`item-list-window item-list-window--report ipl-report-window sap-report-window${reportWindow.isMinimized ? " is-minimized" : ""}${reportWindow.isMaximized ? " is-maximized" : ""}`}
-      {...reportWindow.windowProps}
+    <ReportWindow
+      windowFrame={reportWindow}
+      onMinimize={handleMinimizeReportWindow}
+      onClose={handleCloseReportWindow}
+      title="Inventory Posting List"
+      size="wide"
     >
-      <div className="item-list-window__titlebar sap-report-titlebar" {...reportWindow.titleBarProps}>
-        <div className="item-list-window__title sap-report-title">Inventory Posting List</div>
-        {renderWindowControls(reportWindow, handleMinimizeReportWindow, handleCloseReportWindow)}
-      </div>
-      <div className="item-list-window__accent" />
-
-      {!reportWindow.isMinimized ? (
-        <div className="item-list-window__body item-list-window__body--report">
+      <>
           <div className="ipl-report-toolbar">
             <span>Display Subtotal:</span>
             {[
@@ -1244,10 +1231,7 @@ function InventoryPostingListReportPage() {
 
           <div className="item-list-report__footer">
             <div className="item-list-report__footer-left">
-              <button type="button" className="item-list-report__back-btn" aria-label="Back to selection criteria" onClick={handleCloseReportWindow}>
-                &lt;-
-              </button>
-              <button type="button" className="item-list-btn sap-report-btn sap-report-btn--primary" onClick={handleCloseReportWindow}>OK</button>
+              <ReportBackButton onClick={handleCloseReportWindow} />
             </div>
             <label className="item-list-criteria__checkbox">
               <input
@@ -1259,25 +1243,19 @@ function InventoryPostingListReportPage() {
             </label>
             <span>{company?.companyName || company?.dbName || "SAP Business One"}</span>
           </div>
-        </div>
-      ) : null}
-    </div>
+      </>
+    </ReportWindow>
   );
 
   return (
-    <div className="item-list-page ipl-page sap-report-page">
-      <div
-        className={`item-list-window ipl-criteria-window sap-report-window${criteriaWindow.isMinimized ? " is-minimized" : ""}${criteriaWindow.isMaximized ? " is-maximized" : ""}`}
-        {...criteriaWindow.windowProps}
+    <ReportPageShell className="ipl-page">
+      <ReportWindow
+        windowFrame={criteriaWindow}
+        onMinimize={handleMinimizeCriteriaWindow}
+        onClose={handleCloseCriteriaWindow}
+        title="Inventory Posting List - Selection Criteria"
+        size="large"
       >
-        <div className="item-list-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}>
-          <div className="item-list-window__title sap-report-title">Inventory Posting List - Selection Criteria</div>
-          {renderWindowControls(criteriaWindow, handleMinimizeCriteriaWindow, handleCloseCriteriaWindow)}
-        </div>
-        <div className="item-list-window__accent" />
-
-        {!criteriaWindow.isMinimized ? (
-          <div className="item-list-window__body ipl-criteria-window__body">
             <div className="ipl-criteria-layout">
               <div>
                 <div className="sap-report-tabs ipl-item-tabs">
@@ -1319,16 +1297,14 @@ function InventoryPostingListReportPage() {
             {isLoadingReport ? <div className="item-list-status">Loading Inventory Posting List report...</div> : null}
             {statusMessage ? <div className="item-list-status">{statusMessage}</div> : null}
 
-            <div className="ipl-window-footer">
-              <div>
-                <button type="button" className="item-list-btn sap-report-btn sap-report-btn--primary" onClick={handleOk}>OK</button>
-                <button type="button" className="item-list-btn sap-report-btn" onClick={handleCloseCriteriaWindow}>Cancel</button>
+            <ReportActionBar split>
+              <div className="ipl-action-group">
+                <ReportButton variant="primary" onClick={handleOk}>OK</ReportButton>
+                <ReportButton onClick={handleCloseCriteriaWindow}>Cancel</ReportButton>
               </div>
-              <button type="button" className="item-list-btn sap-report-btn" onClick={selectAllWarehouses}>Select All</button>
-            </div>
-          </div>
-        ) : null}
-      </div>
+              <ReportButton onClick={selectAllWarehouses}>Select All</ReportButton>
+            </ReportActionBar>
+      </ReportWindow>
 
       {reportResult ? renderReportWindow() : null}
       {renderExpandedModal()}
@@ -1354,7 +1330,7 @@ function InventoryPostingListReportPage() {
           else setField("propertyFilter", nextFilter);
         }}
       />
-    </div>
+    </ReportPageShell>
   );
 }
 

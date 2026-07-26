@@ -4,6 +4,7 @@ import { fetchCustomerReceivablesAgingLookups, fetchCustomerReceivablesAgingRepo
 import GLAccountLookupModal from "../components/reports/GLAccountLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
+import { ReportWindowControls, ReportBackButton } from "../components/reports/ReportWindowControls";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
 import "../styles/customer-receivables-aging-report.css";
 import "../styles/inventory-audit-report.css";
@@ -109,12 +110,11 @@ function CustomerReceivablesAgingReportPage() {
     navigate(route[0], { state: { [route[1]]: row.sourceDocEntry } });
   };
   const arrow = (title, onClick) => <button type="button" className="cra-arrow" title={title} onClick={onClick}>-&gt;</button>;
-  const controls = (windowFrame, onClose) => <div className="cra-controls sales-analysis-window__controls"><button type="button" aria-label="Minimize" onClick={windowFrame.toggleMinimize}>-</button><button type="button" aria-label="Restore" onClick={windowFrame.toggleMaximize}>[]</button><button type="button" aria-label="Close" onClick={onClose}>x</button></div>;
   const rangeRow = (label, fromField, toField) => <div className="cra-range-row"><label>{label}</label><span>From</span><input value={criteria[fromField]} onChange={(event) => setField(fromField, event.target.value)} /><span>To</span><input value={criteria[toField]} onChange={(event) => setField(toField, event.target.value)} /></div>;
 
   const criteriaView = (
     <section className={`cra-window cra-window--criteria sales-analysis-window sap-report-window${criteriaWindow.isMinimized ? " is-minimized" : ""}${criteriaWindow.isMaximized ? " is-maximized" : ""}`} {...criteriaWindow.windowProps}>
-      <header className="cra-titlebar sales-analysis-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}><span className="sap-report-title">Customer Receivables Aging - Selection Criteria</span>{controls(criteriaWindow, closeCriteria)}</header>
+      <header className="cra-titlebar sales-analysis-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}><span className="sap-report-title">Customer Receivables Aging - Selection Criteria</span><ReportWindowControls windowFrame={criteriaWindow} onMinimize={criteriaWindow.toggleMinimize} onClose={closeCriteria} className="cra-controls sales-analysis-window__controls" /></header>
       <div className="sales-analysis-window__accent" />
       {!criteriaWindow.isMinimized ? <div className="cra-body sales-analysis-window__body">
         <div className="cra-group-line"><strong>Group By</strong><label><input type="radio" checked={criteria.groupBy === "customer"} onChange={() => setField("groupBy", "customer")} /> Customer</label><label><input type="radio" checked={criteria.groupBy === "salesEmployee"} onChange={() => setField("groupBy", "salesEmployee")} /> Sales Employee</label></div>
@@ -138,7 +138,7 @@ function CustomerReceivablesAgingReportPage() {
           <label className="cra-check cra-connected"><input type="checkbox" checked={criteria.considerConnectedVendors} onChange={(event) => setField("considerConnectedVendors", event.target.checked)} /> Consider Connected Vendors</label>
         </div>
         {message ? <div className="cra-message">{message}</div> : null}
-        <footer className="cra-footer"><button type="button" className="cra-btn" onClick={handleRun} disabled={loading}>{loading ? "Loading..." : "OK"}</button><button type="button" className="cra-btn" onClick={closeCriteria}>Cancel</button></footer>
+        <footer className="cra-footer"><button type="button" className="cra-btn cra-btn--primary" onClick={handleRun} disabled={loading}>{loading ? "Loading..." : "OK"}</button><button type="button" className="cra-btn" onClick={closeCriteria}>Cancel</button></footer>
       </div> : null}
     </section>
   );
@@ -146,7 +146,7 @@ function CustomerReceivablesAgingReportPage() {
   const bucketLabels = report ? [`0 - ${report.intervals[0]}`, ...report.intervals.slice(1).map((value, index) => `${report.intervals[index] + 1} - ${value}`), `${report.intervals.at(-1) + 1}+`] : [];
   const reportView = report ? (
     <section className={`cra-window cra-window--report sales-analysis-window sales-analysis-window--report sap-report-window${reportWindow.isMinimized ? " is-minimized" : ""}${reportWindow.isMaximized ? " is-maximized" : ""}`} {...reportWindow.windowProps}>
-      <header className="cra-titlebar sales-analysis-window__titlebar sap-report-titlebar" {...reportWindow.titleBarProps}><span className="sap-report-title">Customer Receivables Aging</span>{controls(reportWindow, () => setReport(null))}</header>
+      <header className="cra-titlebar sales-analysis-window__titlebar sap-report-titlebar" {...reportWindow.titleBarProps}><span className="sap-report-title">Customer Receivables Aging</span><ReportWindowControls windowFrame={reportWindow} onMinimize={reportWindow.toggleMinimize} onClose={() => setReport(null)} className="cra-controls sales-analysis-window__controls" /></header>
       <div className="sales-analysis-window__accent" />
       {!reportWindow.isMinimized ? <div className="cra-report-body">
         <div className="cra-report-toolbar"><label>Currency <select value={criteria.displayCurrency} onChange={(event) => setField("displayCurrency", event.target.value)}><option value="local">Local</option><option value="system">System</option><option value="foreign">Foreign</option><option value="businessPartner">Business Partner</option></select></label><label>Find <input value={findText} onChange={(event) => setFindText(event.target.value)} /></label><label>Aging Date <input value={formatDate(report.agingDate)} readOnly /></label><label>Age By <select value={criteria.ageBy} onChange={(event) => setField("ageBy", event.target.value)}><option value="due">Due Date</option><option value="posting">Posting Date</option><option value="document">Document Date</option></select></label></div>
@@ -154,7 +154,7 @@ function CustomerReceivablesAgingReportPage() {
           <tbody>{groups.map((group, groupIndex) => <React.Fragment key={group.key}><tr className="cra-group-row"><td>{groupIndex + 1}</td><td><button type="button" className="cra-expand" onClick={() => setExpanded((current) => ({ ...current, [group.key]: !current[group.key] }))}>{expanded[group.key] ? "▼" : "▶"}</button>{report.groupBy === "customer" ? arrow("Open customer", () => openCustomer(group.key)) : null}<strong>{group.key}</strong></td><td><strong>{group.label}</strong></td><td /><td /><td /><td /><td /><td className="is-number"><strong>{formatAmount(group.balance)}</strong></td>{group.buckets.map((value, index) => <td className="is-number" key={index}><strong>{formatAmount(value)}</strong></td>)}</tr>
             {expanded[group.key] ? group.rows.map((row) => <tr key={`${row.transId}-${row.rowNo}`}><td /><td /><td /><td>{arrow(`Open ${row.documentType}`, () => openDocument(row))}{row.documentPrefix}</td><td><button type="button" className="cra-doc-link" onClick={() => openDocument(row)}>{row.documentNumber}</button></td><td>{formatDate(row.postingDate)}</td><td>{formatDate(row.dueDate)}</td><td className="is-number">{row.daysOutstanding}</td><td className="is-number">{formatAmount(row.balance)}</td>{row.buckets.map((value, index) => <td className="is-number" key={index}>{value ? formatAmount(value) : ""}</td>)}</tr>) : null}</React.Fragment>)}</tbody>
           <tfoot><tr><td colSpan="8" /><td className="is-number">{formatAmount(totals.balance)}</td>{totals.buckets.map((value, index) => <td className="is-number" key={index}>{formatAmount(value)}</td>)}</tr></tfoot></table></div>
-        <div className="cra-report-footer"><button type="button" className="sales-analysis-report__back-btn" onClick={() => setReport(null)}>{"<"}</button><div><button type="button" className="cra-btn" onClick={() => setExpanded(Object.fromEntries(groups.map((group) => [group.key, true])))}>Expand All</button><button type="button" className="cra-btn" onClick={() => setExpanded({})}>Collapse All</button></div></div>
+        <div className="cra-report-footer"><ReportBackButton onClick={() => setReport(null)} className="sales-analysis-report__back-btn" /><div><button type="button" className="cra-btn" onClick={() => setExpanded(Object.fromEntries(groups.map((group) => [group.key, true])))}>Expand All</button><button type="button" className="cra-btn" onClick={() => setExpanded({})}>Collapse All</button></div></div>
       </div> : null}
     </section>
   ) : null;

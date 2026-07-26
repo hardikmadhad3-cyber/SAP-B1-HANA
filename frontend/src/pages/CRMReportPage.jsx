@@ -2,8 +2,13 @@ import React, { useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { normalizePath } from "../auth/routeUtils";
+import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
+import useFloatingWindow from "../components/reports/useFloatingWindow";
+import ReportPageShell from "../components/reports/ReportPageShell";
+import ReportWindow from "../components/reports/ReportWindow";
+import { ReportActionBar, ReportButton } from "../components/reports/ReportActionBar";
+import { ReportCheckbox } from "../components/reports/ReportFormControls";
 import "../styles/crm-report.css";
-import "../styles/sales-analysis-report.css";
 
 const MY_ACTIVITIES_PATH = "/reports/crm/my-activities";
 
@@ -69,84 +74,86 @@ const fallbackTitleFromKey = (value = "") =>
 function MyActivitiesReport() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { closeActiveAndRestorePrevious } = useSapWindowTaskbarActions();
   const userName = user?.username || user?.fullName || "manager";
   const emptyRows = Array.from({ length: 32 }, (_, index) => index);
 
+  const handleClose = () => {
+    if (closeActiveAndRestorePrevious()) return;
+    navigate("/dashboard");
+  };
+
+  const reportWindow = useFloatingWindow({
+    isOpen: true,
+    defaultTop: 12,
+    taskId: "crm-my-activities",
+    taskTitle: `My Activities - ${userName}`,
+    taskPath: MY_ACTIVITIES_PATH,
+    bounds: "parent",
+  });
+
   return (
-    <div className="sales-analysis-page crm-activities-page">
-      <section className="sales-analysis-window sales-analysis-window--report sap-report-window crm-activities-window">
-        <header className="sales-analysis-window__titlebar sap-report-titlebar">
-          <span className="sales-analysis-window__title sap-report-title">My Activities - {userName}</span>
-          <div className="sales-analysis-window__controls">
-            <button type="button" aria-label="Minimize" onClick={() => navigate("/dashboard")}>-</button>
-            <button type="button" aria-label="Restore">[]</button>
-            <button type="button" aria-label="Close" onClick={() => navigate("/dashboard")}>x</button>
-          </div>
-        </header>
-        <div className="sales-analysis-window__accent sap-report-accent" />
+    <ReportPageShell className="crm-activities-page">
+      <ReportWindow
+        windowFrame={reportWindow}
+        onMinimize={reportWindow.toggleMinimize}
+        onClose={handleClose}
+        title={`My Activities - ${userName}`}
+        size="wide"
+      >
+        <div className="crm-activities-options">
+          <ReportCheckbox label="Display Only Open Activities" checked readOnly />
+          <ReportCheckbox label="Display Scheduled Service Calls" readOnly />
+        </div>
 
-        <div className="sales-analysis-window__body sales-analysis-window__body--report crm-activities-body">
-          <div className="crm-activities-options">
-            <label className="sales-analysis__checkbox-line crm-activities-option">
-              <input type="checkbox" checked readOnly />
-              <span>Display Only Open Activities</span>
-            </label>
-            <label className="sales-analysis__checkbox-line crm-activities-option">
-              <input type="checkbox" readOnly />
-              <span>Display Scheduled Service Calls</span>
-            </label>
-          </div>
-
-          <div className="crm-activities-grid-wrap">
-            <table className="crm-activities-grid">
-              <colgroup>
+        <div className="crm-activities-grid-wrap">
+          <table className="crm-activities-grid">
+            <colgroup>
+              {MY_ACTIVITY_COLUMNS.map((column) => (
+                <col key={column.key} style={{ width: column.width }} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr>
                 {MY_ACTIVITY_COLUMNS.map((column) => (
-                  <col key={column.key} style={{ width: column.width }} />
+                  <th key={column.key}>{column.label}</th>
                 ))}
-              </colgroup>
-              <thead>
-                <tr>
+              </tr>
+            </thead>
+            <tbody>
+              {MY_ACTIVITY_ROWS.map((row) => (
+                <tr key={row.number}>
+                  {MY_ACTIVITY_COLUMNS.map((column) => {
+                    const isLinkedCell = ["number", "bpName", "contactPerson"].includes(column.key) && row[column.key];
+                    return (
+                      <td key={column.key}>
+                        {isLinkedCell ? (
+                          <button type="button" className="crm-activities-link-cell">
+                            <span className="crm-activities-link-icon">-&gt;</span>
+                            <span>{row[column.key]}</span>
+                          </button>
+                        ) : row[column.key]}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+              {emptyRows.map((rowIndex) => (
+                <tr key={`empty-${rowIndex}`} aria-hidden="true">
                   {MY_ACTIVITY_COLUMNS.map((column) => (
-                    <th key={column.key}>{column.label}</th>
+                    <td key={column.key}>&nbsp;</td>
                   ))}
                 </tr>
-              </thead>
-              <tbody>
-                {MY_ACTIVITY_ROWS.map((row) => (
-                  <tr key={row.number}>
-                    {MY_ACTIVITY_COLUMNS.map((column) => {
-                      const isLinkedCell = ["number", "bpName", "contactPerson"].includes(column.key) && row[column.key];
-                      return (
-                        <td key={column.key}>
-                          {isLinkedCell ? (
-                            <button type="button" className="crm-activities-link-cell">
-                              <span className="crm-activities-link-icon">-&gt;</span>
-                              <span>{row[column.key]}</span>
-                            </button>
-                          ) : row[column.key]}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-                {emptyRows.map((rowIndex) => (
-                  <tr key={`empty-${rowIndex}`} aria-hidden="true">
-                    {MY_ACTIVITY_COLUMNS.map((column) => (
-                      <td key={column.key}>&nbsp;</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <footer className="crm-activities-footer">
-            <button type="button" className="sales-analysis__sap-btn" onClick={() => navigate("/dashboard")}>OK</button>
-            <button type="button" className="sales-analysis__sap-btn crm-activities-activity-btn">Activity</button>
-          </footer>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </section>
-    </div>
+
+        <ReportActionBar>
+          <ReportButton variant="primary" onClick={handleClose}>OK</ReportButton>
+        </ReportActionBar>
+      </ReportWindow>
+    </ReportPageShell>
   );
 }
 
@@ -155,6 +162,7 @@ function CRMReportPage() {
   const location = useLocation();
   const params = useParams();
   const { menus } = useAuth();
+  const { closeActiveAndRestorePrevious } = useSapWindowTaskbarActions();
   const currentPath = normalizePath(location.pathname);
 
   const currentMenu = useMemo(
@@ -164,35 +172,44 @@ function CRMReportPage() {
 
   const title = currentMenu?.menuName || fallbackTitleFromKey(params["*"] || currentPath);
 
+  const handleClose = () => {
+    if (closeActiveAndRestorePrevious()) return;
+    navigate("/dashboard");
+  };
+
+  const criteriaWindow = useFloatingWindow({
+    isOpen: true,
+    defaultTop: 24,
+    taskId: `crm-placeholder-${currentPath}`,
+    taskTitle: `${title} - Selection Criteria`,
+    taskPath: currentPath,
+    bounds: "parent",
+  });
+
   if (currentPath === MY_ACTIVITIES_PATH) {
     return <MyActivitiesReport />;
   }
 
   return (
-    <div className="sales-analysis-page">
-      <div className="sales-analysis-window sales-analysis-window--criteria">
-        <div className="sales-analysis-window__titlebar">
-          <span>{title} - Selection Criteria</span>
-          <div className="sales-analysis-window__controls">
-            <button type="button" aria-label="Minimize" onClick={() => navigate("/dashboard")}>-</button>
-            <button type="button" aria-label="Restore">[]</button>
-            <button type="button" aria-label="Close" onClick={() => navigate("/dashboard")}>x</button>
-          </div>
+    <ReportPageShell>
+      <ReportWindow
+        windowFrame={criteriaWindow}
+        onMinimize={criteriaWindow.toggleMinimize}
+        onClose={handleClose}
+        title={`${title} - Selection Criteria`}
+        size="medium"
+      >
+        <div className="sales-analysis-empty">
+          <h3>{title}</h3>
+          <p>This CRM report menu is available. Connect a report source in Report Layout Manager to run it from here.</p>
         </div>
-        <div className="sales-analysis-window__body">
-          <div className="sales-analysis-criteria">
-            <div className="sales-analysis-empty">
-              <h3>{title}</h3>
-              <p>This CRM report menu is available. Connect a report source in Report Layout Manager to run it from here.</p>
-            </div>
-          </div>
-        </div>
-        <div className="sales-analysis-window__footer">
-          <button type="button" className="sales-analysis__sap-btn">OK</button>
-          <button type="button" className="sales-analysis__sap-btn sales-analysis__sap-btn--secondary" onClick={() => navigate("/dashboard")}>Cancel</button>
-        </div>
-      </div>
-    </div>
+
+        <ReportActionBar>
+          <ReportButton variant="primary" onClick={handleClose}>OK</ReportButton>
+          <ReportButton onClick={handleClose}>Cancel</ReportButton>
+        </ReportActionBar>
+      </ReportWindow>
+    </ReportPageShell>
   );
 }
 

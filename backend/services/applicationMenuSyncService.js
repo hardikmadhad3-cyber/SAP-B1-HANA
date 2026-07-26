@@ -149,6 +149,14 @@ const APP_MENU_DEFINITIONS = [
   { key: 'cash-flow-reference-report', parentKey: 'reports-financial-statements', menuName: 'Cash Flow Reference Report', menuPath: '/reports/financial/financial/cash-flow-reference-report', icon: 'report', sortOrder: 6 },
   { key: 'business-assessment-report', parentKey: 'reports-financial-statements', menuName: 'Business Assessment Report', menuPath: '/reports/financial/financial/business-assessment-report', icon: 'report', sortOrder: 7 },
 
+  { key: 'analytics-report', menuName: 'Analytics Report', icon: 'analytics', sortOrder: 9 },
+  // Published dashboards are synced under this parent at runtime by
+  // analyticsDashboardMenuSyncService.js - do not add static children here.
+
+  { key: 'tools', menuName: 'Tools', icon: 'tools', sortOrder: 10 },
+  { key: 'analytics-query-manager', parentKey: 'tools', menuName: 'Query Manager', menuPath: '/analytics/querymanager', icon: 'analytics', sortOrder: 1, enforceSortOrder: true, enforceMenuName: true },
+  { key: 'analytics-dashboard-studio', parentKey: 'tools', menuName: 'Dashboard Studio', menuPath: '/analytics/dashboardstudio', icon: 'analytics', sortOrder: 2, enforceSortOrder: true, enforceMenuName: true },
+
 ];
 
 const normalizeText = (value) => String(value || '').trim();

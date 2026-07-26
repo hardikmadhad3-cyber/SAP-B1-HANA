@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import BusinessPartnerLookupModal from '../components/reports/BusinessPartnerLookupModal';
@@ -6,6 +6,7 @@ import ItemLookupModal from '../components/reports/ItemLookupModal';
 import PropertiesSelectionModal from '../components/reports/PropertiesSelectionModal';
 import SalesEmployeeLookupModal from '../components/reports/SalesEmployeeLookupModal';
 import SalesAnalysisDetailModal from '../components/reports/SalesAnalysisDetailModal';
+import { ReportWindowControls, ReportBackButton } from '../components/reports/ReportWindowControls';
 import useFloatingWindow from '../components/reports/useFloatingWindow';
 import { useSapWindowTaskbarActions } from '../components/SapWindowTaskbarContext';
 import { fetchBPGroups } from '../api/businessPartnerApi';
@@ -91,6 +92,14 @@ const parseSapDateToIso = (value) => {
   const [, dayText, monthText, yearText] = match;
   const year = yearText.length === 2 ? `20${yearText}` : yearText;
   return `${year}-${monthText.padStart(2, '0')}-${dayText.padStart(2, '0')}`;
+};
+
+const formatIsoToDisplayDate = (isoValue) => {
+  const match = String(isoValue || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '';
+
+  const [, year, month, day] = match;
+  return `${day}/${month}/${year.slice(2)}`;
 };
 
 const formatAmount = (value, currencyCode = '') => {
@@ -368,6 +377,39 @@ function SalesAnalysisReportPage() {
     }));
   };
 
+  const datePickerRefs = useRef({});
+
+  const getDatePickerRef = (key, field) => {
+    const refKey = `${key}-${field}`;
+    if (!datePickerRefs.current[refKey]) {
+      datePickerRefs.current[refKey] = React.createRef();
+    }
+    return datePickerRefs.current[refKey];
+  };
+
+  const openDatePicker = (key, field) => {
+    const node = getDatePickerRef(key, field).current;
+    if (!node) return;
+
+    if (typeof node.showPicker === 'function') {
+      try {
+        node.showPicker();
+        return;
+      } catch (_error) {
+        // Some browsers restrict showPicker() (e.g. cross-origin iframes); fall back below.
+      }
+    }
+
+    node.focus();
+    node.click();
+  };
+
+  const handleDatePickerChange = (key, field, isoValue) => {
+    const displayValue = formatIsoToDisplayDate(isoValue);
+    if (!displayValue) return;
+    updateDateRange(key, field, displayValue);
+  };
+
   const updateSelection = (section, field, value) => {
     setFormState((current) => ({
       ...current,
@@ -617,14 +659,7 @@ function SalesAnalysisReportPage() {
 
   const renderReportFooter = () => (
     <div className="sales-analysis-report__footer">
-      <button
-        type="button"
-        className="sales-analysis-report__back-btn"
-        onClick={handleBackToCriteria}
-        aria-label="Back to criteria"
-      >
-        &lt;
-      </button>
+      <ReportBackButton onClick={handleBackToCriteria} className="sales-analysis-report__back-btn" />
       <div className="sales-analysis-report__action-group">
         <button
           type="button"
@@ -639,13 +674,6 @@ function SalesAnalysisReportPage() {
           onClick={handleExportSummaryPdf}
         >
           Export PDF
-        </button>
-        <button
-          type="button"
-          className="sales-analysis__sap-btn"
-          onClick={handleBackToCriteria}
-        >
-          OK
         </button>
       </div>
     </div>
@@ -887,17 +915,46 @@ function SalesAnalysisReportPage() {
             value={range.from}
             onChange={(event) => updateDateRange(key, 'from', event.target.value)}
           />
+          <button
+            type="button"
+            className="sales-analysis__picker-btn"
+            aria-label={`Open ${label} from date picker`}
+            onClick={() => openDatePicker(key, 'from')}
+          >
+            ...
+          </button>
           <span className="sales-analysis__field-label">To</span>
           <input
             type="text"
             value={range.to}
             onChange={(event) => updateDateRange(key, 'to', event.target.value)}
           />
-          {key === 'postingDate' ? (
-            <button type="button" className="sales-analysis__picker-btn" aria-label="Open picker">
-              ...
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="sales-analysis__picker-btn"
+            aria-label={`Open ${label} to date picker`}
+            onClick={() => openDatePicker(key, 'to')}
+          >
+            ...
+          </button>
+          <input
+            type="date"
+            ref={getDatePickerRef(key, 'from')}
+            className="sales-analysis__date-native-input"
+            value={parseSapDateToIso(range.from) || ''}
+            onChange={(event) => handleDatePickerChange(key, 'from', event.target.value)}
+            tabIndex={-1}
+            aria-hidden="true"
+          />
+          <input
+            type="date"
+            ref={getDatePickerRef(key, 'to')}
+            className="sales-analysis__date-native-input"
+            value={parseSapDateToIso(range.to) || ''}
+            onChange={(event) => handleDatePickerChange(key, 'to', event.target.value)}
+            tabIndex={-1}
+            aria-hidden="true"
+          />
         </div>
       </div>
     );
@@ -1265,17 +1322,12 @@ function SalesAnalysisReportPage() {
               <div className="sales-analysis-window__title sap-report-title">
                 {reportResult?.reportTitle || 'Sales Analysis by Items'}
               </div>
-              <div className="sales-analysis-window__controls">
-                <button
-                  type="button"
-                  aria-label={reportWindow.isMinimized ? 'Restore' : 'Minimize'}
-                  onClick={handleMinimizeReportWindow}
-                >
-                  {reportWindow.isMinimized ? '□' : '-'}
-                </button>
-                <button type="button" aria-label={reportWindow.isMaximized ? 'Restore' : 'Maximize'} title={reportWindow.isMaximized ? 'Restore' : 'Maximize'} onClick={reportWindow.toggleMaximize}>[]</button>
-                <button type="button" aria-label="Close" onClick={handleCloseReportWindow}>x</button>
-              </div>
+              <ReportWindowControls
+                windowFrame={reportWindow}
+                onMinimize={handleMinimizeReportWindow}
+                onClose={handleCloseReportWindow}
+                className="sales-analysis-window__controls"
+              />
             </div>
 
             <div className="sales-analysis-window__accent" />
@@ -1347,17 +1399,12 @@ function SalesAnalysisReportPage() {
               <div className="sales-analysis-window__title sap-report-title">
                 {reportResult?.reportTitle || 'Sales Analysis by Sales Employee'}
               </div>
-              <div className="sales-analysis-window__controls">
-                <button
-                  type="button"
-                  aria-label={reportWindow.isMinimized ? 'Restore' : 'Minimize'}
-                  onClick={handleMinimizeReportWindow}
-                >
-                  {reportWindow.isMinimized ? '□' : '-'}
-                </button>
-                <button type="button" aria-label={reportWindow.isMaximized ? 'Restore' : 'Maximize'} title={reportWindow.isMaximized ? 'Restore' : 'Maximize'} onClick={reportWindow.toggleMaximize}>[]</button>
-                <button type="button" aria-label="Close" onClick={handleCloseReportWindow}>x</button>
-              </div>
+              <ReportWindowControls
+                windowFrame={reportWindow}
+                onMinimize={handleMinimizeReportWindow}
+                onClose={handleCloseReportWindow}
+                className="sales-analysis-window__controls"
+              />
             </div>
 
             <div className="sales-analysis-window__accent" />
@@ -1433,17 +1480,12 @@ function SalesAnalysisReportPage() {
               <div className="sales-analysis-window__title sap-report-title">
                 {reportResult?.reportTitle || 'Sales Analysis by Customer'}
               </div>
-              <div className="sales-analysis-window__controls">
-                <button
-                  type="button"
-                  aria-label={reportWindow.isMinimized ? 'Restore' : 'Minimize'}
-                  onClick={handleMinimizeReportWindow}
-                >
-                  {reportWindow.isMinimized ? '□' : '-'}
-                </button>
-                <button type="button" aria-label={reportWindow.isMaximized ? 'Restore' : 'Maximize'} title={reportWindow.isMaximized ? 'Restore' : 'Maximize'} onClick={reportWindow.toggleMaximize}>[]</button>
-                <button type="button" aria-label="Close" onClick={handleCloseReportWindow}>x</button>
-              </div>
+              <ReportWindowControls
+                windowFrame={reportWindow}
+                onMinimize={handleMinimizeReportWindow}
+                onClose={handleCloseReportWindow}
+                className="sales-analysis-window__controls"
+              />
             </div>
 
             <div className="sales-analysis-window__accent" />
@@ -1556,17 +1598,12 @@ function SalesAnalysisReportPage() {
             <div className="sales-analysis-window__title sap-report-title">
               {reportResult?.reportTitle || 'Sales Analysis by Customer'}
             </div>
-            <div className="sales-analysis-window__controls">
-              <button
-                type="button"
-                aria-label={reportWindow.isMinimized ? 'Restore' : 'Minimize'}
-                onClick={handleMinimizeReportWindow}
-              >
-                {reportWindow.isMinimized ? '□' : '-'}
-              </button>
-              <button type="button" aria-label={reportWindow.isMaximized ? 'Restore' : 'Maximize'} title={reportWindow.isMaximized ? 'Restore' : 'Maximize'} onClick={reportWindow.toggleMaximize}>[]</button>
-              <button type="button" aria-label="Close" onClick={handleCloseReportWindow}>x</button>
-            </div>
+            <ReportWindowControls
+              windowFrame={reportWindow}
+              onMinimize={handleMinimizeReportWindow}
+              onClose={handleCloseReportWindow}
+              className="sales-analysis-window__controls"
+            />
           </div>
 
           <div className="sales-analysis-window__accent" />
@@ -1679,17 +1716,12 @@ function SalesAnalysisReportPage() {
       >
         <div className="sales-analysis-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}>
           <div className="sales-analysis-window__title sap-report-title">Sales Analysis Report - Selection Criteria</div>
-          <div className="sales-analysis-window__controls">
-            <button
-              type="button"
-              aria-label={criteriaWindow.isMinimized ? 'Restore' : 'Minimize'}
-              onClick={handleMinimizeCriteriaWindow}
-            >
-              {criteriaWindow.isMinimized ? '□' : '-'}
-            </button>
-            <button type="button" aria-label={criteriaWindow.isMaximized ? 'Restore' : 'Maximize'} title={criteriaWindow.isMaximized ? 'Restore' : 'Maximize'} onClick={criteriaWindow.toggleMaximize}>[]</button>
-            <button type="button" aria-label="Close" onClick={handleCloseCriteriaWindow}>x</button>
-          </div>
+          <ReportWindowControls
+            windowFrame={criteriaWindow}
+            onMinimize={handleMinimizeCriteriaWindow}
+            onClose={handleCloseCriteriaWindow}
+            className="sales-analysis-window__controls"
+          />
         </div>
 
         <div className="sales-analysis-window__accent" />
@@ -1819,7 +1851,7 @@ function SalesAnalysisReportPage() {
           </div>
 
           <div className="sales-analysis-window__footer">
-            <button type="button" className="sales-analysis__sap-btn" onClick={handleOk}>
+            <button type="button" className="sales-analysis__sap-btn sap-report-btn--primary" onClick={handleOk}>
               OK
             </button>
             <button

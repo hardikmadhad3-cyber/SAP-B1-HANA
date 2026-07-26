@@ -5,6 +5,7 @@ import BusinessPartnerLookupModal from "../components/reports/BusinessPartnerLoo
 import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
+import { ReportWindowControls, ReportBackButton } from "../components/reports/ReportWindowControls";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
 import { fetchCampaignsListLookups, fetchCampaignsListReport } from "../api/campaignsListReportApi";
 import "../styles/campaigns-list-report.css";
@@ -100,7 +101,7 @@ function SelectionDialog({
   onSave,
 }) {
   const [draft, setDraft] = useState([]);
-  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 74 });
+  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 74, bounds: "parent" });
 
   useEffect(() => {
     if (isOpen) setDraft(Array.isArray(selectedValues) ? selectedValues : []);
@@ -188,7 +189,7 @@ function SelectionDialog({
               </table>
             </div>
             <div className="campaign-lookup__footer">
-              <button type="button" className="campaign-btn" onClick={() => { onSave(draft); onClose(); }}>OK</button>
+              <button type="button" className="campaign-btn campaign-btn--primary" onClick={() => { onSave(draft); onClose(); }}>OK</button>
               <button type="button" className="campaign-btn" onClick={onClose}>Cancel</button>
               {title !== "Document Types" ? (
                 <>
@@ -335,18 +336,6 @@ function CampaignsListReportPage() {
     navigate("/dashboard");
   };
 
-  const renderWindowControls = (windowFrame, onMinimize, onClose) => (
-    <div className="campaign-window__controls sales-analysis-window__controls">
-      <button type="button" aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"} onClick={onMinimize}>
-        {windowFrame.isMinimized ? "[]" : "-"}
-      </button>
-      <button type="button" aria-label={windowFrame.isMaximized ? "Restore" : "Maximize"} onClick={windowFrame.toggleMaximize}>
-        []
-      </button>
-      <button type="button" aria-label="Close" onClick={onClose}>x</button>
-    </div>
-  );
-
   const renderOption = (option) => (
     <option key={`${option.value}-${option.label}`} value={option.value}>
       {option.label || option.value}
@@ -420,7 +409,12 @@ function CampaignsListReportPage() {
     >
       <header className="campaign-window__titlebar sales-analysis-window__titlebar sap-report-titlebar" {...reportWindow.titleBarProps}>
         <span className="sap-report-title">Campaigns List Report</span>
-        {renderWindowControls(reportWindow, minimizeReportWindow, () => setReportResult(null))}
+        <ReportWindowControls
+          windowFrame={reportWindow}
+          onMinimize={minimizeReportWindow}
+          onClose={() => setReportResult(null)}
+          className="campaign-window__controls sales-analysis-window__controls"
+        />
       </header>
       <div className="campaign-window__accent sales-analysis-window__accent" />
       {!reportWindow.isMinimized ? (
@@ -474,10 +468,7 @@ function CampaignsListReportPage() {
           </div>
           <footer className="campaign-report__footer">
             <div className="campaign-report__footer-left">
-              <button type="button" className="campaign-report__back-btn" onClick={() => setReportResult(null)} aria-label="Back to selection criteria">
-                &lt;
-              </button>
-              <button type="button" className="campaign-btn" onClick={() => setReportResult(null)}>OK</button>
+              <ReportBackButton onClick={() => setReportResult(null)} className="campaign-report__back-btn" />
             </div>
             <span>{company?.companyName || company?.dbName || "SAP Business One"}</span>
             <div className="campaign-report__footer-actions">
@@ -499,7 +490,12 @@ function CampaignsListReportPage() {
       >
         <header className="campaign-window__titlebar sales-analysis-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}>
           <span className="sap-report-title">Campaigns List - Selection Criteria</span>
-          {renderWindowControls(criteriaWindow, minimizeCriteriaWindow, closeCriteriaWindow)}
+          <ReportWindowControls
+            windowFrame={criteriaWindow}
+            onMinimize={minimizeCriteriaWindow}
+            onClose={closeCriteriaWindow}
+            className="campaign-window__controls sales-analysis-window__controls"
+          />
         </header>
         <div className="campaign-window__accent sales-analysis-window__accent" />
 
@@ -621,7 +617,7 @@ function CampaignsListReportPage() {
             {statusMessage ? <div className="campaign-status">{statusMessage}</div> : null}
 
             <footer className="campaign-window__footer">
-              <button type="button" className="campaign-btn" onClick={handleOk} disabled={isLoadingReport}>OK</button>
+              <button type="button" className="campaign-btn campaign-btn--primary" onClick={handleOk} disabled={isLoadingReport}>OK</button>
               <button type="button" className="campaign-btn" onClick={closeCriteriaWindow}>Cancel</button>
             </footer>
           </div>

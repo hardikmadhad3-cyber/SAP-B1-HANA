@@ -248,7 +248,7 @@ const getCustomerDetails = async (customerCode) => {
     return await salesQuotationDb.getCustomerDetails(customerCode);
   } catch (error) {
     console.error('[Sales Quotation Service] Failed to load customer details:', error);
-    return { contacts: [], bill_to_addresses: [], pay_to_addresses: [] };
+    throw error;
   }
 };
 

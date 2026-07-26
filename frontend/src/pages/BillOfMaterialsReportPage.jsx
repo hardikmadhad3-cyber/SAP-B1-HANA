@@ -4,6 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
+import { ReportWindowControls, ReportBackButton } from "../components/reports/ReportWindowControls";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
 import { fetchItemGroups, fetchItemProperties } from "../api/itemApi";
 import { fetchBillOfMaterialsReport } from "../api/billOfMaterialsReportApi";
@@ -208,27 +209,6 @@ function BillOfMaterialsReportPage() {
     });
   };
 
-  const renderWindowControls = (windowFrame, onMinimize, onClose) => (
-    <div className="bom-report-window__controls">
-      <button
-        type="button"
-        aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"}
-        onClick={onMinimize}
-      >
-        {windowFrame.isMinimized ? "[]" : "-"}
-      </button>
-      <button
-        type="button"
-        aria-label={windowFrame.isMaximized ? "Restore" : "Maximize"}
-        title={windowFrame.isMaximized ? "Restore" : "Maximize"}
-        onClick={windowFrame.toggleMaximize}
-      >
-        []
-      </button>
-      <button type="button" aria-label="Close" onClick={onClose}>x</button>
-    </div>
-  );
-
   const renderReportWindow = () => (
     <div
       className={`bom-report-window bom-report-window--result sap-report-window${reportWindow.isMinimized ? " is-minimized" : ""}${reportWindow.isMaximized ? " is-maximized" : ""}`}
@@ -239,7 +219,12 @@ function BillOfMaterialsReportPage() {
     >
       <div className="bom-report-window__titlebar sap-report-titlebar" {...reportWindow.titleBarProps}>
         <div className="bom-report-window__title sap-report-title">{reportResult?.reportTitle || "Bill of Materials Report"}</div>
-        {renderWindowControls(reportWindow, handleMinimizeReportWindow, handleCloseReportWindow)}
+        <ReportWindowControls
+          windowFrame={reportWindow}
+          onMinimize={handleMinimizeReportWindow}
+          onClose={handleCloseReportWindow}
+          className="bom-report-window__controls"
+        />
       </div>
       <div className="bom-report-window__accent" />
 
@@ -253,7 +238,6 @@ function BillOfMaterialsReportPage() {
               value={findText}
               onChange={(event) => setFindText(event.target.value)}
             />
-            <button type="button" className="bom-report-btn">Text Search</button>
             <span className="bom-report-toolbar__count">
               {filteredRows.length} of {reportResult?.totalRows || 0}
             </span>
@@ -359,19 +343,8 @@ function BillOfMaterialsReportPage() {
           </div>
 
           <div className="bom-report-footer">
-            <button
-              type="button"
-              className="bom-report-back-btn"
-              aria-label="Back to selection criteria"
-              onClick={handleCloseReportWindow}
-            >
-              &lt;
-            </button>
+            <ReportBackButton onClick={handleCloseReportWindow} className="bom-report-back-btn" />
             <span>{company?.companyName || company?.dbName || "SAP Business One"}</span>
-            <div className="bom-report-footer__actions">
-              <button type="button" className="bom-report-btn" onClick={() => {}}>Expand</button>
-              <button type="button" className="bom-report-btn" onClick={() => {}}>Collapse</button>
-            </div>
           </div>
         </div>
       ) : null}
@@ -389,7 +362,12 @@ function BillOfMaterialsReportPage() {
       >
         <div className="bom-report-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}>
           <div className="bom-report-window__title sap-report-title">Bill of Materials Report - Selection Criteria</div>
-          {renderWindowControls(criteriaWindow, handleMinimizeCriteriaWindow, handleCloseCriteriaWindow)}
+          <ReportWindowControls
+            windowFrame={criteriaWindow}
+            onMinimize={handleMinimizeCriteriaWindow}
+            onClose={handleCloseCriteriaWindow}
+            className="bom-report-window__controls"
+          />
         </div>
         <div className="bom-report-window__accent" />
 
@@ -451,7 +429,7 @@ function BillOfMaterialsReportPage() {
 
             <div className="bom-report-window__footer">
               <div className="bom-report-window__footer-left">
-                <button type="button" className="bom-report-btn" onClick={handleOk} disabled={isLoadingReport}>
+                <button type="button" className="bom-report-btn bom-report-btn--primary" onClick={handleOk} disabled={isLoadingReport}>
                   OK
                 </button>
                 <button type="button" className="bom-report-btn" onClick={handleCloseCriteriaWindow}>Cancel</button>

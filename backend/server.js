@@ -120,6 +120,8 @@ const vendorLiabilitiesAgingRoutes = require('./routes/reports/vendorLiabilities
 const accountingTransactionReportsRoutes = require('./routes/reports/accountingTransactionReports.routes');
 const financialStatementsRoutes  = require('./routes/reports/financialStatements.routes');
 const reportStudioRoutes         = require('./routes/reportStudioRoutes');
+const analyticsQueryRoutes       = require('./routes/analyticsQueryRoutes');
+const analyticsDashboardRoutes   = require('./routes/analyticsDashboardRoutes');
 const reportLookupsRoutes        = require('./routes/reportLookups');
 const adminPanelRoutes           = require('./routes/adminPanelRoutes');
 const performanceRoutes          = require('./routes/performanceRoutes');
@@ -183,10 +185,13 @@ const isAllowedOrigin = (origin) => {
       /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
       /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(hostname);
 
+    const allowedPublicHosts = new Set(['157.119.47.190']);
+
     return (
       hostname === 'localhost' ||
       hostname === '127.0.0.1' ||
-      isPrivateLanHost
+      isPrivateLanHost ||
+      allowedPublicHosts.has(hostname)
     );
   } catch (_error) {
     return false;
@@ -275,6 +280,7 @@ app.use((req, res, next) => {
 
 app.use('/api', apiRateLimitMiddleware);
 app.use('/api/reports', reportRateLimitMiddleware, reportSafetyMiddleware);
+app.use('/api/analytics', reportRateLimitMiddleware);
 app.use('/api', reusableLookupCache);
 
 // Routes
@@ -307,6 +313,8 @@ app.use('/api',                    printRoutes);
 app.use('/api/document-print',     documentPrintRoutes);
 app.use('/api',                    reportLayoutRoutes);
 app.use('/api',                    reportStudioRoutes);
+app.use('/api/analytics',          analyticsQueryRoutes);
+app.use('/api/analytics',          analyticsDashboardRoutes);
 app.use('/api/reports',            salesAnalysisRoutes);
 app.use('/api/reports',            opportunitiesForecastRoutes);
 app.use('/api/bom',                bomRoutes);

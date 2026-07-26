@@ -985,7 +985,7 @@ export default function ProductionOrderModule() {
             </div>
 
             <div className="im-field">
-              <label className="im-field__label po-lbl">Routing Date Calculation</label>
+              <label className="im-field__label po-lbl im-field__label--wrap">Routing Date Calculation</label>
               <select className="im-field__select" name="routing_date_calc" value={header.routing_date_calc}
                 onChange={handleHeaderChange} disabled={isReadOnly} style={{ width: 160 }}>
                 <option value="start">On Start Date</option>

@@ -358,26 +358,33 @@
 
 .won-opportunities-page .bp-lookup-modal__backdrop,
 .won-opportunities-page .sales-employee-lookup-modal__backdrop {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 16000;
   background: transparent;
 }
 
+body > .won-opportunities-page .bp-lookup-modal__backdrop,
+body > .won-opportunities-page .sales-employee-lookup-modal__backdrop {
+  position: fixed;
+}
+
 .won-opportunities-page .bp-lookup-modal,
 .won-opportunities-page .sales-employee-lookup-modal {
   position: absolute;
-  width: min(920px, calc(100vw - 36px));
+  width: min(920px, 100%);
   max-height: calc(100vh - 60px);
   display: flex;
   flex-direction: column;
-  border: 1px solid #9fa7ad;
-  background: #f3f3f3;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.24);
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-md, 10px);
+  background: var(--sap-surface, #ffffff);
+  box-shadow: var(--sap-shadow-modal, 0 20px 48px rgba(15, 35, 65, 0.18));
+  overflow: hidden;
 }
 
 .won-opportunities-page .sales-employee-lookup-modal {
-  width: min(520px, calc(100vw - 36px));
+  width: min(520px, 100%);
 }
 
 .won-opportunities-page .bp-lookup-modal__titlebar,
@@ -386,10 +393,12 @@
   align-items: center;
   justify-content: space-between;
   min-height: 30px;
-  padding: 4px 8px 3px 10px;
-  background: linear-gradient(180deg, #f1f1f1 0%, #a4a8ab 100%);
-  color: #111111;
+  padding: 8px 10px 6px;
+  background: linear-gradient(180deg, #ffffff 0%, var(--sap-toolbar-bg, #eef2f7) 100%);
+  border-bottom: 1px solid var(--sap-border, #d5dce3);
+  color: var(--sap-heading, #0a4a85);
   font-size: 13px;
+  font-weight: 700;
   cursor: move;
 }
 
@@ -403,8 +412,9 @@
 .won-opportunities-page .sales-employee-lookup-modal__controls button {
   width: 22px;
   height: 22px;
-  border: 1px solid #87909a;
-  background: linear-gradient(180deg, #ffffff 0%, #d5d5d5 100%);
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-xs, 4px);
+  background: linear-gradient(180deg, #ffffff 0%, #edf3f9 100%);
   color: transparent;
   position: relative;
 }
@@ -414,7 +424,7 @@
   content: "x";
   position: absolute;
   inset: 0;
-  color: #555555;
+  color: var(--sap-text, #223548);
   display: grid;
   place-items: center;
   font-weight: 700;
@@ -428,19 +438,20 @@
   right: 5px;
   bottom: 5px;
   height: 2px;
-  background: #555555;
+  background: var(--sap-text, #223548);
 }
 
 .won-opportunities-page .bp-lookup-modal__accent,
 .won-opportunities-page .sales-employee-lookup-modal__accent {
-  height: 4px;
-  background: #f2b600;
+  height: 3px;
+  background: linear-gradient(90deg, #e0a316 0%, #f3c94f 30%, transparent 30%);
 }
 
 .won-opportunities-page .bp-lookup-modal__body,
 .won-opportunities-page .sales-employee-lookup-modal__body {
   padding: 10px;
   min-height: 0;
+  background: var(--sap-surface, #ffffff);
 }
 
 .won-opportunities-page .bp-lookup-modal__toolbar,
@@ -450,31 +461,61 @@
   align-items: center;
   gap: 6px;
   margin-bottom: 8px;
-  color: #153452;
+  color: var(--sap-text, #223548);
   font-size: 12px;
 }
 
 .won-opportunities-page .bp-lookup-modal__toolbar input,
 .won-opportunities-page .sales-employee-lookup-modal__toolbar input {
-  height: 22px;
-  border: 1px solid #a8b3bd;
-  background: #ffffff;
+  height: 28px;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-xs, 4px);
+  background: var(--sap-surface, #ffffff);
+}
+
+.won-opportunities-page .bp-lookup-modal__toolbar input:focus,
+.won-opportunities-page .sales-employee-lookup-modal__toolbar input:focus {
+  outline: none;
+  border-color: var(--sap-primary, #0a6ed1);
+  box-shadow: 0 0 0 2px var(--sap-primary-soft, rgba(10, 110, 209, 0.13));
 }
 
 .won-opportunities-page .bp-lookup-modal__action-btn,
 .won-opportunities-page .sales-employee-lookup-modal__action-btn {
   min-width: 82px;
-  height: 25px;
-  border: 1px solid #9a874a;
-  background: linear-gradient(180deg, #fff3a0 0%, #e8b82d 100%);
-  color: #293847;
+  height: 28px;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: linear-gradient(180deg, #ffffff 0%, #eef2f7 100%);
+  color: var(--sap-text, #223548);
   font-size: 12px;
+  font-weight: 600;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.won-opportunities-page .bp-lookup-modal__action-btn:hover:not(:disabled),
+.won-opportunities-page .sales-employee-lookup-modal__action-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #e2ecf5 100%);
+  border-color: var(--sap-primary, #0a6ed1);
+}
+
+.won-opportunities-page .bp-lookup-modal__action-btn--primary,
+.won-opportunities-page .sales-employee-lookup-modal__action-btn--primary {
+  border-color: var(--sap-primary-dark, #0854a0);
+  background: linear-gradient(180deg, var(--sap-primary, #0a6ed1) 0%, var(--sap-primary-dark, #0854a0) 100%);
+  color: #ffffff;
+}
+
+.won-opportunities-page .bp-lookup-modal__action-btn--primary:hover:not(:disabled),
+.won-opportunities-page .sales-employee-lookup-modal__action-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #1b7ddb 0%, #0a5fac 100%);
 }
 
 .won-opportunities-page .bp-lookup-modal__grid-wrap,
 .won-opportunities-page .sales-employee-lookup-modal__grid-wrap {
   max-height: 390px;
-  border: 1px solid #b8c2cc;
+  border: 1px solid var(--sap-border, #d5dce3);
+  border-radius: var(--sap-radius-sm, 6px);
   overflow: auto;
 }
 
@@ -490,28 +531,35 @@
 .won-opportunities-page .sales-employee-lookup-modal__grid th,
 .won-opportunities-page .sales-employee-lookup-modal__grid td {
   height: 21px;
-  padding: 2px 5px;
-  border: 1px solid #c7ccd1;
-  background: #e8e8e8;
-  color: #102d46;
+  padding: 4px 8px;
+  border: 1px solid var(--sap-border-soft, #e3e8ee);
+  background: var(--sap-surface, #ffffff);
+  color: var(--sap-text, #223548);
   font-size: 12px;
   white-space: nowrap;
 }
 
+.won-opportunities-page .bp-lookup-modal__grid th,
+.won-opportunities-page .sales-employee-lookup-modal__grid th {
+  background: var(--sap-toolbar-bg, #eef2f7);
+  color: var(--sap-heading, #0a4a85);
+  font-weight: 700;
+}
+
 .won-opportunities-page .bp-lookup-modal__grid tr.is-selected td,
 .won-opportunities-page .sales-employee-lookup-modal__grid tr.is-selected td {
-  background: #c8dcf1;
+  background: #e7f2fb;
 }
 
 .won-opportunities-page .bp-lookup-modal__state-cell,
 .won-opportunities-page .sales-employee-lookup-modal__state-cell {
   text-align: center;
-  color: #536271;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .won-opportunities-page .bp-lookup-modal__state-cell.is-error,
 .won-opportunities-page .sales-employee-lookup-modal__state-cell.is-error {
-  color: #a13b1b;
+  color: var(--sap-danger, #b42318);
 }
 
 .won-opportunities-page .bp-lookup-modal__footer,

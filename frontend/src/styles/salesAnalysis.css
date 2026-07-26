@@ -22,7 +22,7 @@
   gap: 8px;
   justify-content: flex-end;
   padding: 8px 12px 10px;
-  border-top: 1px solid #d7dde5;
+  border-top: 1px solid var(--sap-border-soft, #e3e8ee);
 }
 
 .sar-window__footer--split {
@@ -75,7 +75,7 @@
   margin-bottom: 8px;
   font-size: 12px;
   font-weight: 700;
-  color: #003366;
+  color: var(--sap-heading, #0a4a85);
 }
 
 .sar-radio-stack {
@@ -117,7 +117,7 @@
 
 .sar-date-separator {
   font-size: 12px;
-  color: #444;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .sar-secondary-toggle,
@@ -148,7 +148,7 @@
 
 .sar-grid tfoot td {
   font-weight: 700;
-  border-top: 2px solid #a0aab4;
+  border-top: 2px solid var(--sap-border-strong, #aab8c4);
 }
 
 .sar-grid__cell--num {
@@ -157,13 +157,13 @@
 }
 
 .sar-grid__row-link {
-  color: #005a9e;
+  color: var(--sap-primary, #0a6ed1);
   cursor: pointer;
   text-decoration: underline;
 }
 
 .sar-row-arrow {
-  color: #0066cc;
+  color: var(--sap-primary, #0a6ed1);
   margin-right: 6px;
   font-size: 12px;
   font-weight: bold;
@@ -172,17 +172,17 @@
 .sar-row-arrow-btn {
   padding: 2px 6px;
   margin: 0 6px 0 0;
-  border: 1px solid #0066cc;
-  background: #f0f8ff;
+  border: 1px solid var(--sap-primary, #0a6ed1);
+  background: var(--sap-primary-soft, rgba(10, 110, 209, 0.13));
   cursor: pointer;
   line-height: 1;
-  border-radius: 3px;
+  border-radius: var(--sap-radius-xs, 4px);
   transition: all 0.2s ease;
   font-size: 12px;
 }
 
 .sar-row-arrow-btn:hover {
-  background-color: #0066cc;
+  background-color: var(--sap-primary, #0a6ed1);
   color: white;
   transform: translateX(2px);
 }
@@ -202,7 +202,7 @@
 .sar-result-hint {
   margin-bottom: 8px;
   font-size: 12px;
-  color: #555;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .sar-chart-btn {

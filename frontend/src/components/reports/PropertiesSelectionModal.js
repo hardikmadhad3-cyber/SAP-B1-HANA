@@ -20,7 +20,7 @@ function PropertiesSelectionModal({
   value,
 }) {
   const [draft, setDraft] = useState(buildDraftState(value));
-  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 60 });
+  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 60, bounds: 'parent' });
 
   useEffect(() => {
     if (!isOpen) return;
@@ -87,7 +87,6 @@ function PropertiesSelectionModal({
             >
               {windowFrame.isMinimized ? '□' : '-'}
             </button>
-            <button type="button" aria-label="Restore" onClick={windowFrame.restoreWindow}>□</button>
             <button type="button" aria-label="Close" onClick={onClose}>x</button>
           </div>
         </div>

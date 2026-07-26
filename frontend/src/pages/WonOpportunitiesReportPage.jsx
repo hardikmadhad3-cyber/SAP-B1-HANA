@@ -4,6 +4,7 @@ import { fetchWonOpportunitiesReport } from '../api/opportunitiesForecastApi';
 import BusinessPartnerLookupModal from '../components/reports/BusinessPartnerLookupModal';
 import SalesEmployeeLookupModal from '../components/reports/SalesEmployeeLookupModal';
 import useFloatingWindow from '../components/reports/useFloatingWindow';
+import { ReportBackButton, ReportWindowControls } from '../components/reports/ReportWindowControls';
 import { useSapWindowTaskbarActions } from '../components/SapWindowTaskbarContext';
 import '../styles/won-opportunities-report.css';
 
@@ -39,31 +40,6 @@ const getSelectionLabel = (selection) => {
   if (!labels.length) return '';
   return labels.length === 1 ? labels[0] : `${labels.length} selected`;
 };
-
-function WindowControls({ frame, onClose }) {
-  return (
-    <div className="won-opportunities-window__controls">
-      <button
-        type="button"
-        className="sap-report-window-control"
-        aria-label={frame.isMinimized ? 'Restore' : 'Minimize'}
-        onClick={frame.toggleMinimize}
-      />
-      <button
-        type="button"
-        className="sap-report-window-control"
-        aria-label={frame.isMaximized ? 'Restore Down' : 'Maximize'}
-        onClick={frame.toggleMaximize}
-      />
-      <button
-        type="button"
-        className="sap-report-window-control"
-        aria-label="Close"
-        onClick={onClose}
-      />
-    </div>
-  );
-}
 
 function WonReportChart({ title, rows, valueKey }) {
   const maxValue = Math.max(1, ...rows.map((row) => Number(row[valueKey] || 0)));
@@ -116,6 +92,7 @@ export default function WonOpportunitiesReportPage() {
     taskId: 'won-opportunities-criteria',
     taskTitle: 'Won Opportunities Report - Selection Criteria',
     taskPath: '/reports/crm/opportunities/won',
+    bounds: 'parent',
   });
   const reportWindow = useFloatingWindow({
     isOpen: hasReport,
@@ -123,6 +100,7 @@ export default function WonOpportunitiesReportPage() {
     taskId: 'won-opportunities-report',
     taskTitle: 'Won Opportunities Report',
     taskPath: '/reports/crm/opportunities/won',
+    bounds: 'parent',
   });
 
   const updateCriteria = (updater) => {
@@ -217,7 +195,12 @@ export default function WonOpportunitiesReportPage() {
         >
           <div className="sap-report-titlebar won-opportunities-window__titlebar" {...criteriaWindow.titleBarProps}>
             <div className="sap-report-title">Won Opportunities Report - Selection Criteria</div>
-            <WindowControls frame={criteriaWindow} onClose={handleClose} />
+            <ReportWindowControls
+              windowFrame={criteriaWindow}
+              onMinimize={criteriaWindow.toggleMinimize}
+              onClose={handleClose}
+              className="won-opportunities-window__controls"
+            />
           </div>
           <div className="sap-report-accent" />
           {!criteriaWindow.isMinimized ? (
@@ -309,7 +292,12 @@ export default function WonOpportunitiesReportPage() {
         >
           <div className="sap-report-titlebar won-opportunities-window__titlebar" {...reportWindow.titleBarProps}>
             <div className="sap-report-title">Won Opportunities Report</div>
-            <WindowControls frame={reportWindow} onClose={() => setReport(null)} />
+            <ReportWindowControls
+              windowFrame={reportWindow}
+              onMinimize={reportWindow.toggleMinimize}
+              onClose={() => setReport(null)}
+              className="won-opportunities-window__controls"
+            />
           </div>
           <div className="sap-report-accent" />
           {!reportWindow.isMinimized ? (
@@ -348,7 +336,7 @@ export default function WonOpportunitiesReportPage() {
               </div>
 
               <div className="won-opportunities-report-footer">
-                <button type="button" className="won-opportunities-back-btn" onClick={() => setReport(null)} aria-label="Back" />
+                <ReportBackButton onClick={() => setReport(null)} className="won-opportunities-back-btn" />
                 <button type="button" className="sap-report-btn" onClick={() => setReport(null)}>
                   Cancel
                 </button>

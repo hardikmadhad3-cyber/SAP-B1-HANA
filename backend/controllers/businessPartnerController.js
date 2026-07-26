@@ -489,7 +489,7 @@ const lookupPaymentTerms = async (req, res) => {
 
 const lookupSalesPersons = async (req, res) => {
   try {
-    const rows = await masterDataDbService.lookupSalesPersons(req.query.query || "");
+    const rows = await masterDataDbService.lookupSalesPersons(req.query.query || "", req.query.top, req.query.skip);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });

@@ -22,7 +22,10 @@
 .cra-body input[readonly] { background: #f4e199; }
 .cra-message { margin-top: 8px; color: #9b2b19; }
 .cra-footer { display: flex; gap: 12px; margin-top: 14px; }
-.cra-btn { min-width: 105px; height: 24px; border: 1px solid #9c8f58; background: linear-gradient(90deg, #f0a000 0 10px, transparent 10px), linear-gradient(#fff0aa, #f3cc5f); }
+.cra-btn { min-width: 105px; height: 24px; border: 1px solid var(--sap-border-strong, #aab8c4); border-radius: var(--sap-radius-sm, 6px); background: linear-gradient(180deg, #ffffff 0%, #eef2f7 100%); color: var(--sap-text, #223548); font-weight: 600; transition: background 140ms ease, border-color 140ms ease; }
+.cra-btn:hover:not(:disabled) { background: linear-gradient(180deg, #ffffff 0%, #e2ecf5 100%); border-color: var(--sap-primary, #0a6ed1); }
+.cra-btn--primary { border-color: var(--sap-primary-dark, #0854a0); background: linear-gradient(180deg, var(--sap-primary, #0a6ed1) 0%, var(--sap-primary-dark, #0854a0) 100%); color: #ffffff; }
+.cra-btn--primary:hover:not(:disabled) { background: linear-gradient(180deg, #1b7ddb 0%, #0a5fac 100%); }
 .cra-btn--field { min-width: 130px; }
 .cra-report-body { height: calc(100% - 34px); padding: 10px; display: flex; flex-direction: column; box-sizing: border-box; }
 .cra-report-toolbar { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 7px; }

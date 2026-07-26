@@ -10,23 +10,31 @@ const TABLE_COLUMNS = [
   { key: 'WTaxLiable', label: 'WTax Liable', className: 'is-flag' },
 ];
 
+const PAGE_SIZE = 100;
+
 function ItemLookupModal({ isOpen, onClose, onSelect }) {
   const [searchText, setSearchText] = useState('');
   const [rows, setRows] = useState([]);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 42 });
+  const windowFrame = useFloatingWindow({ isOpen, defaultTop: 42, bounds: 'parent' });
 
-  const loadRows = async (query = '') => {
+  const loadRows = async (query = '', pageToLoad = 0) => {
     setLoading(true);
     setError('');
     try {
-      const response = await searchItems(query, 200, 0);
-      setRows(Array.isArray(response) ? response : []);
+      const response = await searchItems(query, PAGE_SIZE + 1, pageToLoad * PAGE_SIZE);
+      const list = Array.isArray(response) ? response : [];
+      setHasMore(list.length > PAGE_SIZE);
+      setRows(list.slice(0, PAGE_SIZE));
+      setPage(pageToLoad);
       setSelectedIndex(0);
     } catch (loadError) {
       setRows([]);
+      setHasMore(false);
       setError(loadError?.response?.data?.message || loadError?.message || 'Failed to load items.');
     } finally {
       setLoading(false);
@@ -37,12 +45,14 @@ function ItemLookupModal({ isOpen, onClose, onSelect }) {
     if (!isOpen) {
       setSearchText('');
       setRows([]);
+      setPage(0);
+      setHasMore(false);
       setSelectedIndex(0);
       setError('');
       return;
     }
 
-    loadRows('');
+    loadRows('', 0);
   }, [isOpen]);
 
   const normalizedRows = useMemo(
@@ -65,7 +75,7 @@ function ItemLookupModal({ isOpen, onClose, onSelect }) {
   };
 
   const handleSearch = () => {
-    loadRows(searchText);
+    loadRows(searchText, 0);
   };
 
   const handleKeyDown = (event) => {
@@ -99,7 +109,6 @@ function ItemLookupModal({ isOpen, onClose, onSelect }) {
             >
               {windowFrame.isMinimized ? '□' : '-'}
             </button>
-            <button type="button" aria-label="Restore" onClick={windowFrame.restoreWindow}>□</button>
             <button type="button" aria-label="Close" onClick={onClose}>x</button>
           </div>
         </div>
@@ -180,11 +189,30 @@ function ItemLookupModal({ isOpen, onClose, onSelect }) {
 
         {!windowFrame.isMinimized ? (
           <div className="item-lookup-modal__footer">
-          <button type="button" className="item-lookup-modal__action-btn" onClick={handleChoose} disabled={!selectedRow}>
+          <button type="button" className="item-lookup-modal__action-btn item-lookup-modal__action-btn--primary" onClick={handleChoose} disabled={!selectedRow}>
             Choose
           </button>
           <button type="button" className="item-lookup-modal__action-btn" onClick={onClose}>
             Cancel
+          </button>
+          <span className="item-lookup-modal__page-info">
+            {rows.length ? `Showing ${page * PAGE_SIZE + 1}-${page * PAGE_SIZE + rows.length}` : ''}
+          </span>
+          <button
+            type="button"
+            className="item-lookup-modal__action-btn"
+            onClick={() => loadRows(searchText, page - 1)}
+            disabled={loading || page === 0}
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            className="item-lookup-modal__action-btn"
+            onClick={() => loadRows(searchText, page + 1)}
+            disabled={loading || !hasMore}
+          >
+            Next
           </button>
           </div>
         ) : null}

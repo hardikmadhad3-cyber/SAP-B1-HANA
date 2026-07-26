@@ -5,8 +5,12 @@ import { fetchInventoryInWarehouseLookups, fetchInventoryInWarehouseReport } fro
 import BusinessPartnerLookupModal from "../components/reports/BusinessPartnerLookupModal";
 import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
+import { ReportBackButton } from "../components/reports/ReportWindowControls";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
+import ReportPageShell from "../components/reports/ReportPageShell";
+import ReportWindow from "../components/reports/ReportWindow";
+import { ReportActionBar, ReportButton } from "../components/reports/ReportActionBar";
 import "../styles/inventory-in-warehouse-report.css";
 import "../styles/sales-analysis-report.css";
 import "../styles/inventory-report-common.css";
@@ -226,16 +230,6 @@ function InventoryInWarehouseReportPage() {
   const setOpeningBalanceField = (field, value) =>
     setOpeningBalances((current) => ({ ...current, [field]: value }));
 
-  const renderControls = (windowFrame, onClose) => (
-    <div className="iwh-window__controls sales-analysis-window__controls">
-      <button type="button" aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"} onClick={windowFrame.toggleMinimize}>
-        {windowFrame.isMinimized ? "[]" : "-"}
-      </button>
-      <button type="button" aria-label={windowFrame.isMaximized ? "Restore Down" : "Maximize"} title={windowFrame.isMaximized ? "Restore" : "Maximize"} onClick={windowFrame.toggleMaximize}>[]</button>
-      <button type="button" aria-label="Close" onClick={onClose}>x</button>
-    </div>
-  );
-
   const renderRangeRow = (label, fromField, toField, lookupType) => (
     <div className="iwh-range-row">
       <label>{label}</label>
@@ -292,112 +286,112 @@ function InventoryInWarehouseReportPage() {
   );
 
   const renderOpeningBalancesModal = () => (
-    <section className={`iwh-window iwh-window--opening-balances sales-analysis-window sap-report-window${openingBalancesWindow.isMinimized ? " is-minimized" : ""}${openingBalancesWindow.isMaximized ? " is-maximized" : ""}`} {...openingBalancesWindow.windowProps}>
-      <header className="iwh-window__titlebar sales-analysis-window__titlebar sap-report-titlebar" {...openingBalancesWindow.titleBarProps}>
-        <span className="sales-analysis-window__title sap-report-title">Inventory Valuation Report - Opening Balances</span>
-        {renderControls(openingBalancesWindow, () => setShowOpeningBalances(false))}
-      </header>
-      <div className="iwh-window__accent sales-analysis-window__accent" />
-      {!openingBalancesWindow.isMinimized ? (
-        <div className="iwh-opening-body">
-          <div className="iwh-opening-fields">
-            <div className="iwh-opening-left">
-              <label><span>Calculation Method</span><input value={openingBalances.calculationMethod} readOnly /></label>
-              <label><span>Item No.</span><div className="iwh-lookup"><input value={openingBalances.itemNo} onChange={(event) => setOpeningBalanceField("itemNo", event.target.value)} /><button type="button" onClick={() => setLookupTarget("openingBalanceItem")}>...</button></div></label>
-              <label><span>Item Description</span><input value={openingBalances.itemDescription} readOnly /></label>
-            </div>
-            <div className="iwh-opening-middle">
-              <label><span>Date To</span><input value={openingBalances.dateTo} onChange={(event) => setOpeningBalanceField("dateTo", event.target.value)} /></label>
-              <label><span>Warehouse</span><select value={openingBalances.warehouse} onChange={(event) => setOpeningBalanceField("warehouse", event.target.value)}><option value="All">All</option>{lookups.warehouses.map((warehouse) => <option key={warehouse.code} value={warehouse.code}>{warehouse.code}</option>)}</select></label>
-            </div>
-            <div className="iwh-opening-options">
-              <label><input type="checkbox" checked={openingBalances.sortBySystemDate} onChange={(event) => setOpeningBalanceField("sortBySystemDate", event.target.checked)} />Sort by System Date</label>
-              <label><input type="checkbox" checked={openingBalances.displayRevaluationAfterBaseDoc} onChange={(event) => setOpeningBalanceField("displayRevaluationAfterBaseDoc", event.target.checked)} />Display Inv. Reval. After Base Doc. if Post. Date Is Earlier</label>
-              <label><input type="checkbox" checked={openingBalances.includeAllRevaluations} onChange={(event) => setOpeningBalanceField("includeAllRevaluations", event.target.checked)} />Include all revaluations</label>
-            </div>
-          </div>
-          <div className="iwh-opening-grid-wrap">
-            <table className="iwh-opening-grid">
-              <thead><tr>{openingBalanceColumns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
-              <tbody>{Array.from({ length: 11 }, (_, index) => <tr key={index}>{openingBalanceColumns.map((column) => <td key={column}>{column === "#" && index === 0 ? "" : "\u00a0"}</td>)}</tr>)}</tbody>
-            </table>
-          </div>
-          <footer className="iwh-opening-footer">
-            <button type="button" className="iwh-btn sales-analysis__sap-btn sap-report-btn sap-report-btn--primary" onClick={() => setShowOpeningBalances(false)}>OK</button>
-            <button type="button" className="iwh-btn iwh-btn--muted sales-analysis__sap-btn sales-analysis__sap-btn--secondary sap-report-btn" disabled>Remove</button>
-          </footer>
+    <ReportWindow
+      windowFrame={openingBalancesWindow}
+      onMinimize={openingBalancesWindow.toggleMinimize}
+      onClose={() => setShowOpeningBalances(false)}
+      title="Inventory Valuation Report - Opening Balances"
+      size="wide"
+    >
+      <div className="iwh-opening-fields">
+        <div className="iwh-opening-left">
+          <label><span>Calculation Method</span><input value={openingBalances.calculationMethod} readOnly /></label>
+          <label><span>Item No.</span><div className="iwh-lookup"><input value={openingBalances.itemNo} onChange={(event) => setOpeningBalanceField("itemNo", event.target.value)} /><button type="button" onClick={() => setLookupTarget("openingBalanceItem")}>...</button></div></label>
+          <label><span>Item Description</span><input value={openingBalances.itemDescription} readOnly /></label>
         </div>
-      ) : null}
-    </section>
+        <div className="iwh-opening-middle">
+          <label><span>Date To</span><input value={openingBalances.dateTo} onChange={(event) => setOpeningBalanceField("dateTo", event.target.value)} /></label>
+          <label><span>Warehouse</span><select value={openingBalances.warehouse} onChange={(event) => setOpeningBalanceField("warehouse", event.target.value)}><option value="All">All</option>{lookups.warehouses.map((warehouse) => <option key={warehouse.code} value={warehouse.code}>{warehouse.code}</option>)}</select></label>
+        </div>
+        <div className="iwh-opening-options">
+          <label><input type="checkbox" checked={openingBalances.sortBySystemDate} onChange={(event) => setOpeningBalanceField("sortBySystemDate", event.target.checked)} />Sort by System Date</label>
+          <label><input type="checkbox" checked={openingBalances.displayRevaluationAfterBaseDoc} onChange={(event) => setOpeningBalanceField("displayRevaluationAfterBaseDoc", event.target.checked)} />Display Inv. Reval. After Base Doc. if Post. Date Is Earlier</label>
+          <label><input type="checkbox" checked={openingBalances.includeAllRevaluations} onChange={(event) => setOpeningBalanceField("includeAllRevaluations", event.target.checked)} />Include all revaluations</label>
+        </div>
+      </div>
+      <div className="iwh-opening-grid-wrap">
+        <table className="iwh-opening-grid">
+          <thead><tr>{openingBalanceColumns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
+          <tbody>{Array.from({ length: 11 }, (_, index) => <tr key={index}>{openingBalanceColumns.map((column) => <td key={column}>{column === "#" && index === 0 ? "" : " "}</td>)}</tr>)}</tbody>
+        </table>
+      </div>
+      <ReportActionBar>
+        <ReportButton variant="primary" onClick={() => setShowOpeningBalances(false)}>OK</ReportButton>
+      </ReportActionBar>
+    </ReportWindow>
   );
 
   return (
-    <div className="iwh-page sales-analysis-page sap-report-page">
-      <section className={`iwh-window sales-analysis-window sap-report-window${criteriaWindow.isMinimized ? " is-minimized" : ""}${criteriaWindow.isMaximized ? " is-maximized" : ""}`} {...criteriaWindow.windowProps}>
-        <header className="iwh-window__titlebar sales-analysis-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}>
-          <span className="sales-analysis-window__title sap-report-title">Inventory in Warehouse Report - Selection Criteria</span>
-          {renderControls(criteriaWindow, handleCloseCriteria)}
-        </header>
-        <div className="iwh-window__accent sales-analysis-window__accent" />
-        {!criteriaWindow.isMinimized ? (
-          <div className="iwh-window__body sales-analysis-window__body">
-            <div className="iwh-criteria-layout sales-analysis-panel">
-              <div className="iwh-criteria-left">
-                {renderRangeRow("Code", "itemFrom", "itemTo", "item")}
-                {renderRangeRow("Vendor", "vendorFrom", "vendorTo", "vendor")}
-                <div className="iwh-group-row">
-                  <label>Item Group</label>
-                  <select value={criteria.groupCode} onChange={(event) => setField("groupCode", event.target.value)}>
-                    <option value="*">All</option>
-                    {groups.filter((group) => group.code !== "*").map((group) => <option key={group.code} value={group.code}>{group.name || group.code}</option>)}
-                  </select>
-                </div>
-                <div className="iwh-property-row">
-                  <button type="button" className="iwh-btn sales-analysis__sap-btn sales-analysis__sap-btn--field sap-report-btn sap-report-property-btn" onClick={() => setShowProperties(true)}>Properties</button>
-                  <input value={propertyLabel} readOnly />
-                </div>
-                <label className="iwh-checkbox"><input type="checkbox" checked={criteria.hideNoStock} onChange={(event) => setField("hideNoStock", event.target.checked)} />Hide Items with No Quantity in Stock</label>
-                {renderWarehouseSelector()}
-              </div>
-              <div className="iwh-criteria-right">
-                <div className="iwh-display">
-                  <span>Display</span>
-                  <label><input type="radio" name="displayMode" checked={criteria.displayMode === "normal"} onChange={() => setField("displayMode", "normal")} />Normal</label>
-                  <label><input type="radio" name="displayMode" checked={criteria.displayMode === "detailed"} onChange={() => setField("displayMode", "detailed")} />Detailed Report</label>
-                </div>
-                {criteria.displayMode === "detailed" ? (
-                  <label className="iwh-price-source"><span>Price Source</span><select value={criteria.priceSource} onChange={(event) => setField("priceSource", event.target.value)}>{lookups.priceSources.map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}</select></label>
-                ) : null}
-              </div>
+    <ReportPageShell className="iwh-page">
+      <ReportWindow
+        windowFrame={criteriaWindow}
+        onMinimize={criteriaWindow.toggleMinimize}
+        onClose={handleCloseCriteria}
+        title="Inventory in Warehouse Report - Selection Criteria"
+        size="large"
+      >
+        <div className="iwh-criteria-layout">
+          <div className="iwh-criteria-left">
+            {renderRangeRow("Code", "itemFrom", "itemTo", "item")}
+            {renderRangeRow("Vendor", "vendorFrom", "vendorTo", "vendor")}
+            <div className="iwh-group-row">
+              <label>Item Group</label>
+              <select value={criteria.groupCode} onChange={(event) => setField("groupCode", event.target.value)}>
+                <option value="*">All</option>
+                {groups.filter((group) => group.code !== "*").map((group) => <option key={group.code} value={group.code}>{group.name || group.code}</option>)}
+              </select>
             </div>
-            <button type="button" className="iwh-opening-trigger" aria-label="Open inventory valuation opening balances" title="Inventory Valuation Report - Opening Balances" onClick={() => setShowOpeningBalances(true)}>...</button>
-            {message ? <div className="iwh-status">{message}</div> : null}
-            <footer className="iwh-footer sales-analysis-window__footer"><button type="button" className="iwh-btn sales-analysis__sap-btn sap-report-btn sap-report-btn--primary" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</button><button type="button" className="iwh-btn sales-analysis__sap-btn sales-analysis__sap-btn--secondary sap-report-btn" onClick={handleCloseCriteria}>Cancel</button></footer>
+            <div className="iwh-property-row">
+              <button type="button" className="iwh-btn sap-report-btn sap-report-property-btn" onClick={() => setShowProperties(true)}>Properties</button>
+              <input value={propertyLabel} readOnly />
+            </div>
+            <label className="iwh-checkbox"><input type="checkbox" checked={criteria.hideNoStock} onChange={(event) => setField("hideNoStock", event.target.checked)} />Hide Items with No Quantity in Stock</label>
+            {renderWarehouseSelector()}
           </div>
-        ) : null}
-      </section>
+          <div className="iwh-criteria-right">
+            <div className="iwh-display">
+              <span>Display</span>
+              <label><input type="radio" name="displayMode" checked={criteria.displayMode === "normal"} onChange={() => setField("displayMode", "normal")} />Normal</label>
+              <label><input type="radio" name="displayMode" checked={criteria.displayMode === "detailed"} onChange={() => setField("displayMode", "detailed")} />Detailed Report</label>
+            </div>
+            {criteria.displayMode === "detailed" ? (
+              <label className="iwh-price-source"><span>Price Source</span><select value={criteria.priceSource} onChange={(event) => setField("priceSource", event.target.value)}>{lookups.priceSources.map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}</select></label>
+            ) : null}
+          </div>
+        </div>
+        <button type="button" className="iwh-opening-trigger" aria-label="Open inventory valuation opening balances" title="Inventory Valuation Report - Opening Balances" onClick={() => setShowOpeningBalances(true)}>...</button>
+        {message ? <div className="iwh-status">{message}</div> : null}
+        <ReportActionBar>
+          <ReportButton variant="primary" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</ReportButton>
+          <ReportButton onClick={handleCloseCriteria}>Cancel</ReportButton>
+        </ReportActionBar>
+      </ReportWindow>
 
       {showOpeningBalances ? renderOpeningBalancesModal() : null}
 
       {report ? (
-        <section className={`iwh-window iwh-window--report sales-analysis-window sales-analysis-window--report sap-report-window${reportWindow.isMinimized ? " is-minimized" : ""}${reportWindow.isMaximized ? " is-maximized" : ""}`} {...reportWindow.windowProps}>
-          <header className="iwh-window__titlebar sales-analysis-window__titlebar sap-report-titlebar" {...reportWindow.titleBarProps}><span className="sales-analysis-window__title sap-report-title">Inventory in Warehouse Report</span>{renderControls(reportWindow, () => setReport(null))}</header>
-          <div className="iwh-window__accent sales-analysis-window__accent" />
-          {!reportWindow.isMinimized ? <div className="iwh-report-body sales-analysis-window__body sales-analysis-window__body--report">
-            <label className="iwh-find">Find <input value={findText} onChange={(event) => setFindText(event.target.value)} /></label>
-            <div className="iwh-report-tabs sales-analysis-tabs">{quantityTabs.map((tab) => <button type="button" key={tab.key} className={`sales-analysis-tabs__tab${activeQuantity === tab.key ? " is-active" : ""}`} onClick={() => setActiveQuantity(tab.key)}>{tab.label}</button>)}</div>
-            <div className="iwh-report-grid-wrap sales-analysis-report__grid-wrap"><table className="iwh-report-grid sales-analysis-report__grid"><thead><tr><th>#</th><th>Item Number</th><th>Item Description</th><th>UoM</th><th>Whse Total</th>{report.displayMode === "detailed" ? <th>Price</th> : null}{report.warehouses.map((warehouse) => <th key={warehouse.code} title={warehouse.name}>{warehouse.code}</th>)}</tr></thead>
-              <tbody>{filteredRows.length ? filteredRows.map((row, index) => <tr key={row.itemCode}><td className="is-row-number">{index + 1}</td><td><button type="button" className="iwh-item-link sales-analysis-report__link-cell" onClick={() => navigate(`/item-master?itemCode=${encodeURIComponent(row.itemCode)}`)}><span className="sales-analysis-report__link-icon" aria-hidden="true">{"->"}</span><span>{row.itemCode}</span></button></td><td>{row.itemName}</td><td>{row.uom}</td><td className="is-number is-numeric">{formatQuantity(row.totals[activeQuantity])}</td>{report.displayMode === "detailed" ? <td className="is-number is-numeric">{formatQuantity(row.price)}</td> : null}{report.warehouses.map((warehouse) => <td className="is-number is-numeric" key={warehouse.code}>{formatQuantity(row[activeQuantity]?.[warehouse.code])}</td>)}</tr>) : <tr><td className="sales-analysis-report__empty" colSpan={6 + report.warehouses.length}>No items found.</td></tr>}</tbody>
-            </table></div>
-            <div className="sales-analysis-report__footer"><button type="button" className="iwh-back sales-analysis-report__back-btn" aria-label="Back to selection criteria" onClick={() => setReport(null)}>{"<"}</button></div>
-          </div> : null}
-        </section>
+        <ReportWindow
+          windowFrame={reportWindow}
+          onMinimize={reportWindow.toggleMinimize}
+          onClose={() => setReport(null)}
+          title="Inventory in Warehouse Report"
+          size="wide"
+        >
+          <label className="iwh-find">Find <input value={findText} onChange={(event) => setFindText(event.target.value)} /></label>
+          <div className="iwh-report-tabs sales-analysis-tabs">{quantityTabs.map((tab) => <button type="button" key={tab.key} className={`sales-analysis-tabs__tab${activeQuantity === tab.key ? " is-active" : ""}`} onClick={() => setActiveQuantity(tab.key)}>{tab.label}</button>)}</div>
+          <div className="iwh-report-grid-wrap sales-analysis-report__grid-wrap"><table className="iwh-report-grid sales-analysis-report__grid"><thead><tr><th>#</th><th>Item Number</th><th>Item Description</th><th>UoM</th><th>Whse Total</th>{report.displayMode === "detailed" ? <th>Price</th> : null}{report.warehouses.map((warehouse) => <th key={warehouse.code} title={warehouse.name}>{warehouse.code}</th>)}</tr></thead>
+            <tbody>{filteredRows.length ? filteredRows.map((row, index) => <tr key={row.itemCode}><td className="is-row-number">{index + 1}</td><td><button type="button" className="iwh-item-link sales-analysis-report__link-cell" onClick={() => navigate(`/item-master?itemCode=${encodeURIComponent(row.itemCode)}`)}><span className="sales-analysis-report__link-icon" aria-hidden="true">{"->"}</span><span>{row.itemCode}</span></button></td><td>{row.itemName}</td><td>{row.uom}</td><td className="is-number is-numeric">{formatQuantity(row.totals[activeQuantity])}</td>{report.displayMode === "detailed" ? <td className="is-number is-numeric">{formatQuantity(row.price)}</td> : null}{report.warehouses.map((warehouse) => <td className="is-number is-numeric" key={warehouse.code}>{formatQuantity(row[activeQuantity]?.[warehouse.code])}</td>)}</tr>) : <tr><td className="sales-analysis-report__empty" colSpan={6 + report.warehouses.length}>No items found.</td></tr>}</tbody>
+          </table></div>
+          <ReportActionBar>
+            <ReportBackButton onClick={() => setReport(null)} />
+          </ReportActionBar>
+        </ReportWindow>
       ) : null}
 
       <ItemLookupModal isOpen={lookupTarget.startsWith("item") || lookupTarget === "openingBalanceItem"} onClose={() => setLookupTarget("")} onSelect={handleSelectLookup} />
       <BusinessPartnerLookupModal isOpen={lookupTarget.startsWith("vendor")} type="cSupplier" onClose={() => setLookupTarget("")} onSelect={handleSelectLookup} />
       <PropertiesSelectionModal isOpen={showProperties} title="Properties" propertyLabelPrefix="Items Property" properties={properties} value={criteria.propertyFilter} onClose={() => setShowProperties(false)} onSave={(value) => setField("propertyFilter", value)} />
-    </div>
+    </ReportPageShell>
   );
 }
 

@@ -1,11 +1,15 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchItemGroups, fetchItemProperties } from "../api/itemApi";
 import { fetchInventoryAgingLookups, fetchInventoryAgingReport } from "../api/inventoryAgingApi";
 import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
+import { ReportBackButton } from "../components/reports/ReportWindowControls";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
+import ReportPageShell from "../components/reports/ReportPageShell";
+import ReportWindow from "../components/reports/ReportWindow";
+import { ReportActionBar, ReportButton } from "../components/reports/ReportActionBar";
 import "../styles/inventory-aging-report.css";
 import "../styles/sales-analysis-report.css";
 import "../styles/inventory-report-common.css";
@@ -22,6 +26,23 @@ const formatSapShortDate = (date = new Date()) => {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const year = String(date.getFullYear()).slice(-2);
   return `${day}/${month}/${year}`;
+};
+
+const parseSapShortDateToIso = (value) => {
+  const match = String(value || "").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (!match) return "";
+
+  const [, dayText, monthText, yearText] = match;
+  const year = yearText.length === 2 ? `20${yearText}` : yearText;
+  return `${year}-${monthText.padStart(2, "0")}-${dayText.padStart(2, "0")}`;
+};
+
+const formatIsoToSapShortDate = (isoValue) => {
+  const match = String(isoValue || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "";
+
+  const [, year, month, day] = match;
+  return `${day}/${month}/${year.slice(2)}`;
 };
 
 const initialCriteria = {
@@ -131,6 +152,31 @@ function InventoryAgingReportPage() {
     setCriteria((current) => ({ ...current, [field]: value }));
   };
 
+  const reportDatePickerRef = useRef(null);
+
+  const openReportDatePicker = () => {
+    const node = reportDatePickerRef.current;
+    if (!node) return;
+
+    if (typeof node.showPicker === "function") {
+      try {
+        node.showPicker();
+        return;
+      } catch (_error) {
+        // fall back below
+      }
+    }
+
+    node.focus();
+    node.click();
+  };
+
+  const handleReportDatePickerChange = (isoValue) => {
+    const displayValue = formatIsoToSapShortDate(isoValue);
+    if (!displayValue) return;
+    setField("reportDate", displayValue);
+  };
+
   const propertyLabel = criteria.propertyFilter.ignoreProperties
     ? "Ignore"
     : `${criteria.propertyFilter.selectedPropertyNumbers.length} Selected`;
@@ -192,32 +238,30 @@ function InventoryAgingReportPage() {
     setLookupTarget("");
   };
 
-  const renderControls = (windowFrame, onClose) => (
-    <div className="iag-window__controls sales-analysis-window__controls">
-      <button type="button" aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"} onClick={windowFrame.toggleMinimize}>
-        {windowFrame.isMinimized ? "[]" : "-"}
-      </button>
-      <button type="button" aria-label={windowFrame.isMaximized ? "Restore Down" : "Maximize"} onClick={windowFrame.toggleMaximize}>[]</button>
-      <button type="button" aria-label="Close" onClick={onClose}>x</button>
-    </div>
-  );
-
   const renderFilterWindow = () => (
-    <section className={`iag-window sales-analysis-window sap-report-window${filterWindow.isMinimized ? " is-minimized" : ""}${filterWindow.isMaximized ? " is-maximized" : ""}`} {...filterWindow.windowProps}>
-      <header className="iag-window__titlebar sales-analysis-window__titlebar sap-report-titlebar" {...filterWindow.titleBarProps}>
-        <span className="sales-analysis-window__title sap-report-title">Inventory Aging Report Filter</span>
-        {renderControls(filterWindow, handleCloseFilter)}
-      </header>
-      <div className="iag-window__accent sales-analysis-window__accent" />
-      {!filterWindow.isMinimized ? (
-        <div className="iag-window__body sales-analysis-window__body">
+    <ReportWindow
+      windowFrame={filterWindow}
+      onMinimize={filterWindow.toggleMinimize}
+      onClose={handleCloseFilter}
+      title="Inventory Aging Report Filter"
+      size="compact"
+    >
           <div className="iag-layout">
             <div className="iag-left">
               <div className="iag-report-date">
                 <label>Report Date</label>
                 <div className="iag-date-input">
                   <input value={criteria.reportDate} onChange={(event) => setField("reportDate", event.target.value)} />
-                  <button type="button" aria-label="Calendar">.</button>
+                  <button type="button" aria-label="Open report date picker" onClick={openReportDatePicker}>...</button>
+                  <input
+                    type="date"
+                    ref={reportDatePickerRef}
+                    className="iag-date-native-input"
+                    value={parseSapShortDateToIso(criteria.reportDate) || ""}
+                    onChange={(event) => handleReportDatePickerChange(event.target.value)}
+                    tabIndex={-1}
+                    aria-hidden="true"
+                  />
                 </div>
               </div>
 
@@ -311,24 +355,21 @@ function InventoryAgingReportPage() {
 
           {message ? <div className="iag-status">{message}</div> : null}
 
-          <footer className="iag-footer sales-analysis-window__footer">
-            <button type="button" className="iag-btn sap-report-btn sap-report-btn--primary" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</button>
-            <button type="button" className="iag-btn iag-btn--secondary sap-report-btn" onClick={handleCloseFilter}>Cancel</button>
-          </footer>
-        </div>
-      ) : null}
-    </section>
+          <ReportActionBar>
+            <ReportButton variant="primary" disabled={loading} onClick={handleRun}>{loading ? "Loading..." : "OK"}</ReportButton>
+            <ReportButton onClick={handleCloseFilter}>Cancel</ReportButton>
+          </ReportActionBar>
+    </ReportWindow>
   );
 
   const renderReportWindow = () => report ? (
-    <section className={`iag-window iag-window--report sales-analysis-window sales-analysis-window--report sap-report-window${reportWindow.isMinimized ? " is-minimized" : ""}${reportWindow.isMaximized ? " is-maximized" : ""}`} {...reportWindow.windowProps}>
-      <header className="iag-window__titlebar sales-analysis-window__titlebar sap-report-titlebar" {...reportWindow.titleBarProps}>
-        <span className="sales-analysis-window__title sap-report-title">Inventory Aging Report</span>
-        {renderControls(reportWindow, () => setReport(null))}
-      </header>
-      <div className="iag-window__accent sales-analysis-window__accent" />
-      {!reportWindow.isMinimized ? (
-        <div className="iag-report-body sales-analysis-window__body sales-analysis-window__body--report">
+    <ReportWindow
+      windowFrame={reportWindow}
+      onMinimize={reportWindow.toggleMinimize}
+      onClose={() => setReport(null)}
+      title="Inventory Aging Report"
+      size="wide"
+    >
           <div className="iag-report-toolbar">
             <label>Find <input value={findText} onChange={(event) => setFindText(event.target.value)} /></label>
             <span>{report.sourceTable ? `Source: ${report.sourceTable}` : ""}</span>
@@ -383,16 +424,14 @@ function InventoryAgingReportPage() {
               </tbody>
             </table>
           </div>
-          <div className="sales-analysis-report__footer">
-            <button type="button" className="iag-back sales-analysis-report__back-btn" aria-label="Back to selection criteria" onClick={() => setReport(null)}>{"<"}</button>
-          </div>
-        </div>
-      ) : null}
-    </section>
+          <ReportActionBar>
+            <ReportBackButton onClick={() => setReport(null)} />
+          </ReportActionBar>
+    </ReportWindow>
   ) : null;
 
   return (
-    <div className="iag-page sales-analysis-page sap-report-page">
+    <ReportPageShell className="iag-page">
       {renderFilterWindow()}
       {renderReportWindow()}
 
@@ -410,7 +449,7 @@ function InventoryAgingReportPage() {
         onClose={() => setShowProperties(false)}
         onSave={(value) => setField("propertyFilter", value)}
       />
-    </div>
+    </ReportPageShell>
   );
 }
 

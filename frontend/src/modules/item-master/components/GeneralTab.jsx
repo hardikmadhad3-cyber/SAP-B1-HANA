@@ -1,17 +1,29 @@
 import React from "react";
 import LookupField from "./LookupField";
 import ManageItemBySection from "./ManageItemBySection";
-import { fetchManufacturers, fetchHSNCodes } from "../../../api/itemApi";
+import { fetchManufacturers, fetchHSNCodes, fetchSACCodes } from "../../../api/itemApi";
 
 export default function GeneralTab({ form, onChange, onDefineManufacturer, mode }) {
   const isServiceItem = form.ItemClass === "itcService";
   const isMaterialItem = form.ItemClass === "itcMaterial" || !form.ItemClass;
-  const itemCategoryLocked = mode === "update" && Boolean(form.ItemCode);
+  // Item Category is derived from the selected Item Group (see ItemMaster.jsx
+  // resolveItemClassForGroup) and, like in SAP B1, is only free-form before a
+  // group has been picked; once a group is assigned it's locked to whatever
+  // category that group implies.
+  const itemCategoryLocked =
+    Boolean(form.ItemsGroupCode) || (mode === "update" && Boolean(form.ItemCode));
 
   const handleGSTMaterialTypeChange = (e) => {
     onChange(e);
     onChange({ target: { name: "MaterialType", value: e.target.value } });
   };
+
+  // Excisable (old Central Excise) and GST are mutually exclusive tax
+  // regimes in SAP B1, but they share the same Material Type / Chapter ID /
+  // Assessable Value fields — only the regime-specific fields differ
+  // (Notification/Provisional Assessment No. for Excise; Tax Category and
+  // Capital Goods On Hold for GST).
+  const isTaxRelevant = form.Excisable === "tYES" || form.GSTRelevnt === "tYES";
 
   return (
     <div className="im-general-tab">
@@ -211,24 +223,13 @@ export default function GeneralTab({ form, onChange, onDefineManufacturer, mode 
             </div>
           </div>
 
-          {form.Excisable === "tYES" && (
-            <div className="im-field" style={{ marginTop: "10px" }}>
-              <label className="im-field__label">Excisable Type</label>
-              <select className="im-field__select" name="_excisableType" onChange={onChange}>
-                <option value="">- Select -</option>
-                <option value="1">Type 1</option>
-                <option value="2">Type 2</option>
-              </select>
-            </div>
-          )}
-
-          {form.GSTRelevnt === "tYES" && isMaterialItem && (
+          {isTaxRelevant && isMaterialItem && (
             <div className="im-field" style={{ marginTop: "10px" }}>
               <label className="im-field__label">Material Type</label>
-              <select 
-                className="im-field__select" 
-                name="GSTMaterialType" 
-                value={form.GSTMaterialType || ""} 
+              <select
+                className="im-field__select"
+                name="GSTMaterialType"
+                value={form.GSTMaterialType || ""}
                 onChange={handleGSTMaterialTypeChange}
               >
                 <option value="">- Select -</option>
@@ -239,24 +240,52 @@ export default function GeneralTab({ form, onChange, onDefineManufacturer, mode 
             </div>
           )}
 
-          {form.GSTRelevnt === "tYES" && (
+          {isTaxRelevant && (
             <div className="im-field">
-              <label className="im-field__label">HSN/SAC Code</label>
-              <LookupField
-                name="ChapterID"
-                value={form.ChapterID || ""}
-                onChange={onChange}
-                onSelect={(r) => onChange({ target: { name: "ChapterID", value: r.code } })}
-                fetchOptions={fetchHSNCodes}
-                placeholder="India Chapter ID"
-                columns={[
-                  { label: "Chapter", key: "chapter" },
-                  { label: "Heading", key: "heading" },
-                  { label: "Subheading", key: "subheading" },
-                  { label: "Description", key: "name" },
-                ]}
-              />
+              <label className="im-field__label">Chapter ID</label>
+              {isServiceItem ? (
+                <LookupField
+                  name="ChapterID"
+                  value={form.ChapterID || ""}
+                  onChange={onChange}
+                  onSelect={(r) => onChange({ target: { name: "ChapterID", value: r.code } })}
+                  fetchOptions={fetchSACCodes}
+                  placeholder="India SAC Code"
+                  columns={[
+                    { label: "Service Code", key: "code" },
+                    { label: "Service Name", key: "name" },
+                  ]}
+                />
+              ) : (
+                <LookupField
+                  name="ChapterID"
+                  value={form.ChapterID || ""}
+                  onChange={onChange}
+                  onSelect={(r) => onChange({ target: { name: "ChapterID", value: r.code } })}
+                  fetchOptions={fetchHSNCodes}
+                  placeholder="India Chapter ID"
+                  columns={[
+                    { label: "Chapter", key: "chapter" },
+                    { label: "Heading", key: "heading" },
+                    { label: "Subheading", key: "subheading" },
+                    { label: "Description", key: "name" },
+                  ]}
+                />
+              )}
             </div>
+          )}
+
+          {form.Excisable === "tYES" && (
+            <>
+              <div className="im-field">
+                <label className="im-field__label">Notification Availed Serial No.</label>
+                <input className="im-field__input" name="NotificationSerialNo" value={form.NotificationSerialNo || ""} onChange={onChange} />
+              </div>
+              <div className="im-field">
+                <label className="im-field__label">Provisional Assessment No.</label>
+                <input className="im-field__input" name="ProvisionalAssessmentNo" value={form.ProvisionalAssessmentNo || ""} onChange={onChange} />
+              </div>
+            </>
           )}
 
           {form.GSTRelevnt === "tYES" && (
@@ -283,6 +312,11 @@ export default function GeneralTab({ form, onChange, onDefineManufacturer, mode 
                 <label className="im-field__label">Capital Goods On Hold Amount Limit</label>
                 <input type="number" className="im-field__input" name="CapitalGoodsOnHoldLimit" value={form.CapitalGoodsOnHoldLimit || ""} onChange={onChange} style={{ textAlign: "right" }} />
               </div>
+            </div>
+          )}
+
+          {isTaxRelevant && (
+            <div style={{ marginTop: "15px" }}>
               <div className="im-field">
                 <label className="im-field__label">Assessable Value</label>
                 <input type="number" className="im-field__input" name="AssessableValue" value={form.AssessableValue || ""} onChange={onChange} style={{ textAlign: "right" }} />

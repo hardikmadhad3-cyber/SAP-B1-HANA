@@ -9,7 +9,7 @@ const {
   getItemPrices, getItemStock,
   lookupItemGroups, createItemGroup,
   lookupManufacturers, createManufacturer,
-  lookupHSNCodes,
+  lookupHSNCodes, lookupSACCodes,
   lookupPriceLists, lookupVendors, lookupWarehouses, lookupGLAccounts,
   lookupUoMGroups, lookupCustomsGroups, lookupItemProperties, lookupItemCodePrefixes,
   getAttachments, uploadAttachment, deleteAttachment, serveAttachment,
@@ -21,6 +21,7 @@ router.post("/lookup/item-groups",      createItemGroup);
 router.get("/lookup/manufacturers",     lookupManufacturers);
 router.post("/lookup/manufacturers",    createManufacturer);
 router.get("/lookup/hsn-codes",         lookupHSNCodes);
+router.get("/lookup/sac-codes",         lookupSACCodes);
 router.get("/lookup/price-lists",       lookupPriceLists);
 router.get("/lookup/vendors",           lookupVendors);
 router.get("/lookup/warehouses",        lookupWarehouses);

@@ -10,7 +10,13 @@
 .bom-report-window {
   width: 510px;
   max-width: calc(100vw - 220px);
-  overflow: visible;
+  max-height: calc(100vh - 170px);
+  overflow: hidden;
+}
+
+.bom-report-window:not(.is-minimized) {
+  display: flex;
+  flex-direction: column;
 }
 
 .bom-report-window.is-minimized {
@@ -21,6 +27,7 @@
   width: calc(100vw - 16px);
   max-width: none;
   height: calc(100vh - 16px);
+  max-height: calc(100vh - 16px);
   display: flex;
   flex-direction: column;
 }
@@ -29,6 +36,7 @@
   width: min(1220px, calc(100vw - 40px));
   max-width: none;
   height: calc(100vh - 150px);
+  max-height: calc(100vh - 150px);
   display: flex;
   flex-direction: column;
 }
@@ -51,16 +59,6 @@
   cursor: default;
 }
 
-.bom-report-window__controls button {
-  min-width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 1px solid #8f8f8f;
-  background: linear-gradient(180deg, #f8f8f8 0%, #dfdfdf 100%);
-  color: #666;
-  font-size: 13px;
-  line-height: 20px;
-}
 
 .bom-report-window__accent {
   height: 4px;
@@ -70,6 +68,9 @@
 .bom-report-window__body {
   padding: 14px 14px 12px;
   background: #f7f7f7;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .bom-report-window__body--result {
@@ -142,13 +143,29 @@
   min-width: 82px;
   height: 24px;
   padding: 2px 16px;
-  border: 1px solid #9c8f58;
-  background:
-    linear-gradient(90deg, #f0a000 0 12px, transparent 12px),
-    linear-gradient(180deg, #fff0aa 0%, #f3cc5f 100%);
-  color: #333;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: linear-gradient(180deg, #ffffff 0%, #eef2f7 100%);
+  color: var(--sap-text, #223548);
   font-size: 12px;
+  font-weight: 600;
   text-align: center;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.bom-report-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #e2ecf5 100%);
+  border-color: var(--sap-primary, #0a6ed1);
+}
+
+.bom-report-btn--primary {
+  border-color: var(--sap-primary-dark, #0854a0);
+  background: linear-gradient(180deg, var(--sap-primary, #0a6ed1) 0%, var(--sap-primary-dark, #0854a0) 100%);
+  color: #ffffff;
+}
+
+.bom-report-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #1b7ddb 0%, #0a5fac 100%);
 }
 
 .bom-report-btn:disabled {

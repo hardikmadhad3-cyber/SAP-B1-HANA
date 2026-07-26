@@ -89,12 +89,8 @@ const getVendorDetails = async (vendorCode) => {
     const data = await purchaseOrderDb.getVendorDetails(vendorCode);
     return data;
   } catch (error) {
-    return {
-      contacts: [],
-      pay_to_addresses: [],
-      ship_to_addresses: [],
-      bill_to_addresses: [],
-    };
+    console.error('[Purchase Order Service] Failed to load vendor details:', error);
+    throw error;
   }
 };
 

@@ -3,6 +3,7 @@
  * Reads data directly from SAP B1 SQL Server database
  */
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
@@ -817,30 +818,8 @@ const getContactsByCustomer = async (cardCode) => {
 };
 
 const getAddressesByCustomer = async (cardCode) => {
-  const result = await safe(db.query(`
-    SELECT T0.*,
-      T0.CardCode,
-      T0.Address,
-      T0.AdresType,
-      T0.Street,
-      T0.StreetNo,
-      T0.Block,
-      T0.Building,
-      T0.Address2,
-      T0.Address3,
-      T0.City,
-      T0.County,
-      T0.State,
-      T0.ZipCode,
-      T0.Country,
-      T0.GSTRegnNo AS GSTIN,
-      T0.GSTType
-    FROM CRD1 T0
-    WHERE T0.CardCode = @cardCode
-    ORDER BY T0.Address
-  `, { cardCode }));
-
-  return result;
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'Delivery' });
+  return addresses;
 };
 
 // ── SALES ORDERS (FOR COPY FROM) ──────────────────────────────────────────────

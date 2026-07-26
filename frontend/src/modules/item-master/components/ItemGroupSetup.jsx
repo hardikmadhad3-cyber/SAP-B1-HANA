@@ -40,7 +40,7 @@ export default function ItemGroupSetup({ onClose, onSave, showAlert }) {
     try {
       const result = await createItemGroup(form);
       showAlert("success", `Item Group "${result.name}" created.`);
-      onSave(result);
+      onSave({ ...result, ItemClass: form.ItemClass });
       onClose();
     } catch (err) {
       showAlert("error", err.response?.data?.message || "Failed to create Item Group.");

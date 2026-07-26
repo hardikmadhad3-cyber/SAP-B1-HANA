@@ -170,6 +170,12 @@
   white-space: nowrap;
 }
 
+.im-field__label--wrap {
+  flex-basis: 150px;
+  white-space: normal;
+  line-height: 1.15;
+}
+
 .im-field__input {
   flex: 1;
   height: 20px;

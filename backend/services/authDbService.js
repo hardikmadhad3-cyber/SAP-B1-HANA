@@ -57,6 +57,8 @@ const ensureSchema = async () => {
   const database = getDb();
   database.exec(fs.readFileSync(SCHEMA_PATH, 'utf8'));
   ensureCompanyColumns(database);
+  ensureAnalyticsDashboardColumns(database);
+  ensureAnalyticsQueryColumns(database);
   schemaReady = true;
   console.log(`[AUTH_DB] SQLite connected to ${resolveSqlitePath()}`);
 };
@@ -67,6 +69,16 @@ const ensureColumn = (database, tableName, columnName, definition) => {
   if (!hasColumn) {
     database.exec(`ALTER TABLE [${tableName}] ADD COLUMN ${definition};`);
   }
+};
+
+const ensureAnalyticsDashboardColumns = (database) => {
+  ensureColumn(database, 'AnalyticsDashboards', 'CanvasWidth', 'CanvasWidth INTEGER NOT NULL DEFAULT 1280');
+  ensureColumn(database, 'AnalyticsDashboards', 'CanvasHeight', 'CanvasHeight INTEGER NOT NULL DEFAULT 800');
+  ensureColumn(database, 'AnalyticsDashboards', 'FiltersJson', "FiltersJson TEXT NOT NULL DEFAULT '[]'");
+};
+
+const ensureAnalyticsQueryColumns = (database) => {
+  ensureColumn(database, 'AnalyticsQueries', 'MeasuresJson', "MeasuresJson TEXT NOT NULL DEFAULT '[]'");
 };
 
 const ensureCompanyColumns = (database) => {

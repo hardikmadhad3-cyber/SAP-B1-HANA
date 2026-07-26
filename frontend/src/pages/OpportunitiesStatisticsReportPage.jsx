@@ -246,6 +246,7 @@ export default function OpportunitiesStatisticsReportPage({
     taskId: `${taskIdPrefix}-criteria`,
     taskTitle: criteriaTitle,
     taskPath,
+    bounds: 'parent',
   });
   const reportWindow = useFloatingWindow({
     isOpen: hasReport,
@@ -253,6 +254,7 @@ export default function OpportunitiesStatisticsReportPage({
     taskId: `${taskIdPrefix}-report`,
     taskTitle: reportTitle,
     taskPath,
+    bounds: 'parent',
   });
 
   useEffect(() => {

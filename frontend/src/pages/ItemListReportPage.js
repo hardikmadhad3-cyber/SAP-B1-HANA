@@ -3,12 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
+import { ReportBackButton } from "../components/reports/ReportWindowControls";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
+import ReportPageShell from "../components/reports/ReportPageShell";
+import ReportWindow from "../components/reports/ReportWindow";
+import { ReportActionBar, ReportButton } from "../components/reports/ReportActionBar";
+import { ReportFieldRow, ReportLookupField, ReportSelect, ReportCheckbox, ReportPropertiesField } from "../components/reports/ReportFormControls";
 import { fetchItemGroups, fetchItemProperties } from "../api/itemApi";
 import { fetchItemListReport } from "../api/itemListReportApi";
 import "../styles/item-list-report.css";
-import "../styles/sales-analysis-report.css";
 
 const DEFAULT_ITEM_PROPERTIES = Array.from({ length: 64 }, (_, index) => ({
   number: index + 1,
@@ -232,27 +236,6 @@ function ItemListReportPage() {
     navigate(`/item-master?itemCode=${encodeURIComponent(itemCode)}`);
   };
 
-  const renderWindowControls = (windowFrame, onMinimize, onClose) => (
-    <div className="item-list-window__controls">
-      <button
-        type="button"
-        aria-label={windowFrame.isMinimized ? "Restore" : "Minimize"}
-        onClick={onMinimize}
-      >
-        {windowFrame.isMinimized ? "[]" : "-"}
-      </button>
-      <button
-        type="button"
-        aria-label={windowFrame.isMaximized ? "Restore" : "Maximize"}
-        title={windowFrame.isMaximized ? "Restore" : "Maximize"}
-        onClick={windowFrame.toggleMaximize}
-      >
-        []
-      </button>
-      <button type="button" aria-label="Close" onClick={onClose}>x</button>
-    </div>
-  );
-
   const renderExpandedRow = (row, index) => {
     const calculatorKey = `${index}:from`;
     const canUseCalculator = row.field === "tolerance";
@@ -303,22 +286,81 @@ function ItemListReportPage() {
     );
   };
 
-  const renderReportWindow = () => (
-    <div
-      className={`item-list-window item-list-window--report sap-report-window${reportWindow.isMinimized ? " is-minimized" : ""}${reportWindow.isMaximized ? " is-maximized" : ""}`}
-      {...reportWindow.windowProps}
-      style={{
-        ...(reportWindow.windowProps?.style || {}),
-      }}
-    >
-      <div className="item-list-window__titlebar sap-report-titlebar" {...reportWindow.titleBarProps}>
-        <div className="item-list-window__title sap-report-title">{reportResult?.reportTitle || "List of Items"}</div>
-        {renderWindowControls(reportWindow, handleMinimizeReportWindow, handleCloseReportWindow)}
-      </div>
-      <div className="item-list-window__accent" />
+  return (
+    <ReportPageShell>
+      <ReportWindow
+        windowFrame={criteriaWindow}
+        onMinimize={handleMinimizeCriteriaWindow}
+        onClose={handleCloseCriteriaWindow}
+        title="Items List - Selection Criteria"
+        size="compact"
+      >
+        <div className="item-list-criteria">
+          <ReportFieldRow label="Item No.">
+            <div className="item-list-criteria__item-row">
+              <span className="item-list-criteria__from-label">From</span>
+              <ReportLookupField
+                value={formState.itemFrom}
+                onChange={(event) => setField("itemFrom", event.target.value)}
+                onLookup={() => setLookupTarget("itemFrom")}
+                lookupLabel="Choose item from"
+              />
+              <span>To</span>
+              <ReportLookupField
+                value={formState.itemTo}
+                onChange={(event) => setField("itemTo", event.target.value)}
+                onLookup={() => setLookupTarget("itemTo")}
+                lookupLabel="Choose item to"
+              />
+            </div>
+          </ReportFieldRow>
 
-      {!reportWindow.isMinimized ? (
-        <div className="item-list-window__body item-list-window__body--report">
+          <ReportFieldRow label="Group">
+            <ReportSelect value={formState.groupCode} onChange={(event) => setField("groupCode", event.target.value)}>
+              {itemGroups.map((group) => (
+                <option key={`${group.code}-${group.name}`} value={group.code}>
+                  {group.code === "*" || group.name === "*" ? "All" : group.name || group.code}
+                </option>
+              ))}
+            </ReportSelect>
+          </ReportFieldRow>
+
+          <ReportPropertiesField label="Item Properties" summary={propertyModeLabel} onClick={() => setShowProperties(true)} />
+
+          <ReportCheckbox
+            label="Hide Items with No Quantity in Stock"
+            checked={formState.hideNoStock}
+            onChange={(event) => setField("hideNoStock", event.target.checked)}
+          />
+
+          <ReportCheckbox
+            label="Expanded Selection Criteria"
+            checked={formState.expandedSelection}
+            onChange={(event) => setField("expandedSelection", event.target.checked)}
+          />
+
+          <div className="item-list-criteria__expanded-grid">
+            {formState.expandedCriteria.map(renderExpandedRow)}
+          </div>
+
+          {isLoadingReport ? <div className="item-list-status">Loading Item List report...</div> : null}
+          {statusMessage ? <div className="item-list-status">{statusMessage}</div> : null}
+        </div>
+
+        <ReportActionBar>
+          <ReportButton variant="primary" onClick={handleOk}>OK</ReportButton>
+          <ReportButton onClick={handleCloseCriteriaWindow}>Cancel</ReportButton>
+        </ReportActionBar>
+      </ReportWindow>
+
+      {reportResult ? (
+        <ReportWindow
+          windowFrame={reportWindow}
+          onMinimize={handleMinimizeReportWindow}
+          onClose={handleCloseReportWindow}
+          title={reportResult?.reportTitle || "List of Items"}
+          size="large"
+        >
           <div className="item-list-report__toolbar">
             <label htmlFor="item-list-find">Find</label>
             <input
@@ -327,7 +369,6 @@ function ItemListReportPage() {
               value={findText}
               onChange={(event) => setFindText(event.target.value)}
             />
-            <button type="button" className="item-list-btn">Text Search</button>
             <span className="item-list-report__count">
               {filteredRows.length} of {reportResult?.totalRows || 0}
             </span>
@@ -397,117 +438,13 @@ function ItemListReportPage() {
 
           <div className="item-list-report__footer">
             <div className="item-list-report__footer-left">
-              <button
-                type="button"
-                className="item-list-report__back-btn"
-                aria-label="Back to selection criteria"
-                onClick={handleCloseReportWindow}
-              >
-                ←
-              </button>
-              <button type="button" className="item-list-btn" onClick={handleCloseReportWindow}>OK</button>
+              <ReportBackButton onClick={handleCloseReportWindow} />
             </div>
             <span className="item-list-report__print-note">*You can only select one price list for printing</span>
             <span>{company?.companyName || company?.dbName || "SAP Business One"}</span>
           </div>
-        </div>
+        </ReportWindow>
       ) : null}
-    </div>
-  );
-
-  return (
-    <div className="item-list-page sap-report-page">
-      <div
-        className={`item-list-window sap-report-window${criteriaWindow.isMinimized ? " is-minimized" : ""}${criteriaWindow.isMaximized ? " is-maximized" : ""}`}
-        {...criteriaWindow.windowProps}
-        style={{
-          ...(criteriaWindow.windowProps?.style || {}),
-        }}
-      >
-        <div className="item-list-window__titlebar sap-report-titlebar" {...criteriaWindow.titleBarProps}>
-          <div className="item-list-window__title sap-report-title">Items List - Selection Criteria</div>
-          {renderWindowControls(criteriaWindow, handleMinimizeCriteriaWindow, handleCloseCriteriaWindow)}
-        </div>
-        <div className="item-list-window__accent" />
-
-        {!criteriaWindow.isMinimized ? (
-          <div className="item-list-window__body">
-            <div className="item-list-criteria">
-              <div className="item-list-criteria__item-row">
-                <label>Item No.</label>
-                <span className="item-list-criteria__from-label">From</span>
-                <div className="item-list-criteria__lookup-wrap">
-                  <input
-                    type="text"
-                    value={formState.itemFrom}
-                    onChange={(event) => setField("itemFrom", event.target.value)}
-                  />
-                  <button type="button" onClick={() => setLookupTarget("itemFrom")}>...</button>
-                </div>
-                <span>To</span>
-                <div className="item-list-criteria__lookup-wrap">
-                  <input
-                    type="text"
-                    value={formState.itemTo}
-                    onChange={(event) => setField("itemTo", event.target.value)}
-                  />
-                  <button type="button" onClick={() => setLookupTarget("itemTo")}>...</button>
-                </div>
-              </div>
-
-              <div className="item-list-criteria__group-row">
-                <label>Group</label>
-                <select value={formState.groupCode} onChange={(event) => setField("groupCode", event.target.value)}>
-                  {itemGroups.map((group) => (
-                    <option key={`${group.code}-${group.name}`} value={group.code}>
-                      {group.code === "*" || group.name === "*" ? "All" : group.name || group.code}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="item-list-criteria__property-row">
-                <button type="button" className="item-list-btn item-list-btn--wide" onClick={() => setShowProperties(true)}>
-                  Item Properties
-                </button>
-                <input type="text" value={propertyModeLabel} readOnly />
-              </div>
-
-              <label className="item-list-criteria__checkbox">
-                <input
-                  type="checkbox"
-                  checked={formState.hideNoStock}
-                  onChange={(event) => setField("hideNoStock", event.target.checked)}
-                />
-                <span>Hide Items with No Quantity in Stock</span>
-              </label>
-
-              <label className="item-list-criteria__checkbox">
-                <input
-                  type="checkbox"
-                  checked={formState.expandedSelection}
-                  onChange={(event) => setField("expandedSelection", event.target.checked)}
-                />
-                <span>Expanded Selection Criteria</span>
-              </label>
-
-              <div className="item-list-criteria__expanded-grid">
-                {formState.expandedCriteria.map(renderExpandedRow)}
-              </div>
-
-              {isLoadingReport ? <div className="item-list-status">Loading Item List report...</div> : null}
-              {statusMessage ? <div className="item-list-status">{statusMessage}</div> : null}
-            </div>
-
-            <div className="item-list-window__footer">
-              <button type="button" className="item-list-btn" onClick={handleOk}>OK</button>
-              <button type="button" className="item-list-btn" onClick={handleCloseCriteriaWindow}>Cancel</button>
-            </div>
-          </div>
-        ) : null}
-      </div>
-
-      {reportResult ? renderReportWindow() : null}
 
       <ItemLookupModal
         isOpen={Boolean(lookupTarget)}
@@ -524,7 +461,7 @@ function ItemListReportPage() {
         onClose={() => setShowProperties(false)}
         onSave={(nextFilter) => setField("propertyFilter", nextFilter)}
       />
-    </div>
+    </ReportPageShell>
   );
 }
 

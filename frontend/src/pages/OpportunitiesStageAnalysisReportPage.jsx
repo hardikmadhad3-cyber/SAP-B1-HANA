@@ -133,6 +133,7 @@ function StageLookupModal({ isOpen, stages, selectedCodes, stageType, onClose, o
     taskId: 'stage-analysis-stage-lookup',
     taskTitle: 'Opportunity Stage',
     taskPath: '/reports/crm/opportunities/stage-analysis',
+    bounds: 'parent',
   });
 
   useEffect(() => {
@@ -245,6 +246,7 @@ function SalesEmployeeMultiLookupModal({ isOpen, selectedCodes, onClose, onApply
     taskId: 'stage-analysis-sales-employee-lookup',
     taskTitle: 'Sales Employee',
     taskPath: '/reports/crm/opportunities/stage-analysis',
+    bounds: 'parent',
   });
 
   const loadRows = async (query = '') => {
@@ -400,6 +402,7 @@ function BPPropertiesModal({
     taskId: 'stage-analysis-bp-properties',
     taskTitle: 'BP Properties',
     taskPath: '/reports/crm/opportunities/stage-analysis',
+    bounds: 'parent',
   });
 
   useEffect(() => {
@@ -602,6 +605,7 @@ export default function OpportunitiesStageAnalysisReportPage() {
     taskId: 'stage-analysis-criteria',
     taskTitle: 'Stage Analysis - Selection Criteria',
     taskPath: '/reports/crm/opportunities/stage-analysis',
+    bounds: 'parent',
   });
   const reportWindow = useFloatingWindow({
     isOpen: hasReport,
@@ -609,6 +613,7 @@ export default function OpportunitiesStageAnalysisReportPage() {
     taskId: 'stage-analysis-report',
     taskTitle: 'Stage Analysis',
     taskPath: '/reports/crm/opportunities/stage-analysis',
+    bounds: 'parent',
   });
 
   useEffect(() => {

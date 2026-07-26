@@ -1,35 +1,107 @@
+/* Shared input-group layout used by DocumentCurrencySelect and similar composite
+   fields across every document module. Several modules (DC/NC/SODA Sales Order,
+   DC/NC/SODA Delivery, Sales Quotation, A/R Invoice, A/R Credit Memo, Services
+   invoices) never defined this rule locally, so the currency dropdown + code
+   input fell back to block layout and wrapped onto two lines. Defining it once
+   here fixes all of them without touching per-module CSS or JSX. */
+.sap-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+
+.sap-input-group--currency {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(64px, 92px);
+}
+
+.sap-input-group--currency select:last-child {
+  grid-column: 1 / -1;
+}
+
+.sap-input-group--currency input[readonly] {
+  background: var(--sap-surface-soft, #f7fafc);
+}
+
+.sap-input-group--compact {
+  justify-content: flex-start;
+}
+
+.sap-input-group--wrap {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.sap-input-group > * {
+  min-width: 0;
+}
+
+.sap-input-group input,
+.sap-input-group select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sap-input-group button {
+  flex: 0 0 auto;
+}
+
 /* Shared SAP B1 UI foundation.
    This file intentionally normalizes the existing page-specific class families
    while the app migrates toward reusable SAP components. */
 
 :root {
-  --sap-font-family: "Bahnschrift", "Segoe UI", "Trebuchet MS", Arial, sans-serif;
-  --sap-page-bg: #f0f3f7;
+  --sap-font-family: "Segoe UI", "72", "Inter", "Helvetica Neue", Arial, sans-serif;
+  --sap-page-bg: #f5f6f8;
   --sap-surface: #ffffff;
   --sap-surface-soft: #f7fafc;
-  --sap-toolbar-bg: #e9eff5;
-  --sap-tab-bg: #e8edf2;
-  --sap-border: #c8d2dc;
-  --sap-border-strong: #9aa8b6;
-  --sap-border-soft: #dfe6ee;
-  --sap-text: #172334;
-  --sap-text-muted: #5d6f82;
-  --sap-heading: #123b63;
-  --sap-primary: #006fb8;
-  --sap-primary-dark: #00558f;
-  --sap-primary-soft: rgba(0, 111, 184, 0.15);
+  --sap-toolbar-bg: #eef2f7;
+  --sap-tab-bg: #eef1f5;
+  --sap-border: #d5dce3;
+  --sap-border-strong: #aab8c4;
+  --sap-border-soft: #e3e8ee;
+  --sap-text: #223548;
+  --sap-text-muted: #64748b;
+  --sap-heading: #0a4a85;
+  --sap-primary: #0a6ed1;
+  --sap-primary-dark: #0854a0;
+  --sap-primary-darker: #05387e;
+  --sap-primary-soft: rgba(10, 110, 209, 0.13);
   --sap-danger: #b42318;
   --sap-success: #137333;
   --sap-warning: #8a5a00;
-  --sap-radius-xs: 2px;
-  --sap-radius-sm: 4px;
-  --sap-radius-md: 6px;
-  --sap-shadow-modal: 0 16px 42px rgba(16, 32, 48, 0.22);
+  --sap-radius-xs: 4px;
+  --sap-radius-sm: 6px;
+  --sap-radius-md: 10px;
+  --sap-shadow-modal: 0 20px 48px rgba(15, 35, 65, 0.18);
+  --sap-shadow-soft: 0 2px 10px rgba(15, 35, 65, 0.07);
   --sap-control-height: 22px;
   --sap-control-font-size: 12px;
   --sap-grid-font-size: 11px;
-  --sap-row-hover: #f3f8fd;
+  --sap-row-hover: #f0f6fd;
   --sap-row-even: #fafbfd;
+  --sap-transition: 140ms ease;
+  /* Aliases kept for report pages that reference these names directly. */
+  --sap-table-header: var(--sap-toolbar-bg);
+  --sap-surface-muted: #edf1f5;
+}
+
+:is(
+  .po-page,
+  .so-page,
+  .del-page,
+  .im-page,
+  .sap-document-page,
+  .bom-page,
+  .uom-page,
+  .ip-payments-page,
+  .op-payments-page
+) :is(button, input, select, textarea, .po-tab, .so-tab, .del-tab, .im-tab) {
+  transition: background var(--sap-transition), border-color var(--sap-transition),
+    box-shadow var(--sap-transition), color var(--sap-transition);
 }
 
 :is(
@@ -543,6 +615,7 @@
   background: var(--sap-surface);
   border: 1px solid var(--sap-border);
   border-radius: var(--sap-radius-md);
+  box-shadow: var(--sap-shadow-soft);
 }
 
 :is(
@@ -1804,6 +1877,7 @@
 }
 
 :is(.sales-analysis-window, .prr-window, .sar-window, .rs-window, .sap-report-window) {
+  isolation: isolate;
   border: 1px solid var(--sap-border-strong);
   background: var(--sap-surface);
   box-shadow: 0 16px 34px rgba(42, 61, 82, 0.14);
@@ -1932,7 +2006,8 @@
   .prr-button,
   .rs-btn,
   .sar-cfl-btn,
-  .sap-report-btn
+  .sap-report-btn,
+  .sap-report-back-btn
 ) {
   min-height: 26px;
   border: 1px solid var(--sap-border-strong);
@@ -1953,6 +2028,20 @@
   border-color: var(--sap-primary-dark);
   background: linear-gradient(180deg, var(--sap-primary) 0%, var(--sap-primary-dark) 100%);
   color: #ffffff;
+}
+
+.sap-report-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sap-report-back-btn {
+  width: 42px;
+  height: 34px;
+  border-radius: 18px;
+  font-size: 20px;
+  line-height: 1;
 }
 
 :is(

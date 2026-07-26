@@ -296,6 +296,7 @@ export default function InformationSourceDistributionOverTimeReportPage() {
     taskId: 'information-source-distribution-over-time-criteria',
     taskTitle: `${REPORT_TITLE} - Selection Criteria`,
     taskPath: '/reports/crm/opportunities/information-source-distribution-over-time',
+    bounds: 'parent',
   });
   const reportFrame = useFloatingWindow({
     isOpen: hasReport,
@@ -303,6 +304,7 @@ export default function InformationSourceDistributionOverTimeReportPage() {
     taskId: 'information-source-distribution-over-time-report',
     taskTitle: REPORT_TITLE,
     taskPath: '/reports/crm/opportunities/information-source-distribution-over-time',
+    bounds: 'parent',
   });
   const graphFrame = useFloatingWindow({
     isOpen: showGraph,
@@ -310,6 +312,7 @@ export default function InformationSourceDistributionOverTimeReportPage() {
     taskId: 'information-source-distribution-over-time-graph',
     taskTitle: `${REPORT_TITLE} - Selection Criteria`,
     taskPath: '/reports/crm/opportunities/information-source-distribution-over-time',
+    bounds: 'parent',
   });
 
   useEffect(() => {

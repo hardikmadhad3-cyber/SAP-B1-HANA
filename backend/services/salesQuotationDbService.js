@@ -3,6 +3,7 @@
  * Mirrors salesOrderDbService.js but targets OQUT/QUT1 tables (ObjectCode = '23').
  */
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const { createMarketingDocumentLineLookupRepository } = require('./marketingDocumentLineLookupDbService');
@@ -675,15 +676,10 @@ const getContactsByCustomer = async (cardCode) => {
   `, { cardCode }));
 };
 
-const getAddressesByCustomer = (cardCode) => safe(db.query(`
-  SELECT CRD1.*, CardCode, AdresType, Address,
-         Street, StreetNo, Block, Building,
-         Address2, Address3,
-         City, County, State, ZipCode, Country
-  FROM   CRD1
-  WHERE  CardCode = @cardCode
-  ORDER  BY AdresType, Address
-`, { cardCode }));
+const getAddressesByCustomer = async (cardCode) => {
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'Sales Quotation' });
+  return addresses;
+};
 
 const getStateFromAddress = async (cardCode, addressCode) => {
   if (!cardCode || !addressCode) return { state: '' };
@@ -800,11 +796,20 @@ const getReferenceData = async () => {
 };
 
 const getCustomerDetails = async (cardCode) => {
+  if (!String(cardCode || '').trim()) {
+    return {
+      contacts: [],
+      bill_to_addresses: [],
+      pay_to_addresses: [],
+      ship_to_addresses: [],
+    };
+  }
   const [contacts, addresses] = await Promise.all([
     getContactsByCustomer(cardCode),
     getAddressesByCustomer(cardCode),
   ]);
   const billTo = addresses.filter(a => a.AdresType === 'B');
+  const shipTo = addresses.filter(a => a.AdresType === 'S');
   return {
     contacts: contacts.map(c => ({
       CardCode: c.CardCode, CntctCode: c.CntctCode,
@@ -814,6 +819,7 @@ const getCustomerDetails = async (cardCode) => {
     })),
     bill_to_addresses: billTo,
     pay_to_addresses: billTo,
+    ship_to_addresses: shipTo,
   };
 };
 

@@ -240,13 +240,7 @@ const getCustomerDetails = async (customerCode) => {
     return data;
   } catch (error) {
     console.error('[AR Invoice Service] Failed to load customer details via ODBC:', error);
-    return {
-      customer: null,
-      contacts: [],
-      pay_to_addresses: [],
-      ship_to_addresses: [],
-      withholding_tax: { subject: false, defaultCode: '', allowedCodes: [] },
-    };
+    throw error;
   }
 };
 

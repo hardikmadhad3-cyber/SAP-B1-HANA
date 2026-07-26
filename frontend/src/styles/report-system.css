@@ -1,0 +1,539 @@
+/* ============================================================
+   Shared Report UI Design System
+   ============================================================
+   One token set + one component layer for every "selection
+   criteria -> result" report page (Sales Analysis, Item List,
+   Inventory *, Purchase *, CRM/Opportunities *, Financial *, ...).
+
+   These tokens intentionally ALIAS the existing --sap-* palette
+   defined in sap-ui.css rather than declaring a second, competing
+   palette (that duplication is exactly what made report-studio.css
+   and a dozen page-specific report CSS files hard to keep in sync).
+
+   Components that consume these tokens live in:
+     components/reports/ReportPageShell.jsx
+     components/reports/ReportWindow.jsx
+     components/reports/ReportSection.jsx
+     components/reports/ReportTabs.jsx
+     components/reports/ReportActionBar.jsx
+     components/reports/ReportFormControls.jsx
+   ============================================================ */
+
+:root {
+  /* --- Height budget -------------------------------------------------
+     A report window's max-height is computed from the viewport, not
+     from its parent chain, because the app shell's content area
+     (.app-shell__content / .page-window-frame__body) only defines a
+     min-height, not a height -- a percentage height on a descendant
+     would not resolve against it. --report-shell-offset accounts for
+     the topbar + the route-level PageWindowFrame titlebar (present on
+     every report route except the handful excluded in
+     PageWindowFrame.jsx) + shell padding, with a small safety margin.
+     This single, named constant replaces the 14 different ad hoc
+     "100vh - Npx" guesses that used to live in per-report CSS files. */
+  --report-shell-offset: 172px;
+
+  /* --- Widths ---------------------------------------------------------
+     Chosen from the natural clusters already present across the
+     report family: ~520px (small single-purpose criteria), ~720px
+     (typical 1-2 column criteria), ~920px (the most common "large"
+     criteria width, independently reached by Sales Analysis, Purchase
+     Request and the Financial reports), ~1240px (result/list windows). */
+  --report-width-compact: 520px;
+  --report-width-medium: 720px;
+  --report-width-large: 920px;
+  --report-width-wide: 1240px;
+
+  /* --- Spacing --------------------------------------------------------- */
+  --report-space-xs: 4px;
+  --report-space-sm: 8px;
+  --report-space-md: 12px;
+  --report-space-lg: 20px;
+
+  /* --- Form grid --------------------------------------------------------- */
+  --report-label-width: 150px;
+  --report-control-height: var(--sap-control-height, 22px);
+  --report-control-radius: var(--sap-radius-xs, 4px);
+  --report-control-font-size: var(--sap-control-font-size, 12px);
+  --report-lookup-btn-width: 24px;
+
+  /* --- Palette (aliases -- one source of truth in sap-ui.css) --------- */
+  --report-bg: var(--sap-page-bg);
+  --report-window-bg: var(--sap-surface);
+  --report-header-bg: var(--sap-toolbar-bg);
+  --report-border: var(--sap-border);
+  --report-border-strong: var(--sap-border-strong);
+  --report-accent: linear-gradient(90deg, #e0a316 0%, #f3c94f 30%, transparent 30%);
+  --report-text: var(--sap-text);
+  --report-muted-text: var(--sap-text-muted);
+  --report-heading: var(--sap-heading);
+}
+
+/* ============================================================
+   ReportPageShell / ReportWorkspace
+   ============================================================
+   Fills whatever the page's root element already provides (each
+   report page's own root div is expected to keep width:100% /
+   height:100%, matching the existing convention). Only responsible
+   for horizontal centering + top alignment + consistent padding --
+   NOT for computing available width, which the app's grid/flex
+   shell (Sidebar + Header) already handles correctly upstream. */
+
+.report-page-shell {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: var(--report-space-lg);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  .report-page-shell {
+    padding: var(--report-space-md);
+  }
+}
+
+/* ============================================================
+   ReportWindow
+   ============================================================ */
+
+.report-window {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  isolation: isolate;
+  width: min(var(--report-window-width, var(--report-width-medium)), 100%);
+  max-width: 100%;
+  max-height: calc(100vh - var(--report-shell-offset));
+  border: 1px solid var(--report-border-strong);
+  border-radius: var(--sap-radius-md, 10px);
+  background: var(--report-window-bg);
+  box-shadow: var(--sap-shadow-modal);
+  color: var(--report-text);
+  font-family: var(--sap-font-family);
+  overflow: hidden;
+}
+
+.report-window.is-minimized {
+  display: none;
+}
+
+.report-window.is-maximized {
+  /* useFloatingWindow already supplies explicit fixed position/size
+     via inline style when maximized -- just stop capping height here. */
+  max-height: none;
+}
+
+.report-window--compact { --report-window-width: var(--report-width-compact); }
+.report-window--medium  { --report-window-width: var(--report-width-medium); }
+.report-window--large   { --report-window-width: var(--report-width-large); }
+.report-window--wide    { --report-window-width: var(--report-width-wide); }
+
+.report-window__titlebar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 10px 6px 14px;
+  border-bottom: 1px solid var(--report-border);
+  background: var(--report-header-bg);
+  cursor: move;
+}
+
+.report-window__title {
+  color: var(--report-heading);
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.report-window__accent {
+  flex: 0 0 auto;
+  height: 3px;
+  background: var(--report-accent);
+}
+
+.report-window__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--report-space-lg);
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--report-window-bg);
+}
+
+.report-window__body:focus-visible {
+  outline: 2px solid var(--sap-primary);
+  outline-offset: -2px;
+}
+
+/* ============================================================
+   ReportSection
+   ============================================================ */
+
+.report-section {
+  margin: 0 0 var(--report-space-md);
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.report-section:last-child {
+  margin-bottom: 0;
+}
+
+.report-section--bordered {
+  padding: var(--report-space-sm) var(--report-space-md) var(--report-space-md);
+  border: 1px solid var(--report-border-strong);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: var(--sap-surface-soft, #f7fafc);
+}
+
+.report-section__title {
+  padding: 0 4px;
+  color: var(--report-heading);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.report-section__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--report-space-sm);
+  min-width: 0;
+}
+
+.report-section--compact .report-section__body {
+  gap: var(--report-space-xs);
+}
+
+/* ============================================================
+   ReportTabs
+   ============================================================ */
+
+.report-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--report-border-strong);
+  margin-bottom: var(--report-space-md);
+}
+
+.report-tabs__tab {
+  min-height: 32px;
+  padding: 6px 16px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--sap-radius-xs, 4px) var(--sap-radius-xs, 4px) 0 0;
+  background: transparent;
+  color: var(--report-muted-text);
+  font-family: var(--sap-font-family);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.report-tabs__tab:hover {
+  color: var(--report-text);
+  background: var(--sap-surface-soft, #f7fafc);
+}
+
+.report-tabs__tab.is-active {
+  border-color: var(--report-border-strong);
+  background: var(--report-window-bg);
+  color: var(--sap-primary);
+  position: relative;
+  top: 1px;
+}
+
+.report-tabs__tab:focus-visible {
+  outline: 2px solid var(--sap-primary);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   ReportActionBar / ReportButton
+   ============================================================ */
+
+.report-action-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--report-space-sm);
+  padding: var(--report-space-sm) var(--report-space-lg);
+  border-top: 1px solid var(--report-border);
+  background: var(--report-header-bg);
+}
+
+.report-action-bar--split {
+  justify-content: space-between;
+}
+
+.report-btn {
+  min-height: 28px;
+  padding: 0 18px;
+  border: 1px solid var(--report-border-strong);
+  border-radius: var(--report-control-radius);
+  background: linear-gradient(180deg, #ffffff 0%, #e8edf2 100%);
+  color: var(--report-text);
+  font-family: var(--sap-font-family);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--sap-transition, 140ms ease), border-color var(--sap-transition, 140ms ease);
+}
+
+.report-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #dfe8f1 100%);
+}
+
+.report-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.report-btn--primary {
+  border-color: var(--sap-primary-dark);
+  background: linear-gradient(180deg, var(--sap-primary) 0%, var(--sap-primary-dark) 100%);
+  color: #ffffff;
+}
+
+.report-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--sap-primary) 0%, var(--sap-primary-darker) 100%);
+}
+
+.report-btn:focus-visible {
+  outline: 2px solid var(--sap-primary);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   Form controls: ReportFieldRow / ReportFromTo / ReportLookupField /
+   ReportDateField / ReportSelect / ReportCheckbox / ReportRadioGroup /
+   ReportPropertiesField / ReportDivider
+   ============================================================ */
+
+.report-control {
+  height: var(--report-control-height);
+  min-width: 0;
+  padding: 0 6px;
+  border: 1px solid var(--report-border-strong);
+  border-radius: var(--report-control-radius);
+  background: var(--report-window-bg);
+  color: var(--report-text);
+  font-family: var(--sap-font-family);
+  font-size: var(--report-control-font-size);
+}
+
+.report-control:focus-visible {
+  outline: none;
+  border-color: var(--sap-primary);
+  box-shadow: 0 0 0 2px var(--sap-primary-soft, rgba(10, 110, 209, 0.13));
+}
+
+.report-control:disabled,
+.report-control[readonly] {
+  background: var(--sap-surface-muted, #edf1f5);
+  color: var(--report-muted-text);
+}
+
+.report-field-row {
+  display: grid;
+  grid-template-columns: var(--report-label-width) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--report-space-sm);
+  min-width: 0;
+}
+
+.report-field-row__label {
+  color: var(--report-text);
+  font-size: 12px;
+}
+
+.report-field-row__control {
+  min-width: 0;
+}
+
+.report-field-row__control .report-control,
+.report-field-row__control select {
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .report-field-row {
+    grid-template-columns: 1fr;
+    row-gap: var(--report-space-xs);
+  }
+}
+
+.report-lookup-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--report-lookup-btn-width);
+  gap: 4px;
+  min-width: 0;
+}
+
+.report-lookup-field__btn {
+  height: var(--report-control-height);
+  padding: 0;
+  border: 1px solid var(--report-border-strong);
+  border-radius: var(--report-control-radius);
+  background: linear-gradient(180deg, #ffffff 0%, #edf3f9 100%);
+  color: var(--report-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.report-lookup-field__btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #dfe8f1 100%);
+}
+
+.report-lookup-field__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.report-lookup-field__btn:focus-visible {
+  outline: 2px solid var(--sap-primary);
+  outline-offset: 1px;
+}
+
+.report-from-to {
+  display: grid;
+  grid-template-columns: var(--report-label-width) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--report-space-sm);
+  min-width: 0;
+}
+
+.report-from-to__label {
+  color: var(--report-text);
+  font-size: 12px;
+}
+
+.report-from-to__tag {
+  color: var(--report-muted-text);
+  font-size: 12px;
+  justify-self: end;
+}
+
+.report-from-to__from,
+.report-from-to__to {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .report-from-to {
+    grid-template-columns: var(--report-label-width) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    row-gap: var(--report-space-xs);
+  }
+
+  .report-from-to__label {
+    grid-column: 1 / -1;
+  }
+
+  .report-from-to__tag--from {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .report-from-to__from {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .report-from-to__tag--to {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .report-from-to__to {
+    grid-column: 2;
+    grid-row: 3;
+  }
+}
+
+@media (max-width: 560px) {
+  .report-from-to {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .report-from-to__tag--from,
+  .report-from-to__tag--to {
+    grid-column: 1;
+    justify-self: start;
+  }
+
+  .report-from-to__from,
+  .report-from-to__to {
+    grid-column: 1;
+  }
+
+  .report-from-to__tag--from { grid-row: 2; }
+  .report-from-to__from { grid-row: 3; }
+  .report-from-to__tag--to { grid-row: 4; }
+  .report-from-to__to { grid-row: 5; }
+}
+
+.report-checkbox,
+.report-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--report-text);
+  cursor: pointer;
+}
+
+.report-checkbox input,
+.report-radio input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--sap-primary);
+  cursor: pointer;
+}
+
+.report-checkbox input:focus-visible,
+.report-radio input:focus-visible {
+  outline: 2px solid var(--sap-primary);
+  outline-offset: 2px;
+}
+
+.report-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--report-space-sm) var(--report-space-lg);
+}
+
+.report-radio-group--columns {
+  display: grid;
+  grid-template-columns: repeat(var(--report-radio-columns, 2), minmax(0, 1fr));
+  gap: var(--report-space-xs) var(--report-space-lg);
+}
+
+.report-properties-field {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--report-space-sm);
+  align-items: center;
+  min-width: 0;
+}
+
+.report-divider {
+  width: 100%;
+  height: 1px;
+  margin: var(--report-space-sm) 0;
+  border: none;
+  background: var(--report-border);
+}

@@ -3,6 +3,7 @@
  * Column names verified against SAP B1 schema.
  */
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const salesOrderDb = require('./salesOrderDbService');
 const salesQuotationDb = require('./salesQuotationDbService');
@@ -791,82 +792,8 @@ const getContactsByCustomer = async (cardCode) => {
   }));
 };
 
-const getBillToAddressesByCustomer = async (cardCode) => {
-  const result = await safe(db.query(`
-    SELECT
-      CRD1.*,
-      CardCode,
-      Address,
-      Street,
-      StreetNo,
-      Block,
-      Building,
-      City,
-      County,
-      State,
-      ZipCode,
-      Country,
-      AdresType
-    FROM   CRD1
-    WHERE  CardCode = @cardCode
-      AND  AdresType = 'B'
-    ORDER  BY Address
-  `, { cardCode }));
-
-  return result.map(a => ({
-    ...a,
-    CardCode: a.CardCode,
-    Address: a.Address,
-    Street: a.Street,
-    StreetNo: a.StreetNo,
-    Block: a.Block,
-    Building: a.Building,
-    City: a.City,
-    County: a.County,
-    State: a.State,
-    ZipCode: a.ZipCode,
-    Country: a.Country,
-    AdresType: a.AdresType,
-  }));
-};
-
-const getShipToAddressesByCustomer = async (cardCode) => {
-  const result = await safe(db.query(`
-    SELECT
-      CRD1.*,
-      CardCode,
-      Address,
-      Street,
-      StreetNo,
-      Block,
-      Building,
-      City,
-      County,
-      State,
-      ZipCode,
-      Country,
-      AdresType
-    FROM   CRD1
-    WHERE  CardCode = @cardCode
-      AND  AdresType = 'S'
-    ORDER  BY Address
-  `, { cardCode }));
-
-  return result.map(a => ({
-    ...a,
-    CardCode: a.CardCode,
-    Address: a.Address,
-    Street: a.Street,
-    StreetNo: a.StreetNo,
-    Block: a.Block,
-    Building: a.Building,
-    City: a.City,
-    County: a.County,
-    State: a.State,
-    ZipCode: a.ZipCode,
-    Country: a.Country,
-    AdresType: a.AdresType,
-  }));
+const getAddressesByCustomer = async (cardCode) => {
+  return loadBusinessPartnerAddresses(db, cardCode, { context: 'AR Invoice' });
 };
 
 // ── Base Documents (Sales Orders and Deliveries) ──────────────────────────────────────────────────────────
@@ -1092,12 +1019,12 @@ const getCustomerWithholdingTaxDetails = async (customerCode) => {
 };
 
 const getCustomerDetails = async (customerCode) => {
-  const [contacts, billToAddresses, shipToAddresses, withholdingTax] = await Promise.all([
+  const [contacts, addressGroups, withholdingTax] = await Promise.all([
     getContactsByCustomer(customerCode),
-    getBillToAddressesByCustomer(customerCode),
-    getShipToAddressesByCustomer(customerCode),
+    getAddressesByCustomer(customerCode),
     getCustomerWithholdingTaxDetails(customerCode),
   ]);
+  const { billTo: billToAddresses, shipTo: shipToAddresses } = addressGroups;
 
   // Get customer basic info
   const customers = await safe(db.query(`
@@ -1115,6 +1042,7 @@ const getCustomerDetails = async (customerCode) => {
     customer,
     contacts,
     pay_to_addresses: billToAddresses,  // Frontend expects 'pay_to_addresses' for bill-to
+    bill_to_addresses: billToAddresses,
     ship_to_addresses: shipToAddresses,
     gstin: gstProfile.GSTIN || '',
     customerState: gstProfile.State || '',

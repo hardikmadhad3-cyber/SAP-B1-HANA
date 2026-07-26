@@ -3,6 +3,7 @@
  * Column names verified against NCPL_110126 schema.
  */
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const hsnCodeDbService = require('./hsnCodeDbService');
 const {
@@ -2046,27 +2047,7 @@ const getContactsByCustomer = async (cardCode) => {
   return result;
 };
 const getAddressesByCustomer = async (cardCode) => {
-  const crd1FieldMetadata = await getTableFieldMetadata('CRD1');
-  const optionalCrd1Column = (candidates, alias, fallback = "''") => {
-    const resolvedColumn = candidates
-      .map((candidate) => resolveTableColumnName(crd1FieldMetadata, candidate))
-      .find(Boolean);
-    return resolvedColumn
-      ? `T0.${quoteSqlIdentifier(resolvedColumn)} AS ${quoteSqlIdentifier(alias)}`
-      : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
-  };
-
-  return safe(db.query(`
-    SELECT T0.*, T0.CardCode, T0.AdresType, T0.Address,
-           T0.Street, T0.StreetNo, T0.Block, T0.Building,
-           T0.Address2, T0.Address3,
-           T0.City, T0.County, T0.State, T0.ZipCode, T0.Country,
-           ${optionalCrd1Column(['GSTRegnNo', 'GSTIN'], 'GSTIN')},
-           ${optionalCrd1Column(['GSTType'], 'GSTType')}
-    FROM   CRD1 T0
-    WHERE  T0.CardCode = @cardCode
-    ORDER  BY T0.AdresType, T0.Address
-  `, { cardCode }));
+  return loadBusinessPartnerAddresses(db, cardCode, { context: 'Sales Order' });
 };
 
 const getStateFromAddress = async (cardCode, addressCode) => {
@@ -2238,15 +2219,12 @@ const getReferenceData = async () => {
 };
 
 const getCustomerDetails = async (cardCode) => {
-  
-  const [contacts, addresses] = await Promise.all([
-    
+  const [contacts, addressGroups] = await Promise.all([
     getContactsByCustomer(cardCode),
     getAddressesByCustomer(cardCode),
   ]);
 
-  const billTo = addresses.filter(a => a.AdresType === 'B');
-  const shipTo = addresses.filter(a => a.AdresType === 'S');
+  const { billTo, shipTo } = addressGroups;
 
   return {
     contacts: contacts.map(c => ({

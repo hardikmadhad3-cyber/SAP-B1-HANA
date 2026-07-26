@@ -868,6 +868,14 @@ const getHSNCodes = async (query = '') => {
   }));
 };
 
+const getSACCodes = async (query = '') => {
+  const rows = await hsnCodeDbService.getSACCodes(query, 100, 0);
+  return rows.map((row) => ({
+    code: row.serviceCode || row.code || '',
+    name: row.serviceName || row.description || '',
+  }));
+};
+
 const getPriceLists = async (query = '') => {
   const hasQuery = Boolean(String(query || '').trim());
   const rows = await safe(
@@ -1048,6 +1056,7 @@ module.exports = {
   getItemGroups,
   getManufacturers,
   getHSNCodes,
+  getSACCodes,
   getPriceLists,
   getVendors,
   getWarehouses,
