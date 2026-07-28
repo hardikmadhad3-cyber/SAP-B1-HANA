@@ -13,8 +13,8 @@
 .production-open-items-toolbar select,
 .production-open-items-search input {
   height: 20px;
-  border: 1px solid #bdbdbd;
-  background: #fff6bf;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  background: var(--sap-surface, #ffffff);
   font-size: 12px;
 }
 
@@ -28,15 +28,16 @@
 
 .production-open-items-search span {
   justify-self: end;
-  color: #555;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .production-open-items-grid-wrap {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  border: 1px solid #c9c9c9;
-  background: #dfdfdf;
+  border: 1px solid var(--sap-border, #d5dce3);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: var(--sap-surface, #ffffff);
 }
 
 .production-open-items-grid {
@@ -53,28 +54,28 @@
   z-index: 1;
   height: 22px;
   padding: 3px 5px;
-  border-right: 1px solid #c5c5c5;
-  border-bottom: 1px solid #c5c5c5;
-  background: linear-gradient(180deg, #f0f0f0 0%, #dbdbdb 100%);
-  color: #1e3955;
-  font-weight: 400;
+  border-right: 1px solid var(--sap-border-soft, #e3e8ee);
+  border-bottom: 1px solid var(--sap-border-soft, #e3e8ee);
+  background: var(--sap-toolbar-bg, #eef2f7);
+  color: var(--sap-heading, #0a4a85);
+  font-weight: 700;
   text-align: left;
 }
 
 .production-open-items-grid td {
   height: 21px;
   padding: 2px 5px;
-  border-right: 1px solid #c8c8c8;
-  border-bottom: 1px solid #c8c8c8;
-  background: #e5e5e5;
-  color: #000;
+  border-right: 1px solid var(--sap-border-soft, #e3e8ee);
+  border-bottom: 1px solid var(--sap-border-soft, #e3e8ee);
+  background: var(--sap-surface, #ffffff);
+  color: var(--sap-text, #223548);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .production-open-items-grid tr.is-selected td {
-  background: #ffd978;
+  background: #e7f2fb;
 }
 
 .production-open-items-grid td.poi-doc,

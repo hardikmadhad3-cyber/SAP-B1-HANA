@@ -17,7 +17,7 @@
 }
 
 .iag-divider {
-  background: #8e8e8e;
+  background: var(--sap-border, #d5dce3);
 }
 
 .iag-report-date {
@@ -101,7 +101,7 @@
 .iag-section__title {
   display: inline-block;
   margin-left: 2px;
-  color: #000;
+  color: var(--sap-heading, #0a4a85);
   font-size: 12px;
   font-weight: 600;
   text-decoration: underline;

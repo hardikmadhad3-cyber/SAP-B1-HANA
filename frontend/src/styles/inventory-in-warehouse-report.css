@@ -30,7 +30,7 @@
 .iwh-display label { grid-column: 2; display: flex; gap: 6px; align-items: center; }
 .iwh-display input { width: auto; height: auto; }
 .iwh-price-source { display: grid; grid-template-columns: 90px minmax(140px, 1fr); align-items: center; gap: 12px; font-size: 12px; }
-.iwh-opening-trigger { display: block; margin: 6px 0 0 auto; width: 25px; height: 19px; padding: 0; border: 1px solid var(--sap-border-strong, #aab8c4); border-radius: var(--sap-radius-xs, 4px); background: linear-gradient(180deg, #fff8c9 0%, #f4d45d 100%); color: #6b5200; font-size: 12px; line-height: 14px; }
+.iwh-opening-trigger { display: block; margin: 6px 0 0 auto; width: 25px; height: 19px; padding: 0; border: 1px solid var(--sap-border-strong, #aab8c4); border-radius: var(--sap-radius-xs, 4px); background: linear-gradient(180deg, #ffffff 0%, var(--sap-toolbar-bg, #eef2f7) 100%); color: var(--sap-text, #223548); font-size: 12px; line-height: 14px; }
 .iwh-btn { min-width: 82px; height: 24px; padding: 2px 15px; border: 1px solid var(--sap-border-strong, #aab8c4); border-radius: var(--sap-radius-sm, 6px); background: linear-gradient(180deg, #ffffff 0%, #eef2f7 100%); color: var(--sap-text, #223548); font-size: 12px; font-weight: 600; transition: background 140ms ease, border-color 140ms ease; }
 .iwh-btn:hover:not(:disabled) { background: linear-gradient(180deg, #ffffff 0%, #e2ecf5 100%); border-color: var(--sap-primary, #0a6ed1); }
 .iwh-status { margin-top: 8px; color: var(--sap-danger, #b42318); font-size: 12px; }

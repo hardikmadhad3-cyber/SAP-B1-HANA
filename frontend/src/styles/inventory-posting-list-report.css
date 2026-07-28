@@ -130,7 +130,7 @@
 
 .ipl-criteria__empty-panel {
   padding: 18px 8px;
-  color: #555;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .ipl-other-summary {
@@ -143,7 +143,7 @@
   position: absolute;
   top: 42px;
   left: 50%;
-  width: min(560px, calc(100vw - 40px));
+  width: min(560px, 100%);
   max-height: calc(100vh - 84px);
   overflow: hidden;
   transform: translateX(-50%);
@@ -256,7 +256,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: #244d7c;
+  color: var(--sap-primary-dark, #0854a0);
   font-size: 12px;
 }
 
@@ -334,7 +334,7 @@
   top: 34px;
   left: 14px;
   width: 840px;
-  max-width: calc(100vw - 40px);
+  max-width: calc(100% - 28px);
   max-height: calc(100vh - 68px);
   overflow: hidden;
   background: var(--sap-surface);
@@ -393,7 +393,7 @@
 
 .ipl-expanded-modal__general-head {
   height: 18px;
-  color: #111;
+  color: var(--sap-heading, #0a4a85);
   text-align: center;
 }
 
@@ -595,7 +595,7 @@
 
 @media (max-width: 1100px) {
   .ipl-criteria-window {
-    width: calc(100vw - 32px);
+    width: 100%;
     max-width: none;
   }
 

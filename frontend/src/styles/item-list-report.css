@@ -12,34 +12,19 @@
 .item-list-criteria {
   display: grid;
   gap: 9px;
-  color: #111;
+  color: var(--sap-text, #223548);
   font-size: 13px;
 }
 
 .item-list-criteria__item-row {
   display: grid;
-  grid-template-columns: 158px 42px 92px 30px 92px;
-  gap: 6px;
+  grid-template-columns: 34px minmax(0, 1fr) 20px minmax(0, 1fr);
+  gap: 8px;
   align-items: center;
 }
 
 .item-list-criteria__from-label {
   justify-self: end;
-}
-
-.item-list-criteria__group-row {
-  display: grid;
-  grid-template-columns: 234px 1fr;
-  gap: 6px;
-  align-items: center;
-  padding-top: 4px;
-}
-
-.item-list-criteria__property-row {
-  display: grid;
-  grid-template-columns: 142px 1fr;
-  gap: 98px;
-  align-items: center;
 }
 
 .item-list-criteria__lookup-wrap {
@@ -53,19 +38,19 @@
   width: 100%;
   height: 20px;
   padding: 1px 4px;
-  border: 1px solid #bdbdbd;
-  background: #fff;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  background: var(--sap-surface, #ffffff);
   font-size: 12px;
 }
 
 .item-list-criteria input[readonly],
 .item-list-criteria input:disabled {
-  background: #e8e8e8;
+  background: var(--sap-surface-muted, #edf1f5);
 }
 
 .item-list-criteria select:disabled,
 .item-list-criteria input:disabled {
-  color: #555;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .item-list-criteria__lookup-wrap button,
@@ -89,7 +74,7 @@
   width: auto;
   height: auto;
   margin: 0;
-  accent-color: #6b84a5;
+  accent-color: var(--sap-primary, #0a6ed1);
 }
 
 .item-list-criteria__expanded-grid {
@@ -146,7 +131,7 @@
 }
 
 .item-list-status {
-  color: #6b3c00;
+  color: var(--sap-warning, #8a5a00);
   font-size: 12px;
 }
 
@@ -212,7 +197,7 @@
 
 .item-list-report__toolbar {
   display: grid;
-  grid-template-columns: 70px 170px 112px 1fr;
+  grid-template-columns: 46px 170px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
@@ -331,7 +316,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: #000;
+  color: var(--sap-text, #223548);
   font: inherit;
   overflow: hidden;
   text-align: left;
@@ -376,7 +361,7 @@
   justify-content: space-between;
   gap: 10px;
   padding-top: 8px;
-  color: #555;
+  color: var(--sap-text-muted, #64748b);
   font-size: 12px;
 }
 
@@ -388,15 +373,13 @@
 
 .item-list-report__print-note {
   flex: 1;
-  color: #1f2f45;
+  color: var(--sap-heading, #0a4a85);
   font-weight: 600;
   text-align: center;
 }
 
 @media (max-width: 900px) {
   .item-list-criteria__item-row,
-  .item-list-criteria__group-row,
-  .item-list-criteria__property-row,
   .item-list-criteria__expanded-row,
   .item-list-report__toolbar {
     grid-template-columns: 1fr;

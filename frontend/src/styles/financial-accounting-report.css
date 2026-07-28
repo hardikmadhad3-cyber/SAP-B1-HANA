@@ -4,7 +4,7 @@
   min-height: calc(100vh - 140px);
   padding: 12px 18px 24px;
   overflow: hidden;
-  color: #10283d;
+  color: var(--sap-text, #223548);
   font-size: 12px;
 }
 
@@ -15,7 +15,7 @@
 }
 
 .fac-report-window {
-  width: min(560px, calc(100vw - 230px));
+  width: min(560px, 100%);
   max-width: 560px;
   max-height: calc(100vh - 170px);
   display: flex;
@@ -24,25 +24,25 @@
 }
 
 .fac-report-window--result {
-  width: min(1160px, calc(100vw - 230px));
+  width: min(1160px, 100%);
   max-width: none;
   height: calc(100vh - 170px);
 }
 
 .fac-report-window--cash-flow {
-  width: min(560px, calc(100vw - 230px));
+  width: min(560px, 100%);
   max-width: 560px;
 }
 
 .fac-report-window.fac-report-window--trial-balance {
-  width: min(620px, calc(100vw - 230px));
+  width: min(620px, 100%);
   max-width: 620px;
 }
 
 .fac-report-window--balance-sheet,
 .fac-report-window--profit-loss,
 .fac-report-window--cash-flow-reference {
-  width: min(560px, calc(100vw - 230px));
+  width: min(560px, 100%);
 }
 
 .fac-report-window.is-minimized {
@@ -50,7 +50,7 @@
 }
 
 .fac-report-window.is-maximized {
-  width: calc(100vw - 16px);
+  width: 100%;
   height: calc(100vh - 16px);
   max-width: none;
   max-height: calc(100vh - 16px);
@@ -63,10 +63,10 @@
 .fac-report-page :is(input:not([type="checkbox"]):not([type="radio"]), select) {
   min-width: 0;
   height: 22px;
-  border: 1px solid #98a9ba;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
   border-radius: 0;
-  background: #fff;
-  color: #071f35;
+  background: var(--sap-surface, #ffffff);
+  color: var(--sap-text, #223548);
   font: inherit;
   line-height: 20px;
 }
@@ -95,8 +95,8 @@
   flex: 1 1 auto;
   padding: 12px 10px 10px;
   overflow: auto;
-  background: #fff;
-  color: #071f35;
+  background: var(--sap-surface, #ffffff);
+  color: var(--sap-text, #223548);
   font-size: 13px;
 }
 
@@ -139,9 +139,10 @@
 .fac-report-message {
   margin-top: 8px;
   padding: 7px 9px;
-  border: 1px solid #c9b264;
-  background: #fff7d6;
-  color: #5c4700;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: var(--sap-primary-soft, rgba(10, 110, 209, 0.13));
+  color: var(--sap-heading, #0a4a85);
 }
 
 .fac-report-footer {
@@ -149,8 +150,8 @@
   gap: 8px;
   flex: 0 0 auto;
   padding: 10px 18px 14px;
-  border-top: 1px solid #b4b4b4;
-  background: #fff;
+  border-top: 1px solid var(--sap-border, #d5dce3);
+  background: var(--sap-surface, #ffffff);
 }
 
 .fac-report-footer .sap-report-btn {
@@ -418,7 +419,7 @@
 }
 
 .tb-account-name {
-  color: #001f3b;
+  color: var(--sap-text, #223548);
 }
 
 .tb-date-row {
@@ -526,8 +527,8 @@
   height: 24px;
   margin-left: 2px;
   padding: 0;
-  border: 1px solid #98a9ba;
-  background: linear-gradient(180deg, #fff 0%, #e8edf2 100%);
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  background: linear-gradient(180deg, #ffffff 0%, var(--sap-toolbar-bg, #eef2f7) 100%);
   font: inherit;
 }
 
@@ -541,7 +542,7 @@
   gap: 0;
   padding: 0;
   margin: 0;
-  border-bottom: 1px solid #0071bc;
+  border-bottom: 1px solid var(--sap-primary, #0a6ed1);
 }
 
 .cf-tabs .sales-analysis-tabs__tab {
@@ -556,7 +557,7 @@
 .cf-tab-panel {
   min-height: 176px;
   border-top: 0;
-  background: #fff;
+  background: var(--sap-surface, #ffffff);
 }
 
 .cf-small-grid {
@@ -574,16 +575,16 @@
 }
 
 .cf-small-grid__head {
-  color: #071f35;
+  color: var(--sap-heading, #0a4a85);
   font-weight: 700;
 }
 
 .cf-small-grid__row {
-  color: #000;
+  color: var(--sap-text, #223548);
 }
 
 .cf-small-grid__row.is-blank {
-  color: #000;
+  color: var(--sap-text, #223548);
 }
 
 .cf-account-cell {
@@ -593,7 +594,7 @@
 }
 
 .cf-arrow {
-  color: #005aa0;
+  color: var(--sap-primary-dark, #0854a0);
   margin-right: 2px;
 }
 
@@ -637,15 +638,16 @@
 
 .cf-section-label {
   margin: 7px 0 3px;
-  color: #071f35;
+  color: var(--sap-heading, #0a4a85);
   font-weight: 700;
 }
 
 .cf-projected-grid-wrap,
 .cf-result-grid-wrap {
   overflow: auto;
-  border: 1px solid #c2c8cf;
-  background: #fff;
+  border: 1px solid var(--sap-border, #d5dce3);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: var(--sap-surface, #ffffff);
 }
 
 .cf-projected-grid,
@@ -668,7 +670,7 @@
 .fac-filter-grid td {
   height: 22px;
   padding: 2px 5px;
-  border: 1px solid #c8d2dc;
+  border: 1px solid var(--sap-border-soft, #e3e8ee);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -678,8 +680,8 @@
 .cf-result-grid th,
 .fac-grid th,
 .fac-filter-grid th {
-  background: #e9eff5;
-  color: #123b63;
+  background: var(--sap-toolbar-bg, #eef2f7);
+  color: var(--sap-heading, #0a4a85);
   font-weight: 700;
 }
 
@@ -699,7 +701,7 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  background: #fff;
+  background: var(--sap-surface, #ffffff);
 }
 
 .fac-result-toolbar,
@@ -716,7 +718,7 @@
 
 .fac-result-toolbar,
 .cf-result-toolbar {
-  border-bottom: 1px solid #c8d2dc;
+  border-bottom: 1px solid var(--sap-border, #d5dce3);
 }
 
 .fac-grid-wrap {
@@ -744,7 +746,7 @@
 
 .fac-grid tr.is-group td,
 .fac-grid tr.is-title td {
-  color: #174a8b;
+  color: var(--sap-primary-dark, #0854a0);
   font-weight: 700;
 }
 
@@ -763,7 +765,7 @@
 
 .fac-external-code {
   margin-left: 5px;
-  color: #5d6f82;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .fac-tb-report-dates,
@@ -799,11 +801,11 @@
 
 .cf-row-toggle {
   margin-right: 3px;
-  color: #005aa0;
+  color: var(--sap-primary-dark, #0854a0);
 }
 
 .cf-result-row.is-period td {
-  color: #0c4c91;
+  color: var(--sap-primary-dark, #0854a0);
   font-weight: 700;
 }
 
@@ -832,9 +834,10 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #98a9ba;
-  background: #fff;
-  box-shadow: 0 16px 34px rgba(42, 61, 82, 0.18);
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-md, 10px);
+  background: var(--sap-surface, #ffffff);
+  box-shadow: var(--sap-shadow-modal, 0 20px 48px rgba(15, 35, 65, 0.18));
 }
 
 .fac-modal--revaluation {
@@ -868,8 +871,8 @@
   gap: 8px;
   flex: 0 0 auto;
   padding: 10px;
-  border-top: 1px solid #b4b4b4;
-  background: #fff;
+  border-top: 1px solid var(--sap-border, #d5dce3);
+  background: var(--sap-surface, #ffffff);
 }
 
 .fac-modal-clear {
@@ -880,22 +883,23 @@
   display: flex;
   gap: 1px;
   padding: 8px 10px 0;
-  border-bottom: 1px solid #0071bc;
+  border-bottom: 1px solid var(--sap-primary, #0a6ed1);
 }
 
 .fac-modal-tabs button {
   min-width: 88px;
   min-height: 26px;
-  border: 1px solid #98a9ba;
+  border: 1px solid var(--sap-border, #d5dce3);
   border-bottom: 0;
-  background: #e9eff5;
-  color: #10283d;
+  border-radius: var(--sap-radius-sm, 6px) var(--sap-radius-sm, 6px) 0 0;
+  background: var(--sap-tab-bg, #eef1f5);
+  color: var(--sap-text-muted, #64748b);
   font: inherit;
 }
 
 .fac-modal-tabs button.is-active {
-  background: #fff;
-  color: #123b63;
+  background: var(--sap-surface, #ffffff);
+  color: var(--sap-heading, #0a4a85);
   font-weight: 700;
 }
 
@@ -930,7 +934,7 @@
   flex-wrap: wrap;
   gap: 6px;
   padding: 8px;
-  border: 1px solid #c8d2dc;
+  border: 1px solid var(--sap-border, #d5dce3);
 }
 
 .fac-revaluation-method legend,
@@ -963,7 +967,7 @@
 
 .tb-expanded-body h4 {
   margin: 0 0 6px;
-  color: #123b63;
+  color: var(--sap-heading, #0a4a85);
   font-size: 12px;
 }
 

@@ -1,8 +1,8 @@
 .prr-error {
   margin-bottom: 8px;
   padding: 8px 10px;
-  border: 1px solid #d48a8a;
-  background: #fff2f2;
+  border: 1px solid var(--sap-danger, #b42318);
+  background: rgba(180, 35, 24, 0.08);
   color: var(--sap-danger, #b42318);
   font-size: 12px;
 }

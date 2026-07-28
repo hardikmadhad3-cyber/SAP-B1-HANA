@@ -104,31 +104,38 @@
 
 .sales-analysis-tabs {
   display: flex;
-  gap: 1px;
+  gap: 2px;
   padding: 0 14px;
   margin-bottom: -1px;
 }
 
 .sales-analysis-tabs__tab {
   min-width: 132px;
-  padding: 7px 16px 6px;
-  border: 1px solid #a0a0a0;
+  padding: 8px 16px 7px;
+  border: 1px solid var(--sap-border, #d5dce3);
   border-bottom: 0;
-  border-radius: 5px 5px 0 0;
-  background: linear-gradient(180deg, #efefef 0%, #d8d8d8 100%);
-  color: #1d2f44;
-  font-size: 14px;
+  border-radius: var(--sap-radius-sm, 6px) var(--sap-radius-sm, 6px) 0 0;
+  background: var(--sap-tab-bg, #eef1f5);
+  color: var(--sap-text-muted, #64748b);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 140ms ease, color 140ms ease;
 }
 
 .sales-analysis-tabs__tab.is-active {
-  background: #f7f7f7;
+  background: var(--sap-surface, #ffffff);
+  border-color: var(--sap-border, #d5dce3);
+  border-top: 2px solid var(--sap-primary, #0a6ed1);
+  padding-top: 6px;
+  color: var(--sap-heading, #0a4a85);
   position: relative;
   z-index: 2;
 }
 
 .sales-analysis-panel {
-  background: #f7f7f7;
-  border: 1px solid #a0a0a0;
+  background: var(--sap-surface, #ffffff);
+  border: 1px solid var(--sap-border, #d5dce3);
+  border-radius: 0 var(--sap-radius-sm, 6px) var(--sap-radius-sm, 6px) var(--sap-radius-sm, 6px);
   padding: 10px 12px 12px;
   min-height: auto;
   min-width: 860px;
@@ -151,19 +158,19 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #162e46;
+  color: var(--sap-text, #223548);
   font-size: 13px;
 }
 
 .sales-analysis__radio-line input,
 .sales-analysis__checkbox-line input {
   margin: 0;
-  accent-color: #6b84a5;
+  accent-color: var(--sap-primary, #0a6ed1);
 }
 
 .sales-analysis-divider {
   margin: 10px 0;
-  border-top: 1px solid #b8b8b8;
+  border-top: 1px solid var(--sap-border, #d5dce3);
 }
 
 .sales-analysis__dates {
@@ -202,7 +209,7 @@
 
 .sales-analysis__field-label,
 .sales-analysis__column-head {
-  color: #353535;
+  color: var(--sap-text, #223548);
   font-size: 12px;
 }
 
@@ -230,11 +237,19 @@
 .sales-analysis__lookup-btn {
   width: 24px;
   height: 24px;
-  border: 1px solid #b0b0b0;
-  background: linear-gradient(180deg, #fbfbfb 0%, #dedede 100%);
-  color: #6a6a6a;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-xs, 4px);
+  background: linear-gradient(180deg, #ffffff 0%, var(--sap-toolbar-bg, #eef2f7) 100%);
+  color: var(--sap-text, #223548);
   font-size: 11px;
   padding: 0;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.sales-analysis__picker-btn:hover:not(:disabled),
+.sales-analysis__lookup-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #dfe8f1 100%);
+  border-color: var(--sap-primary, #0a6ed1);
 }
 
 .sales-analysis__section {
@@ -243,8 +258,9 @@
 
 .sales-analysis__section-title {
   margin-bottom: 10px;
-  color: #19344f;
+  color: var(--sap-heading, #0a4a85);
   font-size: 14px;
+  font-weight: 700;
 }
 
 .sales-analysis__selection-grid {
@@ -261,7 +277,7 @@
 
 .sales-analysis__selection-row-label {
   padding-bottom: 4px;
-  color: #153452;
+  color: var(--sap-text, #223548);
   font-size: 13px;
 }
 
@@ -319,9 +335,10 @@
 .sales-analysis__status {
   margin-top: 12px;
   padding: 10px 12px;
-  border: 1px solid #b4c6d8;
-  background: #eef5fb;
-  color: #204260;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: var(--sap-primary-soft, rgba(10, 110, 209, 0.13));
+  color: var(--sap-heading, #0a4a85);
   font-size: 13px;
 }
 
@@ -346,7 +363,7 @@
 
 .sales-analysis-report__hint {
   margin-bottom: 10px;
-  color: #173650;
+  color: var(--sap-text-muted, #64748b);
   font-size: 13px;
   flex: 0 0 auto;
 }
@@ -501,7 +518,7 @@
 .sales-analysis-report__empty {
   padding: 12px;
   text-align: center;
-  color: #4e6175;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .sales-analysis-report__footer {
@@ -548,9 +565,10 @@ body > .sales-analysis-detail-modal__backdrop {
   max-height: calc(100vh - var(--sap-topbar-height, 64px) - 90px);
   display: flex;
   flex-direction: column;
-  background: #efefef;
-  border: 1px solid #8e8e8e;
-  box-shadow: 0 18px 44px rgba(47, 58, 70, 0.3);
+  background: var(--sap-surface, #ffffff);
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-md, 10px);
+  box-shadow: var(--sap-shadow-modal, 0 20px 48px rgba(15, 35, 65, 0.18));
   overflow: hidden;
 }
 
@@ -558,15 +576,16 @@ body > .sales-analysis-detail-modal__backdrop {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 6px 4px 10px;
+  padding: 8px 10px 6px;
   cursor: move;
-  background: linear-gradient(180deg, #d8d8d8 0%, #bdbdbd 100%);
-  border-bottom: 1px solid #8f8f8f;
+  background: linear-gradient(180deg, #ffffff 0%, var(--sap-toolbar-bg, #eef2f7) 100%);
+  border-bottom: 1px solid var(--sap-border, #d5dce3);
 }
 
 .sales-analysis-detail-modal__title {
-  color: #16324d;
+  color: var(--sap-heading, #0a4a85);
   font-size: 14px;
+  font-weight: 700;
 }
 
 .sales-analysis-detail-modal__controls {
@@ -578,16 +597,22 @@ body > .sales-analysis-detail-modal__backdrop {
 .sales-analysis-detail-modal__controls button {
   width: 24px;
   height: 24px;
-  border: 1px solid #8f8f8f;
-  background: linear-gradient(180deg, #fbfbfb 0%, #dedede 100%);
-  color: #585858;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-xs, 4px);
+  background: linear-gradient(180deg, #ffffff 0%, #edf3f9 100%);
+  color: var(--sap-text, #223548);
   font-size: 0;
   line-height: 1;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.sales-analysis-detail-modal__controls button:hover {
+  background: linear-gradient(180deg, #ffffff 0%, #dfe8f1 100%);
 }
 
 .sales-analysis-detail-modal__accent {
-  height: 4px;
-  background: #f4b000;
+  height: 3px;
+  background: linear-gradient(90deg, #e0a316 0%, #f3c94f 30%, transparent 30%);
 }
 
 .sales-analysis-detail-modal__body {
@@ -601,15 +626,16 @@ body > .sales-analysis-detail-modal__backdrop {
 
 .sales-analysis-detail-modal__loading {
   padding: 18px 14px;
-  color: #1d3955;
+  color: var(--sap-text, #223548);
   font-size: 14px;
 }
 
 .sales-analysis-detail-modal__grid-wrap {
   overflow-y: auto;
   overflow-x: hidden;
-  border: 1px solid #c6c6c6;
-  background: #ffffff;
+  border: 1px solid var(--sap-border, #d5dce3);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: var(--sap-surface, #ffffff);
   max-height: 250px;
 }
 
@@ -625,7 +651,7 @@ body > .sales-analysis-detail-modal__backdrop {
 .sales-analysis-detail-modal__grid td {
   height: 24px;
   padding: 2px 4px;
-  border: 1px solid #d0d0d0;
+  border: 1px solid var(--sap-border-soft, #e3e8ee);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -636,19 +662,24 @@ body > .sales-analysis-detail-modal__backdrop {
   top: 0;
   z-index: 1;
   text-align: left;
-  font-weight: 400;
-  color: #173650;
-  background: linear-gradient(180deg, #e1e1e1 0%, #d1d1d1 100%);
+  font-weight: 700;
+  color: var(--sap-heading, #0a4a85);
+  background: var(--sap-toolbar-bg, #eef2f7);
 }
 
 .sales-analysis-detail-modal__grid tbody td {
-  background: #f7f7f7;
-  color: #1f1f1f;
+  background: var(--sap-surface, #ffffff);
+  color: var(--sap-text, #223548);
+}
+
+.sales-analysis-detail-modal__grid tbody tr:nth-child(even) td {
+  background: var(--sap-row-even, #fafbfd);
 }
 
 .sales-analysis-detail-modal__grid tfoot td {
-  background: #fbfbfb;
-  color: #173650;
+  background: var(--sap-surface-soft, #f7fafc);
+  color: var(--sap-heading, #0a4a85);
+  font-weight: 700;
 }
 
 .sales-analysis-detail-modal__grid .is-index {
@@ -679,20 +710,20 @@ body > .sales-analysis-detail-modal__backdrop {
 }
 
 .sales-analysis-detail-modal__link-icon {
-  color: #d69b00;
+  color: var(--sap-warning, #8a5a00);
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
 }
 
 .sales-analysis-detail-modal__link-cell:hover {
-  color: #0b4f88;
+  color: var(--sap-primary-dark, #0854a0);
 }
 
 .sales-analysis-detail-modal__empty {
   padding: 8px 10px;
   text-align: center;
-  color: #4e6175;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .sales-analysis-detail-modal__diagram-row {
@@ -713,7 +744,7 @@ body > .sales-analysis-detail-modal__backdrop {
 }
 
 .sales-analysis-detail-modal__diagram-note {
-  color: #26435f;
+  color: var(--sap-text-muted, #64748b);
   font-size: 12px;
 }
 
@@ -743,7 +774,7 @@ body > .sales-analysis-detail-modal__backdrop {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #173650;
+  color: var(--sap-text, #223548);
   font-size: 13px;
 }
 
@@ -751,17 +782,18 @@ body > .sales-analysis-detail-modal__backdrop {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #173650;
+  color: var(--sap-text, #223548);
   font-size: 13px;
 }
 
 .sales-analysis-detail-modal__diagram-select select {
   min-width: 160px;
   height: 28px;
-  border: 1px solid #b0b0b0;
-  background: #fff4ae;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-xs, 4px);
+  background: var(--sap-surface, #ffffff);
   padding: 2px 6px;
-  color: #1c3650;
+  color: var(--sap-text, #223548);
   font-size: 13px;
 }
 
@@ -1003,7 +1035,7 @@ body > .bp-lookup-modal__backdrop {
 }
 
 .bp-lookup-modal__state-cell.is-error {
-  color: #9c2b2b;
+  color: var(--sap-danger, #b42318);
 }
 
 .bp-lookup-modal__footer {
@@ -1234,7 +1266,7 @@ body > .item-lookup-modal__backdrop {
 }
 
 .item-lookup-modal__state-cell.is-error {
-  color: #9c2b2b;
+  color: var(--sap-danger, #b42318);
 }
 
 .item-lookup-modal__footer {
@@ -1455,7 +1487,7 @@ body > .sales-employee-lookup-modal__backdrop {
 }
 
 .sales-employee-lookup-modal__state-cell.is-error {
-  color: #9c2b2b;
+  color: var(--sap-danger, #b42318);
 }
 
 .sales-employee-lookup-modal__footer {
@@ -1485,9 +1517,10 @@ body > .sap-properties-modal__backdrop {
   max-height: calc(100vh - var(--sap-topbar-height, 64px) - 40px);
   display: flex;
   flex-direction: column;
-  background: #efefef;
-  border: 1px solid #8e8e8e;
-  box-shadow: 0 18px 44px rgba(47, 58, 70, 0.28);
+  background: var(--sap-surface, #ffffff);
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-md, 10px);
+  box-shadow: var(--sap-shadow-modal, 0 20px 48px rgba(15, 35, 65, 0.18));
   overflow: hidden;
 }
 
@@ -1495,15 +1528,16 @@ body > .sap-properties-modal__backdrop {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 6px 4px 10px;
+  padding: 8px 10px 6px;
   cursor: move;
-  background: linear-gradient(180deg, #d8d8d8 0%, #bdbdbd 100%);
-  border-bottom: 1px solid #8f8f8f;
+  background: linear-gradient(180deg, #ffffff 0%, var(--sap-toolbar-bg, #eef2f7) 100%);
+  border-bottom: 1px solid var(--sap-border, #d5dce3);
 }
 
 .sap-properties-modal__title {
-  color: #16324d;
+  color: var(--sap-heading, #0a4a85);
   font-size: 14px;
+  font-weight: 700;
 }
 
 .sap-properties-modal__controls {
@@ -1515,16 +1549,22 @@ body > .sap-properties-modal__backdrop {
 .sap-properties-modal__controls button {
   width: 24px;
   height: 24px;
-  border: 1px solid #8f8f8f;
-  background: linear-gradient(180deg, #fbfbfb 0%, #dedede 100%);
-  color: #585858;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-xs, 4px);
+  background: linear-gradient(180deg, #ffffff 0%, #edf3f9 100%);
+  color: var(--sap-text, #223548);
   font-size: 0;
   line-height: 1;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.sap-properties-modal__controls button:hover {
+  background: linear-gradient(180deg, #ffffff 0%, #dfe8f1 100%);
 }
 
 .sap-properties-modal__accent {
-  height: 4px;
-  background: #f4b000;
+  height: 3px;
+  background: linear-gradient(90deg, #e0a316 0%, #f3c94f 30%, transparent 30%);
 }
 
 .sap-properties-modal__body {
@@ -1535,8 +1575,9 @@ body > .sap-properties-modal__backdrop {
 }
 
 .sap-properties-modal__panel {
-  border: 1px solid #a4a4a4;
-  background: #f8f8f8;
+  border: 1px solid var(--sap-border, #d5dce3);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: var(--sap-surface-soft, #f7fafc);
   padding: 12px 14px 14px;
 }
 
@@ -1545,14 +1586,14 @@ body > .sap-properties-modal__backdrop {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #1d2f44;
+  color: var(--sap-text, #223548);
   font-size: 13px;
 }
 
 .sap-properties-modal__checkbox-line input,
 .sap-properties-modal__radio-line input {
   margin: 0;
-  accent-color: #6b84a5;
+  accent-color: var(--sap-primary, #0a6ed1);
 }
 
 .sap-properties-modal__top-options {
@@ -1572,7 +1613,7 @@ body > .sap-properties-modal__backdrop {
 
 .sap-properties-modal__top-label {
   width: 42px;
-  color: #24425f;
+  color: var(--sap-text, #223548);
   font-size: 13px;
 }
 
@@ -1580,8 +1621,9 @@ body > .sap-properties-modal__backdrop {
   margin-top: 6px;
   max-height: 260px;
   overflow: auto;
-  border: 1px solid #c6c6c6;
-  background: #ffffff;
+  border: 1px solid var(--sap-border, #d5dce3);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: var(--sap-surface, #ffffff);
 }
 
 .sap-properties-modal__grid-wrap.is-disabled {
@@ -1601,26 +1643,34 @@ body > .sap-properties-modal__backdrop {
   z-index: 1;
   padding: 4px 6px;
   text-align: left;
-  font-weight: 400;
-  color: #173650;
-  background: linear-gradient(180deg, #e1e1e1 0%, #d1d1d1 100%);
-  border: 1px solid #c6c6c6;
+  font-weight: 700;
+  color: var(--sap-heading, #0a4a85);
+  background: var(--sap-toolbar-bg, #eef2f7);
+  border: 1px solid var(--sap-border, #d5dce3);
 }
 
 .sap-properties-modal__grid tbody td {
   padding: 3px 6px;
-  border: 1px solid #d2d2d2;
+  border: 1px solid var(--sap-border-soft, #e3e8ee);
   height: 22px;
-  color: #1f1f1f;
-  background: #f7f7f7;
+  color: var(--sap-text, #223548);
+  background: var(--sap-surface, #ffffff);
+}
+
+.sap-properties-modal__grid tbody tr:nth-child(even) td {
+  background: var(--sap-row-even, #fafbfd);
 }
 
 .sap-properties-modal__grid tbody tr {
   cursor: pointer;
 }
 
+.sap-properties-modal__grid tbody tr:hover td {
+  background: var(--sap-row-hover, #f0f6fd);
+}
+
 .sap-properties-modal__grid tbody tr.is-selected td {
-  background: #ffe18b;
+  background: #e7f2fb;
 }
 
 .sap-properties-modal__grid .is-index {
@@ -1642,18 +1692,26 @@ body > .sap-properties-modal__backdrop {
 .sap-properties-modal__action-btn {
   min-width: 118px;
   height: 28px;
-  border: 1px solid #b9b9b9;
-  background: linear-gradient(180deg, #f5f5f5 0%, #dedede 100%);
-  color: #6f6f6f;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: linear-gradient(180deg, #ffffff 0%, #eef2f7 100%);
+  color: var(--sap-text, #223548);
   font-size: 12px;
+  font-weight: 600;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.sap-properties-modal__action-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #e2ecf5 100%);
+  border-color: var(--sap-primary, #0a6ed1);
 }
 
 .sap-properties-modal__action-btn:not(:disabled) {
-  color: #304860;
+  color: var(--sap-text, #223548);
 }
 
 .sap-properties-modal__action-btn:disabled {
-  opacity: 0.8;
+  opacity: 0.65;
   cursor: not-allowed;
 }
 
@@ -1666,11 +1724,16 @@ body > .sap-properties-modal__backdrop {
 .sap-properties-modal__primary-btn {
   min-width: 84px;
   height: 31px;
-  border: 1px solid #ba8e14;
-  background: linear-gradient(180deg, #ffe8a3 0%, #f1c54f 100%);
-  color: #3f3216;
+  border: 1px solid var(--sap-primary-dark, #0854a0);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: linear-gradient(180deg, var(--sap-primary, #0a6ed1) 0%, var(--sap-primary-dark, #0854a0) 100%);
+  color: #ffffff;
   font-size: 13px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  font-weight: 700;
+}
+
+.sap-properties-modal__primary-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #1b7ddb 0%, #0a5fac 100%);
 }
 
 .sales-analysis-window button:hover {
