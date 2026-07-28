@@ -20,6 +20,7 @@ import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePr
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
@@ -363,6 +364,35 @@ function PurchaseOrder() {
   const [stateModal, setStateModal] = useState(false);
   const [bpModal, setBpModal] = useState(false);
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
+
+  useStandardDocumentDraftTask({
+    draftKey: 'purchaseQuotationDraft',
+    title: 'Purchase Quotation',
+    draftValues: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+      freightCharges: freightModal.freightCharges,
+    },
+    restoreDraft: (draft) => {
+      setCurrentDocEntry(draft.currentDocEntry || null);
+      setHeader(draft.header || INIT_HEADER);
+      setLines(Array.isArray(draft.lines) && draft.lines.length
+        ? draft.lines
+        : [createLine(ROW_UDF_DEFINITIONS)]);
+      setHeaderUdfs(draft.headerUdfs || createUdfState(HEADER_UDF_DEFINITIONS));
+      setActiveTab(draft.activeTab || 'Contents');
+      setIsDirty(Boolean(draft.isDirty));
+      setFreightModal((prev) => ({
+        ...prev,
+        freightCharges: Array.isArray(draft.freightCharges) ? draft.freightCharges : [],
+        loading: false,
+      }));
+    },
+  });
   const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1 });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyFromDocType, setCopyFromDocType] = useState('purchaseRequest');

@@ -5,6 +5,7 @@ const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { applyUdfValues } = require('./udfPayloadUtils');
+const { buildGRPODocumentLine } = require('./grpoPayloadUtils');
 
 // ───────── HELPERS ─────────
 
@@ -242,58 +243,7 @@ const submitGRPO = async (payload) => {
       DocumentAdditionalExpenses: documentAdditionalExpenses,
       DocumentLines: lines
         .filter(l => l.itemNo && l.itemNo.trim())
-        .map(l => {
-          const hasBaseDoc =
-            l.baseEntry != null &&
-            l.baseEntry !== '' &&
-            l.baseType != null &&
-            l.baseType !== '' &&
-            l.baseLine != null &&
-            l.baseLine !== '';
-
-          const docLine = {
-            Quantity: parseFloat(l.quantity) || 0,
-            WarehouseCode: l.whse || '',
-          };
-          if (l.commPercent !== undefined && l.commPercent !== null && String(l.commPercent).trim() !== '') {
-            docLine.CommissionPercent = parseFloat(l.commPercent) || 0;
-          }
-
-          if (hasBaseDoc) {
-            docLine.BaseEntry = parseInt(l.baseEntry, 10);
-            docLine.BaseType = parseInt(l.baseType, 10);
-            docLine.BaseLine = parseInt(l.baseLine, 10);
-          } else {
-            docLine.ItemCode = l.itemNo;
-            docLine.Price = parseFloat(l.unitPrice) || 0;
-            if (String(l.taxCode || '').trim()) {
-              docLine.TaxCode = String(l.taxCode).trim();
-            }
-            if (l.uomCode) {
-              docLine.UoMCode = l.uomCode;
-            }
-          }
-
-          if (l.stdDiscount && Number(l.stdDiscount) > 0) {
-            docLine.DiscountPercent = parseFloat(l.stdDiscount) || 0;
-          }
-
-          if (l.batchManaged && l.batches && l.batches.length > 0) {
-            docLine.BatchNumbers = l.batches.map(b => {
-              const batch = {
-                BatchNumber: b.batchNumber,
-                Quantity: parseFloat(b.quantity) || 0,
-              };
-              const supplierLotNo = String(b.supplierLotNo || '').trim();
-              if (supplierLotNo) batch.ManufacturerSerialNumber = supplierLotNo;
-              return batch;
-            });
-          }
-
-          applyUdfValues(docLine, l.udf, null, lineUdfDefinitionsByKey);
-
-          return docLine;
-        }),
+        .map(l => buildGRPODocumentLine(l, lineUdfDefinitionsByKey)),
     };
    
     // Add optional fields

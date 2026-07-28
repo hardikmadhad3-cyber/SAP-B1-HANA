@@ -27,6 +27,7 @@ import { useRelationshipMapRegistration } from '../../components/relationship-ma
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from '../../components/document/CopyFromModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
@@ -733,6 +734,81 @@ function ARInvoicePage() {
       : 'Add & New';
 
   useEffect(() => {
+    const draft = location.state?.arInvoiceDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setHeader(draft.header || INIT_HEADER);
+    setLines(Array.isArray(draft.lines) && draft.lines.length
+      ? draft.lines
+      : [createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(draft.headerUdfs || normalizeUdfState(headerUdfDefinitions));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    setFreightModal((prev) => ({
+      ...prev,
+      open: false,
+      freightCharges: Array.isArray(draft.freightCharges) ? draft.freightCharges : [],
+      loading: false,
+    }));
+    if (draft.withholdingTax) {
+      setWithholdingTax((prev) => ({
+        ...prev,
+        ...draft.withholdingTax,
+        open: false,
+      }));
+    }
+    if (draft.addressForm) setAddressForm(draft.addressForm);
+    if (draft.taxInfoForm) setTaxInfoForm(draft.taxInfoForm);
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [
+    headerUdfDefinitions,
+    location.pathname,
+    location.state,
+    navigate,
+    rowUdfDefinitions,
+  ]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    arInvoiceDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+      freightCharges: freightModal.freightCharges,
+      withholdingTax: {
+        customerSubject: withholdingTax.customerSubject,
+        defaultCode: withholdingTax.defaultCode,
+        allowedCodes: withholdingTax.allowedCodes,
+        rows: withholdingTax.rows,
+      },
+      addressForm,
+      taxInfoForm,
+    },
+  }), [
+    activeTab,
+    addressForm,
+    currentDocEntry,
+    freightModal.freightCharges,
+    header,
+    headerUdfs,
+    isDirty,
+    lines,
+    taxInfoForm,
+    withholdingTax.allowedCodes,
+    withholdingTax.customerSubject,
+    withholdingTax.defaultCode,
+    withholdingTax.rows,
+  ]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'A/R Invoice',
+  });
+
+  useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
@@ -1032,7 +1108,7 @@ function ARInvoicePage() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };

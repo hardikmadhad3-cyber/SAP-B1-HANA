@@ -3516,6 +3516,8 @@ const getSalesOrderForCopy = async (docEntry) => {
       T0.DiscPrcnt AS DiscountPercent,
       T0.WhsCode AS WarehouseCode,
       T0.TaxCode, T0.unitMsr AS UomCode, T0.unitMsr AS UomName,
+      ${lineField('NumPerMsr', 'UomFactor', 'CAST(1 AS DECIMAL(19, 6))')},
+      ${lineField('UomEntry', 'UoMEntry', 'NULL')},
       T0.OcrCode AS DistributionRule,
       ${lineField('OcrCode2', 'DistributionRule2')},
       ${lineField('OcrCode3', 'DistributionRule3')},

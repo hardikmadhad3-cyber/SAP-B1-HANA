@@ -9,6 +9,7 @@ import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import { copyToDocument } from '../../services/documentCopyService';
+import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { createActiveCompanyScopedRouteState } from '../../utils/companyStorageScope';
@@ -630,6 +631,22 @@ function ServiceARInvoicePage() {
   const [pageState, setPageState] = useState({ loading: true, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
   const [isDirty, setIsDirty] = useState(false);
+
+  useStandardDocumentDraftTask({
+    draftKey: 'serviceArInvoiceDraft',
+    title: 'Service A/R Invoice',
+    draftValues: { currentDocEntry, header, lines, headerUdfs, activeTab, isDirty },
+    restoreDraft: (draft) => {
+      setCurrentDocEntry(draft.currentDocEntry || null);
+      setHeader(draft.header || INIT_HEADER);
+      setLines(Array.isArray(draft.lines) && draft.lines.length
+        ? draft.lines
+        : [createLine(ROW_UDF_DEFINITIONS)]);
+      setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+      setActiveTab(draft.activeTab || 'Contents');
+      setIsDirty(Boolean(draft.isDirty));
+    },
+  });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyFromDocType, setCopyFromDocType] = useState('salesOrder');
   const [bpModalOpen, setBpModalOpen] = useState(false);

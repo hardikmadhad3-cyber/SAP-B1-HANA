@@ -380,6 +380,13 @@ const pendingLookupFocus = {
   identity: null,
 };
 
+export const consumePendingLookupQuery = () => {
+  if (typeof window === 'undefined') return '';
+  const query = String(window.__sapB1PendingLookupQuery || '').trim();
+  window.__sapB1PendingLookupQuery = '';
+  return query;
+};
+
 export const setPendingLookupFocus = (element) => {
   pendingLookupFocus.element = element || document.activeElement;
   pendingLookupFocus.identity = getElementIdentity(pendingLookupFocus.element);
@@ -456,6 +463,7 @@ const LOOKUP_CONTAINER_SELECTOR = [
   '.del-lookup-wrap',
   '.po-lookup-wrap',
   '.sap-lookup-wrap',
+  '.sap-lookup',
 ].join(',');
 
 const isLookupButton = (button) => {

@@ -58,6 +58,7 @@ import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
 import { openLinkedBusinessPartner } from '../../utils/sapLinkedNavigation';
 import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument } from '../../api/copyFromApi';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import {
   BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
@@ -475,6 +476,13 @@ function PurchaseOrder() {
     setHeaderUdfs(draft.headerUdfs || createUdfState(HEADER_UDF_DEFINITIONS));
     setActiveTab(draft.activeTab || 'Contents');
     setIsDirty(Boolean(draft.isDirty));
+    if (Array.isArray(draft.freightCharges)) {
+      setFreightModal((prev) => ({
+        ...prev,
+        freightCharges: draft.freightCharges,
+        loading: false,
+      }));
+    }
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.state, navigate, location.pathname]);
 
@@ -486,8 +494,14 @@ function PurchaseOrder() {
       headerUdfs,
       activeTab,
       isDirty,
+      freightCharges: freightModal.freightCharges,
     },
-  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines]);
+  }), [activeTab, currentDocEntry, freightModal.freightCharges, header, headerUdfs, isDirty, lines]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'Purchase Order',
+  });
 
   const openBusinessPartnerLink = useCallback(() => {
     openLinkedBusinessPartner({
@@ -662,7 +676,7 @@ function PurchaseOrder() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -708,7 +722,7 @@ function PurchaseOrder() {
 
     const label = sourceType === 'purchaseRequest' ? 'Purchase Request' : 'Purchase Quotation';
     setPageState((prev) => ({ ...prev, error: '', success: `Copied from ${label}. Please review and save.` }));
-    navigate(location.pathname, { replace: true, state: null });
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {

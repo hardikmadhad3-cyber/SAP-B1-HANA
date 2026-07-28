@@ -27,6 +27,7 @@ import PrintSalesOrderActions from './components/PrintSalesOrderActions';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
@@ -558,6 +559,13 @@ function SalesOrder() {
         setActiveTab(draft.activeTab || 'Contents');
         setIsDirty(Boolean(draft.isDirty));
         setReferenceDocumentsModal(Boolean(draft.referenceDocumentsModalOpen));
+        if (Array.isArray(draft.freightCharges)) {
+            setFreightModal((prev) => ({
+                ...prev,
+                freightCharges: draft.freightCharges,
+                loading: false,
+            }));
+        }
 
         const clearDraftStateTimer = window.setTimeout(() => {
             restoringDraftRef.current = false;
@@ -581,10 +589,16 @@ function SalesOrder() {
                 : referenceDocuments,
             referenceDocumentsChanged: overrides.referenceDocumentsChanged ?? referenceDocumentsChanged,
             referenceDocumentsModalOpen: overrides.referenceDocumentsModalOpen ?? referenceDocumentsModal,
+            freightCharges: freightModal.freightCharges,
             activeTab,
             isDirty,
         },
-    }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
+    }), [activeTab, currentDocEntry, freightModal.freightCharges, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
+
+    useDocumentDraftTask({
+        buildDraftState: buildLinkedRestoreState,
+        title: 'Sales Order',
+    });
 
     const openBusinessPartnerLink = useCallback(() => {
         openLinkedBusinessPartner({

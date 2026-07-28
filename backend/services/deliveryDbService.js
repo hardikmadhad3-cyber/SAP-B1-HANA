@@ -316,8 +316,11 @@ const getEWayBillDropdownOptions = async () => {
   const normalize = (rows, valueKeys, labelKeys) => (rows || []).map((row) => {
     const entries = Object.entries(row || {}).filter(([, value]) => value !== null && value !== undefined);
     const read = (keys) => {
-      const wanted = new Set(keys.map((key) => key.toLowerCase()));
-      return entries.find(([key]) => wanted.has(key.toLowerCase()))?.[1];
+      for (const preferredKey of keys) {
+        const match = entries.find(([key]) => key.toLowerCase() === preferredKey.toLowerCase());
+        if (match) return match[1];
+      }
+      return undefined;
     };
     const value = read(valueKeys) ?? entries[0]?.[1] ?? '';
     const label = read([
@@ -330,7 +333,7 @@ const getEWayBillDropdownOptions = async () => {
   return {
     subSupplyType: normalize(subSupplyType, ['AbsEntry'], ['SubName', 'SubTypeName']),
     documentType: normalize(documentType, ['TypeCode', 'Code', 'AbsEntry'], ['TypeName', 'DocTypeName']),
-    mode: normalize(mode, ['AbsEntry'], ['ModeName', 'TransModeName']),
+    mode: normalize(mode, ['ModeCode', 'AbsEntry'], ['ModeName', 'TransModeName']),
     vehicleType: normalize(vehicleType, ['TypeCode', 'Code', 'AbsEntry'], ['TypeName', 'VehicleName']),
   };
 };
@@ -1711,7 +1714,7 @@ const getDelivery = async (docEntry) => {
       SELECT TOP 1 * FROM OEDT WHERE TypeCode = @code
     `, { code: savedEWayBill.DocType }));
     const modeRows = savedEWayBill.TransMode == null ? [] : await safe(db.query(`
-      SELECT TOP 1 * FROM OETM WHERE AbsEntry = @entry
+      SELECT TOP 1 * FROM OETM WHERE ModeCode = @entry
     `, { entry: savedEWayBill.TransMode }));
     const vehicleTypeRows = !savedEWayBill.VehicleTyp ? [] : await safe(db.query(`
       SELECT TOP 1 * FROM OEVT WHERE TypeCode = @code
@@ -2883,11 +2886,17 @@ const validateStockAvailability = (lines) => {
       }
 
       const actualRequiredQty = getRequiredBatchQty(line);
-      const availableStock = parseBatchQtyNumber(stock.Available);
+      const isBaseSalesOrderLine = String(line.baseType || '') === '17'
+        && !isBlank(line.baseEntry)
+        && !isBlank(line.baseLine);
+      const availableStock = parseBatchQtyNumber(
+        isBaseSalesOrderLine ? stock.OnHand : stock.Available
+      );
       const inventoryUOM = String(stock.InventoryUOM || line.inventoryUOM || line.uomCode || 'Base UoM').trim();
       
       if (actualRequiredQty - availableStock > BATCH_QTY_TOLERANCE) {
-        errors.push(`Insufficient stock for item ${line.itemNo} in warehouse ${line.whse}. Required: ${actualRequiredQty.toFixed(2)} ${inventoryUOM}, Available: ${availableStock.toFixed(2)} ${inventoryUOM}`);
+        const quantityLabel = isBaseSalesOrderLine ? 'On hand' : 'Available';
+        errors.push(`Insufficient stock for item ${line.itemNo} in warehouse ${line.whse}. Required: ${actualRequiredQty.toFixed(2)} ${inventoryUOM}, ${quantityLabel}: ${availableStock.toFixed(2)} ${inventoryUOM}`);
       }
     });
     

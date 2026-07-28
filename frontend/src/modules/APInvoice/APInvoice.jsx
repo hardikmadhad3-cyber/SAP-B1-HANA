@@ -34,7 +34,8 @@ import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import { useAuth } from '../../auth/AuthContext';
-import { consumeCopyToState } from '../../utils/copyToState';
+import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   fetchAPInvoiceReferenceData,
@@ -513,6 +514,81 @@ function APInvoice() {
       : 'Add & New';
 
   useEffect(() => {
+    const draft = location.state?.apInvoiceDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setHeader(draft.header || INIT_HEADER);
+    setLines(Array.isArray(draft.lines) && draft.lines.length
+      ? draft.lines
+      : [createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(draft.headerUdfs || createUdfState(headerUdfDefinitions));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    setFreightModal((prev) => ({
+      ...prev,
+      open: false,
+      freightCharges: Array.isArray(draft.freightCharges) ? draft.freightCharges : [],
+      loading: false,
+    }));
+    if (draft.withholdingTax) {
+      setWithholdingTax((prev) => ({
+        ...prev,
+        ...draft.withholdingTax,
+        open: false,
+      }));
+    }
+    if (draft.addressForm) setAddressForm(draft.addressForm);
+    if (draft.taxInfoForm) setTaxInfoForm(draft.taxInfoForm);
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [
+    headerUdfDefinitions,
+    location.pathname,
+    location.state,
+    navigate,
+    rowUdfDefinitions,
+  ]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    apInvoiceDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+      freightCharges: freightModal.freightCharges,
+      withholdingTax: {
+        vendorSubject: withholdingTax.vendorSubject,
+        defaultCode: withholdingTax.defaultCode,
+        allowedCodes: withholdingTax.allowedCodes,
+        rows: withholdingTax.rows,
+      },
+      addressForm,
+      taxInfoForm,
+    },
+  }), [
+    activeTab,
+    addressForm,
+    currentDocEntry,
+    freightModal.freightCharges,
+    header,
+    headerUdfs,
+    isDirty,
+    lines,
+    taxInfoForm,
+    withholdingTax.allowedCodes,
+    withholdingTax.defaultCode,
+    withholdingTax.rows,
+    withholdingTax.vendorSubject,
+  ]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'A/P Invoice',
+  });
+
+  useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
@@ -568,7 +644,7 @@ function APInvoice() {
           return;
         }
 
-        if (!currentDocEntry && !location.state?.APInvoiceDocEntry) {
+        if (!currentDocEntry && !location.state?.APInvoiceDocEntry && !location.state?.apInvoiceDraft) {
           setHeader(INIT_HEADER);
           setLines([createLine(rowUdfDefinitions)]);
         }
@@ -641,7 +717,13 @@ function APInvoice() {
             series: normalizeDocumentSeriesList(seriesRes.data.series || []),
           });
 
-          if (seriesRes.data.series && seriesRes.data.series.length > 0 && !currentDocEntry && !location.state?.APInvoiceDocEntry) {
+          if (
+            seriesRes.data.series
+            && seriesRes.data.series.length > 0
+            && !currentDocEntry
+            && !location.state?.APInvoiceDocEntry
+            && !location.state?.apInvoiceDraft
+          ) {
             const defaultSeries = getDefaultSeriesForCurrentYear(normalizeDocumentSeriesList(seriesRes.data.series));
             if (defaultSeries?.Series != null) {
               handleSeriesChange(defaultSeries.Series);
@@ -699,7 +781,7 @@ function APInvoice() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -746,7 +828,7 @@ function APInvoice() {
 
     const label = sourceType === 'apInvoice' ? 'A/P Invoice' : 'GRPO';
     setPageState((prev) => ({ ...prev, error: '', success: `Copied from ${label}. Please review and save.` }));
-    navigate(location.pathname, { replace: true, state: null });
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {

@@ -35,10 +35,16 @@ import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
-import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../utils/copyToState';
+import {
+  buildCopyToState,
+  consumeCopyToState,
+  openCopyToDocument,
+  replaceRouteStatePreservingWindow,
+} from '../../utils/copyToState';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import { useAuth } from '../../auth/AuthContext';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import {
@@ -415,6 +421,65 @@ function ARCreditMemo() {
       : 'Add & New';
 
   useEffect(() => {
+    const draft = location.state?.arCreditMemoDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setLoadedCreditMemo(null);
+    setHeader(draft.header || INIT_HEADER);
+    setLines(Array.isArray(draft.lines) && draft.lines.length
+      ? draft.lines
+      : [createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(draft.headerUdfs || normalizeUdfState(headerUdfDefinitions));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    setFreightModal((prev) => ({
+      ...prev,
+      open: false,
+      freightCharges: Array.isArray(draft.freightCharges) ? draft.freightCharges : [],
+      loading: false,
+    }));
+    if (draft.addressForm) setAddressForm(draft.addressForm);
+    if (draft.taxInfoForm) setTaxInfoForm(draft.taxInfoForm);
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [
+    headerUdfDefinitions,
+    location.pathname,
+    location.state,
+    navigate,
+    rowUdfDefinitions,
+  ]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    arCreditMemoDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+      freightCharges: freightModal.freightCharges,
+      addressForm,
+      taxInfoForm,
+    },
+  }), [
+    activeTab,
+    addressForm,
+    currentDocEntry,
+    freightModal.freightCharges,
+    header,
+    headerUdfs,
+    isDirty,
+    lines,
+    taxInfoForm,
+  ]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'A/R Credit Memo',
+  });
+
+  useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
@@ -698,7 +763,7 @@ function ARCreditMemo() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -819,7 +884,7 @@ function ARCreditMemo() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -901,7 +966,7 @@ function ARCreditMemo() {
 
     const sourceDocumentLabel = sourceLabel || (sourceType === 'arInvoice' ? 'A/R Invoice' : 'source document');
     setPageState(p => ({ ...p, success: `Copied from ${sourceDocumentLabel}. Please review and save.` }));
-    navigate(location.pathname, { replace: true, state: null });
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived / computed ────────────────────────────────────────────────────

@@ -27,6 +27,7 @@ import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
@@ -327,6 +328,35 @@ function SalesQuotation() {
   const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1 });
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
+
+  useStandardDocumentDraftTask({
+    draftKey: 'salesQuotationDraft',
+    title: 'Sales Quotation',
+    draftValues: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+      freightCharges: freightModal.freightCharges,
+    },
+    restoreDraft: (draft) => {
+      setCurrentDocEntry(draft.currentDocEntry || null);
+      setHeader(draft.header || INIT_HEADER);
+      setLines(Array.isArray(draft.lines) && draft.lines.length
+        ? draft.lines
+        : [createLine(ROW_UDF_DEFINITIONS)]);
+      setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+      setActiveTab(draft.activeTab || 'Contents');
+      setIsDirty(Boolean(draft.isDirty));
+      setFreightModal((prev) => ({
+        ...prev,
+        freightCharges: Array.isArray(draft.freightCharges) ? draft.freightCharges : [],
+        loading: false,
+      }));
+    },
+  });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [addressForm, setAddressForm] = useState({
     shipToCode: '', shipToAddress: '', billToCode: '', billToAddress: '',

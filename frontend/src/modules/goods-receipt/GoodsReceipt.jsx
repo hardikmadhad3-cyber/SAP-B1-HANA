@@ -49,6 +49,7 @@ import {
 } from '../../config/inventoryDocumentForm';
 import { openLinkedReferenceDocument } from '../../utils/sapLinkedNavigation';
 import { replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 
 const TAB_NAMES = ['Contents', 'Attachments'];
 const today = () => new Date().toISOString().split('T')[0];
@@ -247,6 +248,11 @@ function GoodsReceipt() {
       isDirty,
     },
   }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'Goods Receipt',
+  });
 
   const openReferenceDocumentLink = useCallback((row) => {
     openLinkedReferenceDocument({

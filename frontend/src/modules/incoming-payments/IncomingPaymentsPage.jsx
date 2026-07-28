@@ -15,6 +15,7 @@ import PaymentMeansModal, {
   validatePaymentMeans,
 } from "../payments/PaymentMeansModal";
 import SapLookupModal from "../../components/common/SapLookupModal";
+import { consumePendingLookupQuery } from "../../utils/sapTabNavigation";
 import "./incomingPayments.css";
 
 const today = new Date().toISOString().slice(0, 10);
@@ -131,10 +132,11 @@ function SapLookupField({
 
   const openModal = () => {
     if (readOnly) return;
+    const pendingQuery = consumePendingLookupQuery();
     setOpen(true);
-    setQuery("");
+    setQuery(pendingQuery);
     setPage(1);
-    load("", 1);
+    load(pendingQuery, 1);
   };
 
   useEffect(() => {
@@ -152,8 +154,15 @@ function SapLookupField({
 
   const pick = (row) => {
     if (!row) return;
-    onSelect(row);
+    Promise.resolve(onSelect(row)).finally(() => {
+      setOpen(false);
+      window.SapB1TabNavigation?.completeLookup?.();
+    });
+  };
+
+  const closeModal = () => {
     setOpen(false);
+    window.SapB1TabNavigation?.restoreLookup?.();
   };
 
   const handleQueryChange = (nextQuery) => {
@@ -192,7 +201,13 @@ function SapLookupField({
     <>
       <span className={`sap-lookup ${className}`}>
         <input value={value} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} readOnly={readOnly} />
-        <button type="button" className="sap-lookup__arrow" onClick={openModal} disabled={readOnly}>
+        <button
+          type="button"
+          className="sap-lookup__arrow"
+          data-sap-lookup-button="true"
+          onClick={openModal}
+          disabled={readOnly}
+        >
           {buttonLabel}
         </button>
       </span>
@@ -210,7 +225,7 @@ function SapLookupField({
           footerNote={footerNote}
           footerControls={footerControls}
           onQueryChange={handleQueryChange}
-          onClose={() => setOpen(false)}
+          onClose={closeModal}
           onSelect={pick}
           getRowKey={(row, index) => `${row.code || row.docEntry || index}-${index}`}
           width="min(1180px, calc(100% - 40px))"

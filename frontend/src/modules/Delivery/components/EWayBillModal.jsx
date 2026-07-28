@@ -54,9 +54,14 @@ const readUdfValue = (values, definitions, aliases) => {
   return match ? match[1] ?? '' : '';
 };
 
-const buildInitialForm = (values, definitions, liveData) => Object.keys(FIELD_ALIASES).reduce((form, field) => {
-  const value = readUdfValue(values, definitions, FIELD_ALIASES[field]);
-  const effectiveValue = String(value ?? '').trim() === '' ? liveData[field] : value;
+export const buildInitialForm = (values, definitions, liveData) => Object.keys(FIELD_ALIASES).reduce((form, field) => {
+  const udfValue = readUdfValue(values, definitions, FIELD_ALIASES[field]);
+  const savedEWayBillValue = liveData[field];
+  // SAP B1 displays the standard document E-Way Bill fields from the
+  // document's E-Way Bill table (DLN26 for Delivery).
+  // Header UDFs may contain older duplicate values, so use them only when
+  // the standard E-Way Bill field has no saved value.
+  const effectiveValue = String(savedEWayBillValue ?? '').trim() === '' ? udfValue : savedEWayBillValue;
   form[field] = field.toLowerCase().includes('date') ? normalizeDate(effectiveValue) : String(effectiveValue ?? '');
   return form;
 }, {

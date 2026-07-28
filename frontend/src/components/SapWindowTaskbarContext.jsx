@@ -7,6 +7,7 @@ import {
   createActiveCompanyScopedRouteState,
   getActiveCompanyStorageScope,
 } from "../utils/companyStorageScope";
+import { mergeWindowTaskState } from "../utils/windowTaskState";
 
 const SapWindowTaskbarContext = createContext(null);
 const TASKBAR_STORAGE_KEY = "sap-window-taskbar/tasks";
@@ -105,7 +106,7 @@ export function SapWindowTaskbarProvider({ children }) {
         id: normalizedTask.id,
         title: normalizedTask.title,
         path: normalizedTask.path,
-        state: normalizedTask.state === undefined ? existingTask.state : normalizedTask.state,
+        state: mergeWindowTaskState(existingTask.state, normalizedTask.state),
       };
       if (
         existingTask.title === mergedTask.title

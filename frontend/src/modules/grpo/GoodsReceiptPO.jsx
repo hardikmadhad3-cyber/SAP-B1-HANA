@@ -69,6 +69,7 @@ import useValidationHighlights from '../../utils/useValidationHighlights';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
 import { hydrateWorkbookDocumentLine } from '../../utils/workbookLineHydration';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import {
   buildGRPOLineUdfPayload,
   getFirstLineValue,
@@ -487,6 +488,13 @@ function GoodsReceiptPO() {
     setHeaderUdfs(draft.headerUdfs || createUdfState(HEADER_UDF_DEFINITIONS));
     setActiveTab(draft.activeTab || 'Contents');
     setIsDirty(Boolean(draft.isDirty));
+    if (Array.isArray(draft.freightCharges)) {
+      setFreightModal((prev) => ({
+        ...prev,
+        freightCharges: draft.freightCharges,
+        loading: false,
+      }));
+    }
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.state, navigate, location.pathname]);
 
@@ -498,8 +506,14 @@ function GoodsReceiptPO() {
       headerUdfs,
       activeTab,
       isDirty,
+      freightCharges: freightModal.freightCharges,
     },
-  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines]);
+  }), [activeTab, currentDocEntry, freightModal.freightCharges, header, headerUdfs, isDirty, lines]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'Goods Receipt PO',
+  });
 
   const openBusinessPartnerLink = useCallback(() => {
     openLinkedBusinessPartner({
@@ -684,7 +698,7 @@ function GoodsReceiptPO() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -774,7 +788,7 @@ function GoodsReceiptPO() {
 
         setPendingCopyFrom(null);
         setPageState((prev) => ({ ...prev, loading: false, error: '', success: 'Copied from Purchase Order. Please review and save.' }));
-        navigate(location.pathname, { replace: true, state: null });
+        replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
       } catch (error) {
         if (!ignore) {
           setPendingCopyFrom(null);

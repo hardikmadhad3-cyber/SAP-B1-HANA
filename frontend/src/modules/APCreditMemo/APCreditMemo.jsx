@@ -22,7 +22,7 @@ import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePr
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
-import { consumeCopyToState } from '../../utils/copyToState';
+import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
@@ -32,6 +32,7 @@ import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   fetchAPCreditMemoReferenceData,
@@ -618,6 +619,64 @@ function APCreditMemo() {
       : 'Add & New';
 
   useEffect(() => {
+    const draft = location.state?.apCreditMemoDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setHeader(draft.header || INIT_HEADER);
+    setLines(Array.isArray(draft.lines) && draft.lines.length
+      ? draft.lines
+      : [createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(draft.headerUdfs || createUdfState(headerUdfDefinitions));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    setFreightModal((prev) => ({
+      ...prev,
+      open: false,
+      freightCharges: Array.isArray(draft.freightCharges) ? draft.freightCharges : [],
+      loading: false,
+    }));
+    if (draft.addressForm) setAddressForm(draft.addressForm);
+    if (draft.taxInfoForm) setTaxInfoForm(draft.taxInfoForm);
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [
+    headerUdfDefinitions,
+    location.pathname,
+    location.state,
+    navigate,
+    rowUdfDefinitions,
+  ]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    apCreditMemoDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+      freightCharges: freightModal.freightCharges,
+      addressForm,
+      taxInfoForm,
+    },
+  }), [
+    activeTab,
+    addressForm,
+    currentDocEntry,
+    freightModal.freightCharges,
+    header,
+    headerUdfs,
+    isDirty,
+    lines,
+    taxInfoForm,
+  ]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'A/P Credit Memo',
+  });
+
+  useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
@@ -702,7 +761,12 @@ function APCreditMemo() {
             series: normalizeDocumentSeriesList(seriesRes.data.series || []),
           });
 
-          if (seriesRes.data.series && seriesRes.data.series.length > 0 && !currentDocEntry) {
+          if (
+            seriesRes.data.series
+            && seriesRes.data.series.length > 0
+            && !currentDocEntry
+            && !location.state?.apCreditMemoDraft
+          ) {
             const defaultSeries = getDefaultSeriesForCurrentYear(normalizeDocumentSeriesList(seriesRes.data.series));
             if (defaultSeries?.Series != null) {
               handleSeriesChange(defaultSeries.Series);
@@ -760,7 +824,7 @@ function APCreditMemo() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -806,7 +870,7 @@ function APCreditMemo() {
 
     const label = sourceType === 'apInvoice' ? 'A/P Invoice' : 'GRPO';
     setPageState((prev) => ({ ...prev, error: '', success: `Copied from ${label}. Please review and save.` }));
-    navigate(location.pathname, { replace: true, state: null });
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {

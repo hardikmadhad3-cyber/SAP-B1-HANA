@@ -173,10 +173,9 @@ export default function BatchAllocationModal({
   };
 
   return createPortal(
-    <div className="del-modal-overlay" onClick={onClose}>
+    <div className="del-modal-overlay del-batch-modal-overlay" onClick={onClose}>
       <div
-        className="del-modal"
-        style={{ width: 'min(980px, 100%)', maxHeight: '90vh', overflow: 'auto' }}
+        className="del-modal del-batch-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="del-modal__header">

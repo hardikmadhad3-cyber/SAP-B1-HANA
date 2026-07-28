@@ -10,7 +10,8 @@ import LineValueLookupModal from '../../components/sales-document/LineValueLooku
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import { createActiveCompanyScopedRouteState } from '../../utils/companyStorageScope';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
-import { consumeCopyToState } from '../../utils/copyToState';
+import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
@@ -751,6 +752,22 @@ function ServiceAPCreditMemoPage() {
   const [pageState, setPageState] = useState({ loading: true, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
   const [isDirty, setIsDirty] = useState(false);
+
+  useStandardDocumentDraftTask({
+    draftKey: 'serviceApCreditMemoDraft',
+    title: 'Service A/P Credit Memo',
+    draftValues: { currentDocEntry, header, lines, headerUdfs, activeTab, isDirty },
+    restoreDraft: (draft) => {
+      setCurrentDocEntry(draft.currentDocEntry || null);
+      setHeader(draft.header || INIT_HEADER);
+      setLines(Array.isArray(draft.lines) && draft.lines.length
+        ? draft.lines
+        : [createLine(ROW_UDF_DEFINITIONS)]);
+      setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+      setActiveTab(draft.activeTab || 'Contents');
+      setIsDirty(Boolean(draft.isDirty));
+    },
+  });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyFromDocType, setCopyFromDocType] = useState('apInvoice');
   const [bpModalOpen, setBpModalOpen] = useState(false);
@@ -1238,7 +1255,7 @@ function ServiceAPCreditMemoPage() {
     if (normalizedHeader.vendor) {
       loadVendorDetails(normalizedHeader.vendor);
     }
-    navigate(location.pathname, { replace: true, state: null });
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [
     accounts,
     currentDocEntry,

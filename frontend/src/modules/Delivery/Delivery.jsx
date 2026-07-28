@@ -28,6 +28,7 @@ import { useRelationshipMapRegistration } from '../../components/relationship-ma
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from '../../components/document/CopyFromModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import { copyToDocument } from '../../services/documentCopyService';
 import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
@@ -837,6 +838,13 @@ function Delivery() {
     setActiveTab(draft.activeTab || 'Contents');
     setIsDirty(Boolean(draft.isDirty));
     setReferenceDocumentsModal(Boolean(draft.referenceDocumentsModalOpen));
+    if (Array.isArray(draft.freightCharges)) {
+      setFreightModal((prev) => ({
+        ...prev,
+        freightCharges: draft.freightCharges,
+        loading: false,
+      }));
+    }
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.state, navigate, location.pathname]);
 
@@ -851,10 +859,16 @@ function Delivery() {
         : referenceDocuments,
       referenceDocumentsChanged: overrides.referenceDocumentsChanged ?? referenceDocumentsChanged,
       referenceDocumentsModalOpen: overrides.referenceDocumentsModalOpen ?? referenceDocumentsModal,
+      freightCharges: freightModal.freightCharges,
       activeTab,
       isDirty,
     },
-  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
+  }), [activeTab, currentDocEntry, freightModal.freightCharges, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'Delivery',
+  });
 
   const openBusinessPartnerLink = useCallback(() => {
     openLinkedBusinessPartner({
@@ -950,7 +964,9 @@ function Delivery() {
       ''
     ).trim();
     const numericFactor = parseFloat(rawUomCode);
-    const explicitFactor = Number(line?.uomFactor);
+    const explicitFactor = Number(
+      line?.uomFactor ?? line?.UomFactor ?? line?.NumPerMsr ?? line?.numPerMsr
+    );
     const uomFactor = Number.isFinite(explicitFactor) && explicitFactor > 0
       ? explicitFactor
       : Number.isFinite(numericFactor) && numericFactor > 0

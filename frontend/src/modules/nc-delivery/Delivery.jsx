@@ -40,6 +40,7 @@ import {
   consumeCopyToState as consumePersistedCopyToState,
   replaceRouteStatePreservingWindow,
 } from '../../utils/copyToState';
+import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
@@ -646,6 +647,29 @@ function NCDelivery() {
   useValidationHighlights(valErrors, { rootRef: formRef });
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+
+  useStandardDocumentDraftTask({
+    draftKey: 'ncDeliveryDraft',
+    title: 'NC Delivery',
+    draftValues: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+    },
+    restoreDraft: (draft) => {
+      setCurrentDocEntry(draft.currentDocEntry || null);
+      setHeader(draft.header || createInitialHeader(generalSettingsRef.current));
+      setLines(Array.isArray(draft.lines) && draft.lines.length
+        ? draft.lines
+        : [createLine(ROW_UDF_DEFINITIONS)]);
+      setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+      setActiveTab(draft.activeTab || 'Contents');
+      setIsDirty(Boolean(draft.isDirty));
+    },
+  });
   const [addressModal, setAddressModal] = useState(null);
   const [taxInfoModal, setTaxInfoModal] = useState(false);
   const [batchModal, setBatchModal] = useState({ open: false, lineIndex: null, availableBatches: [], loading: false, error: '' });
