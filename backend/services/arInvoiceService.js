@@ -129,6 +129,11 @@ const getLineTotal = (line = {}) => {
 };
 
 const getLineUnitPrice = (line = {}) => {
+  const enteredUnitPrice = normalizeOptionalNumber(line.unitPrice);
+  if (enteredUnitPrice !== undefined) {
+    return enteredUnitPrice;
+  }
+
   const total = getLineTotal(line);
   const quantity = parseLineNumber(line.quantity, 0);
   const discount = parseLineNumber(line.stdDiscount ?? line.discountPercent, 0);
@@ -140,6 +145,13 @@ const getLineUnitPrice = (line = {}) => {
 
   return parseLineNumber(line.unitPrice, 0);
 };
+
+const getLineDiscountPercent = (line = {}) => normalizeOptionalNumber(
+  line.stdDiscount
+  ?? line.discountPercent
+  ?? line.DiscountPercent
+  ?? line.DiscPrcnt,
+);
 
 const getUdfDefinitionsByKey = async (tableId) => {
   const definitions = await getUdfDefinitions(tableId);
@@ -380,10 +392,20 @@ const submitARInvoice = async (payload) => {
     }
     
     console.log("🔍 [ARInvoiceService] Using customer code:", customerCode);
-    const resolvedSeries = await resolveARInvoiceSeries(payload.header, payload.lines);
-    const batchResult = await arInvoiceDb.validateBatchSelection(payload.lines || []);
+    const incomingLines = payload.lines || [];
+    await arInvoiceDb.validateARInvoiceBaseDocuments(incomingLines);
+    const submittedLines = incomingLines.map((line) => (
+      Number(line?.baseType ?? line?.BaseType) === 15
+        ? { ...line, batches: [] }
+        : line
+    ));
+    const resolvedSeries = await resolveARInvoiceSeries(payload.header, submittedLines);
+    const batchResult = await arInvoiceDb.validateBatchSelection(submittedLines);
     if (!batchResult.isValid) {
-      throw new Error(batchResult.errors.join('; '));
+      const error = new Error(batchResult.errors.join('; '));
+      error.status = 400;
+      error.code = 'BATCH_SELECTION_REQUIRED';
+      throw error;
     }
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
     const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
@@ -425,14 +447,22 @@ const submitARInvoice = async (payload) => {
       // Comments
       Comments: payload.header.otherInstruction || payload.header.comments || undefined,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: yesNo(payload.header.rounding),
       ...buildMarketingDocumentAddressPayload(payload.header),
 
-      DocumentLines: payload.lines.map((l, index) => {
+      DocumentLines: submittedLines.map((l, index) => {
         console.log(`🔍 [ARInvoiceService] Processing line ${index}:`, l);
         const warehouseCode = String(l.whse || l.warehouse || '').trim();
+        const rawBaseType = l.baseType ?? l.BaseType;
+        const rawBaseEntry = l.baseEntry ?? l.BaseEntry;
+        const rawBaseLine = l.baseLine ?? l.BaseLine;
+        const hasBaseDocument =
+          rawBaseType !== undefined && rawBaseType !== null && String(rawBaseType).trim() !== '' &&
+          rawBaseEntry !== undefined && rawBaseEntry !== null && String(rawBaseEntry).trim() !== '' &&
+          rawBaseLine !== undefined && rawBaseLine !== null && String(rawBaseLine).trim() !== '';
 
         const line = {
-          ItemCode: l.itemNo,
+          ...(hasBaseDocument ? {} : { ItemCode: l.itemNo }),
           Quantity: Number(l.quantity),
           UnitPrice: getLineUnitPrice(l),
           TaxCode: l.taxCode || undefined,
@@ -448,7 +478,7 @@ const submitARInvoice = async (payload) => {
           line.WarehouseCode = warehouseCode;
         }
 
-        if (Array.isArray(l.batches) && l.batches.length > 0) {
+        if (Number(rawBaseType) !== 15 && Array.isArray(l.batches) && l.batches.length > 0) {
           line.BatchNumbers = l.batches
             .filter((batch) => String(batch.batchNumber || '').trim() && Number(batch.quantity) > 0)
             .map((batch) => ({
@@ -457,18 +487,14 @@ const submitARInvoice = async (payload) => {
             }));
         }
 
-        // Add discount if present
-        if (l.stdDiscount && Number(l.stdDiscount) > 0) {
-          line.DiscountPercent = Number(l.stdDiscount);
-        } else if (l.discountPercent && Number(l.discountPercent) > 0) {
-          line.DiscountPercent = Number(l.discountPercent);
-        }
+        const lineDiscountPercent = getLineDiscountPercent(l);
+        if (lineDiscountPercent !== undefined) line.DiscountPercent = lineDiscountPercent;
 
         // Base document integration
-        if (l.baseType && l.baseEntry && l.baseLine !== undefined) {
-          line.BaseType = Number(l.baseType);
-          line.BaseEntry = Number(l.baseEntry);
-          line.BaseLine = Number(l.baseLine);
+        if (hasBaseDocument) {
+          line.BaseType = Number(rawBaseType);
+          line.BaseEntry = Number(rawBaseEntry);
+          line.BaseLine = Number(rawBaseLine);
         }
 
         console.log(`🔍 [ARInvoiceService] Transformed line ${index}:`, line);
@@ -627,7 +653,7 @@ const updateARInvoice = async (docEntry, payload) => {
           CostingCode: l.distRule || undefined,
           COGSCostingCode: l.cogsDistRule || l.distRule || undefined,
           CountryOrg: l.countryOfOrigin || undefined,
-          DiscountPercent: l.stdDiscount ? Number(l.stdDiscount) : (l.discountPercent ? Number(l.discountPercent) : 0),
+          DiscountPercent: getLineDiscountPercent(l) ?? 0,
           BaseType: l.baseType ? Number(l.baseType) : undefined,
           BaseEntry: l.baseEntry ? Number(l.baseEntry) : undefined,
           BaseLine: l.baseLine !== undefined ? Number(l.baseLine) : undefined,
@@ -794,4 +820,6 @@ module.exports = {
   getDeliveryForCopy:      async (d) => arInvoiceDb.getDeliveryForCopy(d),
   getOpenSalesQuotations:  async (customerCode = null) => { try { return { documents: await arInvoiceDb.getOpenSalesQuotations(customerCode) }; } catch(e) { return { documents: [] }; } },
   getSalesQuotationForCopy:async (d) => arInvoiceDb.getSalesQuotationForCopy(d),
+  _getLineUnitPrice: getLineUnitPrice,
+  _getLineDiscountPercent: getLineDiscountPercent,
 };

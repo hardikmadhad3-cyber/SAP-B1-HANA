@@ -483,6 +483,14 @@ const getOpenPurchaseOrders = async (vendorCode = null) => {
         T0.DocTotal
       FROM OPOR T0
       WHERE T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND EXISTS (
+          SELECT 1
+          FROM POR1 T1
+          WHERE T1.DocEntry = T0.DocEntry
+            AND T1.LineStatus = 'O'
+            AND ISNULL(T1.OpenQty, 0) > 0
+        )
         AND T0.CardCode = @vendorCode
       ORDER BY T0.DocEntry DESC
     `
@@ -497,6 +505,14 @@ const getOpenPurchaseOrders = async (vendorCode = null) => {
         T0.DocTotal
       FROM OPOR T0
       WHERE T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND EXISTS (
+          SELECT 1
+          FROM POR1 T1
+          WHERE T1.DocEntry = T0.DocEntry
+            AND T1.LineStatus = 'O'
+            AND ISNULL(T1.OpenQty, 0) > 0
+        )
       ORDER BY T0.DocEntry DESC
     `;
 
@@ -528,6 +544,7 @@ const getPurchaseOrderForCopy = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
@@ -626,6 +643,8 @@ const getPurchaseOrderForCopy = async (docEntry) => {
       buyerLocation: getUdfValue(headerUdfs, ['U_ShipLocation', 'U_SHIPLOCATION']) || '',
       journalRemark: header.JournalRemark || '',
       discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+      rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+      roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
       freight: header.Freight != null ? String(header.Freight) : '',
       tax: header.Tax != null ? String(header.Tax) : '',
       totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
@@ -769,6 +788,7 @@ const getGRPO = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
@@ -900,6 +920,8 @@ const getGRPO = async (docEntry) => {
         buyerLocation: getUdfValue(headerUdfs, ['U_ShipLocation', 'U_SHIPLOCATION']) || '',
         otherInstruction: header.Remarks || '',
         discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+        rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         freight: header.Freight != null ? String(header.Freight) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',

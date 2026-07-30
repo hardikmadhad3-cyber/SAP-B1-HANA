@@ -36,7 +36,8 @@ export const updateServiceARInvoice = (docEntry, data) =>
   client.patch(`${API_BASE}/${encodeURIComponent(docEntry)}`, data);
 
 export const generateServiceARInvoiceJournalEntry = ({ docEntry, payload, persist = false }) =>
-  client.post('/journal-entry/generate-from-ar-invoice', {
+  client.post('/journal-entry/preview', {
+    documentType: 'serviceArInvoice',
     ...(docEntry ? { docEntry } : {}),
     ...(payload ? { payload } : {}),
     persist,

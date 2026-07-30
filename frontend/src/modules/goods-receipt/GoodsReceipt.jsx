@@ -14,6 +14,7 @@ import ReferenceInformationModal, {
 import BatchAllocationModal from '../../components/BatchAllocationModal';
 import DistributionRuleAssignmentModal from '../../components/DistributionRuleAssignmentModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import {
   BATCH_QTY_TOLERANCE,
@@ -137,6 +138,7 @@ function GoodsReceipt() {
   const location = useLocation();
   const navigate = useNavigate();
   const { upsertTask } = useSapWindowTaskbarActions();
+  const formRef = useRef(null);
   const fileInputRef = useRef(null);
   const attachmentsRef = useRef([]);
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
@@ -1397,7 +1399,7 @@ function GoodsReceipt() {
       : '';
 
   return (
-    <form className={`po-page sap-document-page gr-goods-receipt__page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form ref={formRef} className={`po-page sap-document-page gr-goods-receipt__page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
       <div className="po-toolbar sap-document-toolbar">
         <span className="po-toolbar__title sap-document-toolbar__title">
           Goods Receipt{currentDocEntry ? ` - #${header.number || currentDocEntry}` : ''}
@@ -1446,6 +1448,14 @@ function GoodsReceipt() {
         >
           Form Settings
         </button>
+        <JournalEntryPreviewButton
+          documentType="goodsReceipt"
+          documentLabel="Goods Receipt"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, referenceDocuments })}
+          disabled={pageState.posting || pageState.loading}
+          className="po-btn sap-document-toolbar__journal-preview"
+        />
         <div className="po-dropdown">
           <button
             type="button"
@@ -1763,6 +1773,7 @@ function GoodsReceipt() {
         loading={batchModal.loading}
         error={batchModal.error}
         onGenerateBatchNumber={() => fetchGoodsReceiptNextBatchNumber('JKL')}
+        workspaceRef={formRef}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />

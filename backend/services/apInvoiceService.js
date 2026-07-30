@@ -17,6 +17,11 @@ const parseNum = (value) => {
   return Number.isFinite(num) ? num : 0;
 };
 
+const toSapYesNo = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized) ? 'tYES' : 'tNO';
+};
+
 const normalizeState = (value) =>
   String(value || '')
     .trim()
@@ -171,6 +176,8 @@ const validateAPInvoicePayload = async (payload, docEntry = null) => {
   if (smartGstValidation.warning) {
     warnings.push(smartGstValidation.warning.message);
   }
+
+  await apInvoiceDb.validateAPInvoiceBaseDocuments(effectiveLines);
 
   for (const line of effectiveLines) {
     const itemCode = String(line.itemNo || '').trim();
@@ -425,6 +432,7 @@ const submitAPInvoice = async (payload) => {
       NumAtCard: header.salesContractNo || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: toSapYesNo(header.rounding),
       DocumentLines: documentLines,
     };
     if (withholdingTaxData.length) {
@@ -480,6 +488,7 @@ const updateAPInvoice = async (docEntry, payload) => {
       JournalMemo: header.journalRemark || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: toSapYesNo(header.rounding),
     };
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);

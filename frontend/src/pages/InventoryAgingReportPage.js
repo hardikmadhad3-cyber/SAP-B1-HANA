@@ -6,6 +6,7 @@ import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
+import { matchesSapSearchText } from "../utils/sapSearch";
 import "../styles/inventory-aging-report.css";
 import "../styles/sales-analysis-report.css";
 import "../styles/inventory-report-common.css";
@@ -137,10 +138,10 @@ function InventoryAgingReportPage() {
 
   const filteredRows = useMemo(() => {
     const rows = report?.rows || [];
-    const search = findText.trim().toLowerCase();
+    const search = findText.trim();
     if (!search) return rows;
     return rows.filter((row) =>
-      `${row.itemCode} ${row.itemName} ${row.whsCode} ${row.whsName}`.toLowerCase().includes(search),
+      matchesSapSearchText(`${row.itemCode} ${row.itemName} ${row.whsCode} ${row.whsName}`, search),
     );
   }, [findText, report]);
 

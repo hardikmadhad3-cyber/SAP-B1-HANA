@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import SapLookupModal from '../../../components/common/SapLookupModal';
+import { matchesSapSearchText } from '../../../utils/sapSearch';
 
 const PAGE_SIZE = 200;
 
@@ -57,13 +58,13 @@ export default function BusinessPartnerModal({
   }, [isOpen]);
 
   const filteredPartners = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
-    if (!term) return businessPartners;
+    if (!searchTerm.trim()) return businessPartners;
 
     return businessPartners.filter((bp) =>
-      String(bp.CardCode || '').toLowerCase().includes(term) ||
-      String(bp.CardName || '').toLowerCase().includes(term) ||
-      String(bp.CardType || '').toLowerCase().includes(term)
+      matchesSapSearchText(bp.CardCode, searchTerm) ||
+      matchesSapSearchText(bp.CardName, searchTerm) ||
+      matchesSapSearchText(bp.CardType, searchTerm) ||
+      matchesSapSearchText(getBpTypeLabel(bp.CardType), searchTerm)
     );
   }, [businessPartners, searchTerm]);
 

@@ -69,6 +69,15 @@ const generateFromARCreditMemo = async (req, res) => {
   }
 };
 
+const previewJournalEntry = async (req, res) => {
+  try {
+    const result = await journalEntryService.previewJournalEntry(req.body || {});
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json(getErrorPayload(error, 'Failed to preview Journal Entry.'));
+  }
+};
+
 const createManualJournalEntry = async (req, res) => {
   try {
     const result = await journalEntryService.createManualJournalEntry(req.body || {});
@@ -87,6 +96,7 @@ const getJournalEntryByTransId = async (req, res) => {
 };
 
 module.exports = {
+  previewJournalEntry,
   generateFromARInvoice,
   generateFromAPInvoice,
   generateFromAPCreditMemo,

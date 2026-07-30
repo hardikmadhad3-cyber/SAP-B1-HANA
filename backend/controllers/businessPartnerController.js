@@ -63,6 +63,14 @@ const normalizeCountryCode = (value) => {
   return String(value || "").trim().toUpperCase();
 };
 
+const normalizeAssesseeType = (value) =>
+  String(value || "").trim() === "atCompany" ? "atCompany" : "atOthers";
+
+const isWithholdingCodeCompatible = (withholdingTaxCode, assesseeType) => {
+  if (!withholdingTaxCode?.assesseeType) return true;
+  return normalizeAssesseeType(withholdingTaxCode.assesseeType) === normalizeAssesseeType(assesseeType);
+};
+
 const findStateMatch = (states = [], value) => {
   const token = normalizeLookupToken(value);
   if (!token) return null;
@@ -171,6 +179,13 @@ const normalizeBusinessPartnerAddressPayload = async (data, req) => {
 
 const enrichBP = async (bp) => {
   if (!bp || !bp.CardCode) return bp;
+  const withholdingCollectionCodes = [
+    ...new Set(
+      (bp.BPWithholdingTaxCollection || [])
+        .map((row) => String(row?.WTCode || "").trim())
+        .filter(Boolean),
+    ),
+  ];
 
   const [
     paymentTerms,
@@ -184,6 +199,7 @@ const enrichBP = async (bp) => {
     downPaymentClearAccount,
     downPaymentInterimAccount,
     withholdingTaxCode,
+    withholdingCollectionDetails,
   ] = await Promise.all([
     bp.PayTermsGrpCode != null && bp.PayTermsGrpCode !== "" && Number(bp.PayTermsGrpCode) >= 0
       ? masterDataDbService.getPaymentTerms(bp.PayTermsGrpCode).catch(() => null)
@@ -218,7 +234,27 @@ const enrichBP = async (bp) => {
     bp.WTCode
       ? masterDataDbService.getWithholdingTaxCode(bp.WTCode).catch(() => null)
       : Promise.resolve(null),
+    Promise.all(
+      withholdingCollectionCodes.map((code) =>
+        masterDataDbService.getWithholdingTaxCode(code).catch(() => null),
+      ),
+    ),
   ]);
+  const withholdingDetailsByCode = new Map(
+    withholdingCollectionDetails
+      .filter(Boolean)
+      .map((row) => [String(row.code || "").trim().toUpperCase(), row]),
+  );
+  const enrichedWithholdingCollection = (bp.BPWithholdingTaxCollection || []).map((row) => {
+    const details = withholdingDetailsByCode.get(String(row?.WTCode || "").trim().toUpperCase());
+    return {
+      ...row,
+      WTCodeName: details?.name || row.WTCodeName || "",
+      AssesseeType: details?.assesseeType || row.AssesseeType || "",
+      AssesseeTypeLabel: details?.assesseeTypeLabel || row.AssesseeTypeLabel || "",
+      WTTaxCategoryLabel: details?.taxCategory || row.WTTaxCategoryLabel || "",
+    };
+  });
 
   return {
     ...bp,
@@ -233,6 +269,7 @@ const enrichBP = async (bp) => {
     DownPaymentInterimAccountName: downPaymentInterimAccount?.Name || bp.DownPaymentInterimAccountName || "",
     WTCodeName: withholdingTaxCode?.name || bp.WTCodeName || "",
     WTTaxCategoryLabel: withholdingTaxCode?.taxCategory || bp.WTTaxCategoryLabel || "",
+    BPWithholdingTaxCollection: enrichedWithholdingCollection,
     PaymentBankName: bank?.name || bp.PaymentBankName || "",
     PaymentBankCountryName: country?.name || bank?.countryName || bp.PaymentBankCountryName || "",
   };
@@ -403,6 +440,63 @@ const updateBP = async (req, res) => {
       payload,
       currentResponse.data,
     );
+    const incomingWithholdingRows = Array.isArray(payload.BPWithholdingTaxCollection)
+      ? payload.BPWithholdingTaxCollection
+      : null;
+    if (incomingWithholdingRows) {
+      delete payloadWithCollectionKeys.BPWithholdingTaxCollection;
+    }
+    const hasWithholdingCollection = Object.prototype.hasOwnProperty.call(payload, "BPWithholdingTaxCollection");
+    const requestedAssesseeType = normalizeAssesseeType(payload.TypeReport || currentResponse.data.TypeReport || "atCompany");
+    const requestedWithholdingCodes = [
+      ...new Set([
+        ...(hasWithholdingCollection
+          ? (payload.BPWithholdingTaxCollection || []).map((row) => String(row?.WTCode || "").trim())
+          : []),
+        String(payload.WTCode || "").trim(),
+      ].filter(Boolean)),
+    ];
+    const requestedWithholdingDetails = await Promise.all(
+      requestedWithholdingCodes.map((code) =>
+        masterDataDbService.getWithholdingTaxCode(code).catch(() => null),
+      ),
+    );
+    const requestedWithholdingDetailsByCode = new Map(
+      requestedWithholdingDetails
+        .filter(Boolean)
+        .map((row) => [String(row.code || "").trim().toUpperCase(), row]),
+    );
+
+    if (payloadWithCollectionKeys.WTCode) {
+      const defaultDetails = requestedWithholdingDetailsByCode.get(
+        String(payloadWithCollectionKeys.WTCode || "").trim().toUpperCase(),
+      );
+      if (defaultDetails && !isWithholdingCodeCompatible(defaultDetails, requestedAssesseeType)) {
+        payloadWithCollectionKeys.WTCode = null;
+      }
+    }
+
+    const existingWithholdingCodes = new Set(
+      (currentResponse.data.BPWithholdingTaxCollection || [])
+        .map((row) => String(row?.WTCode || "").trim().toUpperCase())
+        .filter(Boolean),
+    );
+    const compatibleIncomingWithholdingRows = hasWithholdingCollection
+      ? (payload.BPWithholdingTaxCollection || [])
+          .filter((row) => String(row?.WTCode || "").trim())
+          .filter((row) => {
+            const details = requestedWithholdingDetailsByCode.get(String(row.WTCode || "").trim().toUpperCase());
+            return !details || isWithholdingCodeCompatible(details, requestedAssesseeType);
+          })
+      : [];
+    const newWithholdingRows = hasWithholdingCollection
+      ? compatibleIncomingWithholdingRows
+          .filter((row) => !existingWithholdingCodes.has(String(row.WTCode || "").trim().toUpperCase()))
+          .map((row) => ({ WTCode: String(row.WTCode || "").trim() }))
+      : [];
+    const withholdingCollectionPayload = hasWithholdingCollection && newWithholdingRows.length
+      ? { BPWithholdingTaxCollection: newWithholdingRows }
+      : null;
     const sanitizedPayload = await sanitizePayloadForActiveSap(payloadWithCollectionKeys);
 
     await sapService.request({
@@ -410,6 +504,13 @@ const updateBP = async (req, res) => {
       url: sapService.buildStringKeyPath("BusinessPartners", cardCode),
       data: sanitizedPayload,
     });
+    if (withholdingCollectionPayload) {
+      await sapService.request({
+        method: "PATCH",
+        url: sapService.buildStringKeyPath("BusinessPartners", cardCode),
+        data: withholdingCollectionPayload,
+      });
+    }
     const response = await sapService.request({
       method: "GET",
       url: sapService.buildStringKeyPath("BusinessPartners", cardCode),

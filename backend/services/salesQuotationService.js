@@ -4,6 +4,7 @@ const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { buildMarketingDocumentAddressPayload } = require('./documentAddressPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { normalizeUdfValue, normalizeUdfValues, applyUdfsRobust } = require('./udfPayloadUtils');
+const { buildDocumentSeriesPayload } = require('./documentSeriesPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
@@ -16,6 +17,11 @@ const toNumberOrUndefined = (value) => {
   if (!hasValue(value)) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const toSapYesNo = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized) ? 'tYES' : 'tNO';
 };
 
 const SALES_QUOTATION_LINE_UDF_MAPPINGS = [
@@ -363,8 +369,7 @@ const submitSalesQuotation = async (payload) => {
 
     const sapPayload = {
       CardCode: payload.header.vendor.trim(),
-      ...(payload.header.series && Number(payload.header.series) > 0
-        ? { Series: Number(payload.header.series) } : {}),
+      ...buildDocumentSeriesPayload(payload.header),
       DocDate: payload.header.postingDate,
       DocDueDate: payload.header.deliveryDate,
       TaxDate: payload.header.documentDate,
@@ -377,6 +382,7 @@ const submitSalesQuotation = async (payload) => {
       ...(OwnerCode !== null && OwnerCode !== undefined ? { DocumentsOwner: OwnerCode } : {}),
       ...(Remarks ? { Comments: Remarks } : {}),
       ...(Freight > 0 ? { TotalExpenses: Freight } : {}),
+      Rounding: toSapYesNo(payload.header.rounding),
       DocumentAdditionalExpenses: documentAdditionalExpenses,
       ...buildMarketingDocumentAddressPayload(payload.header),
       NumAtCard: payload.header.customerRefNo || undefined,
@@ -473,6 +479,7 @@ const updateSalesQuotation = async (docEntry, payload) => {
       ...(OwnerCode !== null && OwnerCode !== undefined && { DocumentsOwner: OwnerCode }),
       ...(Remarks && { Comments: Remarks }),
       ...(Freight > 0 && { TotalExpenses: Freight }),
+      Rounding: toSapYesNo(payload.header.rounding),
       DocumentAdditionalExpenses: documentAdditionalExpenses,
       ...buildMarketingDocumentAddressPayload(payload.header),
       DocumentLines: documentLines,

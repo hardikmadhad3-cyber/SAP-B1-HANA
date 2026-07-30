@@ -4,6 +4,7 @@ import { fetchPublicCompanies } from '../api/authApi';
 import { useAuth } from '../auth/AuthContext';
 import { getLastSelectedCompanyId } from '../auth/storage';
 import { getDefaultRoute } from '../auth/routeUtils';
+import { matchesSapSearchText } from '../utils/sapSearch';
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -66,13 +67,13 @@ const LoginPage = () => {
 
   const filteredCompanies = useMemo(() => {
     const companies = Array.isArray(publicCompanies) ? publicCompanies : [];
-    const term = chooserSearch.trim().toLowerCase();
+    const term = chooserSearch.trim();
     if (!term) return companies;
 
     return companies.filter((company) =>
       [company.companyName, company.dbName, company.serverName]
         .filter(Boolean)
-        .some((value) => value.toLowerCase().includes(term)),
+        .some((value) => matchesSapSearchText(value, term)),
     );
   }, [chooserSearch, publicCompanies]);
 

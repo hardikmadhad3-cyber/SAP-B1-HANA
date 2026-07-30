@@ -3492,7 +3492,7 @@ const getSalesOrderForCopy = async (docEntry) => {
       T0.BPLId,
       ${headerBranchField} AS BPL_IDAssignedToInvoice,
       T0.GroupNum, T0.SlpCode,
-      T0.DiscPrcnt, T0.TotalExpns AS Freight,
+      T0.DiscPrcnt, T0.RoundDif, T0.TotalExpns AS Freight,
       ${paymentMethodExpression} AS PaymentMethod,
       ${optionalHeaderColumn(headerFieldMetadata, ['TransCat', 'TransactionCategory'], 'TransactionCategory')},
       ${optionalHeaderColumn(headerFieldMetadata, ['FormNo', 'TaxFormNo'], 'TaxFormNo')},

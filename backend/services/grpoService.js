@@ -14,6 +14,11 @@ const formatDateForSAP = (value) => {
   return String(value).split('T')[0];
 };
 
+const toSapYesNo = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized) ? 'tYES' : 'tNO';
+};
+
 const getUdfDefinitionsByKey = async (tableId) => {
   const definitions = await getUdfDefinitions(tableId);
   return new Map(definitions.map((field) => [field.key, field]));
@@ -241,6 +246,7 @@ const submitGRPO = async (payload) => {
       DocCurrency: header.currency || 'INR',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: toSapYesNo(header.rounding),
       DocumentLines: lines
         .filter(l => l.itemNo && l.itemNo.trim())
         .map(l => buildGRPODocumentLine(l, lineUdfDefinitionsByKey)),
@@ -302,6 +308,7 @@ const updateGRPO = async (docEntry, payload) => {
       JournalMemo: header.journalRemark || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: toSapYesNo(header.rounding),
     };
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);

@@ -1375,6 +1375,9 @@ function NCSalesOrder() {
     };
 
     const getLineDiscountPercent = (line) => {
+        const explicitPercent = String(line.stdDiscount ?? '').trim();
+        if (explicitPercent) return parseNum(explicitPercent);
+
         const price = parseNum(line.unitPrice);
         if (price <= 0) return 0;
         return getLineDiscountAmount(line) * 100 / price;

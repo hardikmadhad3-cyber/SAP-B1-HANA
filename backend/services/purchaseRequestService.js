@@ -508,6 +508,7 @@ const getPurchaseRequestForCopy = async (docEntry) => {
         T0.BPLId AS BPL_IDAssignedToInvoice,
         T0.GroupNum,
         T0.DiscPrcnt,
+        T0.RoundDif,
         T0.TotalExpns AS Freight
       FROM OPRQ T0
       WHERE T0.DocEntry = @docEntry

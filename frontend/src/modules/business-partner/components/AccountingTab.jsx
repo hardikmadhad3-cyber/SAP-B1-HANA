@@ -72,6 +72,19 @@ const getWithholdingSummary = (rows = [], defaultCode = "", defaultName = "") =>
 const hasAnyTaxInfoValue = (taxInfo = {}) =>
   Object.values(taxInfo).some((value) => String(value || "").trim() !== "");
 
+const isYesValue = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["tyes", "boyes", "yes", "y", "true", "1"].includes(normalized);
+};
+
+const normalizeAssesseeType = (value) =>
+  String(value || "").trim() === "atCompany" ? "atCompany" : "atOthers";
+
+const isCodeCompatibleWithAssessee = (row, assesseeType) => {
+  const rowType = row?.assesseeType || row?.AssesseeType;
+  return !rowType || normalizeAssesseeType(rowType) === normalizeAssesseeType(assesseeType);
+};
+
 export default function AccountingTab({
   form,
   onChange,
@@ -91,6 +104,12 @@ export default function AccountingTab({
   const [defaultWithholdingCode, setDefaultWithholdingCode] = useState("");
   const [activeWithholdingCode, setActiveWithholdingCode] = useState("");
   const [withholdingMode, setWithholdingMode] = useState("cash");
+  const currentAssesseeType = normalizeAssesseeType(form.TypeReport || "atCompany");
+
+  const compatibleWithholdingRows = useMemo(
+    () => withholdingRows.filter((row) => isCodeCompatibleWithAssessee(row, currentAssesseeType)),
+    [withholdingRows, currentAssesseeType]
+  );
 
   const handleLookupInputChange = (event, nameField) => {
     onChange(event);
@@ -127,25 +146,37 @@ export default function AccountingTab({
     setWithholdingModalOpen(true);
     setWithholdingLoading(true);
 
-    const selectedCodes = (form.BPWithholdingTaxCollection || [])
-      .map((row) => row.WTCode)
-      .filter(Boolean);
-    const initialDefault = form.WTCode || selectedCodes[0] || "";
-
-    setSelectedWithholdingCodes(selectedCodes);
-    setDefaultWithholdingCode(initialDefault);
-    setActiveWithholdingCode(initialDefault);
-
     try {
-      setWithholdingRows(await fetchWithholdingTaxCodes(""));
+      const rows = await fetchWithholdingTaxCodes("");
+      const compatibleCodes = new Set(
+        rows
+          .filter((row) => isCodeCompatibleWithAssessee(row, currentAssesseeType))
+          .map((row) => row.code)
+      );
+      const selectedCodes = (form.BPWithholdingTaxCollection || [])
+        .map((row) => row.WTCode)
+        .filter((code) => code && compatibleCodes.has(code));
+      const initialDefault = compatibleCodes.has(form.WTCode)
+        ? form.WTCode
+        : selectedCodes[0] || "";
+
+      setWithholdingRows(rows);
+      setSelectedWithholdingCodes(selectedCodes);
+      setDefaultWithholdingCode(initialDefault);
+      setActiveWithholdingCode(initialDefault);
     } catch {
       setWithholdingRows([]);
+      setSelectedWithholdingCodes([]);
+      setDefaultWithholdingCode("");
+      setActiveWithholdingCode("");
     } finally {
       setWithholdingLoading(false);
     }
   };
 
   const toggleWithholdingCode = (code) => {
+    if (!compatibleWithholdingRows.some((row) => row.code === code)) return;
+
     setSelectedWithholdingCodes((previous) => {
       const next = previous.includes(code)
         ? previous.filter((item) => item !== code)
@@ -160,7 +191,9 @@ export default function AccountingTab({
   };
 
   const setDefaultFromActiveRow = () => {
-    if (!activeWithholdingCode) return;
+    if (!activeWithholdingCode || !compatibleWithholdingRows.some((row) => row.code === activeWithholdingCode)) {
+      return;
+    }
 
     setSelectedWithholdingCodes((previous) =>
       previous.includes(activeWithholdingCode)
@@ -171,21 +204,43 @@ export default function AccountingTab({
   };
 
   const saveWithholdingCodes = () => {
-    const effectiveDefault = selectedWithholdingCodes.includes(defaultWithholdingCode)
+    const compatibleCodes = new Set(compatibleWithholdingRows.map((row) => row.code));
+    const compatibleSelectedCodes = selectedWithholdingCodes.filter((code) => compatibleCodes.has(code));
+    const effectiveDefault = compatibleSelectedCodes.includes(defaultWithholdingCode)
       ? defaultWithholdingCode
-      : selectedWithholdingCodes[0] || "";
+      : compatibleSelectedCodes[0] || "";
     const defaultRow = withholdingRows.find((row) => row.code === effectiveDefault);
 
     setForm((previous) => ({
       ...previous,
+      SubjectToWithholdingTax: compatibleSelectedCodes.length ? "boYES" : previous.SubjectToWithholdingTax,
       WTCode: effectiveDefault,
       WTCodeName: defaultRow?.name || "",
       WTTaxCategoryLabel: defaultRow?.taxCategory || "",
-      TypeReport: defaultRow?.assesseeType || previous.TypeReport || "atCompany",
-      BPWithholdingTaxCollection: selectedWithholdingCodes.map((code) => ({ WTCode: code })),
+      BPWithholdingTaxCollection: compatibleSelectedCodes.map((code) => {
+        const row = withholdingRows.find((item) => item.code === code);
+        return {
+          WTCode: code,
+          WTCodeName: row?.name || "",
+          AssesseeType: row?.assesseeType || "",
+          WTTaxCategoryLabel: row?.taxCategory || "",
+        };
+      }),
     }));
 
     setWithholdingModalOpen(false);
+  };
+
+  const handleAssesseeTypeChange = (event) => {
+    const nextType = normalizeAssesseeType(event.target.value);
+    setForm((previous) => ({
+      ...previous,
+      TypeReport: nextType,
+      WTCode: "",
+      WTCodeName: "",
+      WTTaxCategoryLabel: "",
+      BPWithholdingTaxCollection: [],
+    }));
   };
 
   const currentWithholdingSummary = useMemo(
@@ -415,7 +470,7 @@ export default function AccountingTab({
               <label className="im-checkbox-label bp-accounting-tax-checkbox">
                 <input
                   type="checkbox"
-                  checked={form.SubjectToWithholdingTax === "boYES"}
+                  checked={isYesValue(form.SubjectToWithholdingTax)}
                   onChange={(event) =>
                     setForm((previous) => ({
                       ...previous,
@@ -518,7 +573,7 @@ export default function AccountingTab({
                   className="im-field__select"
                   name="TypeReport"
                   value={form.TypeReport || "atCompany"}
-                  onChange={onChange}
+                  onChange={handleAssesseeTypeChange}
                 >
                   {ASSESSEE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -604,7 +659,7 @@ export default function AccountingTab({
                     className="im-field__select"
                     name="TypeReport"
                     value={form.TypeReport || "atCompany"}
-                    onChange={onChange}
+                    onChange={handleAssesseeTypeChange}
                   >
                     {ASSESSEE_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>
@@ -654,14 +709,14 @@ export default function AccountingTab({
                       </tr>
                     </thead>
                     <tbody>
-                      {withholdingRows.length === 0 ? (
+                      {compatibleWithholdingRows.length === 0 ? (
                         <tr>
                           <td colSpan={4} className="im-modal__empty">
-                            No withholding tax codes found.
+                            No withholding tax codes match the selected assessee type.
                           </td>
                         </tr>
                       ) : (
-                        withholdingRows.map((row, index) => {
+                        compatibleWithholdingRows.map((row, index) => {
                           const isSelected = selectedWithholdingCodes.includes(row.code);
                           const isDefault = defaultWithholdingCode === row.code;
 

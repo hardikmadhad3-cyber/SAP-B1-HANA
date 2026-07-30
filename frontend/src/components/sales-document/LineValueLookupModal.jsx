@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { matchesSapSearchText } from '../../utils/sapSearch';
 
 const overlayStyle = {
   position: 'absolute',
@@ -70,17 +71,16 @@ export default function LineValueLookupModal({
   const [saving, setSaving] = useState(false);
 
   const filteredOptions = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return options;
+    if (!searchQuery.trim()) return options;
 
     return options.filter((option) => {
-      const value = String(option?.value || '').toLowerCase();
-      const description = String(option?.description || '').toLowerCase();
-      const label = String(option?.label || '').toLowerCase();
-      const searchableValues = Object.values(option || {})
-        .map((item) => String(item ?? '').toLowerCase());
-      return value.includes(query) || description.includes(query) || label.includes(query)
-        || searchableValues.some((item) => item.includes(query));
+      const searchableValues = [
+        option?.value,
+        option?.description,
+        option?.label,
+        ...Object.values(option || {}),
+      ];
+      return searchableValues.some((item) => matchesSapSearchText(item, searchQuery));
     });
   }, [options, searchQuery]);
 

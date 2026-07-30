@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { matchesSapSearchText } from '../../utils/sapSearch';
 
 export const OPPORTUNITIES_FORECAST_GROUP_BY_OPTIONS = [
   { value: '', label: '' },
@@ -108,9 +109,9 @@ function SelectionLookupModal({ title, rows, onClose, onApply }) {
           raw: row,
         }))
         .filter((row) => {
-          const needle = searchText.trim().toLowerCase();
+          const needle = searchText.trim();
           if (!needle) return true;
-          return [row.code, row.name, row.description].some((value) => value.toLowerCase().includes(needle));
+          return [row.code, row.name, row.description].some((value) => matchesSapSearchText(value, needle));
         }),
     [rows, searchText],
   );

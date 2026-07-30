@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { matchesSapSearchText } from "../../utils/sapSearch";
 import useFloatingWindow from "./useFloatingWindow";
 
 function GLAccountLookupModal({
@@ -22,11 +23,10 @@ function GLAccountLookupModal({
   const selectedSet = useMemo(() => new Set(draftCodes), [draftCodes]);
 
   const filteredAccounts = useMemo(() => {
-    const query = searchText.trim().toLowerCase();
-    if (!query) return accounts;
+    if (!searchText.trim()) return accounts;
 
     return accounts.filter((account) =>
-      `${account.code || ""} ${account.formatCode || ""} ${account.name || ""}`.toLowerCase().includes(query),
+      matchesSapSearchText(`${account.code || ""} ${account.formatCode || ""} ${account.name || ""}`, searchText),
     );
   }, [accounts, searchText]);
 

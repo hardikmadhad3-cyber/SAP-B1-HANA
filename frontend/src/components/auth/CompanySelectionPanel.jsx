@@ -2,6 +2,7 @@ import React, { useDeferredValue, useEffect, useMemo, useState, startTransition 
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 import { getDefaultRoute } from '../../auth/routeUtils';
+import { matchesSapSearchText } from '../../utils/sapSearch';
 
 const CompanySelectionPanel = () => {
   const navigate = useNavigate();
@@ -66,13 +67,13 @@ const CompanySelectionPanel = () => {
   }, [getRememberedCompanyId, loadCompanies, pendingAuth?.user?.userId]);
 
   const filteredCompanies = useMemo(() => {
-    const term = deferredSearch.trim().toLowerCase();
+    const term = deferredSearch.trim();
     if (!term) return companies;
 
     return companies.filter((company) =>
       [company.companyName, company.dbName, company.serverName]
         .filter(Boolean)
-        .some((value) => value.toLowerCase().includes(term)),
+        .some((value) => matchesSapSearchText(value, term)),
     );
   }, [companies, deferredSearch]);
 

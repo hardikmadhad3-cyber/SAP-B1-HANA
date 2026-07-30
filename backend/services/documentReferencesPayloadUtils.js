@@ -15,14 +15,23 @@ const DOCUMENT_REFERENCE_TYPES = [
 const normalizeReferenceDocType = (value) => {
   const normalized = String(value || '').trim();
   if (!normalized) return '';
-  if (normalized.startsWith('rot_')) return normalized;
 
   const match = DOCUMENT_REFERENCE_TYPES.find((type) => (
     type.value === normalized ||
     type.label.toLowerCase() === normalized.toLowerCase() ||
     type.serviceLayer.toLowerCase() === normalized.toLowerCase()
   ));
-  return match?.serviceLayer || normalized;
+  return match?.value || normalized;
+};
+
+const isKnownReferenceDocType = (value) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return false;
+  return DOCUMENT_REFERENCE_TYPES.some((type) => (
+    type.value === normalized ||
+    type.label.toLowerCase() === normalized.toLowerCase() ||
+    type.serviceLayer.toLowerCase() === normalized.toLowerCase()
+  ));
 };
 
 const toOptionalReferenceNumber = (value) => {
@@ -33,14 +42,17 @@ const toOptionalReferenceNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
-const buildDocumentReferencesPayload = (references = []) => {
+const buildDocumentReferencesPayload = (references = [], options = {}) => {
   if (!Array.isArray(references)) return [];
 
-  return references
+  const defaultObjectType = options.defaultObjectType || options.defaultReferenceObjectType || '';
+  const invalidRows = [];
+  const result = references
     .filter((row) => String(row?.direction || 'to').toLowerCase() !== 'by')
-    .map((row) => {
+    .map((row, index) => {
+      const rawObjectType = row.transactionType || row.referencedObjectType || row.RefObjType || defaultObjectType;
       const referencedObjectType = normalizeReferenceDocType(
-        row.transactionType || row.referencedObjectType || row.RefObjType
+        rawObjectType
       );
       const referencedDocEntry = toOptionalReferenceNumber(
         row.docEntry || row.referencedDocEntry || row.RefDocEntr
@@ -59,20 +71,34 @@ const buildDocumentReferencesPayload = (references = []) => {
         return null;
       }
 
+      if (!isKnownReferenceDocType(rawObjectType)) {
+        invalidRows.push(index + 1);
+        return null;
+      }
+
       return {
-        ReferencedObjectType: referencedObjectType,
-        ...(referencedDocEntry !== undefined ? { ReferencedDocEntry: referencedDocEntry } : {}),
-        ...(referencedDocNumber !== undefined ? { ReferencedDocNumber: referencedDocNumber } : {}),
+        RefObjType: referencedObjectType,
+        ...(referencedDocEntry !== undefined ? { RefDocEntr: referencedDocEntry } : {}),
+        ...(referencedDocNumber !== undefined ? { RefDocNum: referencedDocNumber } : {}),
         ...(externalReferencedDocNumber
-          ? { ExternalReferencedDocNumber: externalReferencedDocNumber }
+          ? { ExtDocNum: externalReferencedDocNumber }
           : {}),
         ...(row.issueDate ? { IssueDate: row.issueDate } : {}),
         ...(row.remark ? { Remark: row.remark } : {}),
       };
     })
     .filter(Boolean);
+
+  if (invalidRows.length) {
+    const error = new Error(`Referenced Document row ${invalidRows.join(', ')} has an invalid transaction type. Select a valid document type before adding.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return result;
 };
 
 module.exports = {
   buildDocumentReferencesPayload,
+  normalizeReferenceDocType,
 };

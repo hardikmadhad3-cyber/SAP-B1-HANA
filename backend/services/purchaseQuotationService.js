@@ -204,6 +204,11 @@ const toNumberOrUndefined = (value) => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+const toSapYesNo = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized) ? 'tYES' : 'tNO';
+};
+
 const hasValue = (value) => value !== '' && value !== null && value !== undefined;
 
 const firstValue = (...values) => values.find(hasValue);
@@ -475,6 +480,7 @@ const buildPurchaseQuotationPayload = async ({ header = {}, lines = [], header_u
     JournalMemo: header.journalRemark,
     Confirmed: header.confirmed ? 'tYES' : 'tNO',
     DiscountPercent: toNumberOrUndefined(header.discount),
+    Rounding: toSapYesNo(header.rounding),
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
     DocumentLines: await buildDocumentLines(lines),
   });

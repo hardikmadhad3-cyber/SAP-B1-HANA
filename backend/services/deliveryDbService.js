@@ -90,13 +90,16 @@ const toFiniteNumberOrUndefined = (value) => {
 };
 
 const getLineDiscountPercent = (discountAmount, unitPrice, fallbackDiscountPercent) => {
+  const fallback = toFiniteNumberOrUndefined(fallbackDiscountPercent);
+  if (fallback !== undefined) return fallback;
+
   const discount = toFiniteNumberOrUndefined(discountAmount);
   const price = toFiniteNumberOrUndefined(unitPrice);
   if (discount !== undefined && price !== undefined && price > 0) {
     return (discount * 100) / price;
   }
 
-  return toFiniteNumberOrUndefined(fallbackDiscountPercent);
+  return undefined;
 };
 
 const hasNonBlankValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
@@ -1044,7 +1047,16 @@ const getDeliveryForCopy = async (docEntry) => {
     WHERE T0.DocEntry = @DocEntry AND T0.LineStatus = 'O' AND T0.OpenQty > 0
     ORDER BY T0.LineNum
   `, { DocEntry: docEntry });
-  return { ...(h.recordset?.[0] || {}), DocumentLines: l.recordset || [] };
+  const lineUdfs = await getLineUdfValues({
+    tableId: 'DLN1',
+    keyValue: docEntry,
+  }).catch(() => ({}));
+  const documentLines = (l.recordset || []).map((line) => ({
+    ...line,
+    line_udfs: { ...(lineUdfs[line.LineNum] || {}) },
+    udf: { ...(lineUdfs[line.LineNum] || {}) },
+  }));
+  return { ...(h.recordset?.[0] || {}), DocumentLines: documentLines };
 };
 
 // ── GET DELIVERY FOR COPY TO CREDIT MEMO ──────────────────────────────────────
@@ -1124,6 +1136,11 @@ const getDeliveryForCopyToCreditMemo = async (docEntry) => {
     throw new Error('No rows available for copying. All lines are fully copied or closed.');
   }
 
+  const lineUdfs = await getLineUdfValues({
+    tableId: 'DLN1',
+    keyValue: docEntry,
+  }).catch(() => ({}));
+
   // Get HSN codes and batch info for items
   const itemCodes = lineRows.map(l => l.ItemCode).filter(Boolean);
   let itemInfoMap = {};
@@ -1179,7 +1196,7 @@ const getDeliveryForCopyToCreditMemo = async (docEntry) => {
         uomCode: l.UoMCode || '',
         batchManaged: itemInfo.batchManaged,
         batches: [],
-        udf: {},
+        udf: { ...(lineUdfs[l.LineNum] || {}) },
       };
     }),
   };

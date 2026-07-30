@@ -348,6 +348,7 @@ const buildPurchaseOrderPayload = async (
     JournalMemo: header.journalRemark,
     Confirmed: toSapYesNo(forceConfirmed ? true : header.confirmed, true),
     DiscountPercent: toNumberOrUndefined(header.discount),
+    Rounding: toSapYesNo(header.rounding),
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
     DocumentLines: await buildDocumentLines(lines),
   });

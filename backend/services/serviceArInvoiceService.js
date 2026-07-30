@@ -250,6 +250,7 @@ const buildSapPayload = async (payload, includeSeries = true) => {
     Comments: optString(header.remarks || header.otherInstruction || header.comments),
     JournalMemo: optString(header.journalRemark),
     DiscountPercent: header.discount ? parseNum(header.discount) : undefined,
+    Rounding: yesNo(header.rounding),
     DocumentLines: [],
   };
 

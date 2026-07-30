@@ -848,7 +848,10 @@ const getDocumentSeries = async (targetDate = null, transactionType = '', branch
     ToDate: s.ToDate || null,
   }));
 
-  return keepSapVisibleNumberingSeries(filterSeriesByTransactionType(series, transactionType));
+  const transactionMatchedSeries = filterSeriesByTransactionType(series, transactionType);
+  return String(transactionType || '').trim()
+    ? transactionMatchedSeries
+    : keepSapVisibleNumberingSeries(transactionMatchedSeries);
 };
 
 const getNextNumber = async (series) => {
@@ -913,6 +916,13 @@ const getOpenSalesOrders = (customerCode = null) => {
     FROM ORDR T0
     WHERE T0.DocStatus = 'O'
       AND T0.CANCELED <> 'Y'
+      AND EXISTS (
+        SELECT 1
+        FROM RDR1 T1
+        WHERE T1.DocEntry = T0.DocEntry
+          AND T1.LineStatus = 'O'
+          AND ISNULL(T1.OpenQty, 0) > 0
+      )
       ${customerCode ? "AND T0.CardCode = @customerCode" : ""}
     ORDER BY T0.DocDate DESC, T0.DocNum DESC
   `;
@@ -929,6 +939,13 @@ const getOpenDeliveries = (customerCode = null) => {
     FROM ODLN T0
     WHERE T0.DocStatus = 'O'
       AND T0.CANCELED <> 'Y'
+      AND EXISTS (
+        SELECT 1
+        FROM DLN1 T1
+        WHERE T1.DocEntry = T0.DocEntry
+          AND T1.LineStatus = 'O'
+          AND ISNULL(T1.OpenQty, 0) > 0
+      )
       ${customerCode ? "AND T0.CardCode = @customerCode" : ""}
     ORDER BY T0.DocNum DESC, T0.DocDate DESC  
   `;
@@ -1245,9 +1262,10 @@ const getARInvoiceList = async ({
 };
 
 const getARInvoice = async (docEntry) => {
-  const [headerFieldMetadata, lineFieldMetadata] = await Promise.all([
+  const [headerFieldMetadata, lineFieldMetadata, withholdingTaxFieldMetadata] = await Promise.all([
     getTableFieldMetadata('OINV'),
     getTableFieldMetadata('INV1'),
+    getTableFieldMetadata('INV5'),
   ]);
   const addressExtensionFieldMetadata = await getTableFieldMetadata('INV12');
   const addressExtensionSelectFields = buildAddressExtensionSelectFields({
@@ -1313,6 +1331,7 @@ const getARInvoice = async (docEntry) => {
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
+      ${optionalColumn(headerFieldMetadata, 'T0', 'WTSum', 'WTSum', '0')},
       ${placeOfSupplyExpression} AS PlaceOfSupply,
       ${optionalColumn(headerFieldMetadata, 'T0', 'ShipToCode', 'ShipToCode', "''")},
       ${optionalColumn(headerFieldMetadata, 'T0', 'PayToCode', 'PayToCode', "''")},
@@ -1503,6 +1522,30 @@ const getARInvoice = async (docEntry) => {
     });
     return acc;
   }, {});
+  const wtaxDocumentColumn = getTableFieldName(withholdingTaxFieldMetadata, 'AbsEntry')
+    || getTableFieldName(withholdingTaxFieldMetadata, 'DocEntry');
+  const wtaxCodeRef = sqlColumnRef(withholdingTaxFieldMetadata, 'T0', 'WTCode');
+  const wtaxTaxableRef = sqlColumnRef(withholdingTaxFieldMetadata, 'T0', 'TaxbleAmnt')
+    || sqlColumnRef(withholdingTaxFieldMetadata, 'T0', 'TaxableAmount');
+  const wtaxAmountRef = sqlColumnRef(withholdingTaxFieldMetadata, 'T0', 'WTAmnt')
+    || sqlColumnRef(withholdingTaxFieldMetadata, 'T0', 'WTAmount');
+  const wtaxRateRef = sqlColumnRef(withholdingTaxFieldMetadata, 'T0', 'Rate');
+  const wtaxCategoryRef = sqlColumnRef(withholdingTaxFieldMetadata, 'T0', 'Category');
+  const withholdingTaxRows = wtaxDocumentColumn && wtaxCodeRef
+    ? await safe(db.query(`
+      SELECT
+        ${wtaxCodeRef} AS WTCode,
+        COALESCE(NULLIF(LTRIM(RTRIM(WT.WTName)), ''), ${wtaxCodeRef}) AS WTName,
+        ${wtaxRateRef || 'WT.Rate'} AS Rate,
+        ${wtaxTaxableRef || '0'} AS TaxableAmount,
+        ${wtaxAmountRef || '0'} AS WTAmount,
+        ${wtaxCategoryRef || 'WT.Category'} AS Category
+      FROM INV5 T0
+      LEFT JOIN OWHT WT ON WT.WTCode = ${wtaxCodeRef}
+      WHERE T0.${sqlAlias(wtaxDocumentColumn)} = @docEntry
+      ORDER BY ${wtaxCodeRef}
+    `, { docEntry: resolvedDocEntry }))
+    : [];
 
   const [headerUdfs, lineUdfsByLineNum] = await Promise.all([
     getHeaderUdfValues({ tableId: 'OINV', keyValue: resolvedDocEntry }),
@@ -1558,6 +1601,7 @@ const getARInvoice = async (docEntry) => {
         rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
         roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
+        wtaxAmount: header.WTSum != null ? String(header.WTSum) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
         salesEmployee: header.SalesEmployeeCode != null ? String(header.SalesEmployeeCode) : '',
         purchaser: header.SalesEmployeeName || '',
@@ -1640,6 +1684,18 @@ const getARInvoice = async (docEntry) => {
       });
       }),
       DocumentLines: lineRows,
+      withholdingTaxRows: withholdingTaxRows.map((row) => ({
+        code: row.WTCode || '',
+        name: row.WTName || '',
+        rate: row.Rate != null ? String(row.Rate) : '',
+        baseAmount: row.TaxableAmount != null ? String(row.TaxableAmount) : '',
+        taxableAmount: row.TaxableAmount != null ? String(row.TaxableAmount) : '',
+        wtaxAmount: row.WTAmount != null ? String(row.WTAmount) : '',
+        category: row.Category || 'Invoice',
+        baseType: 'Net',
+        criteria: 'Cash',
+        tdsType: 'eTDS',
+      })),
       header_udfs: headerUdfs,
     },
   };
@@ -1730,11 +1786,169 @@ const getLineUomFactor = (line = {}) => {
 const getRequiredBatchQty = (line = {}) =>
   parseBatchQtyNumber(line.quantity) * getLineUomFactor(line);
 
+const createBaseDocumentError = (code, message, details = {}) => {
+  const error = new Error(message);
+  error.code = code;
+  error.status = 400;
+  error.details = details;
+  return error;
+};
+
+const parseRequiredBaseNumber = (value, fieldName, details) => {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    throw createBaseDocumentError(
+      'BASE_DOCUMENT_NOT_FOUND',
+      `Base document ${fieldName} is required.`,
+      details,
+    );
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw createBaseDocumentError(
+      'BASE_DOCUMENT_NOT_FOUND',
+      `Base document ${fieldName} is invalid.`,
+      { ...details, [fieldName]: value },
+    );
+  }
+
+  return parsed;
+};
+
+const hasPositiveBatchAssignment = (line = {}) => (
+  Array.isArray(line.batches) &&
+  line.batches.some((batch) => (
+    String(batch?.batchNumber || batch?.BatchNumber || batch?.BatchNum || '').trim() &&
+    parseBatchQtyNumber(batch?.quantity ?? batch?.Quantity) > 0
+  ))
+);
+
+const getDocumentLineRow = async ({ headerTable, lineTable, docEntry, lineNum }) => {
+  const result = await db.query(`
+    SELECT
+      H.DocEntry,
+      H.DocNum,
+      H.DocStatus,
+      H.CANCELED,
+      L.LineNum,
+      L.LineStatus,
+      ISNULL(L.OpenQty, 0) AS OpenQty,
+      ISNULL(L.Quantity, 0) AS Quantity
+    FROM ${headerTable} H
+    LEFT JOIN ${lineTable} L
+      ON L.DocEntry = H.DocEntry
+     AND L.LineNum = @LineNum
+    WHERE H.DocEntry = @DocEntry
+  `, { DocEntry: docEntry, LineNum: lineNum });
+
+  return result.recordset?.[0] || null;
+};
+
+const validateARInvoiceBaseDocuments = async (lines = []) => {
+  for (let index = 0; index < (lines || []).length; index += 1) {
+    const line = lines[index] || {};
+    const rawBaseType = line.baseType ?? line.BaseType;
+    const rawBaseEntry = line.baseEntry ?? line.BaseEntry;
+    const rawBaseLine = line.baseLine ?? line.BaseLine;
+    const hasBaseDocument =
+      rawBaseType !== undefined && rawBaseType !== null && String(rawBaseType).trim() !== '' &&
+      rawBaseEntry !== undefined && rawBaseEntry !== null && String(rawBaseEntry).trim() !== '' &&
+      rawBaseLine !== undefined && rawBaseLine !== null && String(rawBaseLine).trim() !== '';
+
+    if (!hasBaseDocument) continue;
+
+    const details = { lineIndex: index, itemCode: line.itemNo || line.ItemCode || '' };
+    const baseType = parseRequiredBaseNumber(rawBaseType, 'baseType', details);
+    const baseEntry = parseRequiredBaseNumber(rawBaseEntry, 'baseEntry', details);
+    const baseLine = parseRequiredBaseNumber(rawBaseLine, 'baseLine', details);
+    const requestedQty = parseBatchQtyNumber(line.quantity ?? line.Quantity);
+
+    if (![17, 15].includes(baseType)) {
+      throw createBaseDocumentError(
+        'INVALID_BASE_DOCUMENT_TYPE',
+        `A/R Invoice can only be copied from an open Sales Order or Delivery. BaseType ${baseType} is not allowed.`,
+        { ...details, baseType, baseEntry, baseLine },
+      );
+    }
+
+    if (baseType === 15 && hasPositiveBatchAssignment(line)) {
+      throw createBaseDocumentError(
+        'BATCH_ASSIGNMENT_NOT_REQUIRED',
+        'Batch assignment is not required when creating an A/R Invoice from a Delivery.',
+        { ...details, baseType, baseEntry, baseLine },
+      );
+    }
+
+    const isDelivery = baseType === 15;
+    const row = await getDocumentLineRow({
+      headerTable: isDelivery ? 'ODLN' : 'ORDR',
+      lineTable: isDelivery ? 'DLN1' : 'RDR1',
+      docEntry: baseEntry,
+      lineNum: baseLine,
+    });
+
+    if (!row) {
+      throw createBaseDocumentError(
+        'BASE_DOCUMENT_NOT_FOUND',
+        `${isDelivery ? 'Delivery' : 'Sales Order'} ${baseEntry} was not found.`,
+        { ...details, baseType, baseEntry, baseLine },
+      );
+    }
+
+    if (String(row.CANCELED || '').toUpperCase() === 'Y' || String(row.DocStatus || '').toUpperCase() !== 'O') {
+      throw createBaseDocumentError(
+        isDelivery ? 'DELIVERY_ALREADY_INVOICED' : 'BASE_DOCUMENT_CLOSED',
+        `${isDelivery ? 'Delivery' : 'Sales Order'} ${row.DocNum || baseEntry} is closed and cannot be copied to A/R Invoice.`,
+        { ...details, baseType, baseEntry, baseLine, docStatus: row.DocStatus },
+      );
+    }
+
+    if (row.LineNum === null || row.LineNum === undefined) {
+      throw createBaseDocumentError(
+        'BASE_LINE_NOT_FOUND',
+        `${isDelivery ? 'Delivery' : 'Sales Order'} line ${baseLine} was not found.`,
+        { ...details, baseType, baseEntry, baseLine },
+      );
+    }
+
+    if (String(row.LineStatus || '').toUpperCase() !== 'O') {
+      throw createBaseDocumentError(
+        isDelivery ? 'DELIVERY_ALREADY_INVOICED' : 'BASE_LINE_CLOSED',
+        `${isDelivery ? 'Delivery' : 'Sales Order'} line ${baseLine} is closed and cannot be invoiced again.`,
+        { ...details, baseType, baseEntry, baseLine, lineStatus: row.LineStatus },
+      );
+    }
+
+    const openQty = parseBatchQtyNumber(row.OpenQty);
+    if (openQty <= BATCH_QTY_TOLERANCE) {
+      throw createBaseDocumentError(
+        isDelivery ? 'DELIVERY_ALREADY_INVOICED' : 'NO_OPEN_QUANTITY',
+        isDelivery
+          ? 'This Delivery line has already been fully invoiced.'
+          : 'This Sales Order is closed or fully delivered and has no open quantity available for invoicing.',
+        { ...details, baseType, baseEntry, baseLine, openQty },
+      );
+    }
+
+    if (requestedQty - openQty > BATCH_QTY_TOLERANCE) {
+      throw createBaseDocumentError(
+        'QUANTITY_EXCEEDS_OPEN_QUANTITY',
+        `Quantity ${requestedQty} exceeds open quantity ${openQty} on ${isDelivery ? 'Delivery' : 'Sales Order'} line ${baseLine}.`,
+        { ...details, baseType, baseEntry, baseLine, requestedQty, openQty },
+      );
+    }
+  }
+
+  return { isValid: true };
+};
+
 const validateBatchSelection = async (lines = []) => {
   const errors = [];
   const allocatedByStockBatch = new Map();
 
   for (const line of lines || []) {
+    if (Number(line?.baseType ?? line?.BaseType) === 15) continue;
+
     const itemCode = String(line.itemNo || line.ItemCode || '').trim();
     if (!itemCode) continue;
 
@@ -1932,14 +2146,99 @@ const getARInvoiceForCopy = async (docEntry) => {
       T0.OpenQty AS Quantity, T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent, T0.WhsCode AS WarehouseCode,
       T0.TaxCode, T0.unitMsr AS UomCode, CHP.ChapterID AS HSNCode,
-      T0.DocEntry AS BaseEntry, T0.LineNum AS BaseLine, 13 AS BaseType
+      T0.DocEntry AS BaseEntry, T0.LineNum AS BaseLine, 13 AS BaseType,
+      T0.BaseEntry AS SourceBaseEntry, T0.BaseLine AS SourceBaseLine, T0.BaseType AS SourceBaseType
     FROM INV1 T0
     LEFT JOIN OITM ITM ON T0.ItemCode = ITM.ItemCode
     LEFT JOIN OCHP CHP ON ITM.ChapterID = CHP.AbsEntry
     WHERE T0.DocEntry = @DocEntry AND T0.LineStatus = 'O' AND T0.OpenQty > 0
     ORDER BY T0.LineNum
   `, { DocEntry: docEntry });
-  return { ...(h.recordset?.[0] || {}), DocumentLines: l.recordset || [] };
+  const batchRows = await safe(db.query(`
+    SELECT
+      BaseLinNum AS BaseLineNum,
+      BatchNum,
+      ABS(Quantity) AS Quantity
+    FROM IBT1
+    WHERE BaseType = 13
+      AND BaseEntry = @DocEntry
+    ORDER BY BaseLinNum, BatchNum
+  `, { DocEntry: docEntry }));
+  const batchesByLine = batchRows.reduce((acc, batch) => {
+    const lineNum = batch.BaseLineNum;
+    if (!acc[lineNum]) acc[lineNum] = [];
+    acc[lineNum].push({
+      batchNumber: batch.BatchNum || '',
+      quantity: batch.Quantity != null ? String(batch.Quantity) : '',
+    });
+    return acc;
+  }, {});
+  const invoiceLines = l.recordset || [];
+  const deliveryBasedLines = invoiceLines.filter((line) => (
+    !batchesByLine[line.LineNum]?.length &&
+    Number(line.SourceBaseType) === 15 &&
+    line.SourceBaseEntry != null &&
+    line.SourceBaseLine != null
+  ));
+  if (deliveryBasedLines.length) {
+    const uniqueDeliveryEntries = [...new Set(deliveryBasedLines.map((line) => Number(line.SourceBaseEntry)))];
+    const deliveryBatchRows = [];
+    for (const deliveryEntry of uniqueDeliveryEntries) {
+      let rows = await safe(db.query(`
+        SELECT
+          BaseEntry,
+          BaseLinNum AS BaseLineNum,
+          BatchNum,
+          ABS(Quantity) AS Quantity
+        FROM IBT1
+        WHERE BaseType = 15
+          AND BaseEntry = @deliveryEntry
+        ORDER BY BaseLinNum, BatchNum
+      `, { deliveryEntry }));
+      if (!rows.length) {
+        rows = await safe(db.query(`
+          SELECT
+            T0.DocEntry AS BaseEntry,
+            T0.DocLine AS BaseLineNum,
+            T2.DistNumber AS BatchNum,
+            ABS(T1.Quantity) AS Quantity
+          FROM OITL T0
+          INNER JOIN ITL1 T1 ON T1.LogEntry = T0.LogEntry
+          INNER JOIN OBTN T2
+            ON T2.ItemCode = T1.ItemCode
+           AND T2.SysNumber = T1.SysNumber
+          WHERE T0.DocEntry = @deliveryEntry
+            AND T0.DocType = 15
+            AND T1.Quantity <> 0
+          ORDER BY T0.DocLine, T2.DistNumber
+        `, { deliveryEntry }));
+      }
+      deliveryBatchRows.push(...rows);
+    }
+
+    deliveryBasedLines.forEach((line) => {
+      const sourceBatches = deliveryBatchRows.filter((batch) => (
+        Number(batch.BaseEntry) === Number(line.SourceBaseEntry) &&
+        Number(batch.BaseLineNum) === Number(line.SourceBaseLine)
+      ));
+      if (!sourceBatches.length) return;
+      batchesByLine[line.LineNum] = sourceBatches.map((batch) => ({
+        batchNumber: batch.BatchNum || '',
+        quantity: batch.Quantity != null ? String(batch.Quantity) : '',
+      }));
+    });
+  }
+  const lineUdfs = await getLineUdfValues({
+    tableId: 'INV1',
+    keyValue: docEntry,
+  }).catch(() => ({}));
+  const documentLines = invoiceLines.map((line) => ({
+    ...line,
+    batches: batchesByLine[line.LineNum] || [],
+    line_udfs: { ...(lineUdfs[line.LineNum] || {}) },
+    udf: { ...(lineUdfs[line.LineNum] || {}) },
+  }));
+  return { ...(h.recordset?.[0] || {}), DocumentLines: documentLines };
 };
 
 module.exports = {
@@ -1953,6 +2252,7 @@ module.exports = {
   getWarehouseState,
   getWarehouseBranch,
   getBatchesByItem,
+  validateARInvoiceBaseDocuments,
   validateBatchSelection,
   getFreightCharges,
   getItemsForModal,

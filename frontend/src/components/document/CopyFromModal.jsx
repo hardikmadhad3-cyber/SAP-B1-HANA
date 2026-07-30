@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { matchesSapSearchText } from '../../utils/sapSearch';
 
 const TITLES = {
   quotation: 'List of Sales Quotations',
@@ -98,14 +99,15 @@ export default function CopyFromModal({
   }, [documentType, isOpen, onFetchDocuments]);
 
   const filteredDocuments = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
-    if (!term) return documents;
+    if (!searchTerm.trim()) return documents;
 
     return documents.filter((doc) => (
-      String(getDocValue(doc, ['DocNum', 'docNum', 'doc_num'])).toLowerCase().includes(term) ||
-      String(getDocValue(doc, ['CardCode', 'cardCode', 'customerCode', 'vendor_code'])).toLowerCase().includes(term) ||
-      String(getDocValue(doc, ['CardName', 'cardName', 'customerName', 'vendor_name'])).toLowerCase().includes(term) ||
-      String(getDocValue(doc, ['Comments', 'comments', 'Remarks', 'remarks', 'details'])).toLowerCase().includes(term)
+      [
+        getDocValue(doc, ['DocNum', 'docNum', 'doc_num']),
+        getDocValue(doc, ['CardCode', 'cardCode', 'customerCode', 'vendor_code']),
+        getDocValue(doc, ['CardName', 'cardName', 'customerName', 'vendor_name']),
+        getDocValue(doc, ['Comments', 'comments', 'Remarks', 'remarks', 'details']),
+      ].some((value) => matchesSapSearchText(value, searchTerm))
     ));
   }, [documents, searchTerm]);
 

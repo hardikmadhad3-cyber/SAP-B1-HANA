@@ -363,6 +363,14 @@ const getOpenGRPO = async (vendorCode = null) => {
         T0.DocTotal
       FROM OPDN T0
       WHERE T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND EXISTS (
+          SELECT 1
+          FROM PDN1 T1
+          WHERE T1.DocEntry = T0.DocEntry
+            AND T1.LineStatus = 'O'
+            AND ISNULL(T1.OpenQty, 0) > 0
+        )
         AND T0.CardCode = @vendorCode
       ORDER BY T0.DocEntry DESC
     `
@@ -377,6 +385,14 @@ const getOpenGRPO = async (vendorCode = null) => {
         T0.DocTotal
       FROM OPDN T0
       WHERE T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND EXISTS (
+          SELECT 1
+          FROM PDN1 T1
+          WHERE T1.DocEntry = T0.DocEntry
+            AND T1.LineStatus = 'O'
+            AND ISNULL(T1.OpenQty, 0) > 0
+        )
       ORDER BY T0.DocEntry DESC
     `;
 
@@ -404,6 +420,7 @@ const getGRPOForCopy = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue
@@ -479,6 +496,8 @@ const getGRPOForCopy = async (docEntry) => {
       branch: header.Branch ? String(header.Branch) : '',
       paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
       otherInstruction: header.Remarks || '',
+      rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+      roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
     },
     lines: lineRows.map((l) => {
       const itemInfo = itemInfoMap[l.ItemCode] || { hsnCode: '', batchManaged: false };
@@ -626,6 +645,7 @@ const getAPInvoice = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
@@ -723,6 +743,8 @@ const getAPInvoice = async (docEntry) => {
         paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
         otherInstruction: header.Remarks || '',
         discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+        rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         freight: header.Freight != null ? String(header.Freight) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
@@ -1031,10 +1053,56 @@ const getItemValidation = async (itemCode) => {
 
 const getTaxCodeValidation = async (code) => masterDataDbService.getTaxCode(code);
 
+const createBaseDocumentError = (code, message, details = {}) => {
+  const error = new Error(message);
+  error.code = code;
+  error.status = 400;
+  error.statusCode = 400;
+  error.details = details;
+  return error;
+};
+
+const parseBaseNumber = (value, fieldName, details) => {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    throw createBaseDocumentError(
+      'BASE_DOCUMENT_NOT_FOUND',
+      `Base document ${fieldName} is required.`,
+      details,
+    );
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw createBaseDocumentError(
+      'BASE_DOCUMENT_NOT_FOUND',
+      `Base document ${fieldName} is invalid.`,
+      { ...details, [fieldName]: value },
+    );
+  }
+
+  return parsed;
+};
+
+const parseQuantity = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const hasPositiveBatchAssignment = (line = {}) => (
+  Array.isArray(line.batches) &&
+  line.batches.some((batch) => (
+    String(batch?.batchNumber || batch?.BatchNumber || batch?.BatchNum || '').trim() &&
+    parseQuantity(batch?.quantity ?? batch?.Quantity) > 0
+  ))
+);
+
 const getGRPOOpenLineValidation = async (docEntry, lineNum) => {
   const rows = await safe(db.query(`
     SELECT TOP 1
       T0.DocEntry,
+      H.DocNum,
+      H.DocStatus,
+      H.CANCELED,
       T0.LineNum,
       T0.OpenQty,
       T0.LineStatus
@@ -1044,6 +1112,87 @@ const getGRPOOpenLineValidation = async (docEntry, lineNum) => {
       AND T0.LineNum = @lineNum
   `, { docEntry, lineNum }));
   return rows[0] || null;
+};
+
+const validateAPInvoiceBaseDocuments = async (lines = []) => {
+  for (let index = 0; index < (lines || []).length; index += 1) {
+    const line = lines[index] || {};
+    const rawBaseType = line.baseType ?? line.BaseType;
+    const rawBaseEntry = line.baseEntry ?? line.BaseEntry;
+    const rawBaseLine = line.baseLine ?? line.BaseLine;
+    const hasBaseDocument =
+      rawBaseType !== undefined && rawBaseType !== null && String(rawBaseType).trim() !== '' &&
+      rawBaseEntry !== undefined && rawBaseEntry !== null && String(rawBaseEntry).trim() !== '' &&
+      rawBaseLine !== undefined && rawBaseLine !== null && String(rawBaseLine).trim() !== '';
+
+    if (!hasBaseDocument) continue;
+
+    const details = { lineIndex: index, itemCode: line.itemNo || line.ItemCode || '' };
+    const baseType = parseBaseNumber(rawBaseType, 'baseType', details);
+    const baseEntry = parseBaseNumber(rawBaseEntry, 'baseEntry', details);
+    const baseLine = parseBaseNumber(rawBaseLine, 'baseLine', details);
+    const requestedQty = parseQuantity(line.quantity ?? line.Quantity);
+
+    if (baseType !== 20) {
+      throw createBaseDocumentError(
+        'INVALID_BASE_DOCUMENT_TYPE',
+        `A/P Invoice can only be copied from an open GRPO. BaseType ${baseType} is not allowed.`,
+        { ...details, baseType, baseEntry, baseLine },
+      );
+    }
+
+    if (hasPositiveBatchAssignment(line)) {
+      throw createBaseDocumentError(
+        'BATCH_ASSIGNMENT_NOT_REQUIRED',
+        'Batch assignment is not required when creating an A/P Invoice from a GRPO.',
+        { ...details, baseType, baseEntry, baseLine },
+      );
+    }
+
+    const grpoLine = await getGRPOOpenLineValidation(baseEntry, baseLine);
+    if (!grpoLine) {
+      throw createBaseDocumentError(
+        'BASE_LINE_NOT_FOUND',
+        `GRPO line ${baseLine} was not found.`,
+        { ...details, baseType, baseEntry, baseLine },
+      );
+    }
+
+    if (String(grpoLine.CANCELED || '').toUpperCase() === 'Y' || String(grpoLine.DocStatus || '').toUpperCase() !== 'O') {
+      throw createBaseDocumentError(
+        'GRPO_ALREADY_INVOICED',
+        `GRPO ${grpoLine.DocNum || baseEntry} is closed and cannot be copied to A/P Invoice.`,
+        { ...details, baseType, baseEntry, baseLine, docStatus: grpoLine.DocStatus },
+      );
+    }
+
+    if (String(grpoLine.LineStatus || '').toUpperCase() !== 'O') {
+      throw createBaseDocumentError(
+        'BASE_LINE_CLOSED',
+        `GRPO line ${baseLine} is closed and cannot be invoiced again.`,
+        { ...details, baseType, baseEntry, baseLine, lineStatus: grpoLine.LineStatus },
+      );
+    }
+
+    const openQty = parseQuantity(grpoLine.OpenQty);
+    if (openQty <= 0) {
+      throw createBaseDocumentError(
+        'NO_OPEN_QUANTITY',
+        'This GRPO line has already been fully invoiced.',
+        { ...details, baseType, baseEntry, baseLine, openQty },
+      );
+    }
+
+    if (requestedQty - openQty > 0.000001) {
+      throw createBaseDocumentError(
+        'QUANTITY_EXCEEDS_OPEN_QUANTITY',
+        `Quantity ${requestedQty} exceeds open quantity ${openQty} on GRPO line ${baseLine}.`,
+        { ...details, baseType, baseEntry, baseLine, requestedQty, openQty },
+      );
+    }
+  }
+
+  return { isValid: true };
 };
 
 const isDuplicateVendorInvoiceNumber = async (cardCode, vendorRefNo, excludeDocEntry = null) => {
@@ -1092,6 +1241,7 @@ module.exports = {
   getItemValidation,
   getTaxCodeValidation,
   getGRPOOpenLineValidation,
+  validateAPInvoiceBaseDocuments,
   isDuplicateVendorInvoiceNumber,
   hasItemGLAccount,
   getItemsForModal

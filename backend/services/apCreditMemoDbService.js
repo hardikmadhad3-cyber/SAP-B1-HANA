@@ -359,6 +359,7 @@ const getGRPOForCopy = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue
@@ -433,6 +434,8 @@ const getGRPOForCopy = async (docEntry) => {
       branch: header.Branch ? String(header.Branch) : '',
       paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
       otherInstruction: header.Remarks || '',
+      rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+      roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
     },
     lines: lineRows.map((l) => {
       const itemInfo = itemInfoMap[l.ItemCode] || { hsnCode: '', batchManaged: false };
@@ -579,6 +582,7 @@ const getAPCreditMemo = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
@@ -677,6 +681,8 @@ const getAPCreditMemo = async (docEntry) => {
         paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
         otherInstruction: header.Remarks || '',
         discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+        rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         freight: header.Freight != null ? String(header.Freight) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',

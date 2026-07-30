@@ -1,4 +1,5 @@
 const db = require("./dbService");
+const { appendSapSearchCondition } = require("./documentListUtils");
 
 const toInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
@@ -1014,6 +1015,15 @@ const searchBP = async (query = "", type = "", top = 50, skip = 0, options = {})
   const { top: limit, skip: offset } = pagingParams(top, skip);
   const trimmed = String(query || "").trim();
   const cardType = type === "cCustomer" ? "C" : type === "cSupplier" ? "S" : type === "cLead" ? "L" : "";
+  const searchClauses = [];
+  const searchParams = {};
+  appendSapSearchCondition(
+    searchClauses,
+    searchParams,
+    ["CardCode", "CardName", "CardFName", "Phone1", "E_Mail"],
+    trimmed,
+    "bpQuery",
+  );
   const rows = await queryRows(`
     SELECT
       CardCode,
@@ -1030,16 +1040,16 @@ const searchBP = async (query = "", type = "", top = 50, skip = 0, options = {})
       Address,
       LicTradNum
     FROM OCRD
-      WHERE (@query = ''
-        OR CardCode LIKE @like
-        OR CardName LIKE @like
-        OR CardFName LIKE @like
-        OR Phone1 LIKE @like
-        OR E_Mail LIKE @like)
+      WHERE (${searchClauses.length ? searchClauses.join(" AND ") : "1 = 1"})
         AND (@cardType = '' OR CardType = @cardType)
       ORDER BY CardName, CardCode
       OFFSET @skip ROWS FETCH NEXT @top ROWS ONLY
-    `, { query: trimmed, like: `%${trimmed}%`, cardType, top: limit, skip: offset }, options);
+    `, {
+      ...searchParams,
+      cardType,
+      top: limit,
+      skip: offset,
+    }, options);
 
     return rows.map((row) => ({
       CardCode: row.CardCode,

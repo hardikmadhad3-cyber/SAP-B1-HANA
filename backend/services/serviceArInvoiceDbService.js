@@ -62,6 +62,68 @@ const toInt = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const REFERENCE_DATA_CACHE_TTL_MS = Number(
+  process.env.SERVICE_AR_INVOICE_REFERENCE_DATA_CACHE_TTL_MS || 5 * 60 * 1000,
+);
+const REFERENCE_DATA_BATCH_SIZE = Math.max(
+  1,
+  Math.min(3, Number(process.env.SERVICE_AR_INVOICE_REFERENCE_QUERY_BATCH_SIZE) || 2),
+);
+const referenceDataCache = new Map();
+
+const cloneReferenceData = (data) => JSON.parse(JSON.stringify(data || {}));
+
+const getReferenceDataCacheKey = async () => {
+  try {
+    return String(await db.resolveDatabaseName() || 'default');
+  } catch (_error) {
+    return 'default';
+  }
+};
+
+const runReferenceDataTasks = async (tasks) => {
+  const values = [];
+  for (let index = 0; index < tasks.length; index += REFERENCE_DATA_BATCH_SIZE) {
+    const batch = tasks.slice(index, index + REFERENCE_DATA_BATCH_SIZE);
+    values.push(...await Promise.all(batch.map((task) => task())));
+  }
+  return values;
+};
+
+const getCachedReferenceData = async (loadData) => {
+  if (!Number.isFinite(REFERENCE_DATA_CACHE_TTL_MS) || REFERENCE_DATA_CACHE_TTL_MS <= 0) {
+    return loadData();
+  }
+
+  const cacheKey = await getReferenceDataCacheKey();
+  const now = Date.now();
+  const cached = referenceDataCache.get(cacheKey);
+
+  if (cached?.data && cached.expiresAt > now) {
+    return cloneReferenceData(cached.data);
+  }
+  if (cached?.pending) {
+    return cloneReferenceData(await cached.pending);
+  }
+
+  const pending = loadData();
+  referenceDataCache.set(cacheKey, { pending, expiresAt: now + REFERENCE_DATA_CACHE_TTL_MS });
+
+  try {
+    const data = await pending;
+    referenceDataCache.set(cacheKey, {
+      data,
+      expiresAt: Date.now() + REFERENCE_DATA_CACHE_TTL_MS,
+    });
+    return cloneReferenceData(data);
+  } catch (error) {
+    if (referenceDataCache.get(cacheKey)?.pending === pending) {
+      referenceDataCache.delete(cacheKey);
+    }
+    throw error;
+  }
+};
+
 const formatDate = (value) => {
   if (!value) return '';
   if (value instanceof Date) return value.toISOString().split('T')[0];
@@ -193,7 +255,7 @@ const lookupServiceItems = async () => {
   }));
 };
 
-const getReferenceData = async () => {
+const loadReferenceDataUncached = async () => {
   const [
     base,
     accounts,
@@ -207,19 +269,19 @@ const getReferenceData = async () => {
     sellerQualityOptions,
     buyerPriceOptions,
     sellerPriceOptions,
-  ] = await Promise.all([
-    arInvoiceDb.getReferenceData(),
-    masterDataDbService.searchAccounts('', '', 5000, 0),
-    masterDataDbService.lookupDistributionRules(),
-    masterDataDbService.lookupWithholdingTaxCodes('', 200),
-    hsnCodeDbService.getSACCodes('', 5000, 0),
-    masterDataDbService.lookupWarehouseLocations(),
-    masterDataDbService.searchBP('', '', 5000, 0),
-    lookupServiceItems(),
-    getServiceLineLookupValues(SERVICE_LINE_LOOKUPS.buyerQuality),
-    getServiceLineLookupValues(SERVICE_LINE_LOOKUPS.sellerQuality),
-    getServiceLineLookupValues(SERVICE_LINE_LOOKUPS.buyerPrice),
-    getServiceLineLookupValues(SERVICE_LINE_LOOKUPS.sellerPrice),
+  ] = await runReferenceDataTasks([
+    () => arInvoiceDb.getReferenceData(),
+    () => masterDataDbService.searchAccounts('', '', 5000, 0),
+    () => masterDataDbService.lookupDistributionRules(),
+    () => masterDataDbService.lookupWithholdingTaxCodes('', 200),
+    () => hsnCodeDbService.getSACCodes('', 5000, 0),
+    () => masterDataDbService.lookupWarehouseLocations(),
+    () => masterDataDbService.searchBP('', '', 5000, 0),
+    () => lookupServiceItems(),
+    () => getServiceLineLookupValues(SERVICE_LINE_LOOKUPS.buyerQuality),
+    () => getServiceLineLookupValues(SERVICE_LINE_LOOKUPS.sellerQuality),
+    () => getServiceLineLookupValues(SERVICE_LINE_LOOKUPS.buyerPrice),
+    () => getServiceLineLookupValues(SERVICE_LINE_LOOKUPS.sellerPrice),
   ]);
 
   return {
@@ -256,6 +318,8 @@ const getReferenceData = async () => {
     },
   };
 };
+
+const getReferenceData = async () => getCachedReferenceData(loadReferenceDataUncached);
 
 const getServiceARInvoiceList = async ({
   query = '',

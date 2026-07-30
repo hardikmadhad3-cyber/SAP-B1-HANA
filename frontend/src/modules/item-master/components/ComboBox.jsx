@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { matchesSapSearchText } from "../../../utils/sapSearch";
 
 /**
  * SAP B1-style ComboBox — text input with dropdown arrow
@@ -110,14 +111,12 @@ export default function ComboBox({
     setSearchTerm(event.target.value);
   };
 
-  const normalizedFilterText = String(dropdownSearchable ? searchTerm : value || "")
-    .trim()
-    .toLowerCase();
+  const filterText = String(dropdownSearchable ? searchTerm : value || "").trim();
 
-  const filteredOptions = normalizedFilterText
+  const filteredOptions = filterText
     ? options.filter((opt) =>
-      opt.code?.toLowerCase().includes(normalizedFilterText) ||
-      opt.name?.toLowerCase().includes(normalizedFilterText)
+      matchesSapSearchText(opt.code, filterText) ||
+      matchesSapSearchText(opt.name, filterText)
     )
     : options;
 

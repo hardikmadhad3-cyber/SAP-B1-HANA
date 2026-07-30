@@ -542,6 +542,7 @@ const submitAPCreditMemo = async (payload) => {
       NumAtCard: header.salesContractNo || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: yesNo(header.rounding),
       DocumentLines: documentLines,
     };
 
@@ -594,6 +595,7 @@ const updateAPCreditMemo = async (docEntry, payload) => {
       JournalMemo: header.journalRemark || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: yesNo(header.rounding),
     };
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);

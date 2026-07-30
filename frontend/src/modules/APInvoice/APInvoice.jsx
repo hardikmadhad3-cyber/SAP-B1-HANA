@@ -20,6 +20,7 @@ import WithholdingTaxTableModal from './components/WithholdingTaxTableModal';
 import CopyFromModal from '../../components/document/CopyFromModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
@@ -336,6 +337,12 @@ const AP_INVOICE_COPY_BASE_TYPE = {
   grpo: 20,
   apInvoice: 18,
 };
+
+const getLineBaseTypeNumber = (line = {}) => {
+  const parsed = Number(line.baseType ?? line.BaseType);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const isGrpoBasedLine = (line = {}) => getLineBaseTypeNumber(line) === 20;
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
@@ -802,19 +809,30 @@ function APInvoice() {
       normalizedHeader.customerRefNo = '';
     }
     const sourceLines = Array.isArray(copyFrom.lines) ? copyFrom.lines : [];
-    const copiedLines = sourceLines.map((line, index) => hydratePurchaseOrderLineUdfFields({
-      ...createLine(rowUdfDefinitions),
-      ...normaliseDocumentLine(
+    const copiedLines = sourceLines.map((line, index) => {
+      const normalizedLine = normaliseDocumentLine(
         line,
         index,
         line.baseEntry ?? copyFrom.baseDocument?.baseEntry ?? copyFrom.docEntry,
         line.baseType ?? copyFrom.baseDocument?.baseType ?? AP_INVOICE_COPY_BASE_TYPE[sourceType] ?? 20,
         line.branch || normalizedHeader.branch
-      ),
-      openQty: String(line.openQty ?? line.OpenQty ?? line.quantity ?? line.Quantity ?? ''),
-      taxCodeManuallyOverridden: false,
-      udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
-    }));
+      );
+      const openQty = String(line.openQty ?? line.OpenQty ?? normalizedLine.openQty ?? line.quantity ?? line.Quantity ?? '');
+      const copiedQuantity = isGrpoBasedLine(normalizedLine) && parseNum(openQty) > 0
+        ? openQty
+        : normalizedLine.quantity;
+
+      return hydratePurchaseOrderLineUdfFields({
+        ...createLine(rowUdfDefinitions),
+        ...normalizedLine,
+        quantity: copiedQuantity,
+        openQty,
+        batchManaged: isGrpoBasedLine(normalizedLine) ? false : normalizedLine.batchManaged,
+        batches: isGrpoBasedLine(normalizedLine) ? [] : normalizedLine.batches,
+        taxCodeManuallyOverridden: false,
+        udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
+      });
+    });
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
     setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
@@ -1913,13 +1931,30 @@ function APInvoice() {
       normalizedHeader.customerRefNo = '';
     }
     const rawLines = copySource.lines;
-    const copiedLines = rawLines.map((line, index) => hydratePurchaseOrderLineUdfFields({
-      ...createLine(rowUdfDefinitions),
-      ...normaliseDocumentLine(line, index, copySource.docEntry, AP_INVOICE_COPY_BASE_TYPE[docType] || 20, normalizedHeader.branch),
-      openQty: String(line.OpenQty ?? line.openQty ?? line.Quantity ?? line.quantity ?? ''),
-      taxCodeManuallyOverridden: false,
-      udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
-    }));
+    const copiedLines = rawLines.map((line, index) => {
+      const normalizedLine = normaliseDocumentLine(
+        line,
+        index,
+        copySource.docEntry,
+        AP_INVOICE_COPY_BASE_TYPE[docType] || 20,
+        normalizedHeader.branch,
+      );
+      const openQty = String(line.OpenQty ?? line.openQty ?? normalizedLine.openQty ?? line.Quantity ?? line.quantity ?? '');
+      const copiedQuantity = isGrpoBasedLine(normalizedLine) && parseNum(openQty) > 0
+        ? openQty
+        : normalizedLine.quantity;
+
+      return hydratePurchaseOrderLineUdfFields({
+        ...createLine(rowUdfDefinitions),
+        ...normalizedLine,
+        quantity: copiedQuantity,
+        openQty,
+        batchManaged: isGrpoBasedLine(normalizedLine) ? false : normalizedLine.batchManaged,
+        batches: isGrpoBasedLine(normalizedLine) ? [] : normalizedLine.batches,
+        taxCodeManuallyOverridden: false,
+        udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
+      });
+    });
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
     setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
@@ -2078,7 +2113,7 @@ function APInvoice() {
       }
 
       if (l.baseEntry != null && l.baseEntry !== '' && parseNum(l.openQty) > 0 && parseNum(l.quantity) > parseNum(l.openQty)) {
-        e.lines[i] = { ...(e.lines[i] || {}), quantity: `Quantity exceeds open GRPO quantity (${l.openQty})` };
+        e.lines[i] = { ...(e.lines[i] || {}), quantity: `Quantity cannot exceed open quantity ${l.openQty}` };
         e.form = 'Please correct the highlighted fields.';
         return e;
       }
@@ -2133,6 +2168,8 @@ function APInvoice() {
       };
       const payloadLines = lines.map((line) => ({
         ...line,
+        batches: isGrpoBasedLine(line) ? [] : line.batches,
+        batchManaged: isGrpoBasedLine(line) ? false : line.batchManaged,
         udf: buildPurchaseOrderLineUdfPayload(line, rowUdfDefinitions, formSettings),
       }));
       const payload = {
@@ -2287,6 +2324,14 @@ function APInvoice() {
           disabled={pageState.posting || pageState.loading}
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, error: message, success: '' }))}
+        />
+        <JournalEntryPreviewButton
+          documentType="apInvoice"
+          documentLabel="A/P Invoice"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges })}
+          disabled={pageState.posting || pageState.loading}
+          className="po-btn sap-document-toolbar__journal-preview"
         />
         <span className={`po-mode-badge po-mode-badge--${currentDocEntry ? 'update' : 'add'}`}>
           {currentDocEntry ? 'Update' : 'Add'}

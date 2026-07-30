@@ -7,9 +7,9 @@ const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtil
 const masterDataDbService = require('./masterDataDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const {
-  escapeLike,
   normalizeTopLimit,
   buildMarketingDocumentListFilterQuery,
+  appendSapSearchCondition,
 } = require('./documentListUtils');
 
 const safe = async (promise) => {
@@ -51,6 +51,15 @@ const searchVendors = async ({ query = '', cardCode = '', cardName = '', top, so
   const normalizedCardCode = String(cardCode || '').trim();
   const normalizedCardName = String(cardName || '').trim();
   const normalizedTop = normalizeTopLimit(top);
+  const queryClauses = [];
+  const queryParams = {};
+  appendSapSearchCondition(queryClauses, queryParams, ['CardCode', 'CardName'], normalizedQuery, 'query');
+  const cardCodeClauses = [];
+  const cardCodeParams = {};
+  appendSapSearchCondition(cardCodeClauses, cardCodeParams, ['CardCode'], normalizedCardCode, 'cardCode');
+  const cardNameClauses = [];
+  const cardNameParams = {};
+  appendSapSearchCondition(cardNameClauses, cardNameParams, ['CardName'], normalizedCardName, 'cardName');
   const orderBy = String(sortBy || '').trim().toLowerCase() === 'name'
     ? 'CardName, CardCode'
     : 'CardCode, CardName';
@@ -61,18 +70,15 @@ const searchVendors = async ({ query = '', cardCode = '', cardName = '', top, so
       *
     FROM OCRD
     WHERE CardType = 'S'
-      AND (@query = '' OR CardCode LIKE @queryLike OR CardName LIKE @queryLike)
-      AND (@cardCode = '' OR CardCode LIKE @cardCodeLike)
-      AND (@cardName = '' OR CardName LIKE @cardNameLike)
+      ${queryClauses.length ? `AND ${queryClauses.join(' AND ')}` : ''}
+      ${cardCodeClauses.length ? `AND ${cardCodeClauses.join(' AND ')}` : ''}
+      ${cardNameClauses.length ? `AND ${cardNameClauses.join(' AND ')}` : ''}
     ORDER BY ${orderBy}
   `, {
     ...(normalizedTop ? { top: normalizedTop } : {}),
-    query: normalizedQuery,
-    queryLike: `%${escapeLike(normalizedQuery)}%`,
-    cardCode: normalizedCardCode,
-    cardCodeLike: `%${escapeLike(normalizedCardCode)}%`,
-    cardName: normalizedCardName,
-    cardNameLike: `%${escapeLike(normalizedCardName)}%`,
+    ...queryParams,
+    ...cardCodeParams,
+    ...cardNameParams,
   }));
 };
 
@@ -520,6 +526,7 @@ const getPurchaseQuotationForCopy = async (docEntry) => {
       T0.BPLId AS BPL_IDAssignedToInvoice,
       T0.GroupNum,
       T0.DiscPrcnt,
+      T0.RoundDif,
       T0.TotalExpns AS Freight
     FROM OPQT T0
     WHERE T0.DocEntry = @docEntry

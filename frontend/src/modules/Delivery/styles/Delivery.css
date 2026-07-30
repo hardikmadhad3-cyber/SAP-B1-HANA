@@ -1332,7 +1332,7 @@
 
 .del-batch-modal {
   width: min(980px, 100%);
-  max-height: calc(100vh - 96px);
+  max-height: calc(100% - 96px);
   overflow: hidden;
 }
 

@@ -24,6 +24,7 @@ import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import SapGoldenArrowButton from '../../components/document/SapGoldenArrowButton';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from '../../components/document/CopyFromModal';
@@ -34,6 +35,11 @@ import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/ware
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import {
+  SAP_MANUAL_SERIES_VALUE,
+  isManualDocumentSeries,
+  isValidManualDocumentNumber,
+} from '../../utils/documentSeries';
 import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
@@ -1315,6 +1321,8 @@ function Delivery() {
 
         setRefData(prev => ({ ...prev, series: availableSeries }));
 
+        if (isManualDocumentSeries(header.series)) return;
+
         if (!availableSeries.length) {
           setHeader(prev => ({ ...prev, series: '', nextNumber: '' }));
           return;
@@ -2385,6 +2393,12 @@ function Delivery() {
   
   const handleSeriesChange = async (seriesValue) => {
     if (!seriesValue) return;
+
+    if (isManualDocumentSeries(seriesValue)) {
+      setHeader(p => ({ ...p, series: SAP_MANUAL_SERIES_VALUE, nextNumber: '' }));
+      setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+      return;
+    }
     
     setPageState(p => ({ ...p, seriesLoading: true }));
     setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
@@ -3585,6 +3599,12 @@ function Delivery() {
   const validate = async ({ validateDocumentLines = true } = {}) => {
     const isUpdate = !!currentDocEntry;
     const e = { header: {}, lines: {}, form: '' };
+
+    if (!isUpdate && isManualDocumentSeries(header.series) && !isValidManualDocumentNumber(header.nextNumber)) {
+      e.header.nextNumber = 'Enter a positive document number for Manual series.';
+      e.form = 'Please correct the highlighted fields.';
+      return e;
+    }
     
     // Frontend basic validation first
     if (!isUpdate) {
@@ -3699,13 +3719,14 @@ function Delivery() {
       const validationPayload = {
         _isUpdate: isUpdate,
         validateDocumentLines,
-        header: {
-          customerCode: header.vendor,
-          postingDate: header.postingDate,
-          documentDate: header.documentDate,
-          branch: submitBranch,
-          series: header.series
-        },
+                        header: {
+                          customerCode: header.vendor,
+                          postingDate: header.postingDate,
+                          documentDate: header.documentDate,
+                          branch: submitBranch,
+                          series: header.series,
+                          nextNumber: header.nextNumber,
+                        },
         lines: lines.filter(l => String(l.itemNo || '').trim()).map(l => ({
           itemNo: l.itemNo,
           quantity: l.quantity,
@@ -4353,6 +4374,13 @@ function Delivery() {
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
         />
+        <JournalEntryPreviewButton
+          documentType="delivery"
+          documentLabel="Delivery"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges, referenceDocuments })}
+          disabled={pageState.posting || pageState.loading}
+        />
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
           <button
             type="button"
@@ -4613,6 +4641,7 @@ function Delivery() {
                         disabled={!!currentDocEntry || pageState.seriesLoading}
                       >
                         <option value="">Select Series</option>
+                        <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
                         {refData.series.map(s => (
                           <option key={s.Series} value={s.Series}>
                             {s.SeriesName} ({s.Indicator})
@@ -4626,11 +4655,13 @@ function Delivery() {
                       <label className="del-field__label">Number</label>
                       <input 
                         name="nextNumber" 
-                        className="del-field__input" 
+                        className={`del-field__input${valErrors.header.nextNumber ? ' del-field__input--error' : ''}`}
                         value={currentDocEntry ? (header.docNo || header.nextNumber || '') : (pageState.seriesLoading ? '...' : header.nextNumber)}
-                        readOnly 
-                        style={{ background: '#f0f2f5' }}
-                        title="Number will be assigned after saving"
+                        onChange={handleHeaderChange}
+                        readOnly={!!currentDocEntry || !isManualDocumentSeries(header.series)}
+                        inputMode="numeric"
+                        style={{ background: !currentDocEntry && isManualDocumentSeries(header.series) ? '#fff' : '#f0f2f5' }}
+                        title={isManualDocumentSeries(header.series) ? 'Enter the manual document number' : 'Number will be assigned from the selected series'}
                       />
                     </div>
 
@@ -5038,6 +5069,7 @@ function Delivery() {
         availableBatches={batchModal.availableBatches}
         loading={batchModal.loading}
         error={batchModal.error}
+        workspaceRef={formRef}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />

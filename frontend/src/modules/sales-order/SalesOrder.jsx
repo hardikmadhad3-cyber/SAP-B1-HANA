@@ -32,6 +32,11 @@ import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../..
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import {
+    SAP_MANUAL_SERIES_VALUE,
+    isManualDocumentSeries,
+    isValidManualDocumentNumber,
+} from '../../utils/documentSeries';
 import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
@@ -64,6 +69,7 @@ import {
     fetchSalesOrderLookupOptions,
     fetchSalesOrderReferenceDocumentLookup,
 } from '../../api/salesOrderApi';
+import { fetchSalesOrderForCopy as fetchSalesOrderForDeliveryCopy } from '../../api/deliveryApi';
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { salesOrderCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
@@ -534,6 +540,36 @@ function SalesOrder() {
     const isUpdateMode = Boolean(currentDocEntry);
     const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
     const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+    const isSalesOrderHeaderOpen = String(header.status || '').trim().toLowerCase() === 'open';
+    const copyQuantityChecks = (lines || [])
+        .filter((line = {}) => String(line.itemNo || line.ItemCode || '').trim())
+        .map((line = {}) => {
+            const rawOpenQty = line.openQty ?? line.OpenQty ?? line.OpenQuantity;
+            if (rawOpenQty !== undefined && rawOpenQty !== null && String(rawOpenQty).trim() !== '') {
+                return parseNum(rawOpenQty) > 0;
+            }
+
+            const lineStatus = String(line.lineStatus ?? line.LineStatus ?? '').trim().toUpperCase();
+            if (lineStatus && !['O', 'OPEN'].includes(lineStatus)) return false;
+
+            return null;
+        });
+    const hasKnownCopyQuantityState = copyQuantityChecks.some((value) => value !== null);
+    const hasOpenCopyQuantity = Boolean(currentDocEntry) && lines.some((line = {}) => {
+        const rawOpenQty = line.openQty ?? line.OpenQty ?? line.OpenQuantity;
+        if (rawOpenQty !== undefined && rawOpenQty !== null && String(rawOpenQty).trim() !== '') {
+            return parseNum(rawOpenQty) > 0;
+        }
+
+        const lineStatus = String(line.lineStatus ?? line.LineStatus ?? '').trim().toUpperCase();
+        if (lineStatus && !['O', 'OPEN'].includes(lineStatus)) return false;
+
+        return parseNum(line.quantity ?? line.Quantity) > 0;
+    });
+    const canAttemptCopyTo = Boolean(currentDocEntry) && (
+        hasOpenCopyQuantity ||
+        (isSalesOrderHeaderOpen && !hasKnownCopyQuantityState)
+    );
     const primaryActionLabel = pageState.posting
         ? 'Saving...'
         : isUpdateMode
@@ -926,6 +962,8 @@ function SalesOrder() {
                 if (ignore) return;
 
                 setRefData(prev => ({ ...prev, series: availableSeries }));
+
+                if (isManualDocumentSeries(header.series)) return;
 
                 if (!availableSeries.length) {
                     setHeader(prev => ({ ...prev, series: '', nextNumber: '' }));
@@ -1784,6 +1822,12 @@ function SalesOrder() {
     const handleSeriesChange = async (seriesValue) => {
         if (!seriesValue) return;
 
+        if (isManualDocumentSeries(seriesValue)) {
+            setHeader(p => ({ ...p, series: SAP_MANUAL_SERIES_VALUE, nextNumber: '' }));
+            setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+            return;
+        }
+
         setPageState(p => ({ ...p, seriesLoading: true }));
         setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
 
@@ -2550,13 +2594,51 @@ function SalesOrder() {
 
     // ── Copy To Handler ────────────────────────────────────────────────────────
     const handleCopyTo = async (targetType) => {
+        if (currentDocEntry && hasKnownCopyQuantityState && !hasOpenCopyQuantity) {
+            setPageState(p => ({
+                ...p,
+                success: '',
+                error: 'This Sales Order has no open quantity left. Use the related Delivery to create the A/R Invoice.',
+            }));
+            return;
+        }
+
+        let sourceSnapshot = { header, lines, headerUdfs };
+        if (targetType === 'delivery' && currentDocEntry) {
+            try {
+                const response = await fetchSalesOrderForDeliveryCopy(currentDocEntry);
+                const copyDocument = response.data?.sales_order || response.data?.salesOrder || response.data?.document || response.data || {};
+                const copyLines = Array.isArray(copyDocument.lines) ? copyDocument.lines : [];
+                if (!copyLines.length) {
+                    setPageState(p => ({
+                        ...p,
+                        success: '',
+                        error: 'This Sales Order is open, but it has no open item quantity available for Delivery.',
+                    }));
+                    return;
+                }
+                sourceSnapshot = {
+                    header: copyDocument.header || header,
+                    lines: copyLines,
+                    headerUdfs: copyDocument.headerUdfs || copyDocument.header_udfs || headerUdfs,
+                };
+            } catch (error) {
+                setPageState(p => ({
+                    ...p,
+                    success: '',
+                    error: getErrMsg(error, 'Could not load open Sales Order lines for Delivery.'),
+                }));
+                return;
+            }
+        }
+
         await copyToDocument({
             sourceDocType: 'salesOrder',
             targetType,
             sourceDocEntry: currentDocEntry,
             sourceDocNo: header.docNo,
             sourcePath: '/sales-order',
-            sourceSnapshot: { header, lines, headerUdfs },
+            sourceSnapshot,
             restoreState: { salesOrderDocEntry: currentDocEntry },
             navigate,
             upsertTask,
@@ -2620,6 +2702,12 @@ function SalesOrder() {
 
         const isUpdate = !!currentDocEntry;
         const e = { header: {}, lines: {}, form: '' };
+
+        if (!isUpdate && isManualDocumentSeries(header.series) && !isValidManualDocumentNumber(header.nextNumber)) {
+            e.header.nextNumber = 'Enter a positive document number for Manual series.';
+            e.form = 'Please correct the highlighted fields.';
+            return e;
+        }
 
         if (!isUpdate) {
             const vc = String(header.vendor || '').trim();
@@ -3061,17 +3149,22 @@ function SalesOrder() {
                     <button
                         type="button"
                         className="so-btn"
-                        disabled={!currentDocEntry}
+                        disabled={!canAttemptCopyTo}
+                        title={!currentDocEntry
+                            ? 'Open a saved sales order before using Copy To.'
+                            : hasKnownCopyQuantityState && !hasOpenCopyQuantity
+                                ? 'This Sales Order has no open quantity left. Create the A/R Invoice from the related Delivery.'
+                                : 'Copy To'}
                         onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            if (!currentDocEntry) return;
+                            if (!canAttemptCopyTo) return;
                             const dropdown = e.currentTarget.parentElement;
                             const isActive = dropdown.classList.contains('active');
                             document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
                             if (!isActive) dropdown.classList.add('active');
                         }}
-                        style={{ opacity: !currentDocEntry ? 0.5 : 1 }}
+                        style={{ opacity: !canAttemptCopyTo ? 0.5 : 1 }}
                     >
                         Copy To ▼
                     </button>
@@ -3107,7 +3200,7 @@ function SalesOrder() {
                 </div>
             )}
 
-            <fieldset className="so-fieldset" disabled={!isDocumentEditable} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+            <div className="so-fieldset" style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
             <div className={`sap-document-layout so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ' sap-document-layout--no-udf'}`}>
                 <div className="sap-document-main so-layout__main">
 
@@ -3155,7 +3248,7 @@ function SalesOrder() {
 
                                         <fieldset
                                             className="so-fieldset"
-                                            disabled={!hasBuyerCode}
+                                            disabled={!isDocumentEditable || !hasBuyerCode}
                                             style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
                                         >
                                         {/* Contact Person */}
@@ -3275,6 +3368,7 @@ function SalesOrder() {
                                 <div className="so-header-column">
                                     <fieldset
                                         className="so-fieldset"
+                                        disabled={!isDocumentEditable}
                                         style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
                                     >
                                     <div className="so-field-grid so-field-grid--single">
@@ -3290,6 +3384,7 @@ function SalesOrder() {
                                                 disabled={!!currentDocEntry || pageState.seriesLoading}
                                             >
                                                 <option value="">Select Series</option>
+                                                <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
                                                 {refData.series.map(s => (
                                                     <option key={s.Series} value={s.Series}>
                                                         {s.SeriesName}
@@ -3303,10 +3398,13 @@ function SalesOrder() {
                                             <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'nextNumber', 'Number')}</label>
                                             <input
                                                 name="nextNumber"
-                                                className="so-field__input"
+                                                className={`so-field__input${valErrors.header.nextNumber ? ' so-field__input--error' : ''}`}
                                                 value={currentDocEntry ? (header.docNo || header.nextNumber || '') : (header.nextNumber || '')}
-                                                readOnly
-                                                style={{ background: '#f0f2f5' }}
+                                                onChange={handleHeaderChange}
+                                                readOnly={!!currentDocEntry || !isManualDocumentSeries(header.series)}
+                                                inputMode="numeric"
+                                                style={{ background: !currentDocEntry && isManualDocumentSeries(header.series) ? '#fff' : '#f0f2f5' }}
+                                                title={isManualDocumentSeries(header.series) ? 'Enter the manual document number' : 'Number will be assigned from the selected series'}
                                             />
                                         </div>
 
@@ -3357,11 +3455,6 @@ function SalesOrder() {
                         </div>
 
                         {/* ══ TABS ══════════════════════════════════════════════════════ */}
-                        <fieldset
-                            className="so-fieldset"
-                            disabled={!hasBuyerCode}
-                            style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
-                        >
                         <div className="so-tabs">
                             {TAB_NAMES.map(t => (
                                 <button
@@ -3374,6 +3467,12 @@ function SalesOrder() {
                                 </button>
                             ))}
                         </div>
+
+                        <fieldset
+                            className="so-fieldset"
+                            disabled={!isDocumentEditable}
+                            style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
+                        >
 
                         {/* ══ TAB CONTENT ═══════════════════════════════════════════════ */}
                         {activeTab === 'Contents' && (
@@ -3638,17 +3737,22 @@ function SalesOrder() {
                                     <button
                                         type="button"
                                         className="so-btn"
-                                        disabled={!currentDocEntry}
+                                        disabled={!canAttemptCopyTo}
+                                        title={!currentDocEntry
+                                            ? 'Open a saved sales order before using Copy To.'
+                                            : hasKnownCopyQuantityState && !hasOpenCopyQuantity
+                                                ? 'This Sales Order has no open quantity left. Create the A/R Invoice from the related Delivery.'
+                                                : 'Copy To'}
                                         onClick={(e) => {
                                             e.preventDefault();
                                             e.stopPropagation();
-                                            if (!currentDocEntry) return;
+                                            if (!canAttemptCopyTo) return;
                                             const dropdown = e.currentTarget.parentElement;
                                             const isActive = dropdown.classList.contains('active');
                                             document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
                                             if (!isActive) dropdown.classList.add('active');
                                         }}
-                                        style={{ opacity: !currentDocEntry ? 0.5 : 1 }}
+                                        style={{ opacity: !canAttemptCopyTo ? 0.5 : 1 }}
                                     >
                                         Copy To ▼
                                     </button>
@@ -3693,7 +3797,7 @@ function SalesOrder() {
                     />
                 </div>
 
-            </fieldset>
+            </div>
 
             {/* Address Component Modal */}
             <AddressModal

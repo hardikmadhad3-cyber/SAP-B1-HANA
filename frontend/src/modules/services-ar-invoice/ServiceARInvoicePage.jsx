@@ -441,6 +441,21 @@ const normalizeSeriesText = (value) =>
     .replace(/[^a-z0-9]+/gi, '')
     .toLowerCase();
 
+const getSeriesFamilyKey = (series = {}) => {
+  const label = String(
+    series.SeriesName ||
+    series.DisplayName ||
+    series.RawSeriesName ||
+    series.BeginStr ||
+    series.Indicator ||
+    ''
+  );
+  return normalizeSeriesText(label)
+    .replace(/(?:fy)?\d{2}\d{2}$/i, '')
+    .replace(/\d{4,}$/i, '')
+    .replace(/\d{2}$/i, '');
+};
+
 const getTransactionTypeOptions = () => {
   return DEFAULT_TRANSACTION_TYPES;
 };
@@ -472,6 +487,50 @@ const filterSeriesByTransactionType = (series = [], transactionType = '') => {
 };
 
 const pickFirstSeries = (series = [], transactionType = '') => filterSeriesByTransactionType(series, transactionType)[0];
+
+const pickSeriesForNewDocument = (series = [], transactionType = '', preferredSeries = '', sourceSeries = []) => {
+  const visible = filterSeriesByTransactionType(series, transactionType);
+  if (!visible.length) return null;
+
+  const preferred = String(preferredSeries || '').trim();
+  const currentMatch = preferred
+    ? visible.find((item) => String(item.Series || '') === preferred)
+    : null;
+  if (currentMatch) return currentMatch;
+
+  const oldSeries = preferred
+    ? (sourceSeries || []).find((item) => String(item.Series || '') === preferred)
+    : null;
+  const familyKey = getSeriesFamilyKey(oldSeries);
+  const familyMatch = familyKey
+    ? visible.find((item) => getSeriesFamilyKey(item) === familyKey)
+    : null;
+  if (familyMatch) return familyMatch;
+
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (normalizedType) {
+    const transactionTokens = normalizedType.includes('gsttaxinvoice')
+      ? ['gsttaxinvoice', 'gst', 'taxinvoice', 'retail', 'ret']
+      : normalizedType.includes('billofsupply')
+        ? ['billofsupply', 'bos', 'supply']
+        : normalizedType.includes('debit')
+          ? ['debitmemo', 'debit', 'dbn']
+          : [normalizedType];
+
+    const scored = visible
+      .map((item, index) => {
+        const identity = normalizeSeriesText(`${item.SeriesName || ''} ${item.Indicator || ''}`);
+        const score = transactionTokens.reduce((sum, token) => sum + (identity.includes(token) ? token.length : 0), 0);
+        return { item, index, score };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score || left.index - right.index);
+
+    if (scored[0]?.item) return scored[0].item;
+  }
+
+  return visible.find((item) => item.IsDefault || item.isDefault) || visible[0];
+};
 
 const includeSelectedSeries = (series = [], selectedSeries = '', selectedSeriesName = '') => {
   const selected = String(selectedSeries || '').trim();
@@ -694,6 +753,7 @@ function ServiceARInvoicePage() {
     open: false,
     loading: false,
     data: null,
+    error: '',
   });
   const [lineLookupModal, setLineLookupModal] = useState({
     open: false,
@@ -745,12 +805,13 @@ function ServiceARInvoicePage() {
     [headerUdfDefinitions, refData.transaction_types, refData.transactionTypes],
   );
   const visibleSeries = useMemo(
-    () => includeSelectedSeries(
-      filterSeriesByTransactionType(refData.series || [], header.transactionType),
-      header.series,
-      header.seriesName
-    ),
-    [refData.series, header.transactionType, header.series, header.seriesName],
+    () => {
+      const filteredSeries = filterSeriesByTransactionType(refData.series || [], header.transactionType);
+      return currentDocEntry
+        ? includeSelectedSeries(filteredSeries, header.series, header.seriesName)
+        : filteredSeries;
+    },
+    [currentDocEntry, refData.series, header.transactionType, header.series, header.seriesName],
   );
 
   const accountLookupOptions = useMemo(() => accounts.map((account) => ({
@@ -987,9 +1048,8 @@ function ServiceARInvoicePage() {
     const load = async () => {
       setPageState((prev) => ({ ...prev, loading: true, error: '' }));
       try {
-        const [refRes, seriesRes, layoutRes] = await Promise.all([
+        const [refRes, layoutRes] = await Promise.all([
           fetchServiceARInvoiceReferenceData(),
-          fetchServiceARInvoiceSeries(header.postingDate),
           getDocumentLayout({ documentType: 'SERVICE_AR_INVOICE' }).catch((error) => ({
             data: {
               success: false,
@@ -1007,7 +1067,7 @@ function ServiceARInvoicePage() {
         );
         let nextRefData = {
           ...refRes.data,
-          series: seriesRes.data?.series || refRes.data?.series || [],
+          series: refRes.data?.series || [],
         };
         const nextHeaderUdfs = nextRefData.udf_metadata?.header || [];
         const liveTransactionTypes = getTransactionTypeOptions(nextHeaderUdfs, nextRefData);
@@ -1656,19 +1716,19 @@ function ServiceARInvoicePage() {
       return null;
     }
 
-    setJournalPreview((prev) => ({ ...prev, open: true, loading: true }));
+    setJournalPreview((prev) => ({ ...prev, open: true, loading: true, error: '' }));
     try {
       const res = await generateServiceARInvoiceJournalEntry({
         docEntry,
         payload: docEntry ? null : buildPayload(),
         persist,
       });
-      setJournalPreview({ open: true, loading: false, data: res.data });
+      setJournalPreview({ open: true, loading: false, data: res.data, error: '' });
       setPageState((prev) => ({ ...prev, error: '' }));
       return res.data;
     } catch (error) {
       const message = error.response?.data?.message || error.message || 'Failed to preview Journal Entry.';
-      setJournalPreview((prev) => ({ ...prev, loading: false }));
+      setJournalPreview((prev) => ({ ...prev, loading: false, error: message }));
       setPageState((prev) => ({ ...prev, success: '', error: message }));
       return null;
     }
@@ -1723,7 +1783,7 @@ function ServiceARInvoicePage() {
     setLines([createLine(rowUdfDefinitions)]);
     setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
-    setJournalPreview({ open: false, loading: false, data: null });
+    setJournalPreview({ open: false, loading: false, data: null, error: '' });
     setPageState((prev) => ({ ...prev, error: '', success: '' }));
   };
 
@@ -1770,6 +1830,55 @@ function ServiceARInvoicePage() {
     return null;
   };
 
+  const refreshSeriesForNewDocument = async ({
+    postingDate = header.postingDate,
+    transactionType = header.transactionType,
+    branch = header.branch,
+    preferredSeries = header.series,
+  } = {}) => {
+    if (String(preferredSeries || '') === 'manual') {
+      setHeader((prev) => ({ ...prev, series: 'manual', nextNumber: '', docNo: '' }));
+      return;
+    }
+
+    setPageState((prev) => ({ ...prev, seriesLoading: true }));
+    try {
+      const res = await fetchServiceARInvoiceSeries(postingDate, transactionType, branch);
+      const nextSeries = res.data?.series || [];
+      const selectedSeries = pickSeriesForNewDocument(nextSeries, transactionType, preferredSeries, refData.series || []);
+      setRefData((prev) => ({ ...prev, series: nextSeries }));
+      if (selectedSeries) {
+        const numberRes = await fetchServiceARInvoiceNextNumber(selectedSeries.Series);
+        setHeader((prev) => ({
+          ...prev,
+          postingDate,
+          documentDate: postingDate,
+          deliveryDate: postingDate,
+          branch: branch || prev.branch || String(selectedSeries.BPLId || ''),
+          series: String(selectedSeries.Series || ''),
+          nextNumber: String(numberRes.data?.nextNumber || selectedSeries.NextNumber || ''),
+          docNo: '',
+        }));
+      }
+    } catch (_error) {
+      const selectedSeries = pickSeriesForNewDocument(refData.series || [], transactionType, preferredSeries, refData.series || []);
+      if (selectedSeries) {
+        setHeader((prev) => ({
+          ...prev,
+          postingDate,
+          documentDate: postingDate,
+          deliveryDate: postingDate,
+          branch: branch || prev.branch || String(selectedSeries.BPLId || ''),
+          series: String(selectedSeries.Series || ''),
+          nextNumber: String(selectedSeries.NextNumber || ''),
+          docNo: '',
+        }));
+      }
+    } finally {
+      setPageState((prev) => ({ ...prev, seriesLoading: false }));
+    }
+  };
+
   const handleCopyFrom = (data, sourceType) => {
     const copySource = unwrapCopyFromDocument(data);
     const copyKey = `${sourceType}-${copySource.docEntry}-${copySource.lines.length}`;
@@ -1781,6 +1890,9 @@ function ServiceARInvoicePage() {
       ...prev,
       ...normalizedHeader,
       transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || '',
+      series: prev.series,
+      nextNumber: prev.nextNumber,
+      docNo: '',
     }));
     const baseType = BASE_TYPE[sourceType] || 17;
     setLines(copySource.lines.length
@@ -1814,7 +1926,10 @@ function ServiceARInvoicePage() {
     });
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
+    const duplicateDate = today();
+    const duplicateTransactionType = header.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice';
+    const duplicateBranch = header.branch || '';
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -1834,16 +1949,23 @@ function ServiceARInvoicePage() {
     });
 
     if (duplicated) {
-      const selectedSeries =
-        visibleSeries.find((series) => String(series.Series || '') === String(header.series || '')) ||
-        pickFirstSeries(refData.series || [], header.transactionType);
-      if (selectedSeries) {
-        setHeader((prev) => ({
-          ...prev,
-          series: String(selectedSeries.Series || ''),
-          nextNumber: String(selectedSeries.NextNumber || ''),
-        }));
-      }
+      setHeader((prev) => ({
+        ...prev,
+        postingDate: duplicateDate,
+        documentDate: duplicateDate,
+        deliveryDate: duplicateDate,
+        transactionType: duplicateTransactionType,
+        branch: duplicateBranch,
+        series: '',
+        nextNumber: '',
+        docNo: '',
+      }));
+      await refreshSeriesForNewDocument({
+        postingDate: duplicateDate,
+        transactionType: duplicateTransactionType,
+        branch: duplicateBranch,
+        preferredSeries: header.series,
+      });
     }
   };
 
@@ -2067,14 +2189,16 @@ function ServiceARInvoicePage() {
           onSuccess={(message) => setPageState((prev) => ({ ...prev, error: '', success: message }))}
           onError={(message) => setPageState((prev) => ({ ...prev, success: '', error: message }))}
         />
-        <button
-          type="button"
-          className="del-btn sap-document-toolbar__journal-preview"
-          onClick={() => previewJournalEntry({ persist: false })}
-          disabled={pageState.posting || journalPreview.loading}
-        >
-          Preview Journal Entry
-        </button>
+        {!currentDocEntry && (
+          <button
+            type="button"
+            className="del-btn sap-document-toolbar__journal-preview"
+            onClick={() => previewJournalEntry({ persist: false })}
+            disabled={pageState.posting || journalPreview.loading}
+          >
+            Preview Journal Entry
+          </button>
+        )}
         <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/services/ar-invoice/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
@@ -2448,6 +2572,7 @@ function ServiceARInvoicePage() {
       <JournalEntryPreviewModal
         isOpen={journalPreview.open}
         loading={journalPreview.loading}
+        error={journalPreview.error}
         journalEntry={journalPreview.data}
         onClose={() => setJournalPreview((prev) => ({ ...prev, open: false }))}
         onOpenLinkedMaster={openJournalLinkedMaster}

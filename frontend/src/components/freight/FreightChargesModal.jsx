@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { fetchFreightDistributionRules, fetchFreightProjects } from '../../api/freightLookupApi';
+import { matchesSapSearchText } from '../../utils/sapSearch';
 import {
   DEFAULT_FREIGHT_DIMENSIONS,
   FREIGHT_DISTRIBUTION_METHOD_OPTIONS,
@@ -130,11 +131,10 @@ function DistributionRuleListModal({ isOpen, onClose, onChoose, rules, title = '
   const [query, setQuery] = useState('');
   const [selectedRule, setSelectedRule] = useState(null);
   const filteredRules = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return rules;
+    if (!query.trim()) return rules;
     return rules.filter((rule) =>
-      String(rule.FactorCode || rule.OcrCode || '').toLowerCase().includes(normalizedQuery) ||
-      String(rule.FactorDescription || rule.OcrName || '').toLowerCase().includes(normalizedQuery)
+      matchesSapSearchText(rule.FactorCode || rule.OcrCode || '', query) ||
+      matchesSapSearchText(rule.FactorDescription || rule.OcrName || '', query)
     );
   }, [query, rules]);
 
@@ -295,11 +295,10 @@ function ProjectListModal({ isOpen, onClose, onChoose, projects }) {
   const [query, setQuery] = useState('');
   const [selectedProject, setSelectedProject] = useState(null);
   const filteredProjects = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return projects;
+    if (!query.trim()) return projects;
     return projects.filter((project) =>
-      String(project.Code || project.PrjCode || '').toLowerCase().includes(normalizedQuery) ||
-      String(project.Name || project.PrjName || '').toLowerCase().includes(normalizedQuery)
+      matchesSapSearchText(project.Code || project.PrjCode || '', query) ||
+      matchesSapSearchText(project.Name || project.PrjName || '', query)
     );
   }, [projects, query]);
 

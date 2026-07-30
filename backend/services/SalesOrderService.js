@@ -5,6 +5,7 @@ const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getActiveCompanyConfig } = require('./companyConfigService');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { isBlankUdfValue, normalizeUdfValues } = require('./udfPayloadUtils');
+const { buildDocumentSeriesPayload } = require('./documentSeriesPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
@@ -129,13 +130,12 @@ const DOCUMENT_REFERENCE_TYPES = [
 const normalizeReferenceDocType = (value) => {
   const normalized = String(value || '').trim();
   if (!normalized) return '';
-  if (normalized.startsWith('rot_')) return normalized;
   const match = DOCUMENT_REFERENCE_TYPES.find((type) => (
     type.value === normalized ||
     type.label.toLowerCase() === normalized.toLowerCase() ||
     type.serviceLayer.toLowerCase() === normalized.toLowerCase()
   ));
-  return match?.serviceLayer || normalized;
+  return match?.value || normalized;
 };
 
 const toOptionalReferenceNumber = (value) => {
@@ -165,10 +165,10 @@ const buildDocumentReferencesPayload = (references = []) => {
       }
 
       return {
-        ReferencedObjectType: referencedObjectType,
-        ...(referencedDocEntry !== undefined ? { ReferencedDocEntry: referencedDocEntry } : {}),
-        ...(referencedDocNumber !== undefined ? { ReferencedDocNumber: referencedDocNumber } : {}),
-        ...(externalReferencedDocNumber ? { ExternalReferencedDocNumber: externalReferencedDocNumber } : {}),
+        RefObjType: referencedObjectType,
+        ...(referencedDocEntry !== undefined ? { RefDocEntr: referencedDocEntry } : {}),
+        ...(referencedDocNumber !== undefined ? { RefDocNum: referencedDocNumber } : {}),
+        ...(externalReferencedDocNumber ? { ExtDocNum: externalReferencedDocNumber } : {}),
         ...(row.issueDate ? { IssueDate: row.issueDate } : {}),
         ...(row.remark ? { Remark: row.remark } : {}),
       };
@@ -343,7 +343,10 @@ const toOptionalNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
-const toSapYesNo = (value) => (value ? 'tYES' : 'tNO');
+const toSapYesNo = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized) ? 'tYES' : 'tNO';
+};
 
 const toRequiredNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -424,6 +427,9 @@ const getLineDiscountAmount = (line = {}) => {
 };
 
 const getLineDiscountPercent = (line = {}) => {
+  const explicitPercent = toOptionalNumber(line.stdDiscount ?? line.DiscountPercent ?? line.DiscPrcnt);
+  if (explicitPercent !== undefined) return explicitPercent;
+
   const unitPrice = toRequiredNumber(line.unitPrice ?? line.UnitPrice ?? line.Price, 0);
   if (unitPrice <= 0) return 0;
   return getLineDiscountAmount(line) * 100 / unitPrice;
@@ -676,10 +682,7 @@ const buildDocumentLinePayload = async (line = {}, context = {}) => {
   }
 
   if (hasLineDiscountValue(line)) {
-    const explicitDiscountAmount = getExplicitLineDiscountAmount(line);
-    const discountPercent = hasValue(explicitDiscountAmount)
-      ? getLineDiscountPercent(line)
-      : toOptionalNumber(line.stdDiscount ?? line.DiscountPercent ?? line.DiscPrcnt);
+    const discountPercent = getLineDiscountPercent(line);
     if (discountPercent !== undefined) {
       documentLine.DiscountPercent = discountPercent;
     }
@@ -1218,8 +1221,7 @@ const submitSalesOrder = async (payload) => {
     const sapPayload = {
       CardCode: payload.header.vendor.trim(),
 
-      // Series for auto-numbering - only include if explicitly provided and valid
-      ...(payload.header.series && Number(payload.header.series) > 0 ? { Series: Number(payload.header.series) } : {}),
+      ...buildDocumentSeriesPayload(payload.header),
 
       DocDate: payload.header.postingDate,
       DocDueDate: payload.header.deliveryDate,
@@ -1239,6 +1241,7 @@ const submitSalesOrder = async (payload) => {
       ...(toOptionalNumber(payload.header.shippingType) !== undefined ? { TransportationCode: toOptionalNumber(payload.header.shippingType) } : {}),
       ...(toOptionalNumber(payload.header.language) !== undefined ? { LanguageCode: toOptionalNumber(payload.header.language) } : {}),
       ...(hasOwn(payload.header, 'confirmed') ? { Confirmed: toSapYesNo(payload.header.confirmed) } : {}),
+      Rounding: toSapYesNo(payload.header.rounding),
 
       // ✅ Add Sales Employee if present (converted from name to code)
       ...(SlpCode !== null && SlpCode !== undefined ? { SalesPersonCode: SlpCode } : {}),
@@ -1434,6 +1437,7 @@ const updateSalesOrder = async (docEntry, payload) => {
       ...(toOptionalNumber(payload.header.shippingType) !== undefined ? { TransportationCode: toOptionalNumber(payload.header.shippingType) } : {}),
       ...(toOptionalNumber(payload.header.language) !== undefined ? { LanguageCode: toOptionalNumber(payload.header.language) } : {}),
       ...(hasOwn(payload.header, 'confirmed') ? { Confirmed: toSapYesNo(payload.header.confirmed) } : {}),
+      Rounding: toSapYesNo(payload.header.rounding),
 
       ...(SlpCode !== null && SlpCode !== undefined && { SalesPersonCode: SlpCode }),
       ...(OwnerCode !== null && OwnerCode !== undefined && { DocumentsOwner: OwnerCode }),

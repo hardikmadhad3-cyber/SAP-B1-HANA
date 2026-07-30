@@ -2,6 +2,7 @@ import React from 'react';
 import TaxCodeLookup from '../../../components/TaxCodeLookup';
 import DocumentLinesTable from '../../../components/sales-document/DocumentLinesTable';
 import { useSapItemCodeTab } from '../../../utils/sapTabNavigation';
+import { matchesSapSearchText } from '../../../utils/sapSearch';
 import { filterSalesOrderRowUdfDefinitions } from '../../../config/salesOrderForm';
 import LineValueLookupModal from '../../../components/sales-document/LineValueLookupModal';
 import { SALES_ORDER_LINE_NUMBER_KEY } from '../documentLayout';
@@ -196,12 +197,12 @@ function DistributionRuleAssignmentModal({
 
   const activeDimension = dimensionRows.find((dimension) => getDimensionCode(dimension) === activeDimensionCode);
   const activeRules = React.useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const query = searchQuery.trim();
     return rules
       .filter((rule) => getRuleDimensionCode(rule) === activeDimensionCode)
       .filter((rule) => {
         if (!query) return true;
-        return getRuleCode(rule).toLowerCase().includes(query) || getRuleName(rule).toLowerCase().includes(query);
+        return matchesSapSearchText(getRuleCode(rule), query) || matchesSapSearchText(getRuleName(rule), query);
       });
   }, [activeDimensionCode, rules, searchQuery]);
 

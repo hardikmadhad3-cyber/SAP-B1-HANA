@@ -19,6 +19,7 @@ import HSNCodeModal from '../../components/common/HSNCodeModal';
 import CopyFromModal from '../../components/document/CopyFromModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
@@ -2194,6 +2195,14 @@ function APCreditMemo() {
           disabled={pageState.posting || pageState.loading}
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, error: message, success: '' }))}
+        />
+        <JournalEntryPreviewButton
+          documentType="apCreditMemo"
+          documentLabel="A/P Credit Memo"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges })}
+          disabled={pageState.posting || pageState.loading}
+          className="po-btn sap-document-toolbar__journal-preview"
         />
         <span className={`po-mode-badge po-mode-badge--${currentDocEntry ? 'update' : 'add'}`}>
           {currentDocEntry ? 'Update' : 'Add'}

@@ -21,6 +21,7 @@ import QualitySelectionModal from '../sales-order/components/QualitySelectionMod
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from '../../components/document/CopyFromModal';
@@ -1501,6 +1502,9 @@ function NCDelivery() {
   };
 
   const getLineDiscountPercent = (line) => {
+    const explicitPercent = String(line.stdDiscount ?? '').trim();
+    if (explicitPercent) return parseNum(explicitPercent);
+
     const price = parseNum(line.unitPrice);
     if (price <= 0) return 0;
     return getLineDiscountAmount(line) * 100 / price;
@@ -3892,6 +3896,13 @@ function NCDelivery() {
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
         />
+        <JournalEntryPreviewButton
+          documentType="ncDelivery"
+          documentLabel="NC Delivery"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges })}
+          disabled={pageState.posting || pageState.loading}
+        />
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
           <button
             type="button"
@@ -4555,6 +4566,7 @@ function NCDelivery() {
         availableBatches={batchModal.availableBatches}
         loading={batchModal.loading}
         error={batchModal.error}
+        workspaceRef={formRef}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />

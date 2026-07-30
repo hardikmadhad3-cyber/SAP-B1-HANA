@@ -4,48 +4,29 @@
 /* A/R Invoice uses shared sales and delivery document shells because its tabs reuse del-* components. Keep only workflow-specific overrides here. */
 /* Withholding Tax Table */
 .ap-wtax-overlay {
-  position: fixed;
-  inset: 0;
   z-index: 25000;
-  background: rgba(0, 0, 0, 0.08);
-  display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 14px;
 }
 
 .ap-wtax-window {
-  position: relative;
-  width: min(1840px, calc(100vw - 48px));
-  height: min(860px, calc(100vh - 48px));
-  background: #f2f2f2;
-  border: 1px solid #8e8e8e;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+  width: min(1040px, calc(100% - 28px));
+  height: min(560px, calc(100% - 28px));
+  max-width: 100%;
+  max-height: 100%;
   display: flex;
   flex-direction: column;
-  font-family: "Segoe UI", Arial, sans-serif;
   font-size: 12px;
+  overflow: hidden;
 }
 
 .ap-wtax-titlebar {
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 8px;
-  background: linear-gradient(180deg, #fbfbfb 0%, #d9d9d9 100%);
-  border-bottom: 3px solid #f3b300;
-  font-weight: 600;
+  flex: 0 0 auto;
 }
 
 .ap-wtax-titlebar__button {
-  width: 24px;
-  height: 22px;
-  border: 1px solid #a0a0a0;
-  background: #efefef;
-  font-size: 12px;
-  line-height: 18px;
-  cursor: pointer;
+  text-transform: uppercase;
 }
 
 .ap-wtax-toolbar {
@@ -54,12 +35,14 @@
   align-items: center;
   gap: 8px;
   padding: 10px 14px 8px;
+  background: var(--sap-panel-bg, #f7f9fc);
+  border-bottom: 1px solid var(--sap-border, #d7dde5);
 }
 
 .ap-wtax-toolbar input {
   height: 22px;
-  border: 1px solid #b9b9b9;
-  background: #e9e9e9;
+  border: 1px solid var(--sap-border, #d7dde5);
+  background: #eef3f8;
   padding: 0 6px;
   font-size: 12px;
 }
@@ -69,7 +52,8 @@
   overflow: auto;
   margin: 0 14px;
   background: #fff;
-  border: 1px solid #bebebe;
+  border: 1px solid var(--sap-border, #d7dde5);
+  min-height: 180px;
 }
 
 .ap-wtax-grid {
@@ -82,7 +66,7 @@
 
 .ap-wtax-grid th,
 .ap-wtax-grid td {
-  border: 1px solid #c8c8c8;
+  border: 1px solid var(--sap-border, #d7dde5);
   height: 24px;
   padding: 0;
   background: #fff;
@@ -90,7 +74,7 @@
 }
 
 .ap-wtax-grid th {
-  background: #e6e6e6;
+  background: #eaf0f6;
   font-weight: 600;
   text-align: left;
   padding: 0 5px;
@@ -101,15 +85,15 @@
   width: 100%;
   height: 23px;
   border: 0;
-  background: #f4f4f4;
+  background: #f8fafc;
   padding: 0 5px;
   font-size: 12px;
   box-sizing: border-box;
 }
 
 .ap-wtax-grid input:focus {
-  outline: 1px solid #f3b300;
-  background: #fff4bc;
+  outline: 1px solid var(--sap-accent, #0b74de);
+  background: #fff;
 }
 
 .ap-wtax-grid__muted {
@@ -151,16 +135,12 @@
   display: flex;
   gap: 8px;
   padding: 10px 14px;
-  background: #f2f2f2;
+  background: #f7f9fc;
+  border-top: 1px solid var(--sap-border, #d7dde5);
 }
 
 .ap-wtax-footer button {
-  min-width: 80px;
-  height: 26px;
-  border: 1px solid #a38a29;
-  background: linear-gradient(180deg, #ffe28a 0%, #f3b300 100%);
-  cursor: pointer;
-  font-size: 12px;
+  min-width: 72px;
 }
 
 .ap-wtax-footer button:disabled {
@@ -174,17 +154,19 @@
 
 .ap-wtax-lookup {
   position: absolute;
-  top: 160px;
+  top: 86px;
   left: 50%;
-  width: min(660px, calc(100vw - 96px));
-  max-height: 420px;
+  width: min(620px, calc(100% - 40px));
+  max-height: min(360px, calc(100% - 120px));
   transform: translateX(-50%);
-  background: #f2f2f2;
-  border: 1px solid #8e8e8e;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  background: #fff;
+  border: 1px solid var(--sap-border-strong, #9aa8b8);
+  border-radius: 4px;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.2);
   display: flex;
   flex-direction: column;
   z-index: 26000;
+  overflow: hidden;
 }
 
 .ap-wtax-lookup__find {
@@ -197,21 +179,21 @@
 
 .ap-wtax-lookup__find input {
   height: 24px;
-  border: 1px solid #a0a0a0;
-  background: #fff4bc;
+  border: 1px solid var(--sap-border, #d7dde5);
+  background: #fff;
 }
 
 .ap-wtax-lookup__find button {
   height: 26px;
-  border: 1px solid #a38a29;
-  background: linear-gradient(180deg, #ffe28a 0%, #f3b300 100%);
+  border: 1px solid var(--sap-border-strong, #9aa8b8);
+  background: linear-gradient(180deg, #ffffff 0%, #e8edf2 100%);
 }
 
 .ap-wtax-lookup__grid {
   max-height: 260px;
   overflow: auto;
   margin: 0 12px;
-  border: 1px solid #bebebe;
+  border: 1px solid var(--sap-border, #d7dde5);
   background: #fff;
 }
 
@@ -220,7 +202,7 @@
 }
 
 .ap-wtax-lookup__grid tr:hover td {
-  background: #ffe28a;
+  background: #eaf4ff;
 }
 
 .ap-wtax-empty {

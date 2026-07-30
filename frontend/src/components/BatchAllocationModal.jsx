@@ -37,11 +37,13 @@ export default function BatchAllocationModal({
   loading = false,
   error = '',
   onGenerateBatchNumber,
+  workspaceRef,
   onClose,
   onSave,
 }) {
   const [rows, setRows] = useState([createBatchRow()]);
   const [generatingRow, setGeneratingRow] = useState(null);
+  const [workspaceBounds, setWorkspaceBounds] = useState(null);
   const isIssueMode = mode === 'issue';
   const batchOptions = Array.isArray(availableBatches) ? availableBatches : [];
 
@@ -57,6 +59,35 @@ export default function BatchAllocationModal({
         : [createBatchRow()];
     setRows(nextRows);
   }, [isOpen, line]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const updateBounds = () => {
+      const rect = workspaceRef?.current?.getBoundingClientRect?.();
+      if (!rect) {
+        setWorkspaceBounds(null);
+        return;
+      }
+      const topbarBottom = document.querySelector('.topbar')?.getBoundingClientRect?.().bottom || 0;
+      const top = Math.max(0, rect.top, topbarBottom);
+      const left = Math.max(0, rect.left);
+      setWorkspaceBounds({
+        top,
+        left,
+        right: 'auto',
+        bottom: 'auto',
+        width: Math.max(320, window.innerWidth - left),
+        height: Math.max(240, window.innerHeight - top),
+      });
+    };
+    updateBounds();
+    window.addEventListener('resize', updateBounds);
+    window.addEventListener('scroll', updateBounds, true);
+    return () => {
+      window.removeEventListener('resize', updateBounds);
+      window.removeEventListener('scroll', updateBounds, true);
+    };
+  }, [isOpen, workspaceRef]);
 
   const assignedQty = useMemo(() => sumBatchQty(rows), [rows]);
   const lineQty = parseBatchNumber(line?.quantity);
@@ -197,19 +228,21 @@ export default function BatchAllocationModal({
       className="del-modal-overlay sap-batch-modal-overlay"
       style={{
         position: 'fixed',
-        inset: 0,
+        ...(workspaceBounds || { inset: 0 }),
         display: 'flex',
-        alignItems: 'center',
+        alignItems: workspaceBounds ? 'flex-start' : 'center',
         justifyContent: 'center',
-        padding: 16,
+        padding: workspaceBounds ? '72px 16px 24px' : 16,
+        boxSizing: 'border-box',
+        overflow: 'auto',
       }}
       onClick={onClose}
     >
       <div
         className="del-modal grpo-batch-modal sap-batch-modal"
         style={{
-          width: 'min(980px, calc(100vw - 32px))',
-          maxHeight: '90vh',
+          width: 'min(980px, 100%)',
+          maxHeight: workspaceBounds ? 'calc(100% - 96px)' : '90vh',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',

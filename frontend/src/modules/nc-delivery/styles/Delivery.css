@@ -787,6 +787,19 @@
   gap: 8px;
 }
 
+.del-batch-modal-overlay {
+  align-items: flex-start;
+  padding: 72px 16px 24px;
+  box-sizing: border-box;
+  overflow: auto;
+}
+
+.del-batch-modal {
+  width: min(980px, 100%);
+  max-height: calc(100% - 96px);
+  overflow: hidden;
+}
+
 /* ── Textarea ── */
 .del-textarea {
   width: 100%;

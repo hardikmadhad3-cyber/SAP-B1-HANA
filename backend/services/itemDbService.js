@@ -1,5 +1,6 @@
 const db = require('../db/odbc');
 const hsnCodeDbService = require('./hsnCodeDbService');
+const { appendSapSearchCondition } = require('./documentListUtils');
 
 const safe = async (promise, fallback = []) => {
   try {
@@ -582,6 +583,17 @@ const getItem = async (itemCode) => {
 
 const searchItems = async (query = '', top = 50, skip = 0) => {
   const hasQuery = Boolean(String(query || '').trim());
+  const whereClauses = [];
+  const searchParams = {};
+  if (hasQuery) {
+    appendSapSearchCondition(
+      whereClauses,
+      searchParams,
+      ['T0.ItemCode', 'T0.ItemName'],
+      query,
+      'itemQuery',
+    );
+  }
   const rows = await safe(
     db.query(
       `
@@ -615,14 +627,13 @@ const searchItems = async (query = '', top = 50, skip = 0) => {
           ON T2.ItemCode = T0.ItemCode
          AND T2.PriceRank = 1
         WHERE (@hasQuery = 0
-          OR T0.ItemCode LIKE @query
-          OR T0.ItemName LIKE @query)
+          ${whereClauses.length ? `OR ${whereClauses.join(' OR ')}` : ''})
         ORDER BY T0.ItemCode
         OFFSET @skip ROWS FETCH NEXT @top ROWS ONLY
       `,
       {
         hasQuery: hasQuery ? 1 : 0,
-        query: buildLike(query),
+        ...searchParams,
         top: Number(top) || 50,
         skip: Number(skip) || 0,
       }

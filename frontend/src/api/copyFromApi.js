@@ -165,6 +165,27 @@ const sapYesNoToBoolean = (value) => {
   return Boolean(value);
 };
 
+const toOptionalNumber = (value) => {
+  if (value === undefined || value === null || String(value).trim() === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const resolveRoundingAmount = (source = {}) => firstString(
+  source.roundingAmount,
+  source.RoundingAmount,
+  source.RoundDif,
+  source.RoundDifSy,
+  source.RoundDifFC,
+);
+
+const resolveRoundingFlag = (source = {}) => {
+  const explicit = sapYesNoToBoolean(source.rounding ?? source.Rounding ?? source.Round);
+  if (explicit !== undefined) return explicit;
+  const amount = toOptionalNumber(resolveRoundingAmount(source));
+  return amount !== undefined ? Math.abs(amount) > 0 : false;
+};
+
 const formatDateForInput = (value) => {
   if (!value) return '';
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -191,19 +212,19 @@ const getLineUdfs = (line = {}) => ({
 });
 
 export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranch = '') => ({
-  itemServiceType:   firstString(line.ItemType, line.itemServiceType, line.LineType, 'Item'),
-  itemNo:          firstString(line.ItemCode, line.AccountCode, line.AcctCode, line.itemNo, line.glAccount),
-  itemDescription: firstString(line.ItemDescription, line.Dscription, line.itemDescription),
-  requiredDate:    formatDateForInput(firstValue(line.RequiredDate, line.ReqDate, line.requiredDate, line.udf?.U_Required_Date, line.udf?.U_ReqDate)),
-  quotedDate:      formatDateForInput(firstValue(line.QuotedDate, line.ShipDate, line.quotedDate, line.udf?.U_Quoted_Date, line.udf?.U_QuoteDate)),
-  requiredQty:     firstString(line.RequiredQty, line.RequiredQuantity, line.requiredQty, line.udf?.U_Req_Qty, line.udf?.U_ReqQty),
+  itemServiceType: firstString(line.itemServiceType, line.ItemType, line.LineType, 'Item'),
+  itemNo:          firstString(line.itemNo, line.glAccount, line.ItemCode, line.AccountCode, line.AcctCode),
+  itemDescription: firstString(line.itemDescription, line.ItemDescription, line.Dscription),
+  requiredDate:    formatDateForInput(firstValue(line.requiredDate, line.RequiredDate, line.ReqDate, line.udf?.U_Required_Date, line.udf?.U_ReqDate)),
+  quotedDate:      formatDateForInput(firstValue(line.quotedDate, line.QuotedDate, line.ShipDate, line.udf?.U_Quoted_Date, line.udf?.U_QuoteDate)),
+  requiredQty:     firstString(line.requiredQty, line.RequiredQty, line.RequiredQuantity, line.udf?.U_Req_Qty, line.udf?.U_ReqQty),
   sellerQuality:   firstString(line.sellerQuality, line.SellerQuality),
   buyerQuality:    firstString(line.buyerQuality, line.BuyerQuality),
-  quantity:        firstString(line.Quantity, line.OpenQty, line.quantity, 0),
-  unitPrice:       firstString(line.UnitPrice, line.Price, line.unitPrice, 0),
-  price:           firstString(line.Price, line.UnitPrice, line.price, line.unitPrice, 0),
-  priceAfterDiscount: firstString(line.PriceAfterDiscount, line.priceAfterDiscount),
-  itemCost:        firstString(line.ItemCost, line.StockPrice, line.itemCost, line.stockPrice),
+  quantity:        firstString(line.quantity, line.Quantity, line.OpenQty, 0),
+  unitPrice:       firstString(line.unitPrice, line.UnitPrice, line.Price, 0),
+  price:           firstString(line.price, line.Price, line.UnitPrice, line.unitPrice, 0),
+  priceAfterDiscount: firstString(line.priceAfterDiscount, line.PriceAfterDiscount),
+  itemCost:        firstString(line.itemCost, line.stockPrice, line.ItemCost, line.StockPrice),
   discountAmount:  firstString(
     line.discountAmount,
     line.DiscountAmount,
@@ -240,23 +261,44 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
   freightProvider: firstString(line.freightProvider, line.FreightProvider),
   freightProviderName: firstString(line.freightProviderName, line.FreightProviderName),
   brokerageNumber: firstString(line.brokerageNumber, line.BrokerageNumber),
-  uomCode:         firstString(line.UoMCode, line.UomCode, line.UOMCode, line.uomCode, line.UomEntry, line.UoMEntry),
-  uomName:         firstString(line.UoMName, line.UomName, line.UnitMsr, line.unitMsr, line.MeasureUnit, line.uomName, line.UoMCode, line.UomCode, line.uomCode),
-  hsnCode:         firstString(line.HSNCode, line.hsnCode),
-  sacCode:         firstString(line.SACCode, line.SacCode, line.sacCode),
-  taxCode:         firstString(line.TaxCode, line.VatGroup, line.taxCode),
-  taxCodeManuallyOverridden: Boolean(firstString(line.TaxCode, line.VatGroup, line.taxCode)),
-  stcode:          firstString(line.STCODE, line.STACode, line.stcode),
-  whse:            firstString(line.WarehouseCode, line.WhsCode, line.whse),
-  stdDiscount:     firstString(line.DiscountPercent, line.DiscPrcnt, line.stdDiscount, 0),
-  total:           line.LineTotal != null ? String(line.LineTotal) : (line.total != null ? String(line.total) : ''),
-  distRule:        firstString(line.DistributionRule, line.OcrCode, line.distRule),
-  distRule2:       firstString(line.DistributionRule2, line.OcrCode2, line.distRule2),
-  distRule3:       firstString(line.DistributionRule3, line.OcrCode3, line.distRule3),
-  distRule4:       firstString(line.DistributionRule4, line.OcrCode4, line.distRule4),
-  distRule5:       firstString(line.DistributionRule5, line.OcrCode5, line.distRule5),
-  freeText:        firstString(line.FreeText, line.freeText),
-  countryOfOrigin: firstString(line.CountryOfOrigin, line.CountryOrg, line.countryOfOrigin),
+  uomCode:         firstString(line.uomCode, line.UoMCode, line.UomCode, line.UOMCode, line.UomEntry, line.UoMEntry),
+  uomName:         firstString(line.uomName, line.unitMsr, line.UoMName, line.UomName, line.UnitMsr, line.MeasureUnit, line.UoMCode, line.UomCode, line.uomCode),
+  hsnCode:         firstString(line.hsnCode, line.HSNCode),
+  sacCode:         firstString(line.sacCode, line.SACCode, line.SacCode),
+  taxCode:         firstString(line.taxCode, line.TaxCode, line.VatGroup),
+  taxCodeManuallyOverridden: Boolean(firstString(line.taxCode, line.TaxCode, line.VatGroup)),
+  stcode:          firstString(line.stcode, line.STCODE, line.STACode),
+  whse:            firstString(line.whse, line.WarehouseCode, line.WhsCode),
+  stdDiscount:     firstString(line.stdDiscount, line.DiscountPercent, line.DiscPrcnt, line.discount, 0),
+  total:           firstString(line.total, line.LineTotal),
+  distRule:        firstString(line.distRule, line.DistributionRule, line.OcrCode),
+  distRule2:       firstString(line.distRule2, line.DistributionRule2, line.OcrCode2),
+  distRule3:       firstString(line.distRule3, line.DistributionRule3, line.OcrCode3),
+  distRule4:       firstString(line.distRule4, line.DistributionRule4, line.OcrCode4),
+  distRule5:       firstString(line.distRule5, line.DistributionRule5, line.OcrCode5),
+  freeText:        firstString(line.freeText, line.FreeText),
+  countryOfOrigin: firstString(line.countryOfOrigin, line.CountryOfOrigin, line.CountryOrg),
+  packingType:     firstString(
+    line.packingType,
+    line.U_PackingType,
+    line.udf?.U_PackingType,
+    line.line_udfs?.U_PackingType,
+    line.lineUdfs?.U_PackingType,
+  ),
+  grossWt:         firstString(
+    line.grossWt,
+    line.U_GrossWt,
+    line.udf?.U_GrossWt,
+    line.line_udfs?.U_GrossWt,
+    line.lineUdfs?.U_GrossWt,
+  ),
+  totalPackage:    firstString(
+    line.totalPackage,
+    line.U_TotalPackage,
+    line.udf?.U_TotalPackage,
+    line.line_udfs?.U_TotalPackage,
+    line.lineUdfs?.U_TotalPackage,
+  ),
   openQty:         line.OpenQty != null ? String(line.OpenQty) : (line.openQty != null ? String(line.openQty) : ''),
   deliveredQty:    line.DeliveredQty != null ? String(line.DeliveredQty) : (line.deliveredQty != null ? String(line.deliveredQty) : ''),
   taxAmount:       line.TaxAmount != null ? String(line.TaxAmount) : (line.taxAmount != null ? String(line.taxAmount) : ''),
@@ -311,6 +353,8 @@ export const normaliseDocumentHeader = (data) => {
     freight:          firstString(h.freight, h.Freight),
     tax:              firstString(h.tax, h.TaxAmount),
     totalPaymentDue:  firstString(h.totalPaymentDue, h.DocTotal),
+    rounding:         resolveRoundingFlag(h),
+    roundingAmount:   resolveRoundingAmount(h),
     currency:         firstString(h.currency, h.DocCur, 'INR'),
     remarks:          firstString(h.remarks, h.Comments),
     otherInstruction: firstString(h.otherInstruction, h.remarks, h.Comments),

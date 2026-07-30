@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useSapWindowTaskbar, useSapWindowTaskbarActions } from './SapWindowTaskbarContext';
 import { normalizePath } from '../auth/routeUtils';
 import { restoreTargetWindowState } from '../utils/copyToState';
+import { matchesSapSearchText } from '../utils/sapSearch';
 import '../styles/sidebar.css';
 
 const DASHBOARD_PATH = '/dashboard';
@@ -544,10 +545,10 @@ export default function Sidebar() {
     () => flattenSidebarSearchItems(sidebarMenus),
     [sidebarMenus],
   );
-  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const normalizedSearchQuery = searchQuery.trim();
   const sidebarSearchResults = normalizedSearchQuery
     ? sidebarSearchItems
-        .filter((item) => item.searchText.includes(normalizedSearchQuery))
+        .filter((item) => matchesSapSearchText(item.searchText, normalizedSearchQuery))
         .slice(0, 10)
     : [];
 

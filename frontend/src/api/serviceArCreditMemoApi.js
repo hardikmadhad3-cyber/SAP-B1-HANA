@@ -35,7 +35,8 @@ export const updateServiceARCreditMemo = (docEntry, data) =>
   client.patch(`${API_BASE}/${encodeURIComponent(docEntry)}`, data);
 
 export const generateServiceARCreditMemoJournalEntry = ({ docEntry, payload, persist = false }) =>
-  client.post('/journal-entry/generate-from-ar-credit-memo', {
+  client.post('/journal-entry/preview', {
+    documentType: 'serviceArCreditMemo',
     docEntry,
     payload,
     persist,

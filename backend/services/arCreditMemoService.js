@@ -103,6 +103,71 @@ const hasValue = (value) => (
 );
 
 const firstPresent = (...values) => values.find(hasValue);
+const getLineDiscountPercent = (line = {}) => {
+  const value = firstPresent(
+    line.stdDiscount,
+    line.discountPercent,
+    line.DiscountPercent,
+    line.DiscPrcnt,
+  );
+  if (value === undefined) return undefined;
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : undefined;
+};
+
+const buildBatchNumbersForCreditQuantity = (line = {}, documentLineIndex = 0) => {
+  const sourceBatches = Array.isArray(line.batches) ? line.batches : [];
+  const requiredQty = Number(line.quantity);
+  if (!sourceBatches.length || !Number.isFinite(requiredQty) || requiredQty <= 0) return [];
+
+  let remainingQty = requiredQty;
+  return sourceBatches
+    .map((batch) => {
+      const batchNumber = String(batch.batchNumber || batch.BatchNumber || '').trim();
+      const availableQty = Number(batch.quantity ?? batch.Quantity);
+      if (!batchNumber || !Number.isFinite(availableQty) || availableQty <= 0 || remainingQty <= 0) return null;
+
+      const quantity = Math.min(availableQty, remainingQty);
+      remainingQty -= quantity;
+      return {
+        BatchNumber: batchNumber,
+        Quantity: quantity,
+        BaseLineNumber: documentLineIndex,
+      };
+    })
+    .filter(Boolean);
+};
+
+const hydrateMissingCreditMemoBatches = async (lines = []) => {
+  const sourceInvoiceEntries = [...new Set((Array.isArray(lines) ? lines : [])
+    .filter((line) => Number(line.baseType ?? line.BaseType) === 13)
+    .filter((line) => !Array.isArray(line.batches) || !line.batches.length)
+    .map((line) => Number(line.baseEntry ?? line.BaseEntry))
+    .filter((entry) => Number.isFinite(entry) && entry > 0))];
+
+  if (!sourceInvoiceEntries.length) return lines;
+
+  const invoiceLineBatches = new Map();
+  for (const docEntry of sourceInvoiceEntries) {
+    const copyDocument = await arCreditMemoDb.getARInvoiceForCopy(docEntry).catch(() => null);
+    const documentLines = copyDocument?.DocumentLines || copyDocument?.lines || [];
+    documentLines.forEach((line) => {
+      const lineNum = line.BaseLine ?? line.LineNum ?? line.lineNum;
+      const batches = Array.isArray(line.batches) ? line.batches : [];
+      if (lineNum === undefined || lineNum === null || !batches.length) return;
+      invoiceLineBatches.set(`${docEntry}:${lineNum}`, batches);
+    });
+  }
+
+  return lines.map((line) => {
+    if (Array.isArray(line.batches) && line.batches.length) return line;
+    if (Number(line.baseType ?? line.BaseType) !== 13) return line;
+    const baseEntry = Number(line.baseEntry ?? line.BaseEntry);
+    const baseLine = line.baseLine ?? line.BaseLine;
+    const batches = invoiceLineBatches.get(`${baseEntry}:${baseLine}`) || [];
+    return batches.length ? { ...line, batches } : line;
+  });
+};
 
 const yesNo = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -110,11 +175,11 @@ const yesNo = (value) => {
 };
 
 const AR_CREDIT_MEMO_LINE_UDF_MAPPINGS = [
-  { aliases: ['U_Cost_Sheet'], getValue: (line) => line.udf?.U_Cost_Sheet ?? line.U_Cost_Sheet ?? line.costSheet },
-  { aliases: ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'U_PackingStatus'], getValue: (line) => line.udf?.U_PackingType ?? line.udf?.U_PACKINGTYPE ?? line.U_PackingType ?? line.packingType },
-  { aliases: ['U_ContainerType', 'U_CONTAINERTYPE', 'U_Container_Type'], getValue: (line) => line.udf?.U_ContainerType ?? line.U_ContainerType ?? line.containerType },
-  { aliases: ['U_GrossWt', 'U_GROSSWT', 'U_Gross_Wt'], getValue: (line) => line.udf?.U_GrossWt ?? line.U_GrossWt ?? line.grossWt },
-  { aliases: ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_Total_Package'], getValue: (line) => line.udf?.U_TotalPackage ?? line.U_TotalPackage ?? line.totalPackage },
+  { aliases: ['U_Cost_Sheet'], getValue: (line) => firstPresent(line.U_Cost_Sheet, line.costSheet, line.udf?.U_Cost_Sheet) },
+  { aliases: ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'U_PackingStatus'], getValue: (line) => firstPresent(line.U_PackingType, line.packingType, line.udf?.U_PackingType, line.udf?.U_PACKINGTYPE) },
+  { aliases: ['U_ContainerType', 'U_CONTAINERTYPE', 'U_Container_Type'], getValue: (line) => firstPresent(line.U_ContainerType, line.containerType, line.udf?.U_ContainerType) },
+  { aliases: ['U_GrossWt', 'U_GROSSWT', 'U_Gross_Wt'], getValue: (line) => firstPresent(line.U_GrossWt, line.grossWt, line.udf?.U_GrossWt) },
+  { aliases: ['U_TotalPackage', 'U_TOTALPACKAGE', 'U_Total_Package'], getValue: (line) => firstPresent(line.U_TotalPackage, line.totalPackage, line.udf?.U_TotalPackage) },
   { aliases: ['U_TAXCODE', 'U_TaxCode'], getValue: (line) => firstPresent(line.taxCodeRepeat, line.udf?.U_TAXCODE, line.udf?.U_TaxCode, line.taxCode) },
   { aliases: ['U_PRICE', 'U_Price'], getValue: (line) => firstPresent(line.price, line.udf?.U_PRICE, line.udf?.U_Price) },
   { aliases: ['U_SPLRBT', 'U_SpecialRebate'], getValue: (line) => line.specialRebate },
@@ -349,7 +414,8 @@ const submitARCreditMemo = async (payload) => {
     
     console.log("🔍 [ARCreditMemoService] Using customer code:", customerCode);
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
-    const resolvedSeries = await resolveARCreditMemoSeries(payload.header, payload.lines);
+    const submittedLines = await hydrateMissingCreditMemoBatches(payload.lines || []);
+    const resolvedSeries = await resolveARCreditMemoSeries(payload.header, submittedLines);
     const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('ORIN'),
       getAllowedUdfKeys('RIN1'),
@@ -392,14 +458,21 @@ const submitARCreditMemo = async (payload) => {
       Rounding: yesNo(payload.header.rounding),
       ...buildMarketingDocumentAddressPayload(payload.header),
 
-      DocumentLines: payload.lines.map((l, index) => {
+      DocumentLines: submittedLines.map((l, index) => {
         console.log(`🔍 [ARCreditMemoService] Processing line ${index}:`, l);
         
+        const rawBaseType = l.baseType ?? l.BaseType;
+        const rawBaseEntry = l.baseEntry ?? l.BaseEntry;
+        const rawBaseLine = l.baseLine ?? l.BaseLine;
+        const hasBaseDocument =
+          rawBaseType !== undefined && rawBaseType !== null && String(rawBaseType).trim() !== '' &&
+          rawBaseEntry !== undefined && rawBaseEntry !== null && String(rawBaseEntry).trim() !== '' &&
+          rawBaseLine !== undefined && rawBaseLine !== null && String(rawBaseLine).trim() !== '';
+
         const line = {
-          ItemCode: l.itemNo,
+          ...(l.itemNo ? { ItemCode: l.itemNo } : {}),
           Quantity: Number(l.quantity),
           UnitPrice: Number(l.unitPrice),
-          WarehouseCode: l.whse || l.warehouse || "01",
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
           WTLiable: yesNo(l.wTaxLiable ?? l.wtaxLiable),
@@ -409,18 +482,23 @@ const submitARCreditMemo = async (payload) => {
           CountryOrg: l.countryOfOrigin || undefined,
         };
 
-        // Add discount if present
-        if (l.stdDiscount && Number(l.stdDiscount) > 0) {
-          line.DiscountPercent = Number(l.stdDiscount);
-        } else if (l.discountPercent && Number(l.discountPercent) > 0) {
-          line.DiscountPercent = Number(l.discountPercent);
+        const warehouseCode = String(l.whse || l.warehouse || '').trim();
+        if (warehouseCode) {
+          line.WarehouseCode = warehouseCode;
         }
 
+        const lineDiscountPercent = getLineDiscountPercent(l);
+        if (lineDiscountPercent !== undefined) line.DiscountPercent = lineDiscountPercent;
+
         // Base document integration
-        if (l.baseType && l.baseEntry && l.baseLine !== undefined) {
-          line.BaseType = Number(l.baseType);
-          line.BaseEntry = Number(l.baseEntry);
-          line.BaseLine = Number(l.baseLine);
+        if (hasBaseDocument) {
+          line.BaseType = Number(rawBaseType);
+          line.BaseEntry = Number(rawBaseEntry);
+          line.BaseLine = Number(rawBaseLine);
+        }
+        const batchNumbers = buildBatchNumbersForCreditQuantity(l, index);
+        if (batchNumbers.length > 0) {
+          line.BatchNumbers = batchNumbers;
         }
 
         console.log(`🔍 [ARCreditMemoService] Transformed line ${index}:`, line);
@@ -446,7 +524,7 @@ const submitARCreditMemo = async (payload) => {
 
       const fallbackSeries = await resolveARCreditMemoSeries(
         { ...payload.header, series: '' },
-        payload.lines,
+        submittedLines,
         { preferSubmittedSeries: false },
       );
 
@@ -486,6 +564,21 @@ const submitARCreditMemo = async (payload) => {
     console.error('❌ [ARCreditMemoService] Error details:', error.response?.data);
     console.error('❌ [ARCreditMemoService] Error stack:', error.stack);
 
+    if (lastSapPayload?.DocumentLines) {
+      console.error('[ARCreditMemoService] Rejected line batch summary:', lastSapPayload.DocumentLines.map((line, index) => ({
+        index,
+        baseType: line.BaseType,
+        baseEntry: line.BaseEntry,
+        baseLine: line.BaseLine,
+        itemCode: line.ItemCode,
+        quantity: line.Quantity,
+        batchCount: Array.isArray(line.BatchNumbers) ? line.BatchNumbers.length : 0,
+        batchQty: Array.isArray(line.BatchNumbers)
+          ? line.BatchNumbers.reduce((sum, batch) => sum + Number(batch.Quantity || 0), 0)
+          : 0,
+      })));
+    }
+
     // Extract meaningful error message from SAP
     let errorMessage = 'AR Credit Memo submission failed.';
     errorMessage = getSapErrorMessage(error, errorMessage);
@@ -516,6 +609,7 @@ const updateARCreditMemo = async (docEntry, payload) => {
     // Use vendor or customerCode (frontend sends vendor)
     const customerCode = payload.header.vendor || payload.header.customerCode || payload.header.customer;
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
+    const submittedLines = await hydrateMissingCreditMemoBatches(payload.lines || []);
     const [allowedHeaderUdfs, allowedLineUdfs, headerUdfDefinitionsByKey] = await Promise.all([
       getAllowedUdfKeys('ORIN'),
       getAllowedUdfKeys('RIN1'),
@@ -542,14 +636,20 @@ const updateARCreditMemo = async (docEntry, payload) => {
       Rounding: yesNo(payload.header.rounding),
       ...buildMarketingDocumentAddressPayload(payload.header),
 
-      DocumentLines: payload.lines.map((l) => {
+      DocumentLines: submittedLines.map((l, index) => {
         const lineNum = l.lineNum ?? l.LineNum;
+        const rawBaseType = l.baseType ?? l.BaseType;
+        const rawBaseEntry = l.baseEntry ?? l.BaseEntry;
+        const rawBaseLine = l.baseLine ?? l.BaseLine;
+        const hasBaseDocument =
+          rawBaseType !== undefined && rawBaseType !== null && String(rawBaseType).trim() !== '' &&
+          rawBaseEntry !== undefined && rawBaseEntry !== null && String(rawBaseEntry).trim() !== '' &&
+          rawBaseLine !== undefined && rawBaseLine !== null && String(rawBaseLine).trim() !== '';
         const line = {
           ...(lineNum !== undefined && lineNum !== null && lineNum !== '' ? { LineNum: Number(lineNum) } : {}),
-          ItemCode: l.itemNo,
+          ...(l.itemNo ? { ItemCode: l.itemNo } : {}),
           Quantity: Number(l.quantity),
           UnitPrice: Number(l.unitPrice),
-          WarehouseCode: l.whse || l.warehouse || "01",
           TaxCode: l.taxCode || undefined,
           MeasureUnit: l.uomCode || undefined,
           WTLiable: yesNo(l.wTaxLiable ?? l.wtaxLiable),
@@ -557,11 +657,21 @@ const updateARCreditMemo = async (docEntry, payload) => {
           CostingCode: l.distRule || undefined,
           COGSCostingCode: l.cogsDistRule || l.distRule || undefined,
           CountryOrg: l.countryOfOrigin || undefined,
-          DiscountPercent: l.stdDiscount ? Number(l.stdDiscount) : (l.discountPercent ? Number(l.discountPercent) : 0),
-          BaseType: l.baseType ? Number(l.baseType) : undefined,
-          BaseEntry: l.baseEntry ? Number(l.baseEntry) : undefined,
-          BaseLine: l.baseLine !== undefined ? Number(l.baseLine) : undefined,
+          DiscountPercent: getLineDiscountPercent(l) ?? 0,
         };
+        const warehouseCode = String(l.whse || l.warehouse || '').trim();
+        if (warehouseCode) {
+          line.WarehouseCode = warehouseCode;
+        }
+        if (hasBaseDocument) {
+          line.BaseType = Number(rawBaseType);
+          line.BaseEntry = Number(rawBaseEntry);
+          line.BaseLine = Number(rawBaseLine);
+        }
+        const batchNumbers = buildBatchNumbersForCreditQuantity(l, index);
+        if (batchNumbers.length > 0) {
+          line.BatchNumbers = batchNumbers;
+        }
         applyUdfValues(line, buildLineUdfPayload(l, allowedLineUdfs), allowedLineUdfs);
         return line;
       })
@@ -704,6 +814,8 @@ module.exports = {
   getOpenARInvoices:       async (customerCode = null) => ({ documents: await arCreditMemoDb.getOpenARInvoices(customerCode) }),
   getARInvoiceForCopy:     (d) => arCreditMemoDb.getARInvoiceForCopy(d),
   getARCreditMemoForCopy:  (d) => arCreditMemoDb.getARCreditMemoForCopy(d),
+  _buildLineUdfPayload: buildLineUdfPayload,
+  _getLineDiscountPercent: getLineDiscountPercent,
   // getOpenSalesOrders:      async () => ({ documents: await arCreditMemoDb.getOpenSalesOrders() }),
   // getSalesOrderForCopy:    (d) => arCreditMemoDb.getSalesOrderForCopy(d),
   // getOpenReturns:          async (customerCode = null) => ({ documents: await arCreditMemoDb.getOpenReturns(customerCode) }),

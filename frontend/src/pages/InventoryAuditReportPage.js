@@ -7,6 +7,7 @@ import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
+import { matchesSapSearchText } from "../utils/sapSearch";
 import "../styles/inventory-audit-report.css";
 import "../styles/sales-analysis-report.css";
 import "../styles/inventory-report-common.css";
@@ -224,19 +225,19 @@ function InventoryAuditReportPage() {
 
   const filteredReportRows = useMemo(() => {
     const rows = report?.rows || [];
-    const search = findText.trim().toLowerCase();
+    const search = findText.trim();
     if (!search || report?.criteria?.displayMode === "byAccount") return rows;
     return rows.filter((row) =>
-      `${row.itemCode} ${row.itemName} ${row.whsCode} ${row.document} ${row.accountFormatCode} ${row.accountName}`.toLowerCase().includes(search),
+      matchesSapSearchText(`${row.itemCode} ${row.itemName} ${row.whsCode} ${row.document} ${row.accountFormatCode} ${row.accountName}`, search),
     );
   }, [findText, report]);
 
   const filteredAccountRows = useMemo(() => {
     const rows = report?.accountRows || [];
-    const search = findText.trim().toLowerCase();
+    const search = findText.trim();
     if (!search) return rows;
     return rows.filter((row) =>
-      `${row.accountCode} ${row.formatCode} ${row.accountName}`.toLowerCase().includes(search),
+      matchesSapSearchText(`${row.accountCode} ${row.formatCode} ${row.accountName}`, search),
     );
   }, [findText, report]);
 

@@ -14,6 +14,43 @@ const formatDate = (value) => {
   return Number.isNaN(date.getTime()) ? String(value).split('T')[0] : date.toISOString().split('T')[0];
 };
 
+const SAP_JOURNAL_PREVIEW_DOCUMENT_TYPES = {
+  arReserveInvoice: { label: 'A/R Reserve Invoice' },
+  delivery: { label: 'Delivery' },
+  dcDelivery: { label: 'DC Delivery', sapType: 'delivery' },
+  ncDelivery: { label: 'NC Delivery', sapType: 'delivery' },
+  sodaDelivery: { label: 'SODA Delivery', sapType: 'delivery' },
+  arInvoice: { label: 'A/R Invoice' },
+  serviceArInvoice: { label: 'Service A/R Invoice', generator: 'generateFromServiceARInvoice' },
+  return: { label: 'Return' },
+  arCreditMemo: { label: 'A/R Credit Memo' },
+  serviceArCreditMemo: { label: 'Service A/R Credit Memo', generator: 'generateFromServiceARCreditMemo' },
+  apReserveInvoice: { label: 'A/P Reserve Invoice' },
+  grpo: { label: 'Goods Receipt PO' },
+  goodsReturn: { label: 'Goods Return' },
+  apInvoice: { label: 'A/P Invoice' },
+  serviceApInvoice: { label: 'Service A/P Invoice', generator: 'generateFromServiceAPInvoice' },
+  apCreditMemo: { label: 'A/P Credit Memo' },
+  serviceApCreditMemo: { label: 'Service A/P Credit Memo', generator: 'generateFromServiceAPCreditMemo' },
+  incomingPayment: { label: 'Incoming Payment' },
+  outgoingPayment: { label: 'Outgoing Payment' },
+  goodsIssue: { label: 'Goods Issue' },
+  goodsReceipt: { label: 'Goods Receipt' },
+  inventoryTransfer: { label: 'Inventory Transfer' },
+};
+
+const normalizePreviewResponse = (journalEntry, documentTypeConfig) => ({
+  entries: Array.isArray(journalEntry?.entries) ? journalEntry.entries : [journalEntry].filter(Boolean),
+  warnings: [
+    ...(Array.isArray(journalEntry?.warnings) ? journalEntry.warnings : []),
+    'Preview is calculated before Add. The final SAP journal entry can differ if SAP numbering, exchange rates, inventory valuation, or posting settings change before the document is added.',
+  ],
+  source: {
+    documentType: documentTypeConfig.label,
+    sapType: documentTypeConfig.sapType || documentTypeConfig.label,
+  },
+});
+
 const queryRows = async (sql, params = {}) => {
   const result = await db.query(sql, params);
   return result.recordset || [];
@@ -1163,6 +1200,43 @@ const generateFromServiceARCreditMemo = async ({ docEntry, payload, persist = fa
   return { ...journal, persisted: false };
 };
 
+const previewJournalEntry = async ({ documentType, docEntry, payload } = {}) => {
+  const key = String(documentType || '').trim();
+  const config = SAP_JOURNAL_PREVIEW_DOCUMENT_TYPES[key];
+  if (!config) {
+    const error = new Error('Journal Entry Preview is available only for SAP posting documents that support it.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (docEntry) {
+    const error = new Error('SAP Journal Entry Preview is available in Add mode before the document is added.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (!config.generator) {
+    const error = new Error(`${config.label} is supported by SAP Journal Entry Preview, but this deployment needs the native SAP preview capability exposed before we can calculate it accurately.`);
+    error.status = 501;
+    error.response = {
+      data: {
+        sapDocumentType: config.sapType || config.label,
+        reason: 'No official Service Layer preview action was discovered in the connected metadata, and this app does not have a parity-safe local calculator for this document type.',
+      },
+    };
+    throw error;
+  }
+
+  const generator = module.exports[config.generator];
+  const journalEntry = await generator({
+    docEntry: null,
+    payload,
+    persist: false,
+  });
+
+  return normalizePreviewResponse(journalEntry, config);
+};
+
 const normalizeManualLine = (line = {}) => ({
   accountCode: String(line.accountCode || line.account || line.glAccount || '').trim(),
   accountName: String(line.accountName || line.name || '').trim(),
@@ -1258,6 +1332,7 @@ const getJournalEntryByTransId = async (transId) => {
 };
 
 module.exports = {
+  previewJournalEntry,
   generateFromServiceARInvoice,
   generateFromServiceAPInvoice,
   generateFromServiceAPCreditMemo,

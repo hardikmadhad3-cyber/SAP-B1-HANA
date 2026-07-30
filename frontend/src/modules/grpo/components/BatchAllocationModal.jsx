@@ -27,11 +27,13 @@ export default function BatchAllocationModal({
   loading = false,
   error = '',
   onGenerateBatchNumber,
+  workspaceRef,
   onClose,
   onSave,
 }) {
   const [rows, setRows] = useState([createBatchRow()]);
   const [generatingRow, setGeneratingRow] = useState(null);
+  const [workspaceBounds, setWorkspaceBounds] = useState(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -45,6 +47,35 @@ export default function BatchAllocationModal({
         : [createBatchRow()];
     setRows(nextRows);
   }, [isOpen, line]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const updateBounds = () => {
+      const rect = workspaceRef?.current?.getBoundingClientRect?.();
+      if (!rect) {
+        setWorkspaceBounds(null);
+        return;
+      }
+      const topbarBottom = document.querySelector('.topbar')?.getBoundingClientRect?.().bottom || 0;
+      const top = Math.max(0, rect.top, topbarBottom);
+      const left = Math.max(0, rect.left);
+      setWorkspaceBounds({
+        top,
+        left,
+        right: 'auto',
+        bottom: 'auto',
+        width: Math.max(320, window.innerWidth - left),
+        height: Math.max(240, window.innerHeight - top),
+      });
+    };
+    updateBounds();
+    window.addEventListener('resize', updateBounds);
+    window.addEventListener('scroll', updateBounds, true);
+    return () => {
+      window.removeEventListener('resize', updateBounds);
+      window.removeEventListener('scroll', updateBounds, true);
+    };
+  }, [isOpen, workspaceRef]);
 
   const assignedQty = useMemo(() => sumBatchQty(rows), [rows]);
   const lineQty = parseBatchNumber(line?.quantity);
@@ -170,10 +201,13 @@ export default function BatchAllocationModal({
   const canSave = assignedQty > 0 && !qtyMismatch && availabilityErrors.length === 0;
 
   return createPortal(
-    <div className="del-modal-overlay" onClick={onClose}>
+    <div
+      className="del-modal-overlay grpo-batch-modal-overlay"
+      style={workspaceBounds || undefined}
+      onClick={onClose}
+    >
       <div
         className="del-modal grpo-batch-modal"
-        style={{ width: 'min(980px, 100%)', maxHeight: '90vh', overflow: 'auto' }}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="del-modal__header">

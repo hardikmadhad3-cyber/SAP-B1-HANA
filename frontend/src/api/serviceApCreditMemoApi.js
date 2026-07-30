@@ -35,7 +35,8 @@ export const updateServiceAPCreditMemo = (docEntry, data) =>
   client.patch(`${API_BASE}/${encodeURIComponent(docEntry)}`, data);
 
 export const generateServiceAPCreditMemoJournalEntry = ({ docEntry, payload, persist = false }) =>
-  client.post('/journal-entry/generate-from-ap-credit-memo', {
+  client.post('/journal-entry/preview', {
+    documentType: 'serviceApCreditMemo',
     docEntry,
     payload,
     persist,

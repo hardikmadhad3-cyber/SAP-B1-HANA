@@ -43,7 +43,7 @@ const buildAPInvoiceDocumentLine = (
   const hasBaseDoc = hasBaseDocumentLink(line);
   const unitPrice = toNumber(line.unitPrice, 0);
   const documentLine = {
-    ItemCode: String(line.itemNo || '').trim(),
+    ...(hasBaseDoc ? {} : { ItemCode: String(line.itemNo || '').trim() }),
     ItemDescription: String(line.itemDescription || ''),
     Quantity: toNumber(line.quantity, 0),
     UnitPrice: unitPrice,

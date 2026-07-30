@@ -1,4 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { matchesSapSearchText } from '../../../utils/sapSearch';
 
 const parseNumber = (value) => {
   const number = Number(value);
@@ -23,15 +25,49 @@ export default function WithholdingTaxTableModal({
   allowedCodes,
   onRowsChange,
   baseAmount,
+  allowManualRows = true,
+  workspaceRef,
 }) {
   const [lookup, setLookup] = useState({ open: false, rowIndex: -1, query: '' });
+  const [workspaceBounds, setWorkspaceBounds] = useState(null);
   const lookupOptions = useMemo(() => {
-    const query = lookup.query.trim().toLowerCase();
+    const query = lookup.query.trim();
     return (allowedCodes || []).filter((code) => {
       if (!query) return true;
-      return `${code.code || ''} ${code.name || ''}`.toLowerCase().includes(query);
+      return matchesSapSearchText(`${code.code || ''} ${code.name || ''}`, query);
     });
   }, [allowedCodes, lookup.query]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const updateBounds = () => {
+      const rect = workspaceRef?.current?.getBoundingClientRect?.();
+      if (!rect) {
+        setWorkspaceBounds(null);
+        return;
+      }
+      const topbarBottom = document.querySelector('.topbar')?.getBoundingClientRect?.().bottom || 0;
+      const top = Math.max(0, rect.top, topbarBottom);
+      const left = Math.max(0, rect.left);
+      setWorkspaceBounds({
+        top,
+        left,
+        right: 'auto',
+        bottom: 'auto',
+        width: Math.max(320, window.innerWidth - left),
+        height: Math.max(240, window.innerHeight - top),
+      });
+    };
+
+    updateBounds();
+    window.addEventListener('resize', updateBounds);
+    window.addEventListener('scroll', updateBounds, true);
+    return () => {
+      window.removeEventListener('resize', updateBounds);
+      window.removeEventListener('scroll', updateBounds, true);
+    };
+  }, [isOpen, workspaceRef]);
 
   if (!isOpen) return null;
 
@@ -85,12 +121,17 @@ export default function WithholdingTaxTableModal({
     onRowsChange(rows.filter((_, index) => index !== rowIndex));
   };
 
-  return (
-    <div className="ap-wtax-overlay" onClick={onClose} onContextMenu={(event) => event.stopPropagation()}>
-      <div className="ap-wtax-window" onClick={(event) => event.stopPropagation()}>
-        <div className="ap-wtax-titlebar">
-          <span>Withholding Tax Table</span>
-          <button type="button" className="ap-wtax-titlebar__button" onClick={onClose}>X</button>
+  return createPortal(
+    <div
+      className="del-modal-overlay ap-wtax-overlay"
+      style={workspaceBounds || undefined}
+      onClick={onClose}
+      onContextMenu={(event) => event.stopPropagation()}
+    >
+      <div className="del-modal ap-wtax-window" onClick={(event) => event.stopPropagation()}>
+        <div className="del-modal__header ap-wtax-titlebar">
+          <strong>Withholding Tax Table</strong>
+          <button type="button" className="del-modal__close ap-wtax-titlebar__button" onClick={onClose}>x</button>
         </div>
 
         <div className="ap-wtax-toolbar">
@@ -132,8 +173,10 @@ export default function WithholdingTaxTableModal({
                   <td className="ap-wtax-grid__muted">{rowIndex + 1}</td>
                   <td>
                     <div className="ap-wtax-code-cell">
-                      <input value={row.code || ''} onChange={(event) => updateRow(rowIndex, { code: event.target.value })} />
-                      <button type="button" onClick={() => setLookup({ open: true, rowIndex, query: '' })}>...</button>
+                      <input value={row.code || ''} readOnly={!allowManualRows} onChange={(event) => updateRow(rowIndex, { code: event.target.value })} />
+                      {allowManualRows && (
+                        <button type="button" onClick={() => setLookup({ open: true, rowIndex, query: '' })}>...</button>
+                      )}
                     </div>
                   </td>
                   <td><input value={row.name || ''} readOnly /></td>
@@ -153,21 +196,32 @@ export default function WithholdingTaxTableModal({
                   <td><input value={row.cgstAccount || ''} readOnly /></td>
                   <td><input value={row.sgstAccount || ''} readOnly /></td>
                   <td><input value={row.utgstAccount || ''} readOnly /></td>
-                  <td><button type="button" className="ap-wtax-remove" onClick={() => removeRow(rowIndex)}>x</button></td>
+                  <td>
+                    {allowManualRows && (
+                      <button type="button" className="ap-wtax-remove" onClick={() => removeRow(rowIndex)}>x</button>
+                    )}
+                  </td>
                 </tr>
               ))}
-              <tr>
-                <td className="ap-wtax-grid__muted">{rows.length + 1}</td>
-                <td><button type="button" className="ap-wtax-add-row" onClick={addRow}>+</button></td>
-                <td colSpan={18}></td>
-              </tr>
+              {!rows.length && !allowManualRows && (
+                <tr>
+                  <td colSpan={20} className="ap-wtax-empty">No withholding tax codes are applicable.</td>
+                </tr>
+              )}
+              {allowManualRows && (
+                <tr>
+                  <td className="ap-wtax-grid__muted">{rows.length + 1}</td>
+                  <td><button type="button" className="ap-wtax-add-row" onClick={addRow}>+</button></td>
+                  <td colSpan={18}></td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
 
-        <div className="ap-wtax-footer">
-          <button type="button" className="ap-wtax-ok" onClick={onClose}>OK</button>
-          <button type="button" onClick={onClose}>Cancel</button>
+        <div className="del-modal__footer ap-wtax-footer">
+          <button type="button" className="del-btn del-btn--primary ap-wtax-ok" onClick={onClose}>OK</button>
+          <button type="button" className="del-btn" onClick={onClose}>Cancel</button>
         </div>
 
         {lookup.open && (
@@ -224,6 +278,7 @@ export default function WithholdingTaxTableModal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

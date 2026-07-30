@@ -1266,6 +1266,7 @@ const getSalesQuotationForCopy = async (docEntry) => {
       T0.JrnlMemo,
       T0.Series,
       T0.DiscPrcnt,
+      T0.RoundDif,
       T0.SlpCode,
       SLP.SlpName AS SalesEmployeeName,
       T0.OwnerCode,

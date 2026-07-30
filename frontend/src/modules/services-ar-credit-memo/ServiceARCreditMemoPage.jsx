@@ -827,6 +827,7 @@ function ServiceARCreditMemoPage() {
     open: false,
     loading: false,
     data: null,
+    error: '',
   });
   const [lineLookupModal, setLineLookupModal] = useState({
     open: false,
@@ -1838,19 +1839,19 @@ function ServiceARCreditMemoPage() {
       return null;
     }
 
-    setJournalPreview((prev) => ({ ...prev, open: true, loading: true }));
+    setJournalPreview((prev) => ({ ...prev, open: true, loading: true, error: '' }));
     try {
       const res = await generateServiceARCreditMemoJournalEntry({
         docEntry,
         payload: docEntry ? null : buildPayload(),
         persist,
       });
-      setJournalPreview({ open: true, loading: false, data: res.data });
+      setJournalPreview({ open: true, loading: false, data: res.data, error: '' });
       setPageState((prev) => ({ ...prev, error: '' }));
       return res.data;
     } catch (error) {
       const message = error.response?.data?.message || error.message || 'Failed to preview Journal Entry.';
-      setJournalPreview((prev) => ({ ...prev, loading: false }));
+      setJournalPreview((prev) => ({ ...prev, loading: false, error: message }));
       setPageState((prev) => ({ ...prev, success: '', error: message }));
       return null;
     }
@@ -1903,7 +1904,7 @@ function ServiceARCreditMemoPage() {
     setLines([createLine(rowUdfDefinitions)]);
     setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
-    setJournalPreview({ open: false, loading: false, data: null });
+    setJournalPreview({ open: false, loading: false, data: null, error: '' });
     setPageState((prev) => ({ ...prev, error: '', success: '' }));
   };
 
@@ -1934,6 +1935,48 @@ function ServiceARCreditMemoPage() {
     return null;
   };
 
+  const refreshSeriesForNewDocument = async (preferredSeries = header.series) => {
+    if (String(preferredSeries || '') === 'manual') {
+      setHeader((prev) => ({ ...prev, series: 'manual', nextNumber: '', docNo: '' }));
+      return;
+    }
+
+    setPageState((prev) => ({ ...prev, seriesLoading: true }));
+    try {
+      const res = await fetchServiceARCreditMemoSeries(header.postingDate, header.branch);
+      const nextSeries = toArray(res.data?.series || res.data, ['series']);
+      const selectedSeries =
+        nextSeries.find((series) => String(series.Series || '') === String(preferredSeries || '')) ||
+        nextSeries[0];
+      setRefData((prev) => ({ ...prev, series: nextSeries }));
+      if (selectedSeries) {
+        const numberRes = await fetchServiceARCreditMemoNextNumber(selectedSeries.Series);
+        setHeader((prev) => ({
+          ...prev,
+          branch: prev.branch || String(selectedSeries.BPLId || ''),
+          series: String(selectedSeries.Series || ''),
+          nextNumber: String(numberRes.data?.nextNumber || selectedSeries.NextNumber || ''),
+          docNo: '',
+        }));
+      }
+    } catch (_error) {
+      const selectedSeries =
+        seriesOptions.find((series) => String(series.Series || '') === String(preferredSeries || '')) ||
+        seriesOptions[0];
+      if (selectedSeries) {
+        setHeader((prev) => ({
+          ...prev,
+          branch: prev.branch || String(selectedSeries.BPLId || ''),
+          series: String(selectedSeries.Series || ''),
+          nextNumber: String(selectedSeries.NextNumber || ''),
+          docNo: '',
+        }));
+      }
+    } finally {
+      setPageState((prev) => ({ ...prev, seriesLoading: false }));
+    }
+  };
+
   const handleCopyFrom = (data, sourceType) => {
     const copySource = unwrapCopyFromDocument(data);
     const sourceLines = toArray(copySource.lines, ['lines', 'DocumentLines']);
@@ -1946,6 +1989,9 @@ function ServiceARCreditMemoPage() {
       ...prev,
       ...normalizedHeader,
       transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice',
+      series: prev.series,
+      nextNumber: prev.nextNumber,
+      docNo: '',
     }));
     const baseType = sourceType === 'arInvoice' ? 13 : BASE_TYPE[sourceType] || 13;
     const copyLines = sourceLines;
@@ -1959,7 +2005,7 @@ function ServiceARCreditMemoPage() {
     setPageState((prev) => ({ ...prev, success: 'Copied service A/R invoice lines.', error: '' }));
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -1979,16 +2025,7 @@ function ServiceARCreditMemoPage() {
     });
 
     if (duplicated) {
-      const selectedSeries =
-        (refData.series || []).find((series) => String(series.Series || '') === String(header.series || '')) ||
-        (refData.series || [])[0];
-      if (selectedSeries) {
-        setHeader((prev) => ({
-          ...prev,
-          series: String(selectedSeries.Series || ''),
-          nextNumber: String(selectedSeries.NextNumber || ''),
-        }));
-      }
+      await refreshSeriesForNewDocument(header.series);
     }
   };
 
@@ -2212,14 +2249,16 @@ function ServiceARCreditMemoPage() {
           onSuccess={(message) => setPageState((prev) => ({ ...prev, error: '', success: message }))}
           onError={(message) => setPageState((prev) => ({ ...prev, success: '', error: message }))}
         />
-        <button
-          type="button"
-          className="del-btn sap-document-toolbar__journal-preview"
-          onClick={() => previewJournalEntry({ persist: false })}
-          disabled={pageState.posting || journalPreview.loading}
-        >
-          Preview Journal Entry
-        </button>
+        {!currentDocEntry && (
+          <button
+            type="button"
+            className="del-btn sap-document-toolbar__journal-preview"
+            onClick={() => previewJournalEntry({ persist: false })}
+            disabled={pageState.posting || journalPreview.loading}
+          >
+            Preview Journal Entry
+          </button>
+        )}
         <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/services/ar-credit-memo/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
@@ -2598,6 +2637,7 @@ function ServiceARCreditMemoPage() {
       <JournalEntryPreviewModal
         isOpen={journalPreview.open}
         loading={journalPreview.loading}
+        error={journalPreview.error}
         journalEntry={journalPreview.data}
         onClose={() => setJournalPreview((prev) => ({ ...prev, open: false }))}
         onOpenLinkedMaster={openJournalLinkedMaster}

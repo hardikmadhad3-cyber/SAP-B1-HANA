@@ -7,6 +7,7 @@ import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
 import { fetchItemGroups, fetchItemProperties } from "../api/itemApi";
 import { fetchBillOfMaterialsReport } from "../api/billOfMaterialsReportApi";
+import { matchesSapSearchText } from "../utils/sapSearch";
 import "../styles/sales-analysis-report.css";
 import "../styles/bill-of-materials-report.css";
 
@@ -118,7 +119,7 @@ function BillOfMaterialsReportPage() {
 
   const filteredRows = useMemo(() => {
     const rows = reportResult?.rows || [];
-    const query = findText.trim().toLowerCase();
+    const query = findText.trim();
     if (!query) return rows;
 
     return rows.filter((row) =>
@@ -132,7 +133,7 @@ function BillOfMaterialsReportPage() {
         row.routeSequence,
         row.routeStage,
         row.stageDescription,
-      ].some((value) => String(value || "").toLowerCase().includes(query)),
+      ].some((value) => matchesSapSearchText(value, query)),
     );
   }, [findText, reportResult?.rows]);
 

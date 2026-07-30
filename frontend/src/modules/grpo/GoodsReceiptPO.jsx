@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import './styles/GoodsReceiptPO.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from './components/FormSettingsPanel';
@@ -18,6 +18,7 @@ import HSNCodeModal from '../../components/common/HSNCodeModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import SapGoldenArrowButton from '../../components/document/SapGoldenArrowButton';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
@@ -29,6 +30,7 @@ import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue } from '../../utils/stateDisplay';
 import { getItemPrice } from '../../utils/documentItemHydration';
+import { normaliseDocumentHeader } from '../../api/copyFromApi';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import {
   BATCH_QTY_TOLERANCE,
@@ -332,6 +334,7 @@ function GoodsReceiptPO() {
   const location = useLocation();
   const navigate = useNavigate();
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
+  const formRef = useRef(null);
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
@@ -467,6 +470,17 @@ function GoodsReceiptPO() {
   const isDocumentEditable = !currentDocEntry || String(header.status || '').toLowerCase() === 'open';
   const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
   const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+  const hasOpenCopyQuantity = Boolean(currentDocEntry) && lines.some((line = {}) => {
+    const rawOpenQty = line.openQty ?? line.OpenQty ?? line.OpenQuantity;
+    if (rawOpenQty !== undefined && rawOpenQty !== null && String(rawOpenQty).trim() !== '') {
+      return parseNum(rawOpenQty) > 0;
+    }
+
+    const lineStatus = String(line.lineStatus ?? line.LineStatus ?? '').trim().toUpperCase();
+    if (lineStatus && !['O', 'OPEN'].includes(lineStatus)) return false;
+
+    return parseNum(line.quantity ?? line.Quantity) > 0;
+  });
   const primaryActionLabel = pageState.posting
     ? 'Saving…'
     : currentDocEntry
@@ -747,7 +761,7 @@ function GoodsReceiptPO() {
             {
               ...line,
               quantity: String(line.quantity || line.Quantity || line.OpenQty || 0),
-              stdDiscount: String(line.stdDiscount || line.discount || line.DiscountPercent || line.DiscPrcnt || 0),
+              stdDiscount: String(line.stdDiscount || line.DiscountPercent || line.DiscPrcnt || line.discount || 0),
               baseEntry: line.baseEntry ?? line.BaseEntry ?? baseDocument?.baseEntry ?? sourceDocEntry,
               baseType: line.baseType ?? line.BaseType ?? baseDocument?.baseType ?? 22,
               baseLine: line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? index,
@@ -777,6 +791,8 @@ function GoodsReceiptPO() {
           warehouse: sourceHeader.warehouse || firstLineWarehouse || prev.warehouse || '',
           placeOfSupply: sourceHeader.placeOfSupply || prev.placeOfSupply || '',
           otherInstruction: sourceHeader.otherInstruction || sourceHeader.Comments || '',
+          rounding: sourceHeader.rounding ?? normaliseDocumentHeader(sourceHeader).rounding ?? false,
+          roundingAmount: sourceHeader.roundingAmount || sourceHeader.RoundingAmount || sourceHeader.RoundDif || '',
         }));
         setLines(copiedLines);
         setHeaderUdfs((prev) => ({ ...prev, ...(copyData.headerUdfs || {}) }));
@@ -1673,6 +1689,8 @@ function GoodsReceiptPO() {
         ...prev,
         ...res.data.header,
         warehouse: res.data.header?.warehouse || firstLineWarehouse || prev.warehouse || '',
+        rounding: res.data.header?.rounding ?? normaliseDocumentHeader(res.data.header || {}).rounding ?? false,
+        roundingAmount: res.data.header?.roundingAmount || res.data.header?.RoundingAmount || res.data.header?.RoundDif || '',
       }));
       setHeaderUdfs((prev) => ({ ...prev, ...(res.data.header_udfs || {}) }));
       setLines(copiedLines);
@@ -1701,6 +1719,15 @@ function GoodsReceiptPO() {
   };
 
   const handleCopyTo = async (targetType) => {
+    if (currentDocEntry && !hasOpenCopyQuantity) {
+      setPageState(p => ({
+        ...p,
+        success: '',
+        error: 'This Goods Receipt PO has no open quantity left. It has already been fully copied to A/P Invoice.',
+      }));
+      return;
+    }
+
     await copyToDocument({
       sourceDocType: 'grpo',
       targetType,
@@ -2004,7 +2031,7 @@ function GoodsReceiptPO() {
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <form className={`po-page sap-document-page grpo-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form ref={formRef} className={`po-page sap-document-page grpo-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
       {/* ── Toolbar ── */}
       <div className="po-toolbar sap-document-toolbar">
@@ -2053,10 +2080,16 @@ function GoodsReceiptPO() {
           <button
             type="button"
             className="po-btn"
-            disabled={!currentDocEntry}
+            disabled={!currentDocEntry || !hasOpenCopyQuantity}
+            title={!currentDocEntry
+              ? 'Open a saved goods receipt PO before using Copy To.'
+              : !hasOpenCopyQuantity
+                ? 'This Goods Receipt PO has no open quantity left.'
+                : 'Copy To'}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
+              if (!currentDocEntry || !hasOpenCopyQuantity) return;
               const dropdown = event.currentTarget.parentElement;
               const isActive = dropdown.classList.contains('active');
               document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
@@ -2091,6 +2124,14 @@ function GoodsReceiptPO() {
           disabled={pageState.posting || pageState.loading}
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, error: message, success: '' }))}
+        />
+        <JournalEntryPreviewButton
+          documentType="grpo"
+          documentLabel="Goods Receipt PO"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges })}
+          disabled={pageState.posting || pageState.loading}
+          className="po-btn sap-document-toolbar__journal-preview"
         />
         <span className={`po-mode-badge po-mode-badge--${currentDocEntry ? 'update' : 'add'}`}>
           {currentDocEntry ? 'Update' : 'Add'}
@@ -2467,10 +2508,16 @@ function GoodsReceiptPO() {
                   <button
                     type="button"
                     className="po-btn"
-                    disabled={!currentDocEntry}
+                    disabled={!currentDocEntry || !hasOpenCopyQuantity}
+                    title={!currentDocEntry
+                      ? 'Open a saved goods receipt PO before using Copy To.'
+                      : !hasOpenCopyQuantity
+                        ? 'This Goods Receipt PO has no open quantity left.'
+                        : 'Copy To'}
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
+                      if (!currentDocEntry || !hasOpenCopyQuantity) return;
                       const dropdown = event.currentTarget.parentElement;
                       const isActive = dropdown.classList.contains('active');
                       document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
@@ -2568,6 +2615,7 @@ function GoodsReceiptPO() {
         loading={batchModal.loading}
         error={batchModal.error}
         onGenerateBatchNumber={() => fetchNextBatchNumber('JKL')}
+        workspaceRef={formRef}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />
