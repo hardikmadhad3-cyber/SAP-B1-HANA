@@ -910,34 +910,64 @@ const getPurchaseOrder = async (docEntry) => {
 
 // ── DOCUMENT SERIES ───────────────────────────────────────────────────────────
 
-const getDocumentSeries = async () => {
+const keepSapVisibleNumberingSeries = (series = []) => {
+  const rows = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (rows.length <= 1) return rows;
+
+  const defaultRows = rows.filter((row) => Number(row.IsDefault || 0) === 1);
+  if (defaultRows.length) return defaultRows;
+
+  return [rows[0]];
+};
+
+const getDocumentSeries = async (targetDate = null) => {
+  const normalizedTargetDate = String(targetDate || '').trim();
+  const effectiveTargetDate = /^\d{4}-\d{2}-\d{2}$/.test(normalizedTargetDate)
+    ? normalizedTargetDate
+    : new Date().toISOString().split('T')[0];
+  const targetDateSql = effectiveTargetDate.replace(/'/g, "''");
   const result = await db.query(`
     SELECT
       T0.Series,
       T0.SeriesName,
       T0.Indicator,
       T0.NextNumber,
-      FY.FinancialYear,
-      FY.FromDate,
-      FY.ToDate,
+      T1.Name AS FinancialYear,
+      T1.F_RefDate AS FromDate,
+      T1.T_RefDate AS ToDate,
+      CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault
+    FROM NNM1 T0
+    INNER JOIN OFPR T1 ON T1.Indicator = T0.Indicator
+    LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
+    WHERE T0.ObjectCode = '22'
+      AND T0.Locked = 'N'
+      AND CAST('${targetDateSql}' AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate
+    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName, T0.Series
+  `);
+
+  const activeRows = result.recordset || [];
+  if (activeRows.length) {
+    return { series: keepSapVisibleNumberingSeries(activeRows) };
+  }
+
+  const fallback = await db.query(`
+    SELECT
+      T0.Series,
+      T0.SeriesName,
+      T0.Indicator,
+      T0.NextNumber,
+      NULL AS FinancialYear,
+      NULL AS FromDate,
+      NULL AS ToDate,
       CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault
     FROM NNM1 T0
     LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
-    LEFT JOIN (
-      SELECT
-        Indicator,
-        MAX(Name) AS FinancialYear,
-        MIN(F_RefDate) AS FromDate,
-        MAX(T_RefDate) AS ToDate
-      FROM OFPR
-      GROUP BY Indicator
-    ) FY ON FY.Indicator = T0.Indicator
     WHERE T0.ObjectCode = '22'
       AND T0.Locked = 'N'
-    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName
+    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName, T0.Series
   `);
 
-  return { series: result.recordset || [] };
+  return { series: keepSapVisibleNumberingSeries(fallback.recordset || []) };
 };
 
 const getNextNumber = async (series) => {

@@ -491,6 +491,7 @@ const INIT_HEADER = {
   billToAddress: '', billToCode: '', shipToAddress: '',
   shipToAddressComponents: null, billToAddressComponents: null,
   edocGenerationType: 'edocGenerateLater', edocExportFormat: '', edocStatus: '',
+  genericEdocGenerationType: 'edocGenerateLater', genericEdocExportFormat: '', genericEdocStatus: '',
   languageCode: '', trackingNo: '', stampNo: '', pickAndPackRemarks: '', bpChannelCode: '', bpChannelContact: '',
   centralBankIndicator: '', projectCode: '', qrCodeSource: '', indicator: '', orderNumber: '',
   consolidationType: '', consolidatingBP: '', useShippedGoodsAccount: false,
@@ -1265,6 +1266,7 @@ function Delivery() {
             quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
             price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
             eway_bill_formats: refDataRes.data.eway_bill_formats || [],
+            generic_edoc_formats: refDataRes.data.generic_edoc_formats || [],
             eway_bill_transporters: refDataRes.data.eway_bill_transporters || [],
             eway_bill_options: refDataRes.data.eway_bill_options || {},
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
@@ -1422,6 +1424,12 @@ function Delivery() {
             series: mergedEditSeries,
           }));
         }
+        const savedEdocExportFormat = String(so.header?.edocExportFormat || '');
+        const isSavedEWayBillFormat = savedEdocExportFormat && (refData.eway_bill_formats || [])
+          .some((format) => String(format.AbsEntry) === savedEdocExportFormat);
+        const isSavedGenericEdocFormat = savedEdocExportFormat && (refData.generic_edoc_formats || [])
+          .some((format) => String(format.AbsEntry) === savedEdocExportFormat);
+        const defaultEWayBillFormat = (refData.eway_bill_formats || [])[0]?.AbsEntry;
         setHeader(prev => ({
           ...prev,
           ...INIT_HEADER,
@@ -1445,6 +1453,15 @@ function Delivery() {
           docNo: so.header?.docNo || so.header?.docNum || '',
           series: so.header?.series || '',
           nextNumber: so.header?.docNo || so.header?.docNum || '',
+          edocGenerationType: so.header?.edocGenerationType || 'edocGenerateLater',
+          edocExportFormat: isSavedGenericEdocFormat
+            ? (defaultEWayBillFormat != null ? String(defaultEWayBillFormat) : '')
+            : savedEdocExportFormat,
+          edocStatus: so.header?.edocStatus || '',
+          genericEdocGenerationType: so.header?.genericEdocGenerationType || so.header?.edocGenerationType || 'edocGenerateLater',
+          genericEdocExportFormat: so.header?.genericEdocExportFormat
+            || (isSavedEWayBillFormat ? '' : savedEdocExportFormat),
+          genericEdocStatus: so.header?.genericEdocStatus || so.header?.edocStatus || '',
         }));
         
         const hydratedLoadedLines = loadedLines.length
@@ -4791,6 +4808,7 @@ function Delivery() {
                 header={header}
                 onHeaderChange={handleHeaderChange}
                 formats={refData.eway_bill_formats || []}
+                genericFormats={refData.generic_edoc_formats || []}
                 onOpenEWayBill={() => setEWayBillModalOpen(true)}
                 disabled={!isDocumentEditable}
               />

@@ -6,6 +6,8 @@ const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { applyUdfValues } = require('./udfPayloadUtils');
 const { buildGRPODocumentLine } = require('./grpoPayloadUtils');
+const { applyPlaceOfSupplyUdf } = require('./placeOfSupplyUtils');
+const { buildDocumentSeriesPayload } = require('./documentSeriesPayloadUtils');
 
 // ───────── HELPERS ─────────
 
@@ -157,12 +159,13 @@ const getGRPO = async (docEntry) => {
 
 // ───────── DOCUMENT SERIES (USING ODBC) ─────────
 
-const getDocumentSeries = async () => {
+const getDocumentSeries = async (targetDate = null) => {
   try {
-    const result = await grpoDb.getDocumentSeries();
+    const result = await grpoDb.getDocumentSeries(targetDate);
     return result;
   } catch (error) {
-    return { series: [] };
+    console.error('[GRPO] Failed to load live SAP B1 series:', error.message);
+    throw error;
   }
 };
 
@@ -247,13 +250,13 @@ const submitGRPO = async (payload) => {
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
       Rounding: toSapYesNo(header.rounding),
+      ...buildDocumentSeriesPayload(header),
       DocumentLines: lines
         .filter(l => l.itemNo && l.itemNo.trim())
         .map(l => buildGRPODocumentLine(l, lineUdfDefinitionsByKey)),
     };
    
     // Add optional fields
-    if (header.series) sapPayload.Series = parseInt(header.series);
     if (header.branch) sapPayload.BPL_IDAssignedToInvoice = parseInt(header.branch);
     const contactPersonCode = Number(header.contactPerson);
     if (Number.isFinite(contactPersonCode)) sapPayload.ContactPersonCode = contactPersonCode;
@@ -270,6 +273,7 @@ const submitGRPO = async (payload) => {
       ...header_udfs,
       ...(header.buyerLocation !== undefined ? { U_ShipLocation: header.buyerLocation } : {}),
     }, null, headerUdfDefinitionsByKey);
+    applyPlaceOfSupplyUdf(sapPayload, headerUdfDefinitionsByKey, header.placeOfSupply);
 
    
 
@@ -322,6 +326,7 @@ const updateGRPO = async (docEntry, payload) => {
       ...header_udfs,
       ...(header.buyerLocation !== undefined ? { U_ShipLocation: header.buyerLocation } : {}),
     }, null, headerUdfDefinitionsByKey);
+    applyPlaceOfSupplyUdf(sapPayload, headerUdfDefinitionsByKey, header.placeOfSupply);
 
     await sapService.request({
       method: 'PATCH',

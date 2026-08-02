@@ -29,7 +29,13 @@ import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/docum
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue } from '../../utils/stateDisplay';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
 import { getItemPrice } from '../../utils/documentItemHydration';
+import {
+  SAP_MANUAL_SERIES_VALUE,
+  isManualDocumentSeries,
+  isValidManualDocumentNumber,
+} from '../../utils/documentSeries';
 import { normaliseDocumentHeader } from '../../api/copyFromApi';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import {
@@ -306,6 +312,7 @@ const INIT_HEADER = {
   discount: '',
   freight: '',
   rounding: false,
+  roundingAmount: '',
   tax: '',
   totalPaymentDue: '',
   placeOfSupply: '',
@@ -559,7 +566,7 @@ function GoodsReceiptPO() {
       try {
         const [refDataRes, seriesRes, layoutRes] = await Promise.all([
           fetchGRPOReferenceData(PURCHASE_ORDER_COMPANY_ID),
-          fetchDocumentSeries(),
+          fetchDocumentSeries(today()),
           getDocumentLayout({ documentType: 'GRPO' }).catch((error) => ({
             data: {
               success: false,
@@ -1001,7 +1008,12 @@ function GoodsReceiptPO() {
     taxAmt = roundTo(taxAmt, numDec.tax);
     if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
     taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+    const rounding = calculateDocumentRounding(
+      discSub + freight + taxAmt,
+      header.rounding,
+      numDec.totalPaymentDue,
+    );
+    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, ...rounding, taxBreakdown: Array.from(taxMap.values()) };
   };
 
   const totals = calcTotals();
@@ -1016,6 +1028,7 @@ function GoodsReceiptPO() {
     ? {
       ...totals,
       taxAmt: header.tax !== '' ? parseNum(header.tax) : totals.taxAmt,
+      roundingAmount: header.roundingAmount !== '' ? parseNum(header.roundingAmount) : totals.roundingAmount,
       total: header.totalPaymentDue !== '' ? parseNum(header.totalPaymentDue) : totals.total,
     }
     : totals;
@@ -1077,7 +1090,12 @@ function GoodsReceiptPO() {
     if (!shouldAutoPopulateAddresses) return;
     setHeader(prev => {
       const existing = vendorEffectiveShipToAddresses.find(a => String(a.Address || '') === String(prev.shipToCode || ''));
-      if (existing) return prev;
+      if (existing) {
+        const savedOrAddressState = prev.placeOfSupply || String(existing.State || '').trim();
+        return savedOrAddressState === prev.placeOfSupply
+          ? prev
+          : { ...prev, placeOfSupply: savedOrAddressState };
+      }
       const def = vendorEffectiveShipToAddresses[0];
       if (!def) return prev;
       const fmt = fmtAddr(def);
@@ -1450,6 +1468,12 @@ function GoodsReceiptPO() {
   const handleSeriesChange = async (seriesValue) => {
     if (!seriesValue) return;
 
+    if (isManualDocumentSeries(seriesValue)) {
+      setHeader(p => ({ ...p, series: SAP_MANUAL_SERIES_VALUE, nextNumber: '' }));
+      setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+      return;
+    }
+
     setPageState(p => ({ ...p, seriesLoading: true }));
     setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
 
@@ -1461,6 +1485,21 @@ function GoodsReceiptPO() {
       setPageState(p => ({ ...p, error: 'Failed to get next document number' }));
     } finally {
       setPageState(p => ({ ...p, seriesLoading: false }));
+    }
+  };
+
+  const refreshDocumentSeries = async (targetDate = header.postingDate || today()) => {
+    if (currentDocEntry) return;
+    const effectiveDate = typeof targetDate === 'string'
+      ? targetDate
+      : (header.postingDate || today());
+
+    try {
+      const response = await fetchDocumentSeries(effectiveDate);
+      const liveSeries = Array.isArray(response.data?.series) ? response.data.series : [];
+      setRefData(p => ({ ...p, series: liveSeries }));
+    } catch (error) {
+      setPageState(p => ({ ...p, error: getErrMsg(error, 'Failed to load live SAP B1 Goods Receipt PO series.') }));
     }
   };
 
@@ -1767,7 +1806,7 @@ function GoodsReceiptPO() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      refreshDuplicateSeries(refData.series, '', handleSeriesChange);
     }
   };
 
@@ -1860,6 +1899,11 @@ function GoodsReceiptPO() {
 
     if (!String(header.postingDate || '').trim()) { e.header.postingDate = 'Posting date is required.'; e.form = 'Please correct the highlighted fields.'; return e; }
     if (!String(header.documentDate || '').trim()) { e.header.documentDate = 'Document date is required.'; e.form = 'Please correct the highlighted fields.'; return e; }
+    if (!isUpdate && isManualDocumentSeries(header.series) && !isValidManualDocumentNumber(header.nextNumber)) {
+      e.header.nextNumber = 'Enter a positive document number for Manual series.';
+      e.form = 'Please correct the highlighted fields.';
+      return e;
+    }
 
     const pop = lines.filter(l => String(l.itemNo || '').trim());
     if (!pop.length) { e.form = 'Add at least one item line.'; return e; }
@@ -1967,7 +2011,7 @@ function GoodsReceiptPO() {
       const prep = {
         ...header,
         deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
-        series: header.series ? Number(header.series) : undefined,
+        series: header.series || undefined,
       };
 
       const payloadLines = lines.map((line) => ({
@@ -2253,11 +2297,30 @@ function GoodsReceiptPO() {
                 <div className="po-document-header-column po-header-grid__section po-header-grid__section--right">
                   <div className="po-field">
                     <label className="po-field__label">Series</label>
-                    <select name="series" className="po-field__select" value={header.series} onChange={handleHeaderChange} disabled={!!currentDocEntry || pageState.seriesLoading}>
+                    <select name="series" className="po-field__select" value={header.series} onChange={handleHeaderChange} onFocus={refreshDocumentSeries} disabled={!!currentDocEntry || pageState.seriesLoading}>
                       <option value="">Select Series</option>
-                      {refData.series.map(s => <option key={s.Series} value={s.Series}>{s.SeriesName} ({s.Indicator})</option>)}
+                      <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
+                      {refData.series.map(s => <option key={s.Series} value={s.Series}>{s.SeriesName}</option>)}
+                      {header.series && !isManualDocumentSeries(header.series) && !refData.series.some(s => String(s.Series) === String(header.series)) && (
+                        <option value={header.series}>{header.series}</option>
+                      )}
                     </select>
-                    <input type="text" className="po-field__input" style={{ width: 80, background: '#f0f2f5', textAlign: 'center' }} value={pageState.seriesLoading ? '...' : (currentDocEntry ? (header.docNo || header.nextNumber || '') : header.nextNumber)} readOnly title="Auto-assigned on save" />
+                    <input
+                      name="nextNumber"
+                      type="text"
+                      className="po-field__input"
+                      style={{
+                        width: 80,
+                        background: !currentDocEntry && isManualDocumentSeries(header.series) ? '#fff' : '#f0f2f5',
+                        textAlign: 'center',
+                        border: valErrors.header.nextNumber ? '1px solid #c00' : undefined,
+                      }}
+                      value={pageState.seriesLoading ? '...' : (currentDocEntry ? (header.docNo || header.nextNumber || '') : header.nextNumber)}
+                      onChange={handleHeaderChange}
+                      readOnly={!!currentDocEntry || !isManualDocumentSeries(header.series)}
+                      title={isManualDocumentSeries(header.series) ? 'Enter the manual document number' : 'Number will be assigned from the selected series'}
+                    />
+                    {valErrors.header.nextNumber && <span className="po-error-feedback">{valErrors.header.nextNumber}</span>}
                   </div>
                   <div className="po-field">
                     <label className="po-field__label">Status</label>
@@ -2448,7 +2511,7 @@ function GoodsReceiptPO() {
                             Rounding
                           </label>
                         </td>
-                        <td></td>
+                        <td><input className="po-grid__input" value={fmtDec(totalsForDisplay.roundingAmount, numDec.totalPaymentDue)} readOnly style={{ background: '#f5f8fc' }} /></td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: 600 }}>Tax</td>

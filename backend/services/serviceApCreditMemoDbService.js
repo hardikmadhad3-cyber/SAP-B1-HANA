@@ -1,5 +1,6 @@
 const db = require('./dbService');
 const apInvoiceDb = require('./apInvoiceDbService');
+const apCreditMemoDb = require('./apCreditMemoDbService');
 const masterDataDbService = require('./masterDataDbService');
 const hsnCodeDbService = require('./hsnCodeDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
@@ -98,19 +99,23 @@ const lookupServiceItems = async () => {
     ItemCode: row.ItemCode || '',
     ItemName: row.ItemName || '',
     InStock: row.OnHand ?? 0,
-    WTaxLiable: String(row.WTLiable || '').toUpperCase() === 'N' ? 'No' : 'Yes',
+    WTaxLiable: ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(row.WTLiable || '').trim().toUpperCase()) ? 'Yes' : 'No',
   }));
 };
 
 const getReferenceData = async () => {
-  const [base, accounts, distributionRules, withholdingTaxCodes, sacCodes, locations, businessPartners, serviceItems, creditMemoUdfMetadata] = await Promise.all([
-    apInvoiceDb.getReferenceData(),
+  const base = await apInvoiceDb.getReferenceData();
+  const [accounts, distributionRules, withholdingTaxCodes] = await Promise.all([
     masterDataDbService.searchAccounts('', '', 5000, 0),
     masterDataDbService.lookupDistributionRules(),
     masterDataDbService.lookupWithholdingTaxCodes('', 200),
+  ]);
+  const [sacCodes, locations, businessPartners] = await Promise.all([
     hsnCodeDbService.getSACCodes('', 5000, 0),
     masterDataDbService.lookupWarehouseLocations(),
     masterDataDbService.searchBP('', '', 5000, 0),
+  ]);
+  const [serviceItems, creditMemoUdfMetadata] = await Promise.all([
     lookupServiceItems(),
     getMarketingDocumentUdfs({ headerTable: 'ORPC', lineTable: 'RPC1' }),
   ]);
@@ -698,6 +703,9 @@ const getAPInvoiceTaxReference = async (docEntry) => {
 const getServiceAPDocumentSeries = async (options = {}) => {
   const date = typeof options === 'string' ? options : options.date;
   const branch = typeof options === 'object' && options ? options.branch : '';
+  const transactionType = typeof options === 'object' && options ? options.transactionType : '';
+  return apCreditMemoDb.getDocumentSeries({ date, transactionType: transactionType || 'GST Tax Invoice', branch });
+/*
   const targetDate = date || new Date().toISOString().split('T')[0];
   const [seriesColumns, numberingColumns] = await Promise.all([
     getTableColumns('NNM1'),
@@ -785,6 +793,7 @@ const getServiceAPDocumentSeries = async (options = {}) => {
   return {
     series: yearNamedSeries.length ? yearNamedSeries : (hasFinancialYearNamedSeries ? [] : mappedSeries),
   };
+*/
 };
 
 const getNextNumber = async (series) => {

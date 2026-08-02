@@ -266,6 +266,7 @@ export const normaliseDocumentLine = (line, idx, docEntry, baseType, headerBranc
   hsnCode:         firstString(line.hsnCode, line.HSNCode),
   sacCode:         firstString(line.sacCode, line.SACCode, line.SacCode),
   taxCode:         firstString(line.taxCode, line.TaxCode, line.VatGroup),
+  wtaxLiable:      sapYesNoToBoolean(firstValue(line.wtaxLiable, line.wTaxLiable, line.WTLiable)) ? 'Y' : 'N',
   taxCodeManuallyOverridden: Boolean(firstString(line.taxCode, line.TaxCode, line.VatGroup)),
   stcode:          firstString(line.stcode, line.STCODE, line.STACode),
   whse:            firstString(line.whse, line.WarehouseCode, line.WhsCode),

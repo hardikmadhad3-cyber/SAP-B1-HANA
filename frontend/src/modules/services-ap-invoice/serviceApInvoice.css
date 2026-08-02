@@ -189,16 +189,37 @@
 }
 
 .service-ap-summary-table td:first-child {
-  width: 54%;
+  width: 48%;
   padding: 1px 5px;
 }
 
 .service-ap-summary-table td:last-child {
-  width: 46%;
+  width: 52%;
 }
 
 .service-ap-summary-table .del-grid__input {
   text-align: right;
+}
+
+.service-ap-wtax-cell {
+  display: grid;
+  grid-template-columns: minmax(92px, 1fr) 36px;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+}
+
+.service-ap-wtax-input {
+  min-width: 0;
+  width: 100%;
+}
+
+.service-ap-wtax-btn {
+  width: 36px;
+  min-width: 36px;
+  height: 24px;
+  padding: 0;
+  line-height: 1;
 }
 
 .service-ap-checkbox {

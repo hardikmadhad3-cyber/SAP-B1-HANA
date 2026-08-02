@@ -7,7 +7,7 @@ import LineValueLookupModal from '../../components/sales-document/LineValueLooku
 import ContentsTab from './components/ContentsTab';
 import LogisticsTab from './components/LogisticsTab';
 import AccountingTab from './components/AccountingTab';
-import TaxTab from './components/TaxTab';
+import TaxTab from '../APInvoice/components/TaxTab';
 import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import AddressModal from '../../components/document/AddressComponentModal';
@@ -32,6 +32,7 @@ import { getDefaultSeriesForCurrentYear, normalizeDocumentSeriesList } from '../
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import useValidationHighlights from '../../utils/useValidationHighlights';
@@ -150,7 +151,6 @@ const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Doc
 const DEFAULT_TRANSACTION_TYPES = [
   { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
   { value: 'Bill of Supply', label: 'Bill of Supply' },
-  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
 ];
 
 const normalizeMetadataIdentity = (value) =>
@@ -307,6 +307,12 @@ const INIT_HEADER = {
   importTax: false,
   supplyCovered: false,
   differentialTaxRate: '100',
+  referenceNumber: '',
+  referenceDate: '',
+  revision: false,
+  taxInvoiceNo: '',
+  taxInvoiceDate: '',
+  reasonForIssuingNote: 'Sales Return',
   edocFormat: '',
   documentStatus: '',
   totalImportedDocument: '',
@@ -320,6 +326,7 @@ const INIT_HEADER = {
   discount: '',
   freight: '',
   rounding: false,
+  roundingAmount: '',
   tax: '',
   totalPaymentDue: '',
   placeOfSupply: '',
@@ -550,6 +557,7 @@ function APCreditMemo() {
     lstVatNo: '', cstNo: '', tanNo: '', serviceTaxNo: '', companyType: '', natureOfBusiness: '',
     assesseeType: '', tinNo: '', itrFiling: '', gstType: '', gstin: ''
   });
+  const [taxInfoDraft, setTaxInfoDraft] = useState({});
 
   useEffect(() => {
     if (!refData.states?.length || !header.placeOfSupply) return;
@@ -1044,12 +1052,12 @@ function APCreditMemo() {
         if (ignore) return;
 
         const nextSeries = normalizeDocumentSeriesList(response.data?.series || []);
-        setRefData((prev) => ({ ...prev, series: nextSeries }));
 
         if (!nextSeries.length) {
-          setHeader((prev) => ({ ...prev, series: '', nextNumber: '' }));
           return;
         }
+
+        setRefData((prev) => ({ ...prev, series: nextSeries }));
 
         const hasCurrentSeries = nextSeries.some((series) => String(series.Series) === String(header.series || ''));
         const defaultSeries = hasCurrentSeries
@@ -1062,10 +1070,7 @@ function APCreditMemo() {
           await handleSeriesChange(defaultSeries.Series);
         }
       } catch (error) {
-        if (!ignore) {
-          setRefData((prev) => ({ ...prev, series: [] }));
-          setHeader((prev) => ({ ...prev, series: '', nextNumber: '' }));
-        }
+        // Preserve last known live series if a reload fails.
       } finally {
         if (!ignore) setPageState((prev) => ({ ...prev, seriesLoading: false }));
       }
@@ -1163,7 +1168,12 @@ function APCreditMemo() {
     taxAmt = roundTo(taxAmt, numDec.tax);
     if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
     taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+    const rounding = calculateDocumentRounding(
+      discSub + freight + taxAmt,
+      header.rounding,
+      numDec.totalPaymentDue,
+    );
+    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, ...rounding, taxBreakdown: Array.from(taxMap.values()) };
   };
 
   const totals = calcTotals();
@@ -1741,6 +1751,7 @@ function APCreditMemo() {
 
   // ── Tax Info Modal handlers ───────────────────────────────────────────────
   const openTaxInfoModal = () => {
+    setTaxInfoDraft({ ...taxInfoForm });
     setTaxInfoModal(true);
   };
 
@@ -1749,6 +1760,7 @@ function APCreditMemo() {
   };
 
   const saveTaxInfoModal = () => {
+    setTaxInfoForm({ ...taxInfoDraft });
     closeTaxInfoModal();
   };
 
@@ -1848,7 +1860,7 @@ function APCreditMemo() {
 
   const handleTaxInfoFormChange = (e) => {
     const { name, value } = e.target;
-    setTaxInfoForm(p => ({ ...p, [name]: value }));
+    setTaxInfoDraft(p => ({ ...p, [name]: value }));
   };
 
   // ── Browse Attachment handler ─────────────────────────────────────────────
@@ -1941,7 +1953,10 @@ function APCreditMemo() {
     throw new Error(`Unsupported copy from type: ${docType}`);
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
+    const duplicateDate = today();
+    const duplicateTransactionType = header.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice';
+    const duplicateBranch = header.branch || '';
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -1964,8 +1979,30 @@ function APCreditMemo() {
     });
 
     if (duplicated) {
-      setHeader((prev) => ({ ...prev, salesContractNo: '' }));
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      setHeader((prev) => ({
+        ...prev,
+        salesContractNo: '',
+        postingDate: duplicateDate,
+        documentDate: duplicateDate,
+        deliveryDate: duplicateDate,
+        transactionType: duplicateTransactionType,
+        branch: duplicateBranch,
+        series: '',
+        nextNumber: '',
+      }));
+      try {
+        const seriesResponse = await fetchAPCreditMemoSeries({
+          date: duplicateDate,
+          branch: duplicateBranch,
+          transactionType: duplicateTransactionType,
+        });
+        const duplicateSeries = normalizeDocumentSeriesList(seriesResponse.data?.series || []);
+        setRefData((prev) => ({ ...prev, series: duplicateSeries }));
+        const selectedSeries = getDefaultSeriesForCurrentYear(duplicateSeries, duplicateDate) || duplicateSeries[0];
+        if (selectedSeries?.Series != null) await handleSeriesChange(selectedSeries.Series);
+      } catch (_error) {
+        refreshDuplicateSeries(refData.series, '', handleSeriesChange);
+      }
     }
   };
 
@@ -2361,7 +2398,7 @@ function APCreditMemo() {
             </div>
 
             {/* ══ TAB CONTENT ═══════════════════════════════════════════════ */}
-            <div className="po-tab-panel">
+            <div className={activeTab === 'Tax' ? 'sap-b1-tax-panel' : 'po-tab-panel'}>
             {activeTab === 'Contents' && (
               <ContentsTab
                 lines={lines}
@@ -2409,7 +2446,14 @@ function APCreditMemo() {
             )}
 
             {activeTab === 'Tax' && (
-              <TaxTab header={header} onHeaderChange={handleHeaderChange} onOpenTaxInfoModal={openTaxInfoModal} />
+              <TaxTab
+                header={header}
+                onHeaderChange={handleHeaderChange}
+                onOpenTaxInfoModal={openTaxInfoModal}
+                showTaxInvoiceReference
+                errors={valErrors.header}
+                isEditable={isDocumentEditable}
+              />
             )}
 
             {activeTab === 'Electronic Documents' && (
@@ -2489,7 +2533,7 @@ function APCreditMemo() {
                             Rounding
                           </label>
                         </td>
-                        <td></td>
+                        <td><input className="po-grid__input" value={fmtDec(totals.roundingAmount, numDec.totalPaymentDue)} readOnly style={{ background: '#f5f8fc' }} /></td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: 600 }}>Tax</td>
@@ -2607,7 +2651,7 @@ function APCreditMemo() {
         isOpen={taxInfoModal}
         onClose={closeTaxInfoModal}
         onSave={saveTaxInfoModal}
-        taxInfoForm={taxInfoForm}
+        taxInfoForm={taxInfoDraft}
         onFormChange={handleTaxInfoFormChange}
       />
 

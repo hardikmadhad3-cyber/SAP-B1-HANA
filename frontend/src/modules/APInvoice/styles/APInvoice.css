@@ -27,8 +27,10 @@
 
 .ap-wtax-window {
   position: relative;
-  width: min(1840px, calc(100vw - 48px));
-  height: min(860px, calc(100vh - 48px));
+  width: min(1180px, calc(100% - 32px));
+  height: min(650px, calc(100% - 32px));
+  max-width: 100%;
+  max-height: 100%;
   background: #f2f2f2;
   border: 1px solid #8e8e8e;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
@@ -179,8 +181,15 @@
   cursor: not-allowed;
 }
 
-.ap-wtax-ok {
+.ap-wtax-footer .ap-wtax-ok {
   font-weight: 600;
+  color: #fff;
+  border-color: #075985;
+  background: linear-gradient(180deg, #0b8fd8 0%, #0871b2 100%);
+}
+
+.ap-wtax-footer .ap-wtax-ok:hover:not(:disabled) {
+  background: linear-gradient(180deg, #087fc2 0%, #075f98 100%);
 }
 
 .ap-wtax-lookup {
@@ -397,16 +406,42 @@
 
 .po-sapb1-tax-layout {
   display: grid;
-  grid-template-columns: minmax(360px, 440px) minmax(180px, 1fr);
-  column-gap: clamp(80px, 28vw, 620px);
+  grid-template-columns: minmax(330px, 440px) minmax(100px, 1fr);
+  column-gap: 24px;
+  align-items: stretch;
+}
+
+.ap-invoice-page .po-sapb1-tax-tab,
+.ap-credit-memo-page .po-sapb1-tax-tab {
+  min-height: 372px;
+  padding: 0 !important;
+  border: 0 !important;
+}
+
+.ap-invoice-page .po-tab-panel.po-tab-panel--tax,
+.ap-credit-memo-page .po-tab-panel.po-tab-panel--tax {
+  padding: 3px 5px !important;
+}
+
+.ap-invoice-page .po-sapb1-tax-tab .po-field__label,
+.ap-credit-memo-page .po-sapb1-tax-tab .po-field__label {
+  flex: 0 0 142px;
+  width: 142px;
+  min-width: 142px;
+  padding-right: 3px;
+  text-align: left !important;
 }
 
 .po-sapb1-tax-spacer {
-  height: 38px;
+  height: 18px;
+}
+
+.po-sapb1-tax-left {
+  min-height: 350px;
 }
 
 .po-sapb1-tax-bottom {
-  margin-top: 78px;
+  margin-top: auto;
 }
 
 .po-sapb1-tax-right {
@@ -418,8 +453,313 @@
   color: #000;
 }
 
+.po-sapb1-tax-tab .po-sapb1-checkbox-row .po-field__label {
+  display: none;
+}
+
+.po-sapb1-tax-tab .po-sapb1-checkbox-row {
+  justify-content: flex-start;
+}
+
 .po-sapb1-tax-info-field .po-field__label {
   flex-basis: 142px;
+}
+
+/*
+ * Isolated SAP B1 Tax tab.
+ * Do not reuse po-field/po-tab-panel here: sap-ui.css intentionally applies
+ * high-specificity !important document-form rules to those generic classes.
+ */
+.sap-b1-tax-panel {
+  min-height: 382px;
+  min-width: 0;
+  margin: 0 12px 12px;
+  padding: 4px 5px;
+  overflow: visible;
+  box-sizing: border-box;
+  border: 1px solid #c8d0da;
+  border-top: 0;
+  border-radius: 0 0 3px 3px;
+  background: #fff;
+}
+
+.sap-b1-tax-layout {
+  min-height: 372px;
+  display: grid;
+  grid-template-columns: minmax(317px, 440px) minmax(90px, 1fr);
+  column-gap: 24px;
+  align-items: stretch;
+  color: #1a1a1a;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.sap-b1-tax-left {
+  min-height: 372px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.sap-b1-tax-field {
+  width: 317px;
+  min-height: 18px;
+  display: grid;
+  grid-template-columns: 142px 175px;
+  align-items: center;
+  margin: 0 0 3px;
+  padding: 0;
+}
+
+.sap-b1-tax-label {
+  width: 142px;
+  min-width: 0;
+  margin: 0;
+  padding: 0 3px 0 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  color: #40566d;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  text-align: left;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.sap-b1-tax-control {
+  width: 175px;
+  height: 18px;
+  min-width: 175px;
+  min-height: 18px;
+  margin: 0;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border: 1px solid #aeb8c1;
+  border-radius: 0;
+  outline: 0;
+  background: #fff;
+  color: #000;
+  font: inherit;
+  line-height: 16px;
+}
+
+.sap-b1-tax-control:focus {
+  border-color: #0070c0;
+  outline: 1px solid #0070c0;
+  outline-offset: -1px;
+}
+
+.sap-b1-tax-control:disabled {
+  background: #e7ecef;
+  color: #000;
+  opacity: 1;
+}
+
+.sap-b1-tax-control--error {
+  border-color: #c62828;
+}
+
+.sap-b1-tax-information-row {
+  min-height: 20px;
+}
+
+.sap-b1-tax-ellipsis {
+  justify-self: start;
+  width: 34px;
+  min-width: 34px;
+  height: 20px;
+  min-height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #075985;
+  border-radius: 0;
+  background: #285b7f;
+  color: #fff;
+  font: inherit;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.sap-b1-tax-ellipsis:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.sap-b1-tax-spacer {
+  width: 100%;
+  height: 18px;
+  flex: 0 0 18px;
+}
+
+.sap-b1-tax-check-row {
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 3px;
+  padding: 0;
+  color: #1a1a1a;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sap-b1-tax-check-row input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  padding: 0;
+}
+
+.sap-b1-tax-bottom {
+  width: 100%;
+  margin-top: 62px;
+}
+
+.sap-b1-tax-right {
+  padding-top: 40px;
+}
+
+@media (max-width: 900px) {
+  .sap-b1-tax-layout {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 12px;
+  }
+
+  .sap-b1-tax-right {
+    padding-top: 0;
+  }
+}
+
+/* Compact SAP Business One tax-information child window. */
+.ap-tax-info-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 27000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(18, 37, 55, 0.18);
+}
+
+.ap-tax-info-window {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
+  border: 1px solid #557891;
+  background: #f5f5f5;
+  box-shadow: 0 12px 32px rgba(0, 31, 55, 0.28);
+  color: #111;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 12px;
+}
+
+.ap-tax-info-titlebar {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 7px 0 12px;
+  background: #285b7f;
+  color: #fff;
+  font-weight: 600;
+}
+
+.ap-tax-info-titlebar button {
+  width: 25px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 20px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.ap-tax-info-titlebar button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.ap-tax-info-body {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px 10px;
+  overflow-y: auto;
+}
+
+.ap-tax-info-field {
+  display: grid;
+  grid-template-columns: 225px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 20px;
+  margin: 0;
+}
+
+.ap-tax-info-field span {
+  white-space: nowrap;
+}
+
+.ap-tax-info-field input,
+.ap-tax-info-field select {
+  width: 100%;
+  height: 20px;
+  min-width: 0;
+  padding: 0 4px;
+  border: 1px solid #a7b1b9;
+  border-radius: 0;
+  background: #fff;
+  color: #111;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.ap-tax-info-field input:focus,
+.ap-tax-info-field select:focus {
+  outline: 1px solid #0070c0;
+  border-color: #0070c0;
+}
+
+.ap-tax-info-footer {
+  display: flex;
+  gap: 14px;
+  padding: 4px 14px 13px 239px;
+  background: #f5f5f5;
+}
+
+.ap-tax-info-footer button {
+  min-width: 78px;
+  height: 25px;
+  border: 1px solid #82919d;
+  background: linear-gradient(#fff, #e5eaee);
+  color: #111;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ap-tax-info-footer .ap-tax-info-ok {
+  border-color: #075985;
+  background: #285b7f;
+  color: #fff;
+}
+
+@media (max-width: 620px) {
+  .ap-tax-info-field {
+    grid-template-columns: minmax(120px, 42%) minmax(0, 1fr);
+  }
+
+  .ap-tax-info-footer {
+    justify-content: flex-end;
+    padding-left: 14px;
+  }
 }
 
 .po-sapb1-edoc-section {

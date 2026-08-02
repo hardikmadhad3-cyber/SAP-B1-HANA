@@ -32,6 +32,16 @@ const yesNo = (value) => {
   return ['y', 'yes', 'true', '1', 'tyes'].includes(normalized) ? 'tYES' : 'tNO';
 };
 
+const buildWithholdingTaxData = (rows = []) =>
+  (Array.isArray(rows) ? rows : [])
+    .filter((row) => String(row?.code || row?.WTCode || '').trim())
+    .map((row) => ({
+      WTCode: String(row.code || row.WTCode || '').trim(),
+      TaxableAmount: parseNum(row.taxableAmount, 0),
+      WTAmount: parseNum(row.wtaxAmount || row.WTAmount, 0),
+      Category: 'I',
+    }));
+
 const GST_TRANSACTION_TYPE_MAP = new Map([
   ['--', 'gsttrantyp_BillOfSupply'],
   ['billofsupply', 'gsttrantyp_BillOfSupply'],
@@ -65,6 +75,7 @@ const resolveDocumentSeries = async (header, series, isManualSeries) => {
   const postingDate = header.postingDate || header.documentDate;
   const result = await serviceArCreditMemoDb.getDocumentSeries({
     date: postingDate,
+    transactionType: header.transactionType || '',
     branch: header.branch || '',
   });
   const selectedSeries = (Array.isArray(result) ? result : result?.series || [])
@@ -340,6 +351,11 @@ const buildSapPayload = async (payload, includeSeries = true, docEntry = null) =
     Rounding: yesNo(header.rounding),
     DocumentLines: [],
   };
+
+  const withholdingTaxData = buildWithholdingTaxData(payload.withholdingTaxRows);
+  if (withholdingTaxData.length) {
+    sapPayload.WithholdingTaxDataWTXCollection = withholdingTaxData;
+  }
 
   applyExplicitUdfs(sapPayload, payload.header_udfs, headerUdfDefinitionsByKey);
   applyKnownHeaderUdfs(sapPayload, header, headerUdfDefinitionsByKey);

@@ -112,6 +112,45 @@ const formatSapDate = (value) => {
   return String(value).split('T')[0];
 };
 
+const normalizeEDocGenerationType = (value) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const aliases = {
+    n: 'edocNotRelevant',
+    no: 'edocNotRelevant',
+    notrelevant: 'edocNotRelevant',
+    edocnotrelevant: 'edocNotRelevant',
+    g: 'edocGenerate',
+    generate: 'edocGenerate',
+    edocgenerate: 'edocGenerate',
+    l: 'edocGenerateLater',
+    later: 'edocGenerateLater',
+    generatelater: 'edocGenerateLater',
+    edocgeneratelater: 'edocGenerateLater',
+    o: 'edocGenerateOffline',
+    offline: 'edocGenerateOffline',
+    generateoffline: 'edocGenerateOffline',
+    edocgenerateoffline: 'edocGenerateOffline',
+  };
+  return aliases[normalized] || raw;
+};
+
+const normalizeEDocStatus = (value) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const normalized = raw.toUpperCase();
+  return ({
+    N: 'New',
+    P: 'Pending',
+    W: 'Waiting',
+    S: 'Sent',
+    E: 'Error',
+    C: 'OK',
+    O: 'OK',
+  })[normalized] || raw;
+};
+
 const getUdfAliasValue = (values = {}, aliases = []) => {
   for (const alias of aliases) {
     if (hasNonBlankValue(values[alias])) return values[alias];
@@ -294,9 +333,17 @@ const getShippingTypes = () => safe(db.query(`
 `));
 
 const getEWayBillFormats = () => safe(db.query(`
-  SELECT AbsEntry, Name, Descr
+  SELECT AbsEntry, Name, Descr, Type
   FROM OLLF
   WHERE Type = 'EWBD'
+    AND Assigned <> 'D'
+  ORDER BY Name
+`));
+
+const getGenericEDocFormats = () => safe(db.query(`
+  SELECT AbsEntry, Name, Descr, Type
+  FROM OLLF
+  WHERE (Type <> 'EWBD' OR Type IS NULL)
     AND Assigned <> 'D'
   ORDER BY Name
 `));
@@ -1432,6 +1479,8 @@ const getDelivery = async (docEntry) => {
       T0.EDocGenTyp AS EDocGenerationType,
       T0.EDocExpFrm AS EDocExportFormat,
       T0.EDocStatus,
+      EDF.Type AS EDocExportFormatType,
+      EDF.Name AS EDocExportFormatName,
       ${optionalHeaderColumn(['TrnspCode'], 'ShippingType', 'NULL')},
       ${optionalHeaderColumn(['Confirmed'], 'Confirmed')},
       ${optionalHeaderColumn(['LangCode'], 'LanguageCode', 'NULL')},
@@ -1470,6 +1519,7 @@ const getDelivery = async (docEntry) => {
     LEFT JOIN DLN12 T12 ON T12.DocEntry = T0.DocEntry
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '15' AND NNM.Series = T0.Series
+    LEFT JOIN OLLF EDF ON EDF.AbsEntry = T0.EDocExpFrm
     LEFT JOIN OHEM EMP ON EMP.empID = ${hasTableField(odlnFieldMetadata, 'OwnerCode') ? 'T0.OwnerCode' : 'NULL'}
     WHERE T0.DocEntry = @docEntry
   `, { docEntry: resolvedDocEntry }));
@@ -1832,9 +1882,12 @@ const getDelivery = async (docEntry) => {
         roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
-        edocGenerationType: ({ N: 'edocNotRelevant', G: 'edocGenerate', L: 'edocGenerateLater' })[header.EDocGenerationType] || header.EDocGenerationType || '',
+        edocGenerationType: normalizeEDocGenerationType(header.EDocGenerationType),
         edocExportFormat: header.EDocExportFormat != null ? String(header.EDocExportFormat) : '',
-        edocStatus: ({ N: 'New', P: 'Pending', S: 'Sent', E: 'Error', C: 'OK' })[header.EDocStatus] || header.EDocStatus || '',
+        edocStatus: normalizeEDocStatus(header.EDocStatus),
+        genericEdocGenerationType: normalizeEDocGenerationType(header.EDocGenerationType),
+        genericEdocExportFormat: header.EDocExportFormat != null ? String(header.EDocExportFormat) : '',
+        genericEdocStatus: normalizeEDocStatus(header.EDocStatus),
         paymentMethod: header.PaymentMethod || '',
         centralBankIndicator: header.CentralBankIndicator || '',
         projectCode: header.ProjectCode || '',
@@ -2189,6 +2242,7 @@ const loadReferenceDataUncached = async () => {
     sellerPriceOptions,
     udfMetadata,
     eWayBillFormats,
+    genericEDocFormats,
     eWayBillTransporters,
     eWayBillDropdownOptions,
   ] = await Promise.all([
@@ -2212,6 +2266,7 @@ const loadReferenceDataUncached = async () => {
     getLookupValues('U_Seller_Price'),
     getMarketingDocumentUdfs({ headerTable: 'ODLN', lineTable: 'DLN1' }),
     getEWayBillFormats(),
+    getGenericEDocFormats(),
     getEWayBillTransporters(),
     getEWayBillDropdownOptions(),
   ]);
@@ -2310,6 +2365,7 @@ const loadReferenceDataUncached = async () => {
     decimal_settings: decimalSettings,
     udf_metadata: udfMetadata,
     eway_bill_formats: eWayBillFormats,
+    generic_edoc_formats: genericEDocFormats,
     eway_bill_transporters: eWayBillTransporters,
     eway_bill_options: eWayBillDropdownOptions,
     matrix_columns: lineFieldMetadata.matrix_columns || [],

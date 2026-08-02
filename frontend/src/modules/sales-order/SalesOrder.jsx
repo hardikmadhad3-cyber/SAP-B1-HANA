@@ -31,6 +31,7 @@ import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import {
     SAP_MANUAL_SERIES_VALUE,
@@ -48,7 +49,7 @@ import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../uti
 import { openLinkedBusinessPartner, openLinkedReferenceDocument } from '../../utils/sapLinkedNavigation';
 import { isRouteStateForActiveCompany } from '../../utils/companyStorageScope';
 import { copyToDocument } from '../../services/documentCopyService';
-import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
+import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
@@ -298,7 +299,7 @@ const INIT_HEADER = {
     pickAndPackRemarks: '', bpChannelName: '', bpChannelContact: '',
     journalRemark: '', paymentTerms: '',
     paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
-    totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
+    totalPaymentDue: '', rounding: false, roundingAmount: '', owner: '', purchaser: '',
     placeOfSupply: '', currency: 'INR', useBillToForTax: false,
     billToAddress: '', billToCode: '', shipToAddress: '',
     shipToAddressComponents: null, billToAddressComponents: null,
@@ -1091,6 +1092,9 @@ function SalesOrder() {
                     bpChannelContact: so.header?.bpChannelContact || '',
                     journalRemark: so.header?.journalRemark || '',
                     paymentMethod: so.header?.paymentMethod || '',
+                    rounding: Boolean(so.header?.rounding),
+                    roundingAmount: so.header?.roundingAmount || '',
+                    totalPaymentDue: so.header?.totalPaymentDue || '',
                     transactionCategory: so.header?.transactionCategory || '',
                     taxFormNo: so.header?.taxFormNo || '',
                     dutyStatus: so.header?.dutyStatus || 'Y',
@@ -1381,7 +1385,12 @@ function SalesOrder() {
         taxAmt = roundTo(taxAmt, numDec.tax);
         if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
         taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-        return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+        const rounding = calculateDocumentRounding(
+            discSub + freight + taxAmt,
+            header.rounding,
+            numDec.totalPaymentDue,
+        );
+        return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, ...rounding, taxBreakdown: Array.from(taxMap.values()) };
     };
 
     const totals = calcTotals();
@@ -1392,6 +1401,14 @@ function SalesOrder() {
         header,
         total: totals.total,
     });
+    const totalsForDisplay = currentDocEntry && !isDirty
+        ? {
+            ...totals,
+            taxAmt: header.tax !== '' ? parseNum(header.tax) : totals.taxAmt,
+            roundingAmount: header.roundingAmount !== '' ? parseNum(header.roundingAmount) : totals.roundingAmount,
+            total: header.totalPaymentDue !== '' ? parseNum(header.totalPaymentDue) : totals.total,
+        }
+        : totals;
 
     // ── GST determination logic ───────────────────────────────────────────────
     const determineGSTType = (gstState) => {
@@ -2652,6 +2669,7 @@ function SalesOrder() {
     };
 
     const handleDuplicate = () => {
+        const duplicateDate = today();
         const duplicated = duplicateDocumentInPlace({
             currentDocEntry,
             header,
@@ -2674,7 +2692,18 @@ function SalesOrder() {
         });
 
         if (duplicated) {
-            refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+            setHeader(prev => ({
+                ...prev,
+                postingDate: duplicateDate,
+                documentDate: duplicateDate,
+                deliveryDate: duplicateDate,
+                series: '',
+                nextNumber: '',
+            }));
+            const defaultSeries = resolvePreferredSeries(refData.series, duplicateDate, '');
+            if (defaultSeries?.Series != null) {
+                handleSeriesChange(defaultSeries.Series);
+            }
         }
     };
 
@@ -3650,12 +3679,21 @@ function SalesOrder() {
                                                     </td>
                                                 </tr>
                                                 <tr>
+                                                    <td>
+                                                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0 }}>
+                                                            <input type="checkbox" name="rounding" checked={header.rounding} onChange={handleHeaderChange} />
+                                                            Rounding
+                                                        </label>
+                                                    </td>
+                                                    <td className="so-grid__cell--num"><input className="so-grid__input" value={fmtDec(totalsForDisplay.roundingAmount, numDec.totalPaymentDue)} readOnly /></td>
+                                                </tr>
+                                                <tr>
                                                     <td>Tax</td>
-                                                    <td className="so-grid__cell--num"><input className="so-grid__input" value={fmtDec(totals.taxAmt, numDec.tax)} readOnly /></td>
+                                                    <td className="so-grid__cell--num"><input className="so-grid__input" value={fmtDec(totalsForDisplay.taxAmt, numDec.tax)} readOnly /></td>
                                                 </tr>
                                                 <tr style={{ borderTop: '2px solid #a0aab4' }}>
                                                     <td style={{ fontWeight: 700, color: '#003366' }}>Total</td>
-                                                    <td className="so-grid__cell--num" style={{ fontWeight: 700, color: '#003366' }}><input className="so-grid__input" style={{ fontWeight: 700, color: '#003366' }} value={fmtDec(totals.total, numDec.totalPaymentDue)} readOnly /></td>
+                                                    <td className="so-grid__cell--num" style={{ fontWeight: 700, color: '#003366' }}><input className="so-grid__input" style={{ fontWeight: 700, color: '#003366' }} value={fmtDec(totalsForDisplay.total, numDec.totalPaymentDue)} readOnly /></td>
                                                 </tr>
                                             </tbody>
                                         </table>

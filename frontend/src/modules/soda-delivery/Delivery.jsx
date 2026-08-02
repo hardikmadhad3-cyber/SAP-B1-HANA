@@ -3405,7 +3405,7 @@ function SODADelivery() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      refreshDuplicateSeries(refData.series, '', handleSeriesChange);
     }
   };
 

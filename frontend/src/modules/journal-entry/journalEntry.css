@@ -57,10 +57,9 @@
 
 .je-header {
   display: grid;
-  grid-template-columns: minmax(760px, 1fr) 330px;
-  grid-template-rows: auto auto;
-  column-gap: 24px;
-  row-gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  row-gap: 7px;
   padding: 8px 18px 10px;
   border-bottom: 1px solid #9aa5b1;
 }
@@ -69,7 +68,7 @@
   grid-column: 1;
   grid-row: 1;
   display: grid;
-  grid-template-columns: 118px 116px 166px 166px 166px minmax(220px, 1fr);
+  grid-template-columns: minmax(96px, 0.75fr) minmax(96px, 0.75fr) repeat(3, minmax(125px, 1fr)) minmax(190px, 1.45fr);
   align-content: start;
   column-gap: 7px;
   row-gap: 3px;
@@ -129,14 +128,14 @@
 }
 
 .je-header-checks {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: start;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(155px, max-content));
+  justify-content: end;
+  gap: 7px 18px;
   min-width: 0;
-  padding: 18px 10px 0 4px;
+  padding: 0 4px;
 }
 
 .je-header-bottom {
@@ -145,7 +144,7 @@
   align-items: flex-end;
   gap: 14px;
   grid-column: 1 / -1;
-  grid-row: 2;
+  grid-row: 3;
   margin-top: 2px;
 }
 
@@ -334,6 +333,35 @@
 
 .je-account-cell--name {
   min-width: 0;
+}
+
+.je-context-menu {
+  position: fixed;
+  z-index: 2600;
+  min-width: 205px;
+  padding: 3px 0;
+  border: 1px solid #7f8b96;
+  background: #f5f6f7;
+  box-shadow: 2px 3px 8px rgba(15, 23, 42, 0.25);
+}
+
+.je-context-menu button {
+  display: block;
+  width: 100%;
+  height: 25px;
+  padding: 2px 14px;
+  border: 0;
+  background: transparent;
+  color: #111827;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.je-context-menu button:hover,
+.je-context-menu button:focus {
+  outline: 0;
+  background: #d7e7f5;
 }
 
 .je-attachments {
@@ -527,6 +555,11 @@
 
   .je-header-grid {
     grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+
+  .je-header-checks {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    justify-content: stretch;
   }
 
   .je-footer {

@@ -279,7 +279,8 @@ const getPostedJournal = async ({
   if (!lineRows.length) return null;
 
   const journal = {
-    series: header.SeriesName || header.Series || '',
+    series: header.Series == null ? '' : String(header.Series),
+    seriesName: header.SeriesName || header.Series || '',
     number: header.Number || '',
     postingDate: formatDate(header.RefDate),
     dueDate: formatDate(header.DueDate || header.RefDate),
@@ -328,14 +329,132 @@ const getNextJournalNumber = async () => {
   return Number(rows[0]?.NextNumber || 1);
 };
 
-const getJournalSeries = async () => {
+const getJournalEntrySeries = async (postingDate = '') => {
+  const columns = await getColumnMap('NNM1');
+  if (!columns.size || !getColumnName(columns, 'Series')) return [];
+
+  const optionalSeriesColumn = (columnName, fallback) => {
+    const actualName = getColumnName(columns, columnName);
+    return actualName ? `T0.${actualName}` : fallback;
+  };
+
   const rows = await safeRows(`
-    SELECT TOP 1 SeriesName
-    FROM NNM1
-    WHERE ObjectCode = '30'
-    ORDER BY Series
+    SELECT TOP 200
+      T0.Series,
+      ${optionalSeriesColumn('SeriesName', "CAST(T0.Series AS NVARCHAR(20))")} AS SeriesName,
+      ${optionalSeriesColumn('NextNumber', 'NULL')} AS NextNumber,
+      ${optionalSeriesColumn('InitialNum', 'NULL')} AS InitialNumber,
+      ${optionalSeriesColumn('LastNum', 'NULL')} AS LastNumber,
+      ${optionalSeriesColumn('Indicator', "''")} AS Indicator,
+      ${optionalSeriesColumn('Locked', "'N'")} AS Locked,
+      ${optionalSeriesColumn('BPLId', 'NULL')} AS BPLId
+    FROM NNM1 T0
+    WHERE CAST(T0.ObjectCode AS NVARCHAR(20)) = '30'
+    ORDER BY T0.Series
   `);
-  return rows[0]?.SeriesName || `FY${new Date().getFullYear()}`;
+
+  const [defaultRows, periodRows] = await Promise.all([
+    safeRows(`SELECT TOP 1 DfltSeries FROM ONNM WHERE CAST(ObjectCode AS NVARCHAR(20)) = '30'`),
+    safeRows(`
+      SELECT Indicator, MIN(F_RefDate) AS FromDate, MAX(T_RefDate) AS ToDate
+      FROM OFPR
+      GROUP BY Indicator
+    `),
+  ]);
+  const defaultSeries = String(defaultRows[0]?.DfltSeries ?? '');
+  const requestedDate = postingDate ? new Date(`${String(postingDate).slice(0, 10)}T00:00:00`) : null;
+  const periodByIndicator = new Map(periodRows.map((row) => [String(row.Indicator || '').trim(), row]));
+
+  let liveSeries = rows
+    .filter((row) => String(row.Locked || 'N').toUpperCase() !== 'Y')
+    .map((row) => ({
+      series: String(row.Series ?? ''),
+      name: String(row.SeriesName || row.Series || '').trim(),
+      nextNumber: row.NextNumber ?? '',
+      initialNumber: row.InitialNumber ?? '',
+      lastNumber: row.LastNumber ?? '',
+      indicator: String(row.Indicator || '').trim(),
+      branchId: row.BPLId ?? null,
+      manual: Number(row.Series) === -1,
+      isDefault: String(row.Series ?? '') === defaultSeries,
+    }));
+
+  if (requestedDate && !Number.isNaN(requestedDate.getTime())) {
+    const datedSeries = liveSeries.filter((row) => {
+      if (row.manual) return true;
+      const period = periodByIndicator.get(row.indicator);
+      if (!period || !row.indicator) return false;
+      const from = new Date(period.FromDate);
+      const to = new Date(period.ToDate);
+      return !Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime()) && requestedDate >= from && requestedDate <= to;
+    });
+    if (datedSeries.some((row) => !row.manual)) liveSeries = datedSeries;
+  }
+
+  if (!liveSeries.some((row) => row.manual)) {
+    liveSeries.push({
+      series: '-1',
+      name: 'Manual',
+      nextNumber: '',
+      initialNumber: '',
+      lastNumber: '',
+      indicator: '',
+      branchId: null,
+      manual: true,
+      isDefault: false,
+    });
+  }
+
+  return liveSeries;
+};
+
+const getJournalRemarkTemplates = async (search = '') => {
+  const rows = await queryRows('SELECT TOP 500 * FROM OTTR ORDER BY AbsEntry');
+  const normalizedSearch = String(search || '').trim().toLowerCase();
+
+  return rows.map((row, index) => {
+    const values = Object.entries(row);
+    const findValue = (...names) => {
+      const nameSet = new Set(names.map((name) => name.toUpperCase()));
+      return values.find(([key]) => nameSet.has(String(key).toUpperCase()))?.[1];
+    };
+    const id = findValue('AbsEntry', 'Code', 'TemplateId', 'ID') ?? index + 1;
+    const namedDescription = findValue(
+      'TemplateDescription',
+      'Dscription',
+      'Description',
+      'Template',
+      'TemplateName',
+      'TemplName',
+      'Remarks',
+      'Remark',
+      'RemarkText',
+      'Text',
+      'Name',
+    );
+    const description = namedDescription ?? values.find(([key, value]) => {
+      const normalizedKey = String(key || '').toUpperCase();
+      if (['ABSENTRY', 'USERSIGN', 'LOGINSTANC', 'LOGINSTANCE'].includes(normalizedKey)) return false;
+      return typeof value === 'string' && String(value).trim();
+    })?.[1];
+
+    return {
+      id: String(id),
+      description: String(description ?? '').trim(),
+    };
+  }).filter((row) => row.description && (
+    !normalizedSearch || row.description.toLowerCase().includes(normalizedSearch)
+  ));
+};
+
+const getJournalEntryReferenceData = async ({ postingDate = '' } = {}) => {
+  const series = await getJournalEntrySeries(postingDate);
+  return { series };
+};
+
+const getJournalSeries = async () => {
+  const series = await getJournalEntrySeries();
+  return series.find((row) => !row.manual)?.name || `FY${new Date().getFullYear()}`;
 };
 
 const getAccountName = async (account) => {
@@ -1240,6 +1359,7 @@ const previewJournalEntry = async ({ documentType, docEntry, payload } = {}) => 
 const normalizeManualLine = (line = {}) => ({
   accountCode: String(line.accountCode || line.account || line.glAccount || '').trim(),
   accountName: String(line.accountName || line.name || '').trim(),
+  accountType: String(line.accountType || line.entityType || '').trim(),
   debit: round2(toNumber(line.debit)),
   credit: round2(toNumber(line.credit)),
   remarks: String(line.remarks || line.lineMemo || '').trim(),
@@ -1284,11 +1404,13 @@ const createManualJournalEntry = async (payload = {}) => {
     Indicator: String(header.indicator || '').trim(),
     JournalEntryLines: lines.map((line) => {
       const journalLine = {
-        AccountCode: line.accountCode,
+        ShortName: line.accountCode,
         Debit: line.debit,
         Credit: line.credit,
         LineMemo: line.remarks,
       };
+
+      if (line.accountType !== 'businessPartner') journalLine.AccountCode = line.accountCode;
 
       if (line.taxCode) journalLine.TaxCode = line.taxCode;
       if (line.project) journalLine.ProjectCode = line.project;
@@ -1297,6 +1419,11 @@ const createManualJournalEntry = async (payload = {}) => {
       return journalLine;
     }),
   };
+
+  const selectedSeries = Number(header.series ?? header.Series);
+  if (Number.isInteger(selectedSeries) && selectedSeries >= 0) {
+    data.Series = selectedSeries;
+  }
 
   Object.keys(data).forEach((key) => {
     if (data[key] === '') delete data[key];
@@ -1339,4 +1466,6 @@ module.exports = {
   generateFromServiceARCreditMemo,
   createManualJournalEntry,
   getJournalEntryByTransId,
+  getJournalEntryReferenceData,
+  getJournalRemarkTemplates,
 };

@@ -2879,6 +2879,7 @@ const getSalesOrder = async (docEntry) => {
     -- 🔹 FINANCIALS
     T0.TotalExpns AS Freight,
     T0.VatSum AS TaxAmount,
+    T0.RoundDif AS RoundingAmount,
 
     -- 🔹 PLACE OF SUPPLY (NO DUPLICATE FIXED)
     ST.Name AS PlaceOfSupply,
@@ -3287,7 +3288,10 @@ ORDER BY T1.LineNum
           ? true
           : ['Y', 'YES', '1', 'TRUE'].includes(String(header.SupplyCovered || '').toUpperCase()),
         discount: String(header.DiscPrcnt || ''),
-        tax: '', // Tax is calculated, not stored
+        tax: header.TaxAmount != null ? String(header.TaxAmount) : '',
+        rounding: Number(header.RoundingAmount || 0) !== 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
+        totalPaymentDue: header.DocTotal != null ? String(header.DocTotal) : '',
         currency: header.DocCur || 'INR',
       },
       header_udfs: headerUdfs,

@@ -10,3 +10,9 @@ export const previewJournalEntryDocument = (payload) =>
 
 export const fetchJournalEntryByTransId = (transId) =>
   apiClient.get(`${BASE}/${encodeURIComponent(transId)}`).then((response) => response.data);
+
+export const fetchJournalEntryReferenceData = (postingDate = "") =>
+  apiClient.get(`${BASE}/reference-data`, { params: { postingDate } }).then((response) => response.data);
+
+export const fetchJournalRemarkTemplates = (query = "") =>
+  apiClient.get(`${BASE}/remark-templates`, { params: { query } }).then((response) => response.data);

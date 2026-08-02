@@ -11,6 +11,7 @@ import "../styles/sidebar.css";
 const Layout = () => {
   const location = useLocation();
   const isAdminWorkspace = location.pathname === "/admin" || location.pathname.startsWith("/admin/");
+  const routeWindowKey = location.state?.sapWindow?.id || location.pathname;
 
   return (
     <SapWindowTaskbarProvider>
@@ -28,8 +29,8 @@ const Layout = () => {
           <div className="app-shell__main">
             <Header />
 
-            <div className="app-shell__content" key={location.pathname}>
-              <PageWindowFrame key={location.pathname}>
+            <div className="app-shell__content" key={routeWindowKey}>
+              <PageWindowFrame key={routeWindowKey}>
                 <Outlet />
               </PageWindowFrame>
             </div>

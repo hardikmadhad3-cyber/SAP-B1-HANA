@@ -4,6 +4,8 @@ const controller = require('../controllers/journalEntryController');
 const router = express.Router();
 
 router.post('/preview', controller.previewJournalEntry);
+router.get('/reference-data', controller.getReferenceData);
+router.get('/remark-templates', controller.getRemarkTemplates);
 router.get('/:transId', controller.getJournalEntryByTransId);
 router.post('/', controller.createManualJournalEntry);
 router.post('/generate-from-ar-invoice', controller.generateFromARInvoice);

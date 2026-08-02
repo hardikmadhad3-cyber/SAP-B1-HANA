@@ -22,7 +22,7 @@ import { useRelationshipMapRegistration } from '../../components/relationship-ma
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { copyToDocument } from '../../services/documentCopyService';
-import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
+import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
@@ -30,6 +30,7 @@ import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
@@ -270,6 +271,7 @@ const INIT_HEADER = {
   discount: '',
   freight: '',
   rounding: false,
+  roundingAmount: '',
   tax: '',
   totalPaymentDue: '',
   placeOfSupply: '',
@@ -786,7 +788,12 @@ function PurchaseOrder() {
     taxAmt = roundTo(taxAmt, numDec.tax);
     if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
     taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+    const rounding = calculateDocumentRounding(
+      discSub + freight + taxAmt,
+      header.rounding,
+      numDec.totalPaymentDue,
+    );
+    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, ...rounding, taxBreakdown: Array.from(taxMap.values()) };
   };
 
   const totals = calcTotals();
@@ -1534,6 +1541,7 @@ function PurchaseOrder() {
   };
 
   const handleDuplicate = () => {
+    const duplicateDate = today();
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -1556,7 +1564,19 @@ function PurchaseOrder() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      setHeader(prev => ({
+        ...prev,
+        postingDate: duplicateDate,
+        documentDate: duplicateDate,
+        deliveryDate: duplicateDate,
+        series: '',
+        nextNumber: '',
+      }));
+      const defaultSeries = getDefaultSeriesForCurrentYear(refData.series, new Date(`${duplicateDate}T00:00:00`))
+        || refData.series[0];
+      if (defaultSeries?.Series != null) {
+        handleSeriesChange(defaultSeries.Series);
+      }
     }
   };
 
@@ -2173,6 +2193,15 @@ function PurchaseOrder() {
                               ...
                             </button>
                           </td>
+                        </tr>
+                        <tr>
+                          <td>
+                            <label className="po-checkbox-label">
+                              <input type="checkbox" name="rounding" checked={header.rounding} onChange={handleHeaderChange} />
+                              Rounding
+                            </label>
+                          </td>
+                          <td className="po-grid__cell--num"><input className="po-grid__input" value={fmtDec(totals.roundingAmount, numDec.totalPaymentDue)} readOnly /></td>
                         </tr>
                         <tr>
                           <td>Tax</td>

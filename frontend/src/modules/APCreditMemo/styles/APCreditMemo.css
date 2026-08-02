@@ -1,4 +1,4 @@
-@import '../../purchase-order/styles/purchaseOrder.css';
+@import '../../APInvoice/styles/APInvoice.css';
 
 /* A/P Credit Memo uses the shared purchase-side document shell. Page-specific overrides should live here only when the credit memo workflow truly differs. */
 .ap-credit-memo-page .po-btn--danger.sap-document-toolbar__cancel,

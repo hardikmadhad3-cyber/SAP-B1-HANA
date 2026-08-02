@@ -71,6 +71,7 @@ const getDocumentSeries = async (req, res) => {
   try {
     const result = await serviceArCreditMemoService.getDocumentSeries({
       date: req.query.date || null,
+      transactionType: req.query.transactionType || '',
       branch: req.query.branch || req.query.branchId || '',
     });
     res.json({ series: Array.isArray(result) ? result : (result?.series || []) });

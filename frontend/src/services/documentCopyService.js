@@ -234,6 +234,23 @@ export const getCopyToTargets = (sourceDocType) => {
     }));
 };
 
+export const getCopyableSourceLines = (sourceDocType, lines = []) => {
+  const sourceLines = Array.isArray(lines) ? lines : [];
+  if (sourceDocType !== 'grpo') return sourceLines;
+
+  return sourceLines.filter((line = {}) => {
+    const lineStatus = String(line.lineStatus ?? line.LineStatus ?? '').trim().toUpperCase();
+    if (lineStatus && !['O', 'OPEN'].includes(lineStatus)) return false;
+
+    const rawOpenQty = line.openQty ?? line.OpenQty ?? line.OpenQuantity;
+    if (rawOpenQty !== undefined && rawOpenQty !== null && String(rawOpenQty).trim() !== '') {
+      return Number(rawOpenQty) > 0;
+    }
+
+    return Number(line.quantity ?? line.Quantity ?? 0) > 0;
+  });
+};
+
 export const copyToDocument = async ({
   sourceDocType,
   targetType,
@@ -271,13 +288,19 @@ export const copyToDocument = async ({
     targetRoute: targetConfig.targetPath,
   });
 
+  const copyableLines = getCopyableSourceLines(sourceDocType, sourceSnapshot.lines);
+  if (sourceDocType === 'grpo' && !copyableLines.length) {
+    setError?.('This Goods Receipt PO has no open quantity left. It has already been fully copied to an A/P Invoice.');
+    return false;
+  }
+
   const copyState = buildCopyToState({
     sourceDocType,
     sourceLabel,
     sourceDocEntry,
     sourceDocNo,
     header: sourceSnapshot.header,
-    lines: sourceSnapshot.lines,
+    lines: copyableLines,
     headerUdfs: sourceSnapshot.headerUdfs,
     baseType,
     extraState: targetConfig.extraState,

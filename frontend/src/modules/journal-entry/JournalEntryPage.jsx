@@ -1,7 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { getAccount, searchAccounts } from "../../api/chartOfAccountsApi";
-import { addJournalEntry, fetchJournalEntryByTransId } from "../../api/journalEntryApi";
+import { getBP, searchBP } from "../../api/businessPartnerApi";
+import {
+  addJournalEntry,
+  fetchJournalEntryByTransId,
+  fetchJournalEntryReferenceData,
+  fetchJournalRemarkTemplates,
+} from "../../api/journalEntryApi";
 import SapLookupModal from "../../components/common/SapLookupModal";
 import { useRelationshipMapRegistration } from "../../components/relationship-map/RelationshipMapHost";
 import "./journalEntry.css";
@@ -12,6 +18,7 @@ const makeLine = (index) => ({
   id: `je-line-${index}-${Date.now()}`,
   accountCode: "",
   accountName: "",
+  accountType: "account",
   debit: "",
   credit: "",
   remarks: "",
@@ -54,8 +61,16 @@ const normalizeAccount = (row = {}) => ({
   level: row.Level || "",
 });
 
+const normalizeBusinessPartner = (row = {}) => ({
+  code: row.CardCode || row.code || "",
+  name: row.CardName || row.name || "",
+  balance: row.Balance ?? row.balance ?? 0,
+  type: row.CardType || row.type || "",
+  inactive: row.Inactive || "No",
+});
+
 const blankHeader = () => ({
-  series: "JV2526",
+  series: "",
   number: "",
   postingDate: today,
   dueDate: today,
@@ -126,6 +141,67 @@ function AccountLookupModal({ open, query, onClose, onSelect }) {
   );
 }
 
+function BusinessPartnerLookupModal({ open, query, onClose, onSelect }) {
+  const fetchPartners = useCallback(async (nextSearch = "") => {
+    const data = await searchBP(nextSearch, "", 200, 0);
+    return (data || []).map(normalizeBusinessPartner);
+  }, []);
+
+  return (
+    <SapLookupModal
+      open={open}
+      title="List of Business Partners"
+      columns={[
+        { key: "rowNumber", label: "#", width: 44, searchable: false, render: (_row, index) => index + 1 },
+        { key: "name", label: "BP Name" },
+        { key: "code", label: "BP Code", width: 180 },
+        { key: "balance", label: "Account Balance", width: 180, align: "right", render: (row) => money(row.balance) },
+        { key: "type", label: "BP Type", width: 140 },
+      ]}
+      fetchOptions={fetchPartners}
+      initialQuery={query}
+      searchPlaceholder="Search business partners"
+      emptyMessage="No matching business partners found"
+      onClose={onClose}
+      onSelect={(row) => {
+        onSelect(row);
+        onClose();
+      }}
+      getRowKey={(row, index) => `${row.code}-${index}`}
+      width="min(980px, calc(100% - 40px))"
+    />
+  );
+}
+
+function RemarkTemplateLookupModal({ open, onClose, onSelect }) {
+  const fetchTemplates = useCallback(async (query = "") => {
+    const templates = await fetchJournalRemarkTemplates(query);
+    return Array.isArray(templates) ? templates : [];
+  }, []);
+
+  return (
+    <SapLookupModal
+      open={open}
+      title="List of Remark Template"
+      columns={[
+        { key: "rowNumber", label: "#", width: 44, searchable: false, render: (_row, index) => index + 1 },
+        { key: "description", label: "Template Description" },
+      ]}
+      fetchOptions={fetchTemplates}
+      initialQuery=""
+      searchPlaceholder="Search remark templates"
+      emptyMessage="No remark templates are defined in SAP Business One"
+      onClose={onClose}
+      onSelect={(row) => {
+        onSelect(row);
+        onClose();
+      }}
+      getRowKey={(row, index) => `${row.id}-${index}`}
+      width="min(640px, calc(100% - 40px))"
+    />
+  );
+}
+
 function Field({ label, children, wide = false }) {
   return (
     <label className={`je-field${wide ? " je-field--wide" : ""}`}>
@@ -151,9 +227,63 @@ export default function JournalEntryPage() {
   const [lines, setLines] = useState(() => makeLines());
   const [activeTab, setActiveTab] = useState("contents");
   const [lookup, setLookup] = useState({ open: false, rowIndex: null, query: "" });
+  const [bpLookup, setBpLookup] = useState({ open: false, rowIndex: null, query: "" });
+  const [remarkLookup, setRemarkLookup] = useState({ open: false, rowIndex: null });
+  const [contextMenu, setContextMenu] = useState(null);
+  const [referenceData, setReferenceData] = useState({ series: [], remarkTemplates: [] });
   const [message, setMessage] = useState(null);
   const [saving, setSaving] = useState(false);
   const [currentTransId, setCurrentTransId] = useState(0);
+
+  useEffect(() => {
+    let ignore = false;
+    fetchJournalEntryReferenceData(header.postingDate)
+      .then((data) => {
+        if (ignore) return;
+        const nextReferenceData = {
+          series: Array.isArray(data?.series) ? data.series : [],
+          remarkTemplates: Array.isArray(data?.remarkTemplates) ? data.remarkTemplates : [],
+        };
+        setReferenceData(nextReferenceData);
+        setHeader((current) => {
+          if (requestedTransId) return current;
+          const currentSeries = nextReferenceData.series.find((row) => String(row.series) === String(current.series));
+          if (current.series && currentSeries) {
+            return currentSeries.manual
+              ? current
+              : { ...current, number: String(currentSeries.nextNumber ?? "") };
+          }
+          const defaultSeries = nextReferenceData.series.find((row) => row.isDefault && !row.manual)
+            || nextReferenceData.series.find((row) => !row.manual)
+            || nextReferenceData.series[0];
+          return defaultSeries
+            ? { ...current, series: defaultSeries.series, number: String(defaultSeries.nextNumber ?? "") }
+            : current;
+        });
+      })
+      .catch((error) => {
+        if (!ignore) {
+          setMessage({
+            type: "error",
+            text: error?.response?.data?.message || "Could not load live Journal Entry series from SAP Business One.",
+          });
+        }
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [header.postingDate, requestedTransId]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("blur", closeMenu);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("blur", closeMenu);
+    };
+  }, [contextMenu]);
 
   useEffect(() => {
     if (!requestedTransId) return;
@@ -182,6 +312,7 @@ export default function JournalEntryPage() {
             ...makeLine(index + 1),
             accountCode: line.account || "",
             accountName: line.name || "",
+            accountType: line.goldenArrowTarget === "businessPartner" ? "businessPartner" : "account",
             debit: line.debit ? String(line.debit) : "",
             credit: line.credit ? String(line.credit) : "",
             remarks: line.remarks || "",
@@ -226,6 +357,15 @@ export default function JournalEntryPage() {
     setHeader((prev) => ({ ...prev, [field]: value }));
   };
 
+  const handleSeriesChange = (seriesValue) => {
+    const selected = referenceData.series.find((row) => String(row.series) === String(seriesValue));
+    setHeader((prev) => ({
+      ...prev,
+      series: seriesValue,
+      number: selected?.manual ? "" : String(selected?.nextNumber ?? ""),
+    }));
+  };
+
   const updateLine = (rowIndex, field, value) => {
     setLines((prev) => {
       const next = prev.map((line, index) => {
@@ -248,7 +388,16 @@ export default function JournalEntryPage() {
     if (rowIndex == null) return;
     setLines((prev) => prev.map((line, index) => (
       index === rowIndex
-        ? { ...line, accountCode: account.code, accountName: account.name }
+        ? { ...line, accountCode: account.code, accountName: account.name, accountType: "account" }
+        : line
+    )));
+  };
+
+  const selectBusinessPartner = (rowIndex, partner) => {
+    if (rowIndex == null) return;
+    setLines((prev) => prev.map((line, index) => (
+      index === rowIndex
+        ? { ...line, accountCode: partner.code, accountName: partner.name, accountType: "businessPartner" }
         : line
     )));
   };
@@ -264,8 +413,19 @@ export default function JournalEntryPage() {
 
     try {
       if (mode === "code") {
-        const account = normalizeAccount(await getAccount(query));
-        if (account.code) selectAccount(rowIndex, account);
+        try {
+          const account = normalizeAccount(await getAccount(query));
+          if (account.code) {
+            selectAccount(rowIndex, account);
+            return;
+          }
+        } catch (_accountError) {
+          const partner = normalizeBusinessPartner(await getBP(query));
+          if (partner.code) {
+            selectBusinessPartner(rowIndex, partner);
+            return;
+          }
+        }
         return;
       }
 
@@ -283,6 +443,15 @@ export default function JournalEntryPage() {
 
   const openAccountLookup = (rowIndex, query = "") => {
     setLookup({ open: true, rowIndex, query });
+  };
+
+  const openBusinessPartnerLookup = (rowIndex, query = "") => {
+    setBpLookup({ open: true, rowIndex, query });
+  };
+
+  const openAccountContextMenu = (event, rowIndex, query = "") => {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, rowIndex, query });
   };
 
   const filledLines = lines
@@ -334,7 +503,15 @@ export default function JournalEntryPage() {
   };
 
   const handleCancel = () => {
-    setHeader(blankHeader());
+    const resetHeader = blankHeader();
+    const defaultSeries = referenceData.series.find((row) => row.isDefault && !row.manual)
+      || referenceData.series.find((row) => !row.manual)
+      || referenceData.series[0];
+    if (defaultSeries) {
+      resetHeader.series = defaultSeries.series;
+      resetHeader.number = String(defaultSeries.nextNumber ?? "");
+    }
+    setHeader(resetHeader);
     setLines(makeLines());
     setCurrentTransId(0);
     setActiveTab("contents");
@@ -349,6 +526,8 @@ export default function JournalEntryPage() {
     />
   );
 
+  const currentSeriesKnown = referenceData.series.some((row) => String(row.series) === String(header.series));
+
   return (
     <div className="je-page sap-document-page">
       <div className="je-titlebar">
@@ -360,13 +539,17 @@ export default function JournalEntryPage() {
       <div className="je-header">
         <div className="je-header-grid">
           <Field label="Series">
-            <select value={header.series} onChange={(event) => setHeaderValue("series", event.target.value)}>
-              <option value="JV2526">JV2526</option>
-              <option value="Primary">Primary</option>
-              <option value="Manual">Manual</option>
+            <select value={header.series} onChange={(event) => handleSeriesChange(event.target.value)} disabled={Boolean(currentTransId)}>
+              {!header.series && <option value="">Loading series...</option>}
+              {header.series && !currentSeriesKnown && <option value={header.series}>{header.series}</option>}
+              {referenceData.series.map((series) => (
+                <option key={series.series} value={series.series}>
+                  {series.name}{series.indicator ? ` (${series.indicator})` : ""}
+                </option>
+              ))}
             </select>
           </Field>
-          <Field label="Number"><input value={header.number} onChange={(event) => setHeaderValue("number", event.target.value)} /></Field>
+          <Field label="Number"><input value={header.number} onChange={(event) => setHeaderValue("number", event.target.value)} readOnly={header.series !== "-1" || Boolean(currentTransId)} /></Field>
           <Field label="Posting Date"><input type="date" value={header.postingDate} onChange={(event) => setHeaderValue("postingDate", event.target.value)} /></Field>
           <Field label="Due Date"><input type="date" value={header.dueDate} onChange={(event) => setHeaderValue("dueDate", event.target.value)} /></Field>
           <Field label="Doc. Date"><input type="date" value={header.documentDate} onChange={(event) => setHeaderValue("documentDate", event.target.value)} /></Field>
@@ -468,6 +651,7 @@ export default function JournalEntryPage() {
                             onChange={(event) => updateLine(rowIndex, "accountCode", event.target.value)}
                             onBlur={(event) => resolveAccount(rowIndex, event.target.value, "code")}
                             onDoubleClick={() => openAccountLookup(rowIndex, row.accountCode)}
+                            onContextMenu={(event) => openAccountContextMenu(event, rowIndex, row.accountCode)}
                             onKeyDown={(event) => {
                               if (event.key === "F2") openAccountLookup(rowIndex, row.accountCode);
                               if (event.key === "Enter") resolveAccount(rowIndex, event.currentTarget.value, "code");
@@ -493,7 +677,24 @@ export default function JournalEntryPage() {
                       </td>
                       <td>{renderInputCell(row, rowIndex, "debit", "je-amount")}</td>
                       <td>{renderInputCell(row, rowIndex, "credit", "je-amount")}</td>
-                      <td>{renderInputCell(row, rowIndex, "remarks")}</td>
+                      <td className="je-account-cell">
+                        <span className="je-account-picker je-remark-picker">
+                          <input
+                            value={row.remarks}
+                            onChange={(event) => updateLine(rowIndex, "remarks", event.target.value)}
+                            onDoubleClick={() => setRemarkLookup({ open: true, rowIndex })}
+                            onKeyDown={(event) => {
+                              if (event.key === "F2") setRemarkLookup({ open: true, rowIndex });
+                            }}
+                          />
+                          <button
+                            type="button"
+                            aria-label="Choose remark template"
+                            title="List of Remark Template"
+                            onClick={() => setRemarkLookup({ open: true, rowIndex })}
+                          >...</button>
+                        </span>
+                      </td>
                       <td>{renderInputCell(row, rowIndex, "taxCode")}</td>
                       <td>{renderInputCell(row, rowIndex, "federalTaxId")}</td>
                       <td>{renderInputCell(row, rowIndex, "taxAmount", "je-amount")}</td>
@@ -578,6 +779,45 @@ export default function JournalEntryPage() {
         onClose={() => setLookup({ open: false, rowIndex: null, query: "" })}
         onSelect={(account) => selectAccount(lookup.rowIndex, account)}
       />
+
+      <BusinessPartnerLookupModal
+        open={bpLookup.open}
+        query={bpLookup.query}
+        onClose={() => setBpLookup({ open: false, rowIndex: null, query: "" })}
+        onSelect={(partner) => selectBusinessPartner(bpLookup.rowIndex, partner)}
+      />
+
+      <RemarkTemplateLookupModal
+        open={remarkLookup.open}
+        onClose={() => setRemarkLookup({ open: false, rowIndex: null })}
+        onSelect={(template) => updateLine(remarkLookup.rowIndex, "remarks", template.description)}
+      />
+
+      {contextMenu && (
+        <div
+          className="je-context-menu"
+          role="menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              openAccountLookup(contextMenu.rowIndex, contextMenu.query);
+              setContextMenu(null);
+            }}
+          >List of Accounts</button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              openBusinessPartnerLookup(contextMenu.rowIndex, contextMenu.query);
+              setContextMenu(null);
+            }}
+          >List of Business Partners</button>
+        </div>
+      )}
 
       <div className="je-statusbar">
         <span>{formatSapDate(header.postingDate)}</span>

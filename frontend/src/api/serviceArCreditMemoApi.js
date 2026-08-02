@@ -11,10 +11,11 @@ export const fetchServiceARCreditMemoCustomerDetails = (customerCode) =>
 export const fetchServiceARCreditMemoCustomerOptions = (params = {}) =>
   client.get(`${API_BASE}/customers/search`, { params });
 
-export const fetchServiceARCreditMemoSeries = (date = '', branch = '') =>
+export const fetchServiceARCreditMemoSeries = (date = '', transactionType = '', branch = '') =>
   client.get(`${API_BASE}/series`, {
     params: {
       ...(date ? { date } : {}),
+      ...(transactionType ? { transactionType } : {}),
       ...(branch ? { branch } : {}),
     },
   });

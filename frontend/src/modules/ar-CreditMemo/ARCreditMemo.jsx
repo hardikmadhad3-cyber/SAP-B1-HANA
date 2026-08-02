@@ -200,6 +200,10 @@ const FALLBACK_SHIPPING = [
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 const DEFAULT_WAREHOUSE_CODE = '01';
+const DEFAULT_TRANSACTION_TYPES = [
+  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
+  { value: 'Bill of Supply', label: 'Bill of Supply' },
+];
 
 const toArray = (value, fallbackKeys = []) => {
   if (Array.isArray(value)) return value;
@@ -242,6 +246,7 @@ const normalizeReferenceData = (data = {}) => {
     sales_employees: toArray(ref.sales_employees, ['sales_employees']),
     branches: toArray(ref.branches, ['branches']),
     states: toArray(ref.states, ['states']),
+    transaction_types: toArray(ref.transaction_types || ref.transactionTypes, ['transaction_types', 'transactionTypes', 'validValues', 'ValidValues']),
     gl_accounts: toArray(ref.gl_accounts, ['gl_accounts']),
     distribution_rules: toArray(ref.distribution_rules, ['distribution_rules']),
     uom_groups: toArray(ref.uom_groups, ['uom_groups']),
@@ -257,6 +262,12 @@ const normalizeReferenceData = (data = {}) => {
     },
     warnings: toArray(ref.warnings, ['warnings']),
   };
+};
+
+const normalizeTransactionOption = (option) => {
+  const value = String(option?.value ?? option?.Value ?? option?.code ?? option?.Code ?? option ?? '').trim();
+  const label = String(option?.label ?? option?.description ?? option?.Descr ?? option?.name ?? value).trim();
+  return value ? { value, label: label || value } : null;
 };
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
@@ -1064,6 +1075,12 @@ function ARCreditMemo() {
   const shipTypeOpts = refData.shipping_types.length
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
     : FALLBACK_SHIPPING;
+  const transactionTypeOptions = useMemo(() => {
+    const liveOptions = (refData.transaction_types || [])
+      .map(normalizeTransactionOption)
+      .filter(Boolean);
+    return liveOptions.length ? liveOptions : DEFAULT_TRANSACTION_TYPES;
+  }, [refData.transaction_types]);
   const resolveARCreditMemoAddress = useCallback((code, addresses = [], fallbackText = '') => {
     const normalizedCode = String(code || '').trim();
     if (normalizedCode) {
@@ -1345,6 +1362,16 @@ function ARCreditMemo() {
     
     if (name === 'series') {
       handleSeriesChange(value);
+      return;
+    }
+    if (name === 'transactionType') {
+      setHeader(p => ({
+        ...p,
+        transactionType: value,
+        series: '',
+        nextNumber: '',
+      }));
+      setSeriesReloadToken((token) => token + 1);
       return;
     }
     if (name === 'branch') {
@@ -2583,7 +2610,7 @@ function ARCreditMemo() {
       warehouse: normHeader.warehouse || copiedWarehouse || prev.warehouse,
       postingDate: copyDate,
       documentDate: copyDate,
-      deliveryDate: normHeader.deliveryDate || copyDate,
+      deliveryDate: copyDate,
       series: '',
       nextNumber: '',
     }));
@@ -2959,6 +2986,23 @@ function ARCreditMemo() {
                       </select>
                     </div>
 
+                    <div className="del-field">
+                      <label className="del-field__label">Transaction Type</label>
+                      <select
+                        name="transactionType"
+                        className="del-field__select"
+                        value={header.transactionType || ''}
+                        onChange={handleHeaderChange}
+                        disabled={!!currentDocEntry || !transactionTypeOptions.length}
+                      >
+                        {transactionTypeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     <DocumentCurrencySelect
                       classPrefix="del"
                       header={header}
@@ -2987,28 +3031,6 @@ function ARCreditMemo() {
                           ...
                         </button>
                       </div>
-                    </div>
-
-                    {/* Payment Terms */}
-                    <div className="del-field">
-                      <label className="del-field__label">Payment Terms</label>
-                      <select name="paymentTerms" className="del-field__select" value={header.paymentTerms} onChange={handleHeaderChange}>
-                        <option value="">Select</option>
-                        {payTermOpts.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                      </select>
-                    </div>
-
-                    {/* Branch */}
-                    <div className="del-field">
-                      <label className="del-field__label">Branch</label>
-                      <select name="branch" className="del-field__select" value={header.branch} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
-                        <option value="">Select Branch</option>
-                        {refData.branches.map(b => (
-                          <option key={b.BPLId} value={b.BPLId}>
-                            {b.BPLName}
-                          </option>
-                        ))}
-                      </select>
                     </div>
 
                     {/* Warehouse */}

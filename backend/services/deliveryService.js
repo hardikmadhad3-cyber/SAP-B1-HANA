@@ -169,6 +169,42 @@ const normalizeEWayBillCode = (field, value) => {
   return EWAY_BILL_CODE_ALIASES[field]?.[normalizeEWayBillToken(raw)] || raw;
 };
 
+const normalizeEDocGenerationTypeForSAP = (value) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const token = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const aliases = {
+    n: 'edocNotRelevant',
+    no: 'edocNotRelevant',
+    notrelevant: 'edocNotRelevant',
+    edocnotrelevant: 'edocNotRelevant',
+    g: 'edocGenerate',
+    generate: 'edocGenerate',
+    edocgenerate: 'edocGenerate',
+    l: 'edocGenerateLater',
+    later: 'edocGenerateLater',
+    generatelater: 'edocGenerateLater',
+    edocgeneratelater: 'edocGenerateLater',
+    o: 'edocGenerateOffline',
+    offline: 'edocGenerateOffline',
+    generateoffline: 'edocGenerateOffline',
+    edocgenerateoffline: 'edocGenerateOffline',
+  };
+  return aliases[token] || raw;
+};
+
+const assignElectronicDocumentPayload = (sapPayload, header = {}) => {
+  const generationType = normalizeEDocGenerationTypeForSAP(
+    header.genericEdocGenerationType || header.edocGenerationType,
+  );
+  if (generationType) sapPayload.EDocGenerationType = generationType;
+
+  const exportFormat = header.genericEdocExportFormat || header.edocExportFormat;
+  if (Number.isFinite(Number(exportFormat)) && String(exportFormat).trim() !== '') {
+    sapPayload.EDocExportFormat = Number(exportFormat);
+  }
+};
+
 const buildEWayBillDetailsPayload = async (details = {}) => {
   if (!details || typeof details !== 'object' || !Object.keys(details).length) return null;
 
@@ -1115,10 +1151,7 @@ console.log("SAP Payload:", sapPayload);
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
     if (salesPersonCode !== undefined) sapPayload.SalesPersonCode = salesPersonCode;
-    if (header.edocGenerationType) sapPayload.EDocGenerationType = header.edocGenerationType;
-    if (Number.isFinite(Number(header.edocExportFormat)) && String(header.edocExportFormat).trim() !== '') {
-      sapPayload.EDocExportFormat = Number(header.edocExportFormat);
-    }
+    assignElectronicDocumentPayload(sapPayload, header);
     const eWayBillDetails = await buildEWayBillDetailsPayload(payload.eway_bill_details);
     if (eWayBillDetails) sapPayload.EWayBillDetails = eWayBillDetails;
 
@@ -1247,10 +1280,7 @@ const updateDelivery = async (docEntry, payload) => {
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
     sapPayload.Rounding = toBoolean(header.rounding) ? 'tYES' : 'tNO';
     if (salesPersonCode !== undefined) sapPayload.SalesPersonCode = salesPersonCode;
-    if (header.edocGenerationType) sapPayload.EDocGenerationType = header.edocGenerationType;
-    if (Number.isFinite(Number(header.edocExportFormat)) && String(header.edocExportFormat).trim() !== '') {
-      sapPayload.EDocExportFormat = Number(header.edocExportFormat);
-    }
+    assignElectronicDocumentPayload(sapPayload, header);
     const eWayBillDetails = await buildEWayBillDetailsPayload(payload.eway_bill_details);
     if (eWayBillDetails) sapPayload.EWayBillDetails = eWayBillDetails;
 

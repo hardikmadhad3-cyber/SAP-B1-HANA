@@ -13,7 +13,7 @@ const config = {
   reportRateMax: toPositiveInt(process.env.REPORT_RATE_MAX, 20),
   dbConcurrency: toPositiveInt(process.env.DB_QUERY_CONCURRENCY_LIMIT, 6),
   sapConcurrency: toPositiveInt(process.env.SAP_REQUEST_CONCURRENCY_LIMIT, 4),
-  queueLimit: toPositiveInt(process.env.BACKEND_SAFETY_QUEUE_LIMIT, 30),
+  queueLimit: toPositiveInt(process.env.BACKEND_SAFETY_QUEUE_LIMIT, 100),
   slowDbMs: toPositiveInt(process.env.SLOW_DB_QUERY_MS, 3_000),
   slowSapMs: toPositiveInt(process.env.SLOW_SAP_REQUEST_MS, 5_000),
 };

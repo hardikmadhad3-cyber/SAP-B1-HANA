@@ -27,8 +27,13 @@ const submitGRPO = (payload) =>
 const updateGRPO = (docEntry, payload) =>
   apiClient.patch(`/grpo/${docEntry}`, payload);
 
-const fetchDocumentSeries = () =>
-  apiClient.get('/grpo/series');
+const fetchDocumentSeries = (date = '') =>
+  apiClient.get('/grpo/series', {
+    params: {
+      ...(date ? { date } : {}),
+      _: Date.now(),
+    },
+  });
 
 const fetchNextNumber = (series) =>
   apiClient.get(`/grpo/series/${series}/next-number`);

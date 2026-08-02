@@ -15,6 +15,7 @@ import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarCon
 import { createActiveCompanyScopedRouteState } from '../../utils/companyStorageScope';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
+import { calculateServiceInvoiceLine } from '../../utils/serviceInvoiceLineCalculations';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
 import { BASE_TYPE, normaliseDocumentHeader, unwrapCopyFromDocument } from '../../api/copyFromApi';
@@ -28,7 +29,17 @@ import AttachmentsTab from '../ar-invoice/components/AttachmentsTab';
 import AddressModal from '../../components/document/AddressComponentModal';
 import { mapAddressFields } from '../../utils/documentAddress';
 import TaxInfoModal from '../ar-invoice/components/TaxInfoModal';
+import WithholdingTaxTableModal from '../APInvoice/components/WithholdingTaxTableModal';
 import JournalEntryPreviewModal from './JournalEntryPreviewModal';
+import {
+  calculateWithholdingTaxAmount,
+  createDefaultWithholdingRows,
+  createEmptyWithholdingTaxState,
+  isYesValue,
+  normalizePartnerWithholdingTax,
+  recalcWithholdingRows,
+  roundTo,
+} from '../../utils/withholdingTax';
 import {
   fetchOpenServiceDeliveriesForARInvoice,
   fetchOpenServiceSalesOrdersForARInvoice,
@@ -122,6 +133,8 @@ const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
 }));
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
+  _priceBaselineEstablished: false,
+  _pendingPriceDiscountApplication: false,
   sac: '',
   description: '',
   glAccount: '',
@@ -130,7 +143,7 @@ const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   discountPercent: '',
   priceAfterDisc: '',
   taxCode: '',
-  wtaxLiable: 'Yes',
+  wtaxLiable: 'No',
   totalLC: '',
   taxAmountLC: '',
   loc: '',
@@ -621,9 +634,25 @@ const getTaxRate = (taxCodes, code) => {
   return parseNum(tax?.Rate);
 };
 
+const normalizeAccountCode = (value) => String(value || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+
+const findAccountByCode = (accounts = [], code = '') => {
+  const normalizedCode = normalizeAccountCode(code);
+  if (!normalizedCode) return null;
+  return accounts.find((item) => [
+    item?.code,
+    item?.AcctCode,
+    item?.FormatCode,
+    item?.accountCode,
+    item?.value,
+  ].some((value) => normalizeAccountCode(value) === normalizedCode)) || null;
+};
+
+const getAccountName = (account = {}) => account?.name || account?.AcctName || account?.accountName || account?.description || '';
+
 const normalizeCopyLine = (line, idx, docEntry, baseType, accounts) => {
   const glAccount = String(line.AccountCode || line.AcctCode || line.glAccount || '').trim();
-  const account = accounts.find((item) => String(item.code) === glAccount);
+  const account = findAccountByCode(accounts, glAccount);
   return {
     ...createLine(),
     baseEntry: docEntry || line.BaseEntry || null,
@@ -632,7 +661,7 @@ const normalizeCopyLine = (line, idx, docEntry, baseType, accounts) => {
     sac: String(line.SAC || line.SACEntry || line.sac || ''),
     description: String(line.ItemDescription || line.Dscription || line.description || ''),
     glAccount,
-    glAccountName: line.AccountName || line.AcctName || account?.name || '',
+    glAccountName: line.glAccountName || line.AccountName || line.AcctName || getAccountName(account),
     distRule: String(line.DistributionRule || line.OcrCode || line.distRule || ''),
     taxCode: String(line.TaxCode || line.taxCode || ''),
     totalLC: line.LineTotal != null ? String(line.LineTotal) : String(line.totalLC || ''),
@@ -657,6 +686,7 @@ function ServiceARInvoicePage() {
   const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(CONTENT_COLUMNS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
+  const [withholdingTax, setWithholdingTax] = useState(createEmptyWithholdingTaxState);
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
@@ -1032,6 +1062,51 @@ function ServiceARInvoicePage() {
     return { subtotal, tax, discountAmount, freight, downPayment, roundingAmount, total, appliedAmount, balanceDue, wtaxAmount: 0 };
   }, [currentDocEntry, header.appliedAmount, header.balanceDue, header.discount, header.discountAmount, header.freight, header.roundingAmount, header.tax, header.totalBeforeDiscount, header.totalDownPayment, header.totalPaymentDue, header.wtaxAmount, lines]);
 
+  const wtaxDecimals = { total: 2, tax: 2, totalPaymentDue: 2 };
+  const hasSavedWTaxAmount = Boolean(currentDocEntry && Math.abs(parseNum(header.wtaxAmount)) > 0);
+  const hasWTaxLiableLines = lines.some((line) => isYesValue(line.wtaxLiable || line.wTaxLiable)) || hasSavedWTaxAmount;
+  const wtaxBaseAmount = totals.total;
+  const wtaxRowsForTotals = hasWTaxLiableLines && withholdingTax.partnerSubject
+    ? recalcWithholdingRows(withholdingTax.rows, wtaxBaseAmount, wtaxDecimals)
+    : [];
+  const withholdingModalRows = withholdingTax.open
+    ? recalcWithholdingRows(
+      withholdingTax.rows.length
+        ? withholdingTax.rows
+        : createDefaultWithholdingRows(withholdingTax, wtaxBaseAmount, wtaxDecimals),
+      wtaxBaseAmount,
+      wtaxDecimals
+    )
+    : wtaxRowsForTotals;
+  const wtaxAmount = calculateWithholdingTaxAmount({
+    currentDocEntry,
+    savedAmount: header.wtaxAmount,
+    hasLiableLines: hasWTaxLiableLines,
+    withholdingTax,
+    baseAmount: wtaxBaseAmount,
+    decimals: wtaxDecimals,
+  });
+  const totalPaymentDueAfterWTax = roundTo(totals.total - wtaxAmount, wtaxDecimals.totalPaymentDue);
+  const balanceDueAfterWTax = currentDocEntry && String(header.balanceDue || '').trim()
+    ? totals.balanceDue
+    : Math.max(0, totalPaymentDueAfterWTax - totals.appliedAmount);
+
+  const openWithholdingTaxTable = () => {
+    if (!String(header.vendor || '').trim()) {
+      setPageState((prev) => ({ ...prev, error: 'Select a customer before opening withholding tax table.', success: '' }));
+      return;
+    }
+    if (!withholdingTax.partnerSubject) {
+      setPageState((prev) => ({ ...prev, error: 'Selected customer does not have withholding tax setup.', success: '' }));
+      return;
+    }
+    setWithholdingTax((prev) => ({
+      ...prev,
+      open: true,
+      rows: prev.rows.length ? recalcWithholdingRows(prev.rows, wtaxBaseAmount, wtaxDecimals) : createDefaultWithholdingRows(prev, wtaxBaseAmount, wtaxDecimals),
+    }));
+  };
+
   useEffect(() => {
     const handler = (event) => {
       if (!event.target.closest('.del-dropdown')) {
@@ -1201,6 +1276,7 @@ function ServiceARInvoicePage() {
           ? doc.lines.map((line) => ({
             ...createLine(rowUdfDefinitions),
             ...line,
+            _priceBaselineEstablished: true,
             udf: rowUdfDefinitions.length ? normalizeUdfState(rowUdfDefinitions, line.udf || {}) : (line.udf || {}),
           }))
           : [createLine(rowUdfDefinitions)]);
@@ -1217,18 +1293,12 @@ function ServiceARInvoicePage() {
     };
   }, [requestedDocEntry, headerUdfDefinitions, rowUdfDefinitions]);
 
-  const updateLineCalculatedValues = (line) => {
-    const next = { ...line };
+  const updateLineCalculatedValues = (line, changedField) => {
+    let next = { ...line };
     next.taxCodeRepeat = next.taxCode || '';
-    if (next.priceAfterDisc === '' && next.unitPrice !== '') next.priceAfterDisc = next.unitPrice;
     if (next.price === '' && next.unitPrice !== '') next.price = next.unitPrice;
-    const qty = parseNum(next.sQty);
-    const price = parseNum(next.unitPrice);
-    if (qty > 0 && price > 0) {
-      next.totalLC = fmt(qty * price);
-    }
     const taxRate = getTaxRate(taxCodes, next.taxCode);
-    next.taxAmountLC = next.totalLC ? fmt(parseNum(next.totalLC) * taxRate / 100) : '';
+    next = calculateServiceInvoiceLine(next, changedField, taxRate);
     return next;
   };
 
@@ -1239,6 +1309,7 @@ function ServiceARInvoicePage() {
     if (!normalizedCustomerCode) {
       setRefData((prev) => ({ ...prev, contacts: [] }));
       setHeader((prev) => ({ ...prev, contactPerson: '' }));
+      setWithholdingTax(createEmptyWithholdingTaxState());
       return;
     }
     try {
@@ -1252,6 +1323,8 @@ function ServiceARInvoicePage() {
         ship_to_addresses: res.data?.ship_to_addresses || [],
         bill_to_addresses: res.data?.bill_to_addresses || [],
       }));
+      const customerWithholdingTax = normalizePartnerWithholdingTax(res.data?.withholding_tax || {});
+      setWithholdingTax((prev) => ({ ...prev, ...customerWithholdingTax, rows: [] }));
       const customer = res.data?.customer;
       if (customer) {
         const shipTo = (res.data?.ship_to_addresses || res.data?.pay_to_addresses || [])[0];
@@ -1520,10 +1593,19 @@ function ServiceARInvoicePage() {
       if (name === 'loc') {
         next.locCode = '';
       }
-      return ['taxCode', 'totalLC', 'unitPrice', 'sQty'].includes(name)
-        ? updateLineCalculatedValues(next)
+      return ['taxCode', 'discountPercent', 'priceAfterDisc', 'totalLC', 'unitPrice', 'sQty'].includes(name)
+        ? updateLineCalculatedValues(next, name)
         : next;
     }));
+  };
+
+  const handleLineBlur = (index, fieldName) => {
+    if (!isDocumentEditable || fieldName !== 'priceAfterDisc') return;
+    setLines((prev) => prev.map((line, lineIndex) => (
+      lineIndex === index && line._pendingPriceDiscountApplication
+        ? updateLineCalculatedValues(line, 'priceAfterDiscCommit')
+        : line
+    )));
   };
 
   const addLine = () => {
@@ -1673,7 +1755,11 @@ function ServiceARInvoicePage() {
   };
 
   const buildPayload = () => ({
-    header,
+    header: {
+      ...header,
+      wtaxAmount,
+      totalPaymentDue: totalPaymentDueAfterWTax,
+    },
     lines: lines
       .filter((line) => String(line.description || line.glAccount || line.totalLC || '').trim())
       .map((line) => ({
@@ -1681,7 +1767,8 @@ function ServiceARInvoicePage() {
         udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
       })),
     header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
-    totals,
+    totals: { ...totals, wtaxAmount, total: totalPaymentDueAfterWTax, balanceDue: balanceDueAfterWTax },
+    withholdingTaxRows: wtaxRowsForTotals,
   });
 
   const openJournalLinkedMaster = (line = {}) => {
@@ -1879,21 +1966,33 @@ function ServiceARInvoicePage() {
     }
   };
 
-  const handleCopyFrom = (data, sourceType) => {
+  const handleCopyFrom = async (data, sourceType) => {
     const copySource = unwrapCopyFromDocument(data);
     const copyKey = `${sourceType}-${copySource.docEntry}-${copySource.lines.length}`;
     if (handledCopyFromRef.current === copyKey) return;
     handledCopyFromRef.current = copyKey;
 
     const normalizedHeader = normaliseDocumentHeader(copySource.header);
+    const copyDate = today();
+    const copyTransactionType = normalizedHeader.transactionType
+      || header.transactionType
+      || transactionTypeOptions[0]?.value
+      || 'GST Tax Invoice';
+    const copyBranch = normalizedHeader.branch || header.branch || '';
     setHeader((prev) => ({
       ...prev,
       ...normalizedHeader,
-      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || '',
-      series: prev.series,
-      nextNumber: prev.nextNumber,
+      postingDate: copyDate,
+      documentDate: copyDate,
+      deliveryDate: copyDate,
+      transactionType: copyTransactionType,
+      branch: copyBranch,
+      wtaxAmount: '',
+      series: '',
+      nextNumber: '',
       docNo: '',
     }));
+    setWithholdingTax(createEmptyWithholdingTaxState());
     const baseType = BASE_TYPE[sourceType] || 17;
     setLines(copySource.lines.length
       ? copySource.lines.map((line, index) => ({
@@ -1902,6 +2001,15 @@ function ServiceARInvoicePage() {
       }))
       : [createLine(rowUdfDefinitions)]);
     setActiveTab('Contents');
+    if (normalizedHeader.vendor) {
+      loadCustomerDetails(normalizedHeader.vendor);
+    }
+    await refreshSeriesForNewDocument({
+      postingDate: copyDate,
+      transactionType: copyTransactionType,
+      branch: copyBranch,
+      preferredSeries: '',
+    });
     setPageState((prev) => ({ ...prev, success: 'Copied service document lines.', error: '' }));
   };
 
@@ -1956,10 +2064,12 @@ function ServiceARInvoicePage() {
         deliveryDate: duplicateDate,
         transactionType: duplicateTransactionType,
         branch: duplicateBranch,
+        wtaxAmount: '',
         series: '',
         nextNumber: '',
         docNo: '',
       }));
+      setWithholdingTax((prev) => ({ ...prev, rows: [], open: false }));
       await refreshSeriesForNewDocument({
         postingDate: duplicateDate,
         transactionType: duplicateTransactionType,
@@ -2137,6 +2247,7 @@ function ServiceARInvoicePage() {
         name={column.key}
         value={column.key === 'taxCodeRepeat' ? (line.taxCodeRepeat || line.taxCode || '') : (line[column.key] || '')}
         onChange={(event) => handleLineChange(index, event)}
+        onBlur={() => handleLineBlur(index, column.key)}
         readOnly={column.readOnly}
         disabled={!isDocumentEditable || column.readOnly}
         style={{ textAlign: column.numeric || column.readOnly ? 'right' : 'left' }}
@@ -2465,10 +2576,20 @@ function ServiceARInvoicePage() {
                   <tr><td>Freight</td><td><input className="del-grid__input" name="freight" value={header.freight} onChange={handleHeaderChange} disabled={!isDocumentEditable} /></td></tr>
                   <tr><td><label className="service-ar-checkbox"><input type="checkbox" name="rounding" checked={header.rounding || parseNum(header.roundingAmount) !== 0} onChange={handleHeaderChange} disabled={!isDocumentEditable} /> Rounding</label></td><td><input className="del-grid__input" value={`INR ${fmt(totals.roundingAmount)}`} readOnly /></td></tr>
                   <tr><td>Tax</td><td><input className="del-grid__input" value={fmt(totals.tax)} readOnly /></td></tr>
-                  <tr><td>WTax Amount</td><td><input className="del-grid__input" value={fmt(totals.wtaxAmount)} readOnly /></td></tr>
-                  <tr style={{ borderTop: '2px solid #a0aab4' }}><td style={{ fontWeight: 700 }}>Total</td><td><input className="del-grid__input" value={fmt(totals.total)} readOnly style={{ fontWeight: 700 }} /></td></tr>
+                  {hasWTaxLiableLines && (
+                    <tr>
+                      <td>WTax Amount</td>
+                      <td>
+                        <div className="service-ar-wtax-cell">
+                          <input className="del-grid__input service-ar-wtax-input" value={fmt(wtaxAmount)} readOnly />
+                          <button type="button" className="del-btn service-ar-wtax-btn" onClick={openWithholdingTaxTable} disabled={!isDocumentEditable}>→</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  <tr style={{ borderTop: '2px solid #a0aab4' }}><td style={{ fontWeight: 700 }}>Total</td><td><input className="del-grid__input" value={fmt(totalPaymentDueAfterWTax)} readOnly style={{ fontWeight: 700 }} /></td></tr>
                   <tr><td>Applied Amount</td><td><input className="del-grid__input" name="appliedAmount" value={header.appliedAmount} onChange={handleHeaderChange} disabled={!isDocumentEditable} /></td></tr>
-                  <tr><td>Balance Due</td><td><input className="del-grid__input" value={fmt(totals.balanceDue)} readOnly /></td></tr>
+                  <tr><td>Balance Due</td><td><input className="del-grid__input" value={fmt(balanceDueAfterWTax)} readOnly /></td></tr>
                 </tbody>
               </table>
             </div>
@@ -2567,6 +2688,18 @@ function ServiceARInvoicePage() {
         onSave={saveTaxInfoModal}
         taxInfoForm={taxInfoForm}
         onFormChange={handleTaxInfoFormChange}
+      />
+
+      <WithholdingTaxTableModal
+        isOpen={withholdingTax.open}
+        onClose={() => setWithholdingTax((prev) => ({ ...prev, open: false }))}
+        rows={withholdingModalRows}
+        allowedCodes={withholdingTax.allowedCodes.length ? withholdingTax.allowedCodes : refData.withholding_tax_codes}
+        baseAmount={wtaxBaseAmount}
+        onRowsChange={(rows) => setWithholdingTax((prev) => ({
+          ...prev,
+          rows: recalcWithholdingRows(rows, wtaxBaseAmount, wtaxDecimals),
+        }))}
       />
 
       <JournalEntryPreviewModal

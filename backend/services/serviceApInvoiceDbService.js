@@ -69,6 +69,143 @@ const formatDate = (value) => {
   return Number.isNaN(date.getTime()) ? String(value).split('T')[0] : date.toISOString().split('T')[0];
 };
 
+const normalizeSeriesText = (value) =>
+  String(value || '').toUpperCase().replace(/FY/g, '').replace(/[^A-Z0-9]/g, '');
+
+const resolveSeriesDocSubType = (transactionType = '') => {
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (normalizedType.includes('GSTDEBITMEMO') || normalizedType.includes('DEBITMEMO')) return 'GD';
+  if (normalizedType.includes('GSTTAXINVOICE') || normalizedType.includes('TAXINVOICE')) return 'GA';
+  if (normalizedType.includes('BILLOFSUPPLY')) return '--';
+  return '';
+};
+
+const resolveTransactionSeriesKind = (transactionType = '') => {
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (normalizedType.includes('DEBIT')) return 'debit';
+  if (normalizedType.includes('BILLOFSUPPLY') || normalizedType.includes('SUPPLY')) return 'bill';
+  if (normalizedType.includes('TAXINVOICE') || normalizedType.includes('GST')) return 'tax';
+  return '';
+};
+
+const getSeriesKind = (series = {}) => {
+  const text = normalizeSeriesText([
+    series.SeriesName,
+    series.DisplayName,
+    series.RawSeriesName,
+    series.BeginStr,
+    series.Indicator,
+    series.DocSubType,
+  ].filter(Boolean).join(' '));
+  const docSubType = String(series.DocSubType || '').trim().toUpperCase();
+
+  if (docSubType === 'GD' || text.includes('DEBIT') || text.includes('DBN') || text.includes('CAN')) return 'debit';
+  if (docSubType === '--' || text.includes('BILLOFSUPPLY') || text.includes('SUPPLY') || text.includes('BOS') || text.includes('BILL')) return 'bill';
+  if (docSubType === 'GA' || text.includes('TAXINVOICE') || text.includes('GST')) return 'tax';
+  if (text.includes('AP') && !text.includes('CAN')) return 'bill';
+  return 'tax';
+};
+
+const filterSeriesByTransactionType = (series = [], transactionType = '') => {
+  const targetKind = resolveTransactionSeriesKind(transactionType);
+  if (!targetKind) return series;
+
+  const matched = (Array.isArray(series) ? series : []).filter((row) => {
+    if (Number(row.Series) === -1 || String(row.SeriesName || '').trim().toUpperCase() === 'MANUAL') return false;
+    return getSeriesKind(row) === targetKind;
+  });
+
+  return matched.length ? matched : series;
+};
+
+const scoreSeriesForTransactionType = (series = {}, transactionType = '') => {
+  const targetKind = resolveTransactionSeriesKind(transactionType);
+  if (!targetKind) return 0;
+
+  const text = normalizeSeriesText([
+    series.SeriesName,
+    series.DisplayName,
+    series.RawSeriesName,
+    series.BeginStr,
+    series.Indicator,
+    series.DocSubType,
+  ].filter(Boolean).join(' '));
+  const docSubType = String(series.DocSubType || '').trim().toUpperCase();
+  const isManual = Number(series.Series) === -1 || String(series.SeriesName || '').trim().toUpperCase() === 'MANUAL';
+  if (isManual) return -10000;
+
+  let score = 0;
+  if (series.IsDefault || series.isDefault) score += 25;
+
+  if (targetKind === 'debit') {
+    if (docSubType === 'GD') score += 250;
+    if (text.includes('CAN')) score += 180;
+    if (text.includes('DEBIT') || text.includes('DBN')) score += 160;
+    if (text.includes('AP')) score -= 40;
+    if (docSubType === 'GA' || text.includes('TAX')) score -= 80;
+  } else if (targetKind === 'bill') {
+    if (docSubType === '--') score += 120;
+    if (text.includes('BILLOFSUPPLY') || text.includes('SUPPLY') || text.includes('BOS') || text.includes('BILL')) score += 180;
+    if (text.includes('AP')) score += 140;
+    if (text.includes('CAN') || text.includes('DEBIT') || docSubType === 'GD') score -= 120;
+    if (docSubType === 'GA' || text.includes('TAX')) score -= 60;
+  } else if (targetKind === 'tax') {
+    if (docSubType === 'GA') score += 180;
+    if (text.includes('GST') || text.includes('TAXINVOICE') || text.includes('TAX')) score += 160;
+    if (!text.includes('AP') && !text.includes('CAN') && !text.includes('DEBIT') && !text.includes('BILL')) score += 120;
+    if (text.includes('AP')) score -= 100;
+    if (text.includes('CAN') || text.includes('DEBIT') || docSubType === 'GD') score -= 160;
+  }
+
+  return score;
+};
+
+const pickSapSeriesForTransactionType = (series = [], transactionType = '') => {
+  const rows = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (!String(transactionType || '').trim()) return null;
+
+  const nonManualRows = rows.filter((row) => (
+    Number(row.Series) !== -1 &&
+    String(row.SeriesName || '').trim().toUpperCase() !== 'MANUAL'
+  ));
+  const candidates = nonManualRows.length ? nonManualRows : rows;
+  if (!candidates.length) return null;
+
+  const scored = candidates
+    .map((row, index) => ({ row, index, score: scoreSeriesForTransactionType(row, transactionType) }))
+    .sort((left, right) =>
+      right.score - left.score ||
+      Number(right.row.IsDefault || right.row.isDefault || 0) - Number(left.row.IsDefault || left.row.isDefault || 0) ||
+      left.index - right.index);
+
+  return scored[0]?.row || null;
+};
+
+const keepSapVisibleNumberingSeries = (series = []) => {
+  const rows = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (rows.length <= 1) return rows;
+
+  const nonManualRows = rows.filter((row) => Number(row.Series) !== -1 && String(row.SeriesName || '').trim().toUpperCase() !== 'MANUAL');
+  const candidates = nonManualRows.length ? nonManualRows : rows;
+  const defaultRows = candidates.filter((row) => row.IsDefault || row.isDefault);
+  if (defaultRows.length) return [defaultRows[0]];
+
+  return [candidates[0]];
+};
+
+const dedupeNumberingSeries = (series = []) => {
+  const seen = new Set();
+  return (Array.isArray(series) ? series : []).filter((row) => {
+    const name = normalizeSeriesText(row.SeriesName || row.DisplayName || row.RawSeriesName || row.BeginStr || row.Series);
+    const indicator = normalizeSeriesText(row.Indicator);
+    const docSubType = String(row.DocSubType || '').trim().toUpperCase();
+    const key = `${name}|${indicator}|${docSubType}`;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 const lookupServiceItems = async () => {
   const rowsWithWTax = await safe(db.query(`
     SELECT
@@ -98,7 +235,7 @@ const lookupServiceItems = async () => {
     ItemCode: row.ItemCode || '',
     ItemName: row.ItemName || '',
     InStock: row.OnHand ?? 0,
-    WTaxLiable: String(row.WTLiable || '').toUpperCase() === 'N' ? 'No' : 'Yes',
+    WTaxLiable: ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(row.WTLiable || '').trim().toUpperCase()) ? 'Yes' : 'No',
   }));
 };
 
@@ -659,6 +796,7 @@ const getServiceDocumentForCopy = async ({ headerTable, lineTable, docEntry, bas
 const getServiceAPDocumentSeries = async (options = {}) => {
   const date = typeof options === 'string' ? options : options.date;
   const branch = typeof options === 'object' && options ? options.branch : '';
+  const transactionType = typeof options === 'object' && options ? options.transactionType : '';
   const targetDate = date || new Date().toISOString().split('T')[0];
   const [seriesColumns, numberingColumns] = await Promise.all([
     getTableColumns('NNM1'),
@@ -670,13 +808,13 @@ const getServiceAPDocumentSeries = async (options = {}) => {
     || getColumnName(numberingColumns, 'DfltSerie');
   const branchId = Number(branch);
   const useBranch = Boolean(branchColumn && Number.isFinite(branchId) && String(branch || '').trim());
-  const params = useBranch ? { targetDate, branchId } : { targetDate };
+  const params = {
+    ...(useBranch ? { targetDate, branchId } : { targetDate }),
+  };
   const branchFilter = useBranch
     ? `AND (T0.${branchColumn} IS NULL OR T0.${branchColumn} IN (-1, 0, @branchId))`
     : '';
-  const subTypeFilter = docSubTypeColumn
-    ? `AND COALESCE(T0.${docSubTypeColumn}, '--') <> 'GD'`
-    : '';
+  const subTypeFilter = '';
   const defaultSeriesJoin = defaultSeriesColumn
     ? `LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode AND DEF.${defaultSeriesColumn} = T0.Series`
     : '';
@@ -688,6 +826,8 @@ const getServiceAPDocumentSeries = async (options = {}) => {
       T0.SeriesName,
       T0.Indicator,
       T0.NextNumber,
+      ${optionalColumn(seriesColumns, 'T0', 'BeginStr', 'BeginStr', "''")},
+      ${optionalColumn(seriesColumns, 'T0', 'EndStr', 'EndStr', "''")},
       ${optionalColumn(seriesColumns, 'T0', 'DocSubType', 'DocSubType', "''")},
       ${optionalColumn(seriesColumns, 'T0', 'BPLId', 'BPLId', 'NULL')},
       ${defaultSeriesSelect} AS IsDefault`;
@@ -710,9 +850,21 @@ const getServiceAPDocumentSeries = async (options = {}) => {
     ORDER BY IsDefault DESC, T0.SeriesName, T0.Series
   `, params));
 
-  const mappedSeries = rows.map((row) => ({
+  const orderedRows = [...rows].sort((left, right) => {
+    const leftBranchMatch = useBranch && Number(left.BPLId) === branchId ? 0 : 1;
+    const rightBranchMatch = useBranch && Number(right.BPLId) === branchId ? 0 : 1;
+    return leftBranchMatch - rightBranchMatch ||
+      Number(right.IsDefault || 0) - Number(left.IsDefault || 0) ||
+      Number(left.Series || 0) - Number(right.Series || 0);
+  });
+
+  const mappedSeries = dedupeNumberingSeries(orderedRows.map((row) => ({
     Series: row.Series,
     SeriesName: row.SeriesName || '',
+    DisplayName: row.SeriesName || '',
+    RawSeriesName: row.SeriesName || '',
+    BeginStr: row.BeginStr || '',
+    EndStr: row.EndStr || '',
     NextNumber: row.NextNumber,
     Indicator: row.Indicator || '',
     DocSubType: row.DocSubType || '',
@@ -721,7 +873,7 @@ const getServiceAPDocumentSeries = async (options = {}) => {
     FinancialYear: row.FinancialYear || '',
     FromDate: row.FromDate || null,
     ToDate: row.ToDate || null,
-  }));
+  })));
   const parsedTargetDate = new Date(`${String(targetDate).split('T')[0]}T00:00:00Z`);
   const startYear = parsedTargetDate.getUTCMonth() >= 3
     ? parsedTargetDate.getUTCFullYear()
@@ -743,8 +895,27 @@ const getServiceAPDocumentSeries = async (options = {}) => {
     });
   });
 
+  const parsedTargetTime = parsedTargetDate.getTime();
+  const dateMatchedSeries = mappedSeries.filter((row) => {
+    const fromDate = row.FromDate ? new Date(row.FromDate).getTime() : NaN;
+    const toDate = row.ToDate ? new Date(row.ToDate).getTime() : NaN;
+    return Number.isFinite(parsedTargetTime) &&
+      Number.isFinite(fromDate) &&
+      Number.isFinite(toDate) &&
+      parsedTargetTime >= fromDate &&
+      parsedTargetTime <= toDate;
+  });
+  const effectiveSeries = dateMatchedSeries.length
+    ? dateMatchedSeries
+    : (yearNamedSeries.length ? yearNamedSeries : (hasFinancialYearNamedSeries ? [] : mappedSeries));
+  const transactionMatchedSeries = filterSeriesByTransactionType(effectiveSeries, transactionType);
+  const selectedTransactionSeries = pickSapSeriesForTransactionType(transactionMatchedSeries, transactionType)
+    || pickSapSeriesForTransactionType(effectiveSeries, transactionType);
+
   return {
-    series: yearNamedSeries.length ? yearNamedSeries : (hasFinancialYearNamedSeries ? [] : mappedSeries),
+    series: String(transactionType || '').trim()
+      ? (selectedTransactionSeries ? [selectedTransactionSeries] : keepSapVisibleNumberingSeries(effectiveSeries))
+      : keepSapVisibleNumberingSeries(effectiveSeries),
   };
 };
 

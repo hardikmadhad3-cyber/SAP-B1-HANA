@@ -151,7 +151,7 @@ const getGRPOForCopy = async (req, res) => {
   try {
     res.json(await apInvoiceService.getGRPOForCopy(req.params.docEntry));
   } catch (error) {
-    res.status(500).json(getErrorPayload(error, 'Failed to load GRPO.'));
+    res.status(error.statusCode || error.status || 500).json(getErrorPayload(error, 'Failed to load GRPO.'));
   }
 };
 

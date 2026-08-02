@@ -251,7 +251,7 @@ const lookupServiceItems = async () => {
     ItemCode: row.ItemCode || '',
     ItemName: row.ItemName || '',
     InStock: row.OnHand ?? 0,
-    WTaxLiable: String(row.WTLiable || '').toUpperCase() === 'N' ? 'No' : 'Yes',
+    WTaxLiable: ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(row.WTLiable || '').trim().toUpperCase()) ? 'Yes' : 'No',
   }));
 };
 

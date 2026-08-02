@@ -242,6 +242,179 @@ const isUomNameColumn = (column = {}) => {
   return tokens.some((token) => ['UOMNAME', 'UNITMSR'].includes(token));
 };
 
+const normalizeSalesQuotationColumnToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, 'U')
+    .replace(/[^A-Z0-9]+/g, '');
+
+const SALES_QUOTATION_LAYOUT_KEY_ALIASES = {
+  ITEMCODE: 'itemNo',
+  ITEMNO: 'itemNo',
+  DSCRIPTION: 'itemDescription',
+  DESCRIPTION: 'itemDescription',
+  ITEMDESCRIPTION: 'itemDescription',
+  ITEMSERVICEDESCRIPTION: 'itemDescription',
+  ITEMSERVICEDESCRIPTION200CHARACTERS: 'itemDescription',
+  QUANTITY: 'quantity',
+  QTY: 'quantity',
+  UNITMSR: 'uomName',
+  UOMNAME: 'uomName',
+  HSN: 'hsnCode',
+  HSNCODE: 'hsnCode',
+  HSNENTRY: 'hsnCode',
+  PRICE: 'unitPrice',
+  PRICEBEFDI: 'unitPrice',
+  UNITPRICE: 'unitPrice',
+  TAXCODE: 'taxCode',
+  VATGROUP: 'taxCode',
+  TOTAL: 'totalLC',
+  TOTALLC: 'totalLC',
+  LINETOTAL: 'totalLC',
+  GTOTAL: 'totalLC',
+  PACKINGTYPE: 'U_PackingType',
+  UPACKINGTYPE: 'U_PackingType',
+  UPACKINGSTATUS: 'U_PackingType',
+  OCRCODE: 'distRule',
+  DISTRULE: 'distRule',
+  DISTRRULE: 'distRule',
+  DISTRIBUTIONRULE: 'distRule',
+  UTAXCODE: 'taxCodeRepeat',
+  UPRICE: 'price',
+  UBROKSELLER: 'sellerBrokerage',
+  SELLERBROKERAGE: 'sellerBrokerage',
+  UBROKBUYER: 'buyerBrokerage',
+  BUYERBROKERAGE: 'buyerBrokerage',
+  UBUYERDELIVERY: 'buyerDelivery',
+  BUYERDELIVERY: 'buyerDelivery',
+  USELLERDELIVERY: 'sellerDelivery',
+  SELLERDELIVERY: 'sellerDelivery',
+  UBUYERPAYMENTTERM: 'buyerPaymentTerms',
+  UBUYERPAYMENTTERMS: 'buyerPaymentTerms',
+  BUYERTERMSOFPAYMENT: 'buyerPaymentTerms',
+  USELLERPAYMENTTER: 'sellerPaymentTerms',
+  USELLERPAYMENTTERM: 'sellerPaymentTerms',
+  USELLERPAYMENTTERMS: 'sellerPaymentTerms',
+  SELLERTERMSOFPAYMENT: 'sellerPaymentTerms',
+  UBUYERQUALITY: 'buyerQuality',
+  BUYERQUALITY: 'buyerQuality',
+  USELLERQUALITY: 'sellerQuality',
+  SELLERQUALITY: 'sellerQuality',
+  UBUYERPRICE: 'buyerPrice',
+  BUYERPRICE: 'buyerPrice',
+  USELLERPRICE: 'sellerPrice',
+  SELLERPRICE: 'sellerPrice',
+  UBUYERSPINS: 'buyerSpecialInstruction',
+  BUYERSPECIALINSTRUCTION: 'buyerSpecialInstruction',
+  USELLERSPINS: 'sellerSpecialInstruction',
+  SELLERSPECIALINSTRUCTION: 'sellerSpecialInstruction',
+  USELBROKAP: 'sellerBrokerageAmtPer',
+  SELLERBROKERAGEAMTPER: 'sellerBrokerageAmtPer',
+  USELLERBROKPER: 'sellerBrokeragePercent',
+  SELLERBROKERAGEINPERCENTAGE: 'sellerBrokeragePercent',
+  USELLTCODE: 'stcode',
+  USTCODE: 'stcode',
+  STCODE: 'stcode',
+  USITEM: 'sellerItem',
+  SITEM: 'sellerItem',
+  USQTY: 'sellerQty',
+  SQTY: 'sellerQty',
+  USPLRBT: 'specialRebate',
+  SPECIALREBATE: 'specialRebate',
+  UCOMPRC: 'commission',
+  COMMISION: 'commission',
+  COMMISSION: 'commission',
+  USBROKPERQTY: 'sellerBrokeragePerQty',
+  BROKPERQTY: 'sellerBrokeragePerQty',
+  UFIXBROCKB: 'U_Fix_Brock_B',
+  UFIXBROKB: 'U_Fix_Brock_B',
+  UFIXBROKBUYER: 'U_Fix_Brock_B',
+  FIXBROKBUYER: 'U_Fix_Brock_B',
+  UFIXBROCKS: 'U_Fix_Brock_S',
+  UFIXBROKS: 'U_Fix_Brock_S',
+  UFIXBROCKSELLER: 'U_Fix_Brock_S',
+  UFIXBROKSELLER: 'U_Fix_Brock_S',
+  FIXBROCKSELLER: 'U_Fix_Brock_S',
+  FIXBROKSELLER: 'U_Fix_Brock_S',
+};
+
+const getSalesQuotationCanonicalColumnKey = (column = {}) => {
+  const candidates = [
+    column.key,
+    column.valueKey,
+    column.rendererKey,
+    column.sapField,
+    column.fieldName,
+    column.layoutFieldName,
+    column.sapColumnId,
+    column.columnTitle,
+    column.label,
+  ];
+
+  for (const candidate of candidates) {
+    const key = SALES_QUOTATION_LAYOUT_KEY_ALIASES[normalizeSalesQuotationColumnToken(candidate)];
+    if (key) return key;
+  }
+
+  return '';
+};
+
+const getSalesQuotationItemDescription = (item = {}, fallback = '') => (
+  item.ItemName ||
+  item.ItemDescription ||
+  item.Dscription ||
+  item.Description ||
+  item.ItemDesc ||
+  item.FrgnName ||
+  fallback ||
+  ''
+);
+
+const normalizeSalesQuotationMatrixColumns = (columns = []) => {
+  const sourceColumns = Array.isArray(columns) ? columns : [];
+  const desiredColumns = BASE_MATRIX_COLUMNS;
+  const desiredByKey = new Map(desiredColumns.map((column) => [column.key, column]));
+  const sourceByCanonicalKey = new Map();
+
+  sourceColumns.forEach((column) => {
+    const key = getSalesQuotationCanonicalColumnKey(column);
+    if (key && desiredByKey.has(key) && !sourceByCanonicalKey.has(key)) {
+      sourceByCanonicalKey.set(key, column);
+    }
+  });
+
+  return desiredColumns.map((desiredColumn, index) => {
+    const sourceColumn = sourceByCanonicalKey.get(desiredColumn.key) || {};
+    const minWidth = Math.max(
+      Number(desiredColumn.minWidth) || 125,
+      Number(sourceColumn.minWidth || sourceColumn.width) || 0,
+    );
+
+    return {
+      ...sourceColumn,
+      ...desiredColumn,
+      key: desiredColumn.key,
+      valueKey: desiredColumn.valueKey || desiredColumn.key,
+      rendererKey: desiredColumn.rendererKey || desiredColumn.valueKey || desiredColumn.key,
+      label: desiredColumn.label,
+      visible: desiredColumn.visible !== false,
+      active: sourceColumn.active !== false,
+      readOnly: desiredColumn.readOnly ?? sourceColumn.readOnly,
+      minWidth,
+      width: minWidth,
+      order: index + 1,
+      columnOrder: index + 1,
+      type: desiredColumn.type || (desiredColumn.numeric ? 'number' : 'text'),
+      numeric: Boolean(desiredColumn.numeric),
+      isUdf: Boolean(desiredColumn.isUdf),
+      importedLayout: Boolean(sourceColumn.importedLayout),
+      sapControlled: Boolean(sourceColumn.sapControlled),
+      source: sourceColumn.source || desiredColumn.source || 'sales-quotation-workbook',
+    };
+  });
+};
+
 const ensureSalesQuotationMatrixColumns = (columns = []) => {
   const safeColumns = Array.isArray(columns) ? columns.filter(Boolean) : [];
   const nextColumns = safeColumns.map((column) => ({
@@ -607,12 +780,12 @@ function SalesQuotation() {
           const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
             ? refDataRes.data.line_field_metadata.matrix_columns
             : BASE_MATRIX_COLUMNS;
-          const nextMatrixColumns = ensureSalesQuotationMatrixColumns(buildSalesOrderMatrixColumnsFromLayout({
+          const nextMatrixColumns = normalizeSalesQuotationMatrixColumns(ensureSalesQuotationMatrixColumns(buildSalesOrderMatrixColumnsFromLayout({
             layoutColumns: layoutRes?.data?.columns || [],
             liveMatrixColumns,
             rowUdfFields: nextRowUdfs,
             includeLineNumber: false,
-          }));
+          })));
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
           setMatrixColumnDefinitions(nextMatrixColumns);
@@ -1453,7 +1626,7 @@ function SalesQuotation() {
             const next = { ...line, itemNo: value };
             
             // Step 1: Set Item Details
-            next.itemDescription = item.ItemName || next.itemDescription;
+            next.itemDescription = getSalesQuotationItemDescription(item, next.itemDescription);
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
             next.uomName = next.uomCode || next.uomName || '';
             
@@ -1465,7 +1638,7 @@ function SalesQuotation() {
             
             console.log('🔍 Item Selected:', {
               itemCode: item.ItemCode,
-              itemName: item.ItemName,
+              itemName: getSalesQuotationItemDescription(item),
               hsnCode: next.hsnCode,
               baseTaxCode: baseTaxCode,
               placeOfSupply: header.placeOfSupply,
@@ -1516,7 +1689,7 @@ function SalesQuotation() {
           const next = { ...line, itemNo: value };
           const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
           if (item) {
-            next.itemDescription = item.ItemName || next.itemDescription;
+            next.itemDescription = getSalesQuotationItemDescription(item, next.itemDescription);
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
             next.uomName = next.uomCode || next.uomName || '';
             next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
@@ -2375,11 +2548,45 @@ function SalesQuotation() {
         hsnCode: line.hsnCode,
         quantity: line.quantity,
         unitPrice: line.unitPrice,
+        price: line.price,
+        sellerPrice: line.sellerPrice,
+        buyerPrice: line.buyerPrice,
+        sellerDelivery: line.sellerDelivery,
+        buyerDelivery: line.buyerDelivery,
+        sellerBrokerageAmtPer: line.sellerBrokerageAmtPer,
+        sellerBrokeragePercent: line.sellerBrokeragePercent,
+        sellerBrokerage: line.sellerBrokerage,
+        buyerBrokerage: line.buyerBrokerage,
+        specialRebate: line.specialRebate,
+        commission: line.commission,
+        sellerBrokeragePerQty: line.sellerBrokeragePerQty,
+        unitPriceUdf: line.unitPriceUdf,
+        buyerPaymentTerms: line.buyerPaymentTerms,
+        sellerPaymentTerms: line.sellerPaymentTerms,
+        buyerQuality: line.buyerQuality,
+        sellerQuality: line.sellerQuality,
+        buyerSpecialInstruction: line.buyerSpecialInstruction,
+        sellerSpecialInstruction: line.sellerSpecialInstruction,
+        buyerBillDiscount: line.buyerBillDiscount,
+        sellerBillDiscount: line.sellerBillDiscount,
+        sellerItem: line.sellerItem,
+        sellerQty: line.sellerQty,
         uomCode: line.uomCode,
+        uomName: line.uomName,
         stdDiscount: line.stdDiscount,
+        stcode: line.stcode,
         taxCode: line.taxCode,
+        taxCodeRepeat: line.taxCodeRepeat,
         total: line.total,
         whse: line.whse,
+        distRule: line.distRule,
+        distRule2: line.distRule2,
+        distRule3: line.distRule3,
+        distRule4: line.distRule4,
+        distRule5: line.distRule5,
+        freeText: line.freeText,
+        countryOfOrigin: line.countryOfOrigin,
+        sacCode: line.sacCode,
         loc: line.loc,
         branch: line.branch,
         baseEntry: line.baseEntry,
@@ -2870,14 +3077,6 @@ function SalesQuotation() {
                       ))}
                       <option value="__DEFINE_NEW__">Define New</option>
                     </select>
-                    {/* Debug info */}
-                    <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
-                      {header.purchaser ? (
-                        <span>Selected: {header.purchaser} | Available: {effectiveSalesEmployees.length} employees</span>
-                      ) : (
-                        <span>No selection | Available: {effectiveSalesEmployees.length} employees</span>
-                      )}
-                    </div>
                   </div>
                   <div className="so-field">
                     <label className="so-field__label">Owner</label>
@@ -2895,14 +3094,6 @@ function SalesQuotation() {
                         </option>
                       ))}
                     </select>
-                    {/* Debug info */}
-                    <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
-                      {header.owner ? (
-                        <span>Selected: {header.owner} | Available: {(refData.owners || []).length} owners</span>
-                      ) : (
-                        <span>No selection | Available: {(refData.owners || []).length} owners</span>
-                      )}
-                    </div>
                   </div>
                   <div className="so-field">
                     <label className="so-field__label">Remarks</label>

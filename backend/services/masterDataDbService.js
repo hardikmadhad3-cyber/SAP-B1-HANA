@@ -1149,6 +1149,30 @@ const mapWithholdingTaxCode = (row) => ({
   surcharge: row.Surcharge ?? 0,
   officialCode: row.OffclCode || "",
   rate: row.Rate ?? 0,
+  baseTypeCode: row.BaseType || "N",
+  baseType: ({ G: "Gross", N: "Net", V: "VAT", U: "UoM", H: "Gross - VAT" })[String(row.BaseType || "N").toUpperCase()] || row.BaseType || "Net",
+  basePercentage: row.PrctBsAmnt ?? 100,
+  account: row.ApTdsAcc || row.Account || "",
+  tdsAccount: row.ApTdsAcc || row.Account || "",
+  surchargeAccount: row.ApSurAcc || "",
+  cessAccount: row.ApCessAcc || "",
+  hscAccount: row.ApHscAcc || "",
+  igstAccount: row.ApIgstAcc || "",
+  cgstAccount: row.ApCgstAcc || "",
+  sgstAccount: row.ApSgstAcc || "",
+  utgstAccount: row.ApUtgstAcc || "",
+  cessGstAccount: row.ApCsgstAcc || "",
+  tdsTypeCode: row.TDSType || "E",
+  tdsType: ({ E: "eTDS", D: "GST TDS", C: "GST TCS", S: "SALES TCS" })[String(row.TDSType || "E").toUpperCase()] || row.TDSType || "eTDS",
+  tdsRate: row.TdsRate ?? row.Rate ?? 0,
+  surchargeRate: row.SurRate ?? row.Surcharge ?? 0,
+  cessRate: row.CessRate ?? 0,
+  hscRate: row.HscRate ?? 0,
+  igstRate: row.IgstRate ?? 0,
+  cgstRate: row.CgstRate ?? 0,
+  sgstRate: row.SgstRate ?? 0,
+  utgstRate: row.UtgstRate ?? 0,
+  cessGstRate: row.CsgstRate ?? 0,
   inactive: toYesNo(row.Inactive),
 });
 
@@ -1157,7 +1181,8 @@ const getWithholdingTaxCode = async (code) => {
   if (!trimmed) return null;
 
   const row = await queryOne(`
-    SELECT TOP 1 WTCode, WTName, Assessee, Threshold, Surcharge, EBWTaxCate, Category, OffclCode, Rate, Inactive
+    SELECT TOP 1 WTCode, WTName, Assessee, Threshold, Surcharge, EBWTaxCate, Category, OffclCode, Rate,
+      BaseType, PrctBsAmnt, Account, Inactive
     FROM OWHT
     WHERE WTCode = @code
     ORDER BY WTCode
@@ -1169,16 +1194,40 @@ const getWithholdingTaxCode = async (code) => {
 const lookupWithholdingTaxCodes = async (query = "") => {
   const trimmed = String(query || "").trim();
   const rows = await queryRows(`
-    SELECT TOP 200 WTCode, WTName, Assessee, Threshold, Surcharge, EBWTaxCate, Category, OffclCode, Rate, Inactive
-    FROM OWHT
-    WHERE @query = ''
-      OR WTCode LIKE @like
-      OR ISNULL(WTName, '') LIKE @like
-      OR ISNULL(OffclCode, '') LIKE @like
-    ORDER BY WTCode
+      SELECT TOP 200 W.WTCode, W.WTName, W.Assessee, W.Threshold, W.Surcharge, W.EBWTaxCate,
+        W.Category, W.OffclCode, W.Rate, W.BaseType, W.PrctBsAmnt, W.Account, W.Inactive,
+        W.ApTdsAcc, W.ApSurAcc, W.ApCessAcc, W.ApHscAcc, W.TDSType,
+        W.ApIgstAcc, W.ApCgstAcc, W.ApSgstAcc, W.ApUtgstAcc, W.ApCsgstAcc
+      FROM OWHT W
+      WHERE @query = ''
+        OR W.WTCode LIKE @like
+        OR ISNULL(W.WTName, '') LIKE @like
+        OR ISNULL(W.OffclCode, '') LIKE @like
+      ORDER BY W.WTCode
   `, { query: trimmed, like: `%${trimmed}%` });
 
-  return rows.map(mapWithholdingTaxCode);
+  let rateRows = [];
+  try {
+    rateRows = await queryRows(`
+      SELECT TOP 1000 WTCode, EffecDate, LineNum, TdsRate, SurRate, CessRate, HscRate,
+        IgstRate, CgstRate, SgstRate, UtgstRate, CsgstRate
+      FROM AWH1
+      ORDER BY WTCode, EffecDate DESC, LineNum DESC
+    `);
+  } catch (_error) {
+    rateRows = [];
+  }
+
+  const latestRatesByCode = new Map();
+  rateRows.forEach((row) => {
+    const code = String(row.WTCode || '').trim();
+    if (code && !latestRatesByCode.has(code)) latestRatesByCode.set(code, row);
+  });
+
+  return rows.map((row) => mapWithholdingTaxCode({
+    ...row,
+    ...(latestRatesByCode.get(String(row.WTCode || '').trim()) || {}),
+  }));
 };
 
 const getNextCreditCardCode = async () => {

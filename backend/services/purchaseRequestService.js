@@ -326,6 +326,15 @@ const mapPurchaseRequestToForm = (request = {}, itemHsnMap = {}) => ({
         : request.DiscPrcnt !== undefined && request.DiscPrcnt !== null
           ? String(request.DiscPrcnt)
           : '',
+    rounding:
+      String(request.Rounding || '').trim().toUpperCase() === 'TYES' ||
+      Math.abs(Number(request.RoundingDiffAmount ?? request.RoundDif ?? 0)) > 0,
+    roundingAmount:
+      request.RoundingDiffAmount !== undefined && request.RoundingDiffAmount !== null
+        ? String(request.RoundingDiffAmount)
+        : request.RoundDif !== undefined && request.RoundDif !== null
+          ? String(request.RoundDif)
+          : '',
     freight:
       request.TotalExpenses !== undefined && request.TotalExpenses !== null
         ? String(request.TotalExpenses)
@@ -606,6 +615,7 @@ const buildPurchaseRequestPayload = async ({ header = {}, lines = [], header_udf
     JournalMemo: header.journalRemark,
     Confirmed: header.confirmed ? 'tYES' : 'tNO',
     DiscountPercent: toNumberOrUndefined(header.discount),
+    Rounding: header.rounding ? 'tYES' : 'tNO',
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
     DocumentLines: buildDocumentLines(lines),
   });

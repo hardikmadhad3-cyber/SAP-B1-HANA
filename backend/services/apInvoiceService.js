@@ -6,6 +6,7 @@ const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { applyUdfValues, isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
 const { buildAPInvoiceDocumentLine } = require('./apInvoicePayloadUtils');
+const { applyPlaceOfSupplyUdf } = require('./placeOfSupplyUtils');
 
 const formatDateForSAP = (value) => {
   if (!value) return null;
@@ -125,12 +126,15 @@ const calculateExpectedTotal = (header, lines) => {
 const buildWithholdingTaxData = (rows = []) =>
   (Array.isArray(rows) ? rows : [])
     .filter((row) => String(row?.code || row?.WTCode || '').trim())
-    .map((row) => ({
-      WTCode: String(row.code || row.WTCode || '').trim(),
-      TaxableAmount: parseNum(row.taxableAmount),
-      WTAmount: parseNum(row.wtaxAmount || row.WTAmount),
-      Category: 'I',
-    }));
+    .map((row) => {
+      const category = String(row.categoryCode || row.category || 'I').trim().toUpperCase();
+      return {
+        WTCode: String(row.code || row.WTCode || '').trim(),
+        TaxableAmount: parseNum(row.taxableAmount),
+        WTAmount: parseNum(row.wtaxAmount ?? row.WTAmount),
+        Category: category.startsWith('P') ? 'P' : 'I',
+      };
+    });
 
 const validateAPInvoicePayload = async (payload, docEntry = null) => {
   const { header = {}, lines = [] } = payload || {};
@@ -394,7 +398,8 @@ const getGRPOForCopy = async (docEntry) => {
   try {
     return await apInvoiceDb.getGRPOForCopy(docEntry);
   } catch (error) {
-    throw new Error(`Failed to load GRPO: ${error.message}`);
+    error.message = `Failed to load GRPO: ${error.message}`;
+    throw error;
   }
 };
 
@@ -451,6 +456,7 @@ const submitAPInvoice = async (payload) => {
     if (header.payToCode) sapPayload.PayToCode = String(header.payToCode).trim();
 
     applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
+    applyPlaceOfSupplyUdf(sapPayload, headerUdfDefinitionsByKey, header.placeOfSupply);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
     console.log('Constructed SAP Payload:', sapPayload);
@@ -494,6 +500,7 @@ const updateAPInvoice = async (docEntry, payload) => {
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
     applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
+    applyPlaceOfSupplyUdf(sapPayload, headerUdfDefinitionsByKey, header.placeOfSupply);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
 
