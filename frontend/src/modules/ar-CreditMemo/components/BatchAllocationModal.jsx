@@ -22,10 +22,12 @@ export default function BatchAllocationModal({
   availableBatches = [],
   loading = false,
   error = '',
+  workspaceRef,
   onClose,
   onSave,
 }) {
   const [rows, setRows] = useState([]);
+  const [workspaceBounds, setWorkspaceBounds] = useState(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -53,6 +55,35 @@ export default function BatchAllocationModal({
       })
     );
   }, [availableBatches, isOpen, line]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const updateBounds = () => {
+      const rect = workspaceRef?.current?.getBoundingClientRect?.();
+      if (!rect) {
+        setWorkspaceBounds(null);
+        return;
+      }
+      const topbarBottom = document.querySelector('.topbar')?.getBoundingClientRect?.().bottom || 0;
+      const top = Math.max(0, rect.top, topbarBottom);
+      const left = Math.max(0, rect.left);
+      setWorkspaceBounds({
+        top,
+        left,
+        right: 'auto',
+        bottom: 'auto',
+        width: Math.max(320, window.innerWidth - left),
+        height: Math.max(240, window.innerHeight - top),
+      });
+    };
+    updateBounds();
+    window.addEventListener('resize', updateBounds);
+    window.addEventListener('scroll', updateBounds, true);
+    return () => {
+      window.removeEventListener('resize', updateBounds);
+      window.removeEventListener('scroll', updateBounds, true);
+    };
+  }, [isOpen, workspaceRef]);
 
   const assignedQty = useMemo(() => sumBatchQty(rows), [rows]);
   const lineQty = parseBatchNumber(line?.quantity);
@@ -117,10 +148,13 @@ export default function BatchAllocationModal({
   };
 
   return createPortal(
-    <div className="del-modal-overlay" onClick={onClose}>
+    <div
+      className="del-modal-overlay del-batch-modal-overlay"
+      style={workspaceBounds || undefined}
+      onClick={onClose}
+    >
       <div
-        className="del-modal"
-        style={{ width: 'min(980px, 100%)', maxHeight: '90vh', overflow: 'auto' }}
+        className="del-modal del-batch-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="del-modal__header">

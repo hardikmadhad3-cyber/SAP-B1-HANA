@@ -107,7 +107,7 @@ const updatePurchaseOrder = async (req, res) => {
 const getDocumentSeries = async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');
-    const data = await purchaseOrderService.getDocumentSeries();
+    const data = await purchaseOrderService.getDocumentSeries(req.query.date);
     res.json(data);
   } catch (error) {
     res.status(500).json(getErrorPayload(error, 'Failed to load document series.'));

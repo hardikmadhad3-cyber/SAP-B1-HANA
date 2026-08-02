@@ -5,12 +5,20 @@ const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { applyUdfValues } = require('./udfPayloadUtils');
+const { buildGRPODocumentLine } = require('./grpoPayloadUtils');
+const { applyPlaceOfSupplyUdf } = require('./placeOfSupplyUtils');
+const { buildDocumentSeriesPayload } = require('./documentSeriesPayloadUtils');
 
 // ───────── HELPERS ─────────
 
 const formatDateForSAP = (value) => {
   if (!value) return null;
   return String(value).split('T')[0];
+};
+
+const toSapYesNo = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized) ? 'tYES' : 'tNO';
 };
 
 const getUdfDefinitionsByKey = async (tableId) => {
@@ -61,14 +69,8 @@ const getVendorDetails = async (vendorCode) => {
     const result = await grpoDb.getVendorDetails(vendorCode);
     return result;
   } catch (error) {
-    return {
-      contacts: [],
-      pay_to_addresses: [],
-      ship_to_addresses: [],
-      bill_to_addresses: [],
-      gstin: '',
-      vendorState: '',
-    };
+    console.error('[GRPO Service] Failed to load vendor details:', error);
+    throw error;
   }
 };
 
@@ -157,12 +159,13 @@ const getGRPO = async (docEntry) => {
 
 // ───────── DOCUMENT SERIES (USING ODBC) ─────────
 
-const getDocumentSeries = async () => {
+const getDocumentSeries = async (targetDate = null) => {
   try {
-    const result = await grpoDb.getDocumentSeries();
+    const result = await grpoDb.getDocumentSeries(targetDate);
     return result;
   } catch (error) {
-    return { series: [] };
+    console.error('[GRPO] Failed to load live SAP B1 series:', error.message);
+    throw error;
   }
 };
 
@@ -246,64 +249,14 @@ const submitGRPO = async (payload) => {
       DocCurrency: header.currency || 'INR',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: toSapYesNo(header.rounding),
+      ...buildDocumentSeriesPayload(header),
       DocumentLines: lines
         .filter(l => l.itemNo && l.itemNo.trim())
-        .map(l => {
-          const hasBaseDoc =
-            l.baseEntry != null &&
-            l.baseEntry !== '' &&
-            l.baseType != null &&
-            l.baseType !== '' &&
-            l.baseLine != null &&
-            l.baseLine !== '';
-
-          const docLine = {
-            Quantity: parseFloat(l.quantity) || 0,
-            WarehouseCode: l.whse || '',
-          };
-          if (l.commPercent !== undefined && l.commPercent !== null && String(l.commPercent).trim() !== '') {
-            docLine.CommissionPercent = parseFloat(l.commPercent) || 0;
-          }
-
-          if (hasBaseDoc) {
-            docLine.BaseEntry = parseInt(l.baseEntry, 10);
-            docLine.BaseType = parseInt(l.baseType, 10);
-            docLine.BaseLine = parseInt(l.baseLine, 10);
-          } else {
-            docLine.ItemCode = l.itemNo;
-            docLine.Price = parseFloat(l.unitPrice) || 0;
-            if (String(l.taxCode || '').trim()) {
-              docLine.TaxCode = String(l.taxCode).trim();
-            }
-            if (l.uomCode) {
-              docLine.UoMCode = l.uomCode;
-            }
-          }
-
-          if (l.stdDiscount && Number(l.stdDiscount) > 0) {
-            docLine.DiscountPercent = parseFloat(l.stdDiscount) || 0;
-          }
-
-          if (l.batchManaged && l.batches && l.batches.length > 0) {
-            docLine.BatchNumbers = l.batches.map(b => {
-              const batch = {
-                BatchNumber: b.batchNumber,
-                Quantity: parseFloat(b.quantity) || 0,
-              };
-              const supplierLotNo = String(b.supplierLotNo || '').trim();
-              if (supplierLotNo) batch.ManufacturerSerialNumber = supplierLotNo;
-              return batch;
-            });
-          }
-
-          applyUdfValues(docLine, l.udf, null, lineUdfDefinitionsByKey);
-
-          return docLine;
-        }),
+        .map(l => buildGRPODocumentLine(l, lineUdfDefinitionsByKey)),
     };
    
     // Add optional fields
-    if (header.series) sapPayload.Series = parseInt(header.series);
     if (header.branch) sapPayload.BPL_IDAssignedToInvoice = parseInt(header.branch);
     const contactPersonCode = Number(header.contactPerson);
     if (Number.isFinite(contactPersonCode)) sapPayload.ContactPersonCode = contactPersonCode;
@@ -320,6 +273,7 @@ const submitGRPO = async (payload) => {
       ...header_udfs,
       ...(header.buyerLocation !== undefined ? { U_ShipLocation: header.buyerLocation } : {}),
     }, null, headerUdfDefinitionsByKey);
+    applyPlaceOfSupplyUdf(sapPayload, headerUdfDefinitionsByKey, header.placeOfSupply);
 
    
 
@@ -358,6 +312,7 @@ const updateGRPO = async (docEntry, payload) => {
       JournalMemo: header.journalRemark || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: toSapYesNo(header.rounding),
     };
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
@@ -371,6 +326,7 @@ const updateGRPO = async (docEntry, payload) => {
       ...header_udfs,
       ...(header.buyerLocation !== undefined ? { U_ShipLocation: header.buyerLocation } : {}),
     }, null, headerUdfDefinitionsByKey);
+    applyPlaceOfSupplyUdf(sapPayload, headerUdfDefinitionsByKey, header.placeOfSupply);
 
     await sapService.request({
       method: 'PATCH',

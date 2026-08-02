@@ -6,6 +6,7 @@ import {
   fetchAdminEntityBootstrap,
   updateAdminRecord,
 } from '../api/adminPanelApi';
+import { matchesSapSearchText } from '../utils/sapSearch';
 
 const EMPTY_RECORDS = [];
 const EMPTY_LOOKUPS = {};
@@ -629,13 +630,13 @@ const AdminPanelEntity = () => {
   }, [bootstrap?.entity?.listColumns, schema]);
 
   const filteredRecords = useMemo(() => {
-    const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
+    const normalizedSearch = deferredSearchTerm.trim();
     if (!normalizedSearch) return records;
 
     return records.filter((record) =>
       visibleColumns.some((column) => {
         const cellValue = formatCellValue(record[column.name], column, lookupLabelMaps[column.name]);
-        return String(cellValue).toLowerCase().includes(normalizedSearch);
+        return matchesSapSearchText(cellValue, normalizedSearch);
       }),
     );
   }, [deferredSearchTerm, lookupLabelMaps, records, visibleColumns]);

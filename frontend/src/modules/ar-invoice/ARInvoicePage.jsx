@@ -22,11 +22,13 @@ import WithholdingTaxTableModal from '../APInvoice/components/WithholdingTaxTabl
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from '../../components/document/CopyFromModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
@@ -189,6 +191,11 @@ const isLineBatchManaged = (line = {}, item = null) => (
     line.isBatchManaged,
   ].some(isTruthySapFlag) || isBatchManaged(item)
 );
+const getLineBaseTypeNumber = (line = {}) => {
+  const parsed = Number(line.baseType ?? line.BaseType);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const isDeliveryBasedLine = (line = {}) => getLineBaseTypeNumber(line) === 15;
 const normalizeLineBatches = (batches = []) => (
   Array.isArray(batches)
     ? batches
@@ -215,6 +222,20 @@ const normalizeFieldIdentity = (value) =>
     .replace(/^U_/i, '')
     .replace(/[^a-z0-9]+/gi, '')
     .toLowerCase();
+const getSeriesFamilyKey = (series = {}) => {
+  const label = String(
+    series.SeriesName ||
+    series.DisplayName ||
+    series.RawSeriesName ||
+    series.BeginStr ||
+    series.Indicator ||
+    ''
+  );
+  return normalizeFieldIdentity(label)
+    .replace(/(?:fy)?\d{2}\d{2}$/i, '')
+    .replace(/\d{4,}$/i, '')
+    .replace(/\d{2}$/i, '');
+};
 const fieldNameMatches = (field = {}, names = new Set()) =>
   names.has(normalizeFieldIdentity(field.key)) ||
   names.has(normalizeFieldIdentity(field.label)) ||
@@ -499,6 +520,7 @@ function ARInvoicePage() {
   const activeCompanyId = company?.companyId || '';
   const activeCompanyDb = company?.dbName || '';
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
+  const formRef = useRef(null);
   const handledCopyFromRef = useRef('');
   const requestedEditDocEntry = location.state?.arInvoiceDocEntry;
 
@@ -628,8 +650,9 @@ function ARInvoicePage() {
   const hydrateARInvoiceBatchLine = useCallback((line = {}) => {
     const itemCode = String(line.itemNo || line.ItemCode || '').trim();
     const item = refData.items.find((candidate) => String(candidate.ItemCode || '').trim() === itemCode);
-    const batchManaged = isLineBatchManaged(line, item);
-    const batches = normalizeLineBatches(line.batches || line.BatchNumbers || line.BatchNumberDetails);
+    const deliveryBased = isDeliveryBasedLine(line);
+    const batchManaged = deliveryBased ? false : isLineBatchManaged(line, item);
+    const batches = deliveryBased ? [] : normalizeLineBatches(line.batches || line.BatchNumbers || line.BatchNumberDetails);
     const inventoryUOM = String(line.inventoryUOM || line.InventoryUOM || item?.InventoryUOM || line.uomCode || '').trim();
     const explicitFactor = Number(line.uomFactor);
 
@@ -647,7 +670,7 @@ function ARInvoicePage() {
 
   const refreshBatchAvailabilityForLines = useCallback((nextLines = []) => {
     nextLines.forEach((line, lineIndex) => {
-      if (!line?.batchManaged || !line?.itemNo || !line?.whse) return;
+      if (isDeliveryBasedLine(line) || !line?.batchManaged || !line?.itemNo || !line?.whse) return;
       checkBatchAvailability(line.itemNo, line.whse).then((hasBatches) => {
         setLines((prevLines) => prevLines.map((currentLine, currentIndex) => (
           currentIndex === lineIndex &&
@@ -669,10 +692,16 @@ function ARInvoicePage() {
 
     return normalizeBranchSelection(getWarehouseBranchId(warehouse));
   }, [refData.warehouses]);
-  const resolvePreferredSeries = (seriesList, postingDateValue, selectedSeries = '') => {
+  const resolvePreferredSeries = (
+    seriesList,
+    postingDateValue,
+    selectedSeries = '',
+    branchValue = header.branch,
+    transactionTypeValue = header.transactionType,
+  ) => {
     if (!Array.isArray(seriesList) || !seriesList.length) return null;
 
-    const selectedBranchId = normalizeBranchSelection(header.branch);
+    const selectedBranchId = normalizeBranchSelection(branchValue);
     const compatibleSeries = seriesList.filter((series) => {
       const seriesBranchId = String(series?.BPLId ?? '').trim();
       return !seriesBranchId || seriesBranchId === '0' || seriesBranchId === '-1'
@@ -690,10 +719,16 @@ function ARInvoicePage() {
 
     if (matchedSeries) return matchedSeries;
 
-    const sapDefaultSeries = compatibleSeries.find((series) => series.IsDefault || series.isDefault);
-    if (sapDefaultSeries) return sapDefaultSeries;
+    if (normalizedSeries) {
+      const sourceSeries = (refData.series || []).find((series) => String(series.Series) === normalizedSeries);
+      const sourceFamilyKey = getSeriesFamilyKey(sourceSeries);
+      const sameFamilySeries = sourceFamilyKey
+        ? compatibleSeries.find((series) => getSeriesFamilyKey(series) === sourceFamilyKey)
+        : null;
+      if (sameFamilySeries) return sameFamilySeries;
+    }
 
-    const normalizedTransactionType = normalizeFieldIdentity(header.transactionType);
+    const normalizedTransactionType = normalizeFieldIdentity(transactionTypeValue);
     if (normalizedTransactionType) {
       const transactionTokens = normalizedTransactionType.includes('gsttaxinvoice')
         ? ['gsttaxinvoice', 'gst', 'taxinvoice', 'retail', 'ret']
@@ -718,8 +753,29 @@ function ARInvoicePage() {
       if (scoredSeries[0]?.series) return scoredSeries[0].series;
     }
 
+    const sapDefaultSeries = compatibleSeries.find((series) => series.IsDefault || series.isDefault);
+    if (sapDefaultSeries) return sapDefaultSeries;
+
     const seriesDate = postingDateValue ? new Date(`${postingDateValue}T00:00:00`) : new Date();
     return getDefaultSeriesForCurrentYear(compatibleSeries, seriesDate) || compatibleSeries[0];
+  };
+  const mergeCurrentSeriesOption = (seriesList = [], currentSeries = '', fallbackSeriesOption = null) => {
+    const normalizedSeries = String(currentSeries || '').trim();
+    const availableSeries = Array.isArray(seriesList) ? seriesList : [];
+    if (!normalizedSeries || availableSeries.some((series) => String(series.Series) === normalizedSeries)) {
+      return availableSeries;
+    }
+
+    const currentSeriesOption =
+      fallbackSeriesOption ||
+      (refData.series || []).find((series) => String(series.Series) === normalizedSeries) ||
+      {
+        Series: normalizedSeries,
+        SeriesName: normalizedSeries,
+        DisplayName: normalizedSeries,
+      };
+
+    return [currentSeriesOption, ...availableSeries];
   };
   const primaryActionLabel = pageState.posting
     ? 'Saving…'
@@ -731,6 +787,81 @@ function ARInvoicePage() {
     : currentDocEntry
       ? updateActionLabel
       : 'Add & New';
+
+  useEffect(() => {
+    const draft = location.state?.arInvoiceDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setHeader(draft.header || INIT_HEADER);
+    setLines(Array.isArray(draft.lines) && draft.lines.length
+      ? draft.lines
+      : [createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(draft.headerUdfs || normalizeUdfState(headerUdfDefinitions));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    setFreightModal((prev) => ({
+      ...prev,
+      open: false,
+      freightCharges: Array.isArray(draft.freightCharges) ? draft.freightCharges : [],
+      loading: false,
+    }));
+    if (draft.withholdingTax) {
+      setWithholdingTax((prev) => ({
+        ...prev,
+        ...draft.withholdingTax,
+        open: false,
+      }));
+    }
+    if (draft.addressForm) setAddressForm(draft.addressForm);
+    if (draft.taxInfoForm) setTaxInfoForm(draft.taxInfoForm);
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [
+    headerUdfDefinitions,
+    location.pathname,
+    location.state,
+    navigate,
+    rowUdfDefinitions,
+  ]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    arInvoiceDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+      freightCharges: freightModal.freightCharges,
+      withholdingTax: {
+        customerSubject: withholdingTax.customerSubject,
+        defaultCode: withholdingTax.defaultCode,
+        allowedCodes: withholdingTax.allowedCodes,
+        rows: withholdingTax.rows,
+      },
+      addressForm,
+      taxInfoForm,
+    },
+  }), [
+    activeTab,
+    addressForm,
+    currentDocEntry,
+    freightModal.freightCharges,
+    header,
+    headerUdfs,
+    isDirty,
+    lines,
+    taxInfoForm,
+    withholdingTax.allowedCodes,
+    withholdingTax.customerSubject,
+    withholdingTax.defaultCode,
+    withholdingTax.rows,
+  ]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'A/R Invoice',
+  });
 
   useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
@@ -921,15 +1052,16 @@ function ARInvoicePage() {
 
         if (ignore || requestedEditDocEntry) return;
 
-        setRefData(prev => ({ ...prev, series: availableSeries }));
+        const currentSeries = String(header.series || '');
+        const mergedAvailableSeries = mergeCurrentSeriesOption(availableSeries, currentSeries);
+        setRefData(prev => ({ ...prev, series: mergedAvailableSeries }));
 
-        if (!availableSeries.length) {
+        if (!mergedAvailableSeries.length) {
           setHeader(prev => ({ ...prev, series: '', nextNumber: '' }));
           return;
         }
 
-        const currentSeries = String(header.series || '');
-        const defaultSeries = resolvePreferredSeries(availableSeries, seriesDate, currentSeries);
+        const defaultSeries = resolvePreferredSeries(mergedAvailableSeries, seriesDate, currentSeries);
 
         if (!defaultSeries?.Series) return;
 
@@ -1019,12 +1151,17 @@ function ARInvoicePage() {
             ? nextDocumentLines
             : [createLine(rowUdfDefinitions)]
         );
+        setWithholdingTax((prev) => ({
+          ...prev,
+          open: false,
+          rows: Array.isArray(so.withholdingTaxRows) ? so.withholdingTaxRows : [],
+        }));
         refreshBatchAvailabilityForLines(nextDocumentLines);
         setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, so.header_udfs || {}));
         setSnapshotPending(true);
         setIsDirty(false);
         if (so.header?.customerCode || so.header?.customer) {
-          loadVendorDetails(so.header?.customerCode || so.header?.customer);
+          loadVendorDetails(so.header?.customerCode || so.header?.customer, { preserveWithholdingRows: true });
         }
         setPageState(p => ({ ...p, success: so.doc_num ? `AR Invoice ${so.doc_num} loaded.` : 'AR Invoice loaded.' }));
       } catch (e) {
@@ -1032,7 +1169,7 @@ function ARInvoicePage() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -1139,10 +1276,15 @@ function ARInvoicePage() {
     if (Array.isArray(srcLines) && srcLines.length > 0) {
       const copiedLines = srcLines.map((l, idx) => {
         const normalizedLine = normaliseDocumentLine(l, idx, copiedBaseEntry, copiedBaseType, copiedBranch);
+        const copyOpenQty = parseNum(normalizedLine.openQty);
+        const copiedQuantity = [15, 17].includes(Number(normalizedLine.baseType || copiedBaseType)) && copyOpenQty > 0
+          ? String(copyOpenQty)
+          : normalizedLine.quantity;
         const copiedLineUdfs = mergeUdfValues(l.line_udfs, l.lineUdfs, l.udf, normalizedLine.udf);
         return hydrateARInvoiceBatchLine({
           ...createLine(rowUdfDefinitions),
           ...normalizedLine,
+          quantity: copiedQuantity,
           whse: normalizeWarehouse(normalizedLine, srcHeader) || normalizeWarehouse(l, srcHeader) || copiedWarehouse || '',
           taxCodeManuallyOverridden: Boolean(String(normalizedLine.taxCode || l.taxCode || l.TaxCode || l.VatGroup || '').trim()),
           baseEntry: l.baseEntry ?? l.BaseEntry ?? copiedBaseEntry,
@@ -1429,7 +1571,9 @@ function ARInvoicePage() {
     header,
     total: totals.total,
   });
-  const hasWTaxLiableLines = lines.some((line) => isYesValue(line.wTaxLiable || line.wtaxLiable));
+  const hasSavedWTaxAmount = Boolean(currentDocEntry && Math.abs(parseNum(header.wtaxAmount)) > 0);
+  const hasWTaxLiableLines = lines.some((line) => isYesValue(line.wTaxLiable || line.wtaxLiable)) || hasSavedWTaxAmount;
+  const showWTaxSummaryRow = hasWTaxLiableLines;
   const wtaxBaseAmount = totals.total;
   const recalcWithholdingRows = useCallback((rows = withholdingTax.rows, baseAmount = wtaxBaseAmount) => (
     (rows || []).map((row) => {
@@ -1474,14 +1618,36 @@ function ARInvoicePage() {
       utgstAccount: '',
     }];
   }, [numDec.tax, numDec.total, withholdingTax.allowedCodes, withholdingTax.defaultCode, wtaxBaseAmount]);
-  const wtaxRowsForTotals = hasWTaxLiableLines
-    ? recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows())
+  const wtaxRowsForTotals = showWTaxSummaryRow
+    ? (
+        currentDocEntry && withholdingTax.rows.length
+          ? withholdingTax.rows
+          : recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows())
+      )
     : [];
   const withholdingModalRows = withholdingTax.open
-    ? recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows())
+    ? (
+        currentDocEntry && withholdingTax.rows.length
+          ? withholdingTax.rows
+          : recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows())
+      )
     : wtaxRowsForTotals;
-  const wtaxAmount = roundTo(wtaxRowsForTotals.reduce((sum, row) => sum + parseNum(row.wtaxAmount), 0), numDec.tax);
-  const totalPaymentDueAfterWTax = roundTo(totals.total - wtaxAmount, numDec.totalPaymentDue);
+  const calculatedWtaxAmount = roundTo(wtaxRowsForTotals.reduce((sum, row) => sum + parseNum(row.wtaxAmount), 0), numDec.tax);
+  const wtaxAmount = hasSavedWTaxAmount ? roundTo(parseNum(header.wtaxAmount), numDec.tax) : calculatedWtaxAmount;
+  const totalPaymentDueAfterWTax = currentDocEntry && String(header.totalPaymentDue || '').trim()
+    ? roundTo(parseNum(header.totalPaymentDue), numDec.totalPaymentDue)
+    : roundTo(totals.total - wtaxAmount, numDec.totalPaymentDue);
+
+  useEffect(() => {
+    if (!hasWTaxLiableLines || !withholdingTax.customerSubject || withholdingTax.rows.length) return;
+
+    const defaultRows = createDefaultWithholdingRows();
+    if (!defaultRows.length) return;
+
+    setWithholdingTax((prev) => (
+      prev.rows.length ? prev : { ...prev, rows: defaultRows }
+    ));
+  }, [createDefaultWithholdingRows, hasWTaxLiableLines, withholdingTax.customerSubject, withholdingTax.rows.length]);
 
   // Continue in next part...
 
@@ -1515,7 +1681,7 @@ function ARInvoicePage() {
   }, [header.vendor, vendorEffectiveBillToAddresses]);
 
   // ── vendor details ────────────────────────────────────────────────────────
-  const loadVendorDetails = async (code) => {
+  const loadVendorDetails = async (code, options = {}) => {
     if (!code) {
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setWithholdingTax({ open: false, customerSubject: false, defaultCode: '', allowedCodes: [], rows: [] });
@@ -1546,13 +1712,13 @@ function ARInvoicePage() {
         ship_to_addresses: shipToAddresses,
         bill_to_addresses: payToAddresses
       }));
-      setWithholdingTax({
+      setWithholdingTax((prev) => ({
         open: false,
         customerSubject: Boolean(customerWithholdingTax.subject),
         defaultCode: customerWithholdingTax.defaultCode || '',
         allowedCodes: customerWithholdingTax.allowedCodes || [],
-        rows: [],
-      });
+        rows: options.preserveWithholdingRows ? prev.rows : [],
+      }));
 
       if (contacts.length > 0) {
         setHeader(prev => ({
@@ -1878,7 +2044,7 @@ function ARInvoicePage() {
     }
   };
   
-  const handleSeriesChange = async (seriesValue) => {
+  const handleSeriesChange = async (seriesValue, seriesOptions = refData.series) => {
     if (!seriesValue || seriesValue === SAP_MANUAL_SERIES_VALUE) {
       setHeader(p => ({
         ...p,
@@ -1889,7 +2055,8 @@ function ARInvoicePage() {
       return;
     }
 
-    const selectedSeries = refData.series.find((series) => String(series.Series) === String(seriesValue));
+    const selectedSeries = (Array.isArray(seriesOptions) ? seriesOptions : [])
+      .find((series) => String(series.Series) === String(seriesValue));
     const seriesBranchId = String(selectedSeries?.BPLId ?? '').trim();
     const branchFromSeries = !seriesBranchId || seriesBranchId === '0' || seriesBranchId === '-1'
       ? ''
@@ -2072,7 +2239,7 @@ function ARInvoicePage() {
     if ((name === 'wTaxLiable' || name === 'wtaxLiable') && isYesValue(value) && withholdingTax.customerSubject) {
       setWithholdingTax((prev) => ({
         ...prev,
-        open: true,
+        open: false,
         rows: prev.rows.length ? recalcWithholdingRows(prev.rows) : createDefaultWithholdingRows(),
       }));
     }
@@ -2094,23 +2261,13 @@ function ARInvoicePage() {
       return;
     }
 
-    if (!withholdingTax.customerSubject) {
-      setPageState((prev) => ({ ...prev, error: 'Selected customer does not have withholding tax setup.', success: '' }));
-      return;
-    }
-
     setPageState((prev) => ({ ...prev, error: '', success: '' }));
     setWithholdingTax((prev) => ({
       ...prev,
       open: true,
       rows: prev.rows.length ? recalcWithholdingRows(prev.rows) : createDefaultWithholdingRows(),
     }));
-  }, [createDefaultWithholdingRows, header.vendor, isDocumentEditable, recalcWithholdingRows, withholdingTax.customerSubject]);
-
-  const handleDocumentContextMenu = (event) => {
-    event.preventDefault();
-    openWithholdingTaxTable();
-  };
+  }, [createDefaultWithholdingRows, header.vendor, isDocumentEditable, recalcWithholdingRows]);
 
   const openFreightModal = async () => {
     if (!isDocumentEditable) return;
@@ -2466,6 +2623,14 @@ function ARInvoicePage() {
 
   const openBatchModalForLine = useCallback((lineIndex, line) => {
     if (!isDocumentEditable) return;
+    if (isDeliveryBasedLine(line)) {
+      setPageState((prev) => ({
+        ...prev,
+        error: 'Batch assignment is not required for an A/R Invoice copied from Delivery.',
+        success: '',
+      }));
+      return;
+    }
     if (!line?.itemNo) {
       setPageState((prev) => ({ ...prev, error: 'Select an item before allocating batches.', success: '' }));
       return;
@@ -2861,6 +3026,13 @@ function ARInvoicePage() {
           return e;
         }
 
+        const openQty = parseNum(l.openQty ?? l.OpenQty ?? l.OpenQuantity);
+        if ((l.baseType || l.BaseType) && openQty > 0 && parseNum(l.quantity) - openQty > 0.000001) {
+          e.lines[i] = { ...(e.lines[i] || {}), quantity: `Quantity cannot exceed open quantity ${openQty}` };
+          e.form = 'Please copy only the remaining open quantity.';
+          return e;
+        }
+
         if (!l.hsnCode && !isUpdate) {
           console.log(`❌ Line ${i}: HSN Code is required`);
           e.lines[i] = { ...(e.lines[i] || {}), hsnCode: 'HSN Code is required' };
@@ -2895,7 +3067,7 @@ function ARInvoicePage() {
         
         console.log(`🔍 Line ${i}: Validating tax code:`, l.taxCode);
         const item = refData.items.find((candidate) => String(candidate.ItemCode || '') === String(l.itemNo || ''));
-        const batchManaged = isLineBatchManaged(l, item);
+        const batchManaged = !isDeliveryBasedLine(l) && isLineBatchManaged(l, item);
         if (batchManaged && !isUpdate) {
           if (!Array.isArray(l.batches) || l.batches.length === 0) {
             e.lines[i] = { ...(e.lines[i] || {}), batches: 'Batch selection is mandatory for batch-managed item' };
@@ -2972,18 +3144,6 @@ function ARInvoicePage() {
         return e;
       }
 
-      if (hasWTaxLiableLines) {
-        if (!withholdingTax.customerSubject) {
-          e.form = 'Selected customer does not have withholding tax setup.';
-          return e;
-        }
-
-        if (!wtaxRowsForTotals.some((row) => String(row.code || '').trim())) {
-          e.form = 'Select withholding tax code in the withholding tax table.';
-          return e;
-        }
-      }
-
       console.log('✅ Validation passed!');
       return e;
       
@@ -3041,10 +3201,15 @@ function ARInvoicePage() {
     const rawLines = copySource.lines;
     const newLines = rawLines.map((line, idx) => {
       const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, resolvedBranch);
+      const copyOpenQty = parseNum(normalizedLine.openQty);
+      const copiedQuantity = [15, 17].includes(Number(normalizedLine.baseType || baseType)) && copyOpenQty > 0
+        ? String(copyOpenQty)
+        : normalizedLine.quantity;
       const copiedLineUdfs = mergeUdfValues(line.line_udfs, line.lineUdfs, line.udf, normalizedLine.udf);
       return hydrateARInvoiceBatchLine({
         ...createLine(rowUdfDefinitions),
         ...normalizedLine,
+        quantity: copiedQuantity,
         branch: normalizeBranchSelection(normalizedLine.branch) || resolvedBranch,
         udf: {
           ...copiedLineUdfs,
@@ -3130,7 +3295,10 @@ function ARInvoicePage() {
       sourcePath: location.pathname,
       sourceSnapshot: {
         header,
-        lines: lines.map((line) => ({ ...line, stdDiscount: line.stdDiscount ?? line.discount ?? '' })),
+        lines: lines.map((line) => ({
+          ...line,
+          stdDiscount: line.stdDiscount ?? line.DiscountPercent ?? line.DiscPrcnt ?? line.discount ?? '',
+        })),
         headerUdfs,
       },
       restoreState: { arInvoiceDocEntry: currentDocEntry },
@@ -3144,6 +3312,10 @@ function ARInvoicePage() {
 
   const handleDuplicate = async () => {
     const duplicateDate = today();
+    const duplicateSeriesValue = String(header.series || '').trim();
+    const duplicateTransactionType = String(
+      header.transactionType || getTransactionTypeFromUdfs(headerUdfDefinitions, headerUdfs) || 'GST Tax Invoice'
+    ).trim();
     const firstLineWarehouse = normalizeWarehouse(lines[0] || {}, header);
     const duplicateBranch = normalizeBranchSelection(header.branch)
       || normalizeBranchSelection(lines[0]?.branch || lines[0]?.loc)
@@ -3176,20 +3348,31 @@ function ARInvoicePage() {
         documentDate: duplicateDate,
         deliveryDate: prev.deliveryDate || duplicateDate,
         branch: duplicateBranch,
-        series: '',
+        transactionType: duplicateTransactionType,
+        series: duplicateSeriesValue,
         nextNumber: '',
       }));
+      if (duplicateSeriesValue === SAP_MANUAL_SERIES_VALUE) {
+        handleSeriesChange(duplicateSeriesValue);
+        return;
+      }
       try {
-        const seriesResponse = await fetchDocumentSeries(duplicateDate, header.transactionType, duplicateBranch);
+        const seriesResponse = await fetchDocumentSeries(duplicateDate, duplicateTransactionType, duplicateBranch);
         const duplicateSeries = seriesResponse.data?.series || [];
         setRefData((prev) => ({ ...prev, series: duplicateSeries }));
 
-        const preferredSeries = resolvePreferredSeries(duplicateSeries, duplicateDate, '');
+        const preferredSeries = resolvePreferredSeries(
+          duplicateSeries,
+          duplicateDate,
+          duplicateSeriesValue,
+          duplicateBranch,
+          duplicateTransactionType,
+        );
         if (preferredSeries?.Series != null) {
-          handleSeriesChange(preferredSeries.Series);
+          handleSeriesChange(preferredSeries.Series, duplicateSeries);
         }
       } catch (_error) {
-        refreshDuplicateSeries(refData.series, '', handleSeriesChange);
+        refreshDuplicateSeries(refData.series, duplicateSeriesValue, handleSeriesChange);
       }
     }
   };
@@ -3218,13 +3401,6 @@ function ARInvoicePage() {
           refreshBatchAvailabilityForLines(hydratedLines);
           window.setTimeout(() => openBatchModal(lineIndex, hydratedLines[lineIndex]), 0);
         }
-      }
-      if (hasWTaxLiableLines && withholdingTax.customerSubject) {
-        setWithholdingTax((prev) => ({
-          ...prev,
-          open: true,
-          rows: prev.rows.length ? recalcWithholdingRows(prev.rows) : createDefaultWithholdingRows(),
-        }));
       }
       return;
     }
@@ -3261,6 +3437,8 @@ function ARInvoicePage() {
         header: prep,
         lines: lines.map((line) => ({
           ...line,
+          batches: isDeliveryBasedLine(line) ? [] : line.batches,
+          batchManaged: isDeliveryBasedLine(line) ? false : line.batchManaged,
           udf: buildARInvoiceLineUdfPayload(line, rowUdfDefinitions, formSettings),
         })),
         freightCharges: freightModal.freightCharges,
@@ -3309,10 +3487,10 @@ function ARInvoicePage() {
   // ── render ────────────────────────────────────────────────────────────────
   return (
     <form
+      ref={formRef}
       className={`del-page sap-document-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`}
       onSubmit={handleSubmit}
       onChangeCapture={markDirty}
-      onContextMenu={handleDocumentContextMenu}
     >
 
       {/* toolbar */}
@@ -3344,6 +3522,13 @@ function ARInvoicePage() {
           classPrefix="del"
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
+        />
+        <JournalEntryPreviewButton
+          documentType="arInvoice"
+          documentLabel="A/R Invoice"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges })}
+          disabled={pageState.posting}
         />
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
           <button
@@ -3812,7 +3997,7 @@ function ARInvoicePage() {
                           <td>Tax</td>
                           <td className="del-grid__cell--num"><input className="del-grid__input" value={fmtDec(totals.taxAmt, numDec.tax)} readOnly /></td>
                         </tr>
-                        {hasWTaxLiableLines && (
+                        {showWTaxSummaryRow && (
                           <tr>
                             <td>WTax Amount</td>
                             <td className="del-grid__cell--num" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -3966,6 +4151,7 @@ function ARInvoicePage() {
         availableBatches={batchModal.availableBatches}
         loading={batchModal.loading}
         error={batchModal.error}
+        workspaceRef={formRef}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />
@@ -4027,6 +4213,8 @@ function ARInvoicePage() {
         rows={withholdingModalRows}
         allowedCodes={withholdingTax.allowedCodes.length ? withholdingTax.allowedCodes : refData.withholding_tax_codes}
         baseAmount={wtaxBaseAmount}
+        allowManualRows={false}
+        workspaceRef={formRef}
         onRowsChange={(rows) => setWithholdingTax((prev) => ({
           ...prev,
           rows: recalcWithholdingRows(rows),

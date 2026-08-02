@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { matchesSapSearchText } from "../../utils/sapSearch";
 
 export default function SapLookupModal({
   open,
@@ -38,14 +39,13 @@ export default function SapLookupModal({
   );
   const activeRows = useMemo(() => {
     if (!Array.isArray(rows)) return baseRows;
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return baseRows;
+    if (!query.trim()) return baseRows;
 
     return baseRows.filter((row) =>
       visibleColumns.some((column) => {
         if (column.searchable === false || column.key === "rowNumber") return false;
         const value = typeof column.render === "function" ? column.render(row, 0) : row[column.key];
-        return String(value ?? "").toLowerCase().includes(normalizedQuery);
+        return matchesSapSearchText(value, query);
       })
     );
   }, [baseRows, query, rows, visibleColumns]);

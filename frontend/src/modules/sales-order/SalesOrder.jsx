@@ -13,7 +13,7 @@ import ElectronicDocumentsTab from './components/ElectronicDocumentsTab';
 import AttachmentsTab from './components/AttachmentsTab';
 import ReferenceDocumentsModal from './components/ReferenceDocumentsModal';
 import AddressModal from '../../components/document/AddressComponentModal';
-import { mapAddressFields } from '../../utils/documentAddress';
+import { mapAddressFields, normalizeBusinessPartnerAddress } from '../../utils/documentAddress';
 import TaxInfoModal from './components/TaxInfoModal';
 import StateSelectionModal from '../../components/common/StateSelectionModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
@@ -27,10 +27,17 @@ import PrintSalesOrderActions from './components/PrintSalesOrderActions';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import {
+    SAP_MANUAL_SERIES_VALUE,
+    isManualDocumentSeries,
+    isValidManualDocumentNumber,
+} from '../../utils/documentSeries';
 import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
@@ -42,7 +49,7 @@ import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../uti
 import { openLinkedBusinessPartner, openLinkedReferenceDocument } from '../../utils/sapLinkedNavigation';
 import { isRouteStateForActiveCompany } from '../../utils/companyStorageScope';
 import { copyToDocument } from '../../services/documentCopyService';
-import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
+import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
@@ -63,6 +70,7 @@ import {
     fetchSalesOrderLookupOptions,
     fetchSalesOrderReferenceDocumentLookup,
 } from '../../api/salesOrderApi';
+import { fetchSalesOrderForCopy as fetchSalesOrderForDeliveryCopy } from '../../api/deliveryApi';
 import { fetchHSNCodes, fetchHSNCodeFromItem } from '../../api/hsnCodeApi';
 import { salesOrderCopyFromApi, normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument, BASE_TYPE } from '../../api/copyFromApi';
 import {
@@ -291,7 +299,7 @@ const INIT_HEADER = {
     pickAndPackRemarks: '', bpChannelName: '', bpChannelContact: '',
     journalRemark: '', paymentTerms: '',
     paymentMethod: '', otherInstruction: '', discount: '', freight: '', tax: '',
-    totalPaymentDue: '', rounding: false, owner: '', purchaser: '',
+    totalPaymentDue: '', rounding: false, roundingAmount: '', owner: '', purchaser: '',
     placeOfSupply: '', currency: 'INR', useBillToForTax: false,
     billToAddress: '', billToCode: '', shipToAddress: '',
     shipToAddressComponents: null, billToAddressComponents: null,
@@ -533,6 +541,36 @@ function SalesOrder() {
     const isUpdateMode = Boolean(currentDocEntry);
     const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
     const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+    const isSalesOrderHeaderOpen = String(header.status || '').trim().toLowerCase() === 'open';
+    const copyQuantityChecks = (lines || [])
+        .filter((line = {}) => String(line.itemNo || line.ItemCode || '').trim())
+        .map((line = {}) => {
+            const rawOpenQty = line.openQty ?? line.OpenQty ?? line.OpenQuantity;
+            if (rawOpenQty !== undefined && rawOpenQty !== null && String(rawOpenQty).trim() !== '') {
+                return parseNum(rawOpenQty) > 0;
+            }
+
+            const lineStatus = String(line.lineStatus ?? line.LineStatus ?? '').trim().toUpperCase();
+            if (lineStatus && !['O', 'OPEN'].includes(lineStatus)) return false;
+
+            return null;
+        });
+    const hasKnownCopyQuantityState = copyQuantityChecks.some((value) => value !== null);
+    const hasOpenCopyQuantity = Boolean(currentDocEntry) && lines.some((line = {}) => {
+        const rawOpenQty = line.openQty ?? line.OpenQty ?? line.OpenQuantity;
+        if (rawOpenQty !== undefined && rawOpenQty !== null && String(rawOpenQty).trim() !== '') {
+            return parseNum(rawOpenQty) > 0;
+        }
+
+        const lineStatus = String(line.lineStatus ?? line.LineStatus ?? '').trim().toUpperCase();
+        if (lineStatus && !['O', 'OPEN'].includes(lineStatus)) return false;
+
+        return parseNum(line.quantity ?? line.Quantity) > 0;
+    });
+    const canAttemptCopyTo = Boolean(currentDocEntry) && (
+        hasOpenCopyQuantity ||
+        (isSalesOrderHeaderOpen && !hasKnownCopyQuantityState)
+    );
     const primaryActionLabel = pageState.posting
         ? 'Saving...'
         : isUpdateMode
@@ -558,6 +596,13 @@ function SalesOrder() {
         setActiveTab(draft.activeTab || 'Contents');
         setIsDirty(Boolean(draft.isDirty));
         setReferenceDocumentsModal(Boolean(draft.referenceDocumentsModalOpen));
+        if (Array.isArray(draft.freightCharges)) {
+            setFreightModal((prev) => ({
+                ...prev,
+                freightCharges: draft.freightCharges,
+                loading: false,
+            }));
+        }
 
         const clearDraftStateTimer = window.setTimeout(() => {
             restoringDraftRef.current = false;
@@ -581,10 +626,16 @@ function SalesOrder() {
                 : referenceDocuments,
             referenceDocumentsChanged: overrides.referenceDocumentsChanged ?? referenceDocumentsChanged,
             referenceDocumentsModalOpen: overrides.referenceDocumentsModalOpen ?? referenceDocumentsModal,
+            freightCharges: freightModal.freightCharges,
             activeTab,
             isDirty,
         },
-    }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
+    }), [activeTab, currentDocEntry, freightModal.freightCharges, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
+
+    useDocumentDraftTask({
+        buildDraftState: buildLinkedRestoreState,
+        title: 'Sales Order',
+    });
 
     const openBusinessPartnerLink = useCallback(() => {
         openLinkedBusinessPartner({
@@ -913,6 +964,8 @@ function SalesOrder() {
 
                 setRefData(prev => ({ ...prev, series: availableSeries }));
 
+                if (isManualDocumentSeries(header.series)) return;
+
                 if (!availableSeries.length) {
                     setHeader(prev => ({ ...prev, series: '', nextNumber: '' }));
                     return;
@@ -1039,6 +1092,9 @@ function SalesOrder() {
                     bpChannelContact: so.header?.bpChannelContact || '',
                     journalRemark: so.header?.journalRemark || '',
                     paymentMethod: so.header?.paymentMethod || '',
+                    rounding: Boolean(so.header?.rounding),
+                    roundingAmount: so.header?.roundingAmount || '',
+                    totalPaymentDue: so.header?.totalPaymentDue || '',
                     transactionCategory: so.header?.transactionCategory || '',
                     taxFormNo: so.header?.taxFormNo || '',
                     dutyStatus: so.header?.dutyStatus || 'Y',
@@ -1329,7 +1385,12 @@ function SalesOrder() {
         taxAmt = roundTo(taxAmt, numDec.tax);
         if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
         taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-        return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+        const rounding = calculateDocumentRounding(
+            discSub + freight + taxAmt,
+            header.rounding,
+            numDec.totalPaymentDue,
+        );
+        return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, ...rounding, taxBreakdown: Array.from(taxMap.values()) };
     };
 
     const totals = calcTotals();
@@ -1340,6 +1401,14 @@ function SalesOrder() {
         header,
         total: totals.total,
     });
+    const totalsForDisplay = currentDocEntry && !isDirty
+        ? {
+            ...totals,
+            taxAmt: header.tax !== '' ? parseNum(header.tax) : totals.taxAmt,
+            roundingAmount: header.roundingAmount !== '' ? parseNum(header.roundingAmount) : totals.roundingAmount,
+            total: header.totalPaymentDue !== '' ? parseNum(header.totalPaymentDue) : totals.total,
+        }
+        : totals;
 
     // ── GST determination logic ───────────────────────────────────────────────
     const determineGSTType = (gstState) => {
@@ -1589,10 +1658,16 @@ function SalesOrder() {
         try {
             const r = await fetchSalesOrderCustomerDetails(code);
 
-            const contacts = r.data.contacts || [];
-            const payToAddresses = r.data.pay_to_addresses || [];
-            const shipToAddresses = r.data.ship_to_addresses || [];
-            const billToAddresses = r.data.bill_to_addresses || [];
+            const normalizeAddresses = (rows) => (Array.isArray(rows) ? rows : [])
+                .map((address) => normalizeBusinessPartnerAddress(address, code))
+                .filter((address) => address.Address);
+            const contacts = (Array.isArray(r.data.contacts) ? r.data.contacts : []).map((contact) => ({
+                ...contact,
+                CardCode: String(contact.CardCode || code).trim(),
+            }));
+            const payToAddresses = normalizeAddresses(r.data.pay_to_addresses);
+            const shipToAddresses = normalizeAddresses(r.data.ship_to_addresses);
+            const billToAddresses = normalizeAddresses(r.data.bill_to_addresses);
             setRefData(p => ({
                 ...p,
                 contacts: contacts,
@@ -1763,6 +1838,12 @@ function SalesOrder() {
 
     const handleSeriesChange = async (seriesValue) => {
         if (!seriesValue) return;
+
+        if (isManualDocumentSeries(seriesValue)) {
+            setHeader(p => ({ ...p, series: SAP_MANUAL_SERIES_VALUE, nextNumber: '' }));
+            setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+            return;
+        }
 
         setPageState(p => ({ ...p, seriesLoading: true }));
         setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
@@ -2530,13 +2611,51 @@ function SalesOrder() {
 
     // ── Copy To Handler ────────────────────────────────────────────────────────
     const handleCopyTo = async (targetType) => {
+        if (currentDocEntry && hasKnownCopyQuantityState && !hasOpenCopyQuantity) {
+            setPageState(p => ({
+                ...p,
+                success: '',
+                error: 'This Sales Order has no open quantity left. Use the related Delivery to create the A/R Invoice.',
+            }));
+            return;
+        }
+
+        let sourceSnapshot = { header, lines, headerUdfs };
+        if (targetType === 'delivery' && currentDocEntry) {
+            try {
+                const response = await fetchSalesOrderForDeliveryCopy(currentDocEntry);
+                const copyDocument = response.data?.sales_order || response.data?.salesOrder || response.data?.document || response.data || {};
+                const copyLines = Array.isArray(copyDocument.lines) ? copyDocument.lines : [];
+                if (!copyLines.length) {
+                    setPageState(p => ({
+                        ...p,
+                        success: '',
+                        error: 'This Sales Order is open, but it has no open item quantity available for Delivery.',
+                    }));
+                    return;
+                }
+                sourceSnapshot = {
+                    header: copyDocument.header || header,
+                    lines: copyLines,
+                    headerUdfs: copyDocument.headerUdfs || copyDocument.header_udfs || headerUdfs,
+                };
+            } catch (error) {
+                setPageState(p => ({
+                    ...p,
+                    success: '',
+                    error: getErrMsg(error, 'Could not load open Sales Order lines for Delivery.'),
+                }));
+                return;
+            }
+        }
+
         await copyToDocument({
             sourceDocType: 'salesOrder',
             targetType,
             sourceDocEntry: currentDocEntry,
             sourceDocNo: header.docNo,
             sourcePath: '/sales-order',
-            sourceSnapshot: { header, lines, headerUdfs },
+            sourceSnapshot,
             restoreState: { salesOrderDocEntry: currentDocEntry },
             navigate,
             upsertTask,
@@ -2550,6 +2669,7 @@ function SalesOrder() {
     };
 
     const handleDuplicate = () => {
+        const duplicateDate = today();
         const duplicated = duplicateDocumentInPlace({
             currentDocEntry,
             header,
@@ -2572,7 +2692,18 @@ function SalesOrder() {
         });
 
         if (duplicated) {
-            refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+            setHeader(prev => ({
+                ...prev,
+                postingDate: duplicateDate,
+                documentDate: duplicateDate,
+                deliveryDate: duplicateDate,
+                series: '',
+                nextNumber: '',
+            }));
+            const defaultSeries = resolvePreferredSeries(refData.series, duplicateDate, '');
+            if (defaultSeries?.Series != null) {
+                handleSeriesChange(defaultSeries.Series);
+            }
         }
     };
 
@@ -2600,6 +2731,12 @@ function SalesOrder() {
 
         const isUpdate = !!currentDocEntry;
         const e = { header: {}, lines: {}, form: '' };
+
+        if (!isUpdate && isManualDocumentSeries(header.series) && !isValidManualDocumentNumber(header.nextNumber)) {
+            e.header.nextNumber = 'Enter a positive document number for Manual series.';
+            e.form = 'Please correct the highlighted fields.';
+            return e;
+        }
 
         if (!isUpdate) {
             const vc = String(header.vendor || '').trim();
@@ -3041,17 +3178,22 @@ function SalesOrder() {
                     <button
                         type="button"
                         className="so-btn"
-                        disabled={!currentDocEntry}
+                        disabled={!canAttemptCopyTo}
+                        title={!currentDocEntry
+                            ? 'Open a saved sales order before using Copy To.'
+                            : hasKnownCopyQuantityState && !hasOpenCopyQuantity
+                                ? 'This Sales Order has no open quantity left. Create the A/R Invoice from the related Delivery.'
+                                : 'Copy To'}
                         onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            if (!currentDocEntry) return;
+                            if (!canAttemptCopyTo) return;
                             const dropdown = e.currentTarget.parentElement;
                             const isActive = dropdown.classList.contains('active');
                             document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
                             if (!isActive) dropdown.classList.add('active');
                         }}
-                        style={{ opacity: !currentDocEntry ? 0.5 : 1 }}
+                        style={{ opacity: !canAttemptCopyTo ? 0.5 : 1 }}
                     >
                         Copy To ▼
                     </button>
@@ -3087,7 +3229,7 @@ function SalesOrder() {
                 </div>
             )}
 
-            <fieldset className="so-fieldset" disabled={!isDocumentEditable} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+            <div className="so-fieldset" style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
             <div className={`sap-document-layout so-layout${isRightSidebarOpen ? ' is-sidebar-open' : ' sap-document-layout--no-udf'}`}>
                 <div className="sap-document-main so-layout__main">
 
@@ -3135,7 +3277,7 @@ function SalesOrder() {
 
                                         <fieldset
                                             className="so-fieldset"
-                                            disabled={!hasBuyerCode}
+                                            disabled={!isDocumentEditable || !hasBuyerCode}
                                             style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
                                         >
                                         {/* Contact Person */}
@@ -3255,6 +3397,7 @@ function SalesOrder() {
                                 <div className="so-header-column">
                                     <fieldset
                                         className="so-fieldset"
+                                        disabled={!isDocumentEditable}
                                         style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
                                     >
                                     <div className="so-field-grid so-field-grid--single">
@@ -3270,6 +3413,7 @@ function SalesOrder() {
                                                 disabled={!!currentDocEntry || pageState.seriesLoading}
                                             >
                                                 <option value="">Select Series</option>
+                                                <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
                                                 {refData.series.map(s => (
                                                     <option key={s.Series} value={s.Series}>
                                                         {s.SeriesName}
@@ -3283,10 +3427,13 @@ function SalesOrder() {
                                             <label className="so-field__label">{getHeaderFieldLabel(headerFieldMap, 'nextNumber', 'Number')}</label>
                                             <input
                                                 name="nextNumber"
-                                                className="so-field__input"
+                                                className={`so-field__input${valErrors.header.nextNumber ? ' so-field__input--error' : ''}`}
                                                 value={currentDocEntry ? (header.docNo || header.nextNumber || '') : (header.nextNumber || '')}
-                                                readOnly
-                                                style={{ background: '#f0f2f5' }}
+                                                onChange={handleHeaderChange}
+                                                readOnly={!!currentDocEntry || !isManualDocumentSeries(header.series)}
+                                                inputMode="numeric"
+                                                style={{ background: !currentDocEntry && isManualDocumentSeries(header.series) ? '#fff' : '#f0f2f5' }}
+                                                title={isManualDocumentSeries(header.series) ? 'Enter the manual document number' : 'Number will be assigned from the selected series'}
                                             />
                                         </div>
 
@@ -3337,11 +3484,6 @@ function SalesOrder() {
                         </div>
 
                         {/* ══ TABS ══════════════════════════════════════════════════════ */}
-                        <fieldset
-                            className="so-fieldset"
-                            disabled={!hasBuyerCode}
-                            style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
-                        >
                         <div className="so-tabs">
                             {TAB_NAMES.map(t => (
                                 <button
@@ -3354,6 +3496,12 @@ function SalesOrder() {
                                 </button>
                             ))}
                         </div>
+
+                        <fieldset
+                            className="so-fieldset"
+                            disabled={!isDocumentEditable}
+                            style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
+                        >
 
                         {/* ══ TAB CONTENT ═══════════════════════════════════════════════ */}
                         {activeTab === 'Contents' && (
@@ -3531,12 +3679,21 @@ function SalesOrder() {
                                                     </td>
                                                 </tr>
                                                 <tr>
+                                                    <td>
+                                                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0 }}>
+                                                            <input type="checkbox" name="rounding" checked={header.rounding} onChange={handleHeaderChange} />
+                                                            Rounding
+                                                        </label>
+                                                    </td>
+                                                    <td className="so-grid__cell--num"><input className="so-grid__input" value={fmtDec(totalsForDisplay.roundingAmount, numDec.totalPaymentDue)} readOnly /></td>
+                                                </tr>
+                                                <tr>
                                                     <td>Tax</td>
-                                                    <td className="so-grid__cell--num"><input className="so-grid__input" value={fmtDec(totals.taxAmt, numDec.tax)} readOnly /></td>
+                                                    <td className="so-grid__cell--num"><input className="so-grid__input" value={fmtDec(totalsForDisplay.taxAmt, numDec.tax)} readOnly /></td>
                                                 </tr>
                                                 <tr style={{ borderTop: '2px solid #a0aab4' }}>
                                                     <td style={{ fontWeight: 700, color: '#003366' }}>Total</td>
-                                                    <td className="so-grid__cell--num" style={{ fontWeight: 700, color: '#003366' }}><input className="so-grid__input" style={{ fontWeight: 700, color: '#003366' }} value={fmtDec(totals.total, numDec.totalPaymentDue)} readOnly /></td>
+                                                    <td className="so-grid__cell--num" style={{ fontWeight: 700, color: '#003366' }}><input className="so-grid__input" style={{ fontWeight: 700, color: '#003366' }} value={fmtDec(totalsForDisplay.total, numDec.totalPaymentDue)} readOnly /></td>
                                                 </tr>
                                             </tbody>
                                         </table>
@@ -3618,17 +3775,22 @@ function SalesOrder() {
                                     <button
                                         type="button"
                                         className="so-btn"
-                                        disabled={!currentDocEntry}
+                                        disabled={!canAttemptCopyTo}
+                                        title={!currentDocEntry
+                                            ? 'Open a saved sales order before using Copy To.'
+                                            : hasKnownCopyQuantityState && !hasOpenCopyQuantity
+                                                ? 'This Sales Order has no open quantity left. Create the A/R Invoice from the related Delivery.'
+                                                : 'Copy To'}
                                         onClick={(e) => {
                                             e.preventDefault();
                                             e.stopPropagation();
-                                            if (!currentDocEntry) return;
+                                            if (!canAttemptCopyTo) return;
                                             const dropdown = e.currentTarget.parentElement;
                                             const isActive = dropdown.classList.contains('active');
                                             document.querySelectorAll('.so-dropdown').forEach(d => d.classList.remove('active'));
                                             if (!isActive) dropdown.classList.add('active');
                                         }}
-                                        style={{ opacity: !currentDocEntry ? 0.5 : 1 }}
+                                        style={{ opacity: !canAttemptCopyTo ? 0.5 : 1 }}
                                     >
                                         Copy To ▼
                                     </button>
@@ -3673,7 +3835,7 @@ function SalesOrder() {
                     />
                 </div>
 
-            </fieldset>
+            </div>
 
             {/* Address Component Modal */}
             <AddressModal

@@ -1,5 +1,6 @@
 const db = require('./dbService');
 const arInvoiceDb = require('./arInvoiceDbService');
+const arCreditMemoDb = require('./arCreditMemoDbService');
 const masterDataDbService = require('./masterDataDbService');
 const hsnCodeDbService = require('./hsnCodeDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
@@ -98,7 +99,7 @@ const lookupServiceItems = async () => {
     ItemCode: row.ItemCode || '',
     ItemName: row.ItemName || '',
     InStock: row.OnHand ?? 0,
-    WTaxLiable: String(row.WTLiable || '').toUpperCase() === 'N' ? 'No' : 'Yes',
+    WTaxLiable: ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(String(row.WTLiable || '').trim().toUpperCase()) ? 'Yes' : 'No',
   }));
 };
 
@@ -689,6 +690,9 @@ const getServiceDocumentForCopy = async ({ headerTable, lineTable, docEntry, bas
 const getServiceARCreditMemoDocumentSeries = async (options = {}) => {
   const date = typeof options === 'string' ? options : options.date;
   const branch = typeof options === 'object' && options ? options.branch : '';
+  const transactionType = typeof options === 'object' && options ? options.transactionType : '';
+  return arCreditMemoDb.getDocumentSeries(date, transactionType || 'GST Tax Invoice', branch);
+/*
   const targetDate = date || new Date().toISOString().split('T')[0];
   const [seriesColumns, numberingColumns] = await Promise.all([
     getTableColumns('NNM1'),
@@ -776,6 +780,7 @@ const getServiceARCreditMemoDocumentSeries = async (options = {}) => {
   return {
     series: yearNamedSeries.length ? yearNamedSeries : (hasFinancialYearNamedSeries ? [] : mappedSeries),
   };
+*/
 };
 
 const getNextNumber = async (series) => {

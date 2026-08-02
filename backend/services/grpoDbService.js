@@ -3,9 +3,21 @@
  * Reads data directly from SAP B1 SQL Server database
  */
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
+const { getPlaceOfSupplyUdfValue } = require('./placeOfSupplyUtils');
+
+const buildCopyRemarks = (sourceRemarks, baseRemark) => {
+  const remarks = String(sourceRemarks || '').trim();
+  const base = String(baseRemark || '').trim();
+
+  if (!remarks) return base;
+  if (!base || remarks.toLowerCase().includes(base.toLowerCase())) return remarks;
+
+  return `${remarks}\n${base}`;
+};
 
 const safe = async (promise) => {
   try {
@@ -463,29 +475,8 @@ const getContactsByVendor = async (cardCode) => {
 };
 
 const getAddressesByVendor = async (cardCode) => {
-  const result = await safe(db.query(`
-    SELECT T0.*,
-      T0.CardCode,
-      T0.Address,
-      T0.AdresType,
-      T0.Street,
-      T0.StreetNo,
-      T0.Block,
-      T0.Building,
-      T0.Address2,
-      T0.Address3,
-      T0.City,
-      T0.County,
-      T0.State,
-      T0.ZipCode,
-      T0.Country,
-      T0.GSTRegnNo AS GSTIN
-    FROM CRD1 T0
-    WHERE T0.CardCode = @cardCode
-    ORDER BY T0.Address
-  `, { cardCode }));
-
-  return result;
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'GRPO' });
+  return addresses;
 };
 
 // ── PURCHASE ORDERS (FOR COPY FROM) ───────────────────────────────────────────
@@ -503,6 +494,14 @@ const getOpenPurchaseOrders = async (vendorCode = null) => {
         T0.DocTotal
       FROM OPOR T0
       WHERE T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND EXISTS (
+          SELECT 1
+          FROM POR1 T1
+          WHERE T1.DocEntry = T0.DocEntry
+            AND T1.LineStatus = 'O'
+            AND ISNULL(T1.OpenQty, 0) > 0
+        )
         AND T0.CardCode = @vendorCode
       ORDER BY T0.DocEntry DESC
     `
@@ -517,6 +516,14 @@ const getOpenPurchaseOrders = async (vendorCode = null) => {
         T0.DocTotal
       FROM OPOR T0
       WHERE T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND EXISTS (
+          SELECT 1
+          FROM POR1 T1
+          WHERE T1.DocEntry = T0.DocEntry
+            AND T1.LineStatus = 'O'
+            AND ISNULL(T1.OpenQty, 0) > 0
+        )
       ORDER BY T0.DocEntry DESC
     `;
 
@@ -548,6 +555,7 @@ const getPurchaseOrderForCopy = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
@@ -646,10 +654,15 @@ const getPurchaseOrderForCopy = async (docEntry) => {
       buyerLocation: getUdfValue(headerUdfs, ['U_ShipLocation', 'U_SHIPLOCATION']) || '',
       journalRemark: header.JournalRemark || '',
       discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+      rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+      roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
       freight: header.Freight != null ? String(header.Freight) : '',
       tax: header.Tax != null ? String(header.Tax) : '',
       totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
-      otherInstruction: header.DocNum ? `Based On Purchase Orders ${header.DocNum}.` : (header.Remarks || ''),
+      otherInstruction: buildCopyRemarks(
+        header.Remarks,
+        header.DocNum ? `Based On Purchase Orders ${header.DocNum}.` : ''
+      ),
     },
     header_udfs: headerUdfs,
     lines: lineRows.map(l => {
@@ -789,6 +802,7 @@ const getGRPO = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
@@ -816,15 +830,18 @@ const getGRPO = async (docEntry) => {
     getLineUdfValues({ tableId: 'PDN1', keyValue: docEntry }),
   ]);
 
-  const lineRows = await safe(db.query(`
+  const lineResult = await db.query(`
     SELECT 
       T0.LineNum,
       T0.ItemCode,
       T0.Dscription AS ItemDescription,
       T0.Quantity,
+      T0.OpenQty,
+      T0.LineStatus,
       COALESCE(T0.PriceBefDi, T0.Price) AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
+      'N' AS WTLiable,
       T0.LineTotal,
       T0.VatSum AS TaxAmount,
       T0.Commission AS CommissionPercent,
@@ -836,7 +853,14 @@ const getGRPO = async (docEntry) => {
     FROM PDN1 T0
     WHERE T0.DocEntry = @docEntry
     ORDER BY T0.LineNum
-  `, { docEntry }));
+  `, { docEntry });
+  const lineRows = lineResult.recordset || [];
+  if (!lineRows.length) {
+    const error = new Error(`Goods Receipt PO ${docEntry} exists but its content lines could not be loaded.`);
+    error.code = 'GRPO_LINES_NOT_LOADED';
+    error.statusCode = 500;
+    throw error;
+  }
 
   const itemCodes = lineRows.map(l => l.ItemCode).filter(Boolean);
   let itemInfoMap = {};
@@ -846,7 +870,8 @@ const getGRPO = async (docEntry) => {
       const itemRows = await safe(db.query(`
         SELECT T0.ItemCode,
                COALESCE(CHP.ChapterID, T0.SWW, '') AS HSNCode,
-               T0.ManBtchNum AS BatchManaged
+               T0.ManBtchNum AS BatchManaged,
+               T0.WTLiable AS ItemWTLiable
         FROM OITM T0
         LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID
         WHERE T0.ItemCode IN (${itemCodes.map((_, i) => `@item${i}`).join(',')})
@@ -856,6 +881,7 @@ const getGRPO = async (docEntry) => {
         acc[row.ItemCode] = {
           hsnCode: row.HSNCode || '',
           batchManaged: row.BatchManaged === 'Y',
+          wtaxLiable: String(row.ItemWTLiable || '').toUpperCase() === 'Y',
         };
         return acc;
       }, {});
@@ -918,15 +944,19 @@ const getGRPO = async (docEntry) => {
         payTo: header.PayToAddress || '',
         payToAddress: header.PayToAddress || '',
         buyerLocation: getUdfValue(headerUdfs, ['U_ShipLocation', 'U_SHIPLOCATION']) || '',
+        placeOfSupply: getPlaceOfSupplyUdfValue(headerUdfs),
         otherInstruction: header.Remarks || '',
         discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+        rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         freight: header.Freight != null ? String(header.Freight) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
       },
       lines: lineRows.map(l => {
-        const itemInfo = itemInfoMap[l.ItemCode] || { hsnCode: '', batchManaged: false };
+        const itemInfo = itemInfoMap[l.ItemCode] || { hsnCode: '', batchManaged: false, wtaxLiable: false };
         return ({
+        lineNum: l.LineNum,
         baseEntry: l.BaseEntry || null,
         baseType: l.BaseType || null,
         baseLine: l.BaseLine || null,
@@ -934,9 +964,12 @@ const getGRPO = async (docEntry) => {
         itemDescription: l.ItemDescription || '',
         hsnCode: itemInfo.hsnCode,
         quantity: l.Quantity != null ? String(l.Quantity) : '',
+        openQty: l.OpenQty != null ? String(l.OpenQty) : '',
+        lineStatus: String(l.LineStatus || '').toUpperCase() === 'O' ? 'Open' : 'Closed',
         unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
         stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
         taxCode: l.TaxCode || '',
+        wtaxLiable: itemInfo.wtaxLiable ? 'Y' : 'N',
         total: l.LineTotal != null ? String(l.LineTotal) : '',
         totalBeforeTax: l.LineTotal != null ? String(l.LineTotal) : '',
         totalLC: l.LineTotal != null ? String(l.LineTotal) : '',
@@ -1023,34 +1056,64 @@ const getNextBatchNumber = async ({ prefix = 'JKL' } = {}) => {
 
 // ── DOCUMENT SERIES ───────────────────────────────────────────────────────────
 
-const getDocumentSeries = async () => {
-  const result = await safe(db.query(`
+const keepSapVisibleNumberingSeries = (series = []) => {
+  const rows = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (rows.length <= 1) return rows;
+
+  const defaultRows = rows.filter((row) => Number(row.IsDefault || 0) === 1);
+  if (defaultRows.length) return defaultRows;
+
+  return [rows[0]];
+};
+
+const getDocumentSeries = async (targetDate = null) => {
+  const normalizedTargetDate = String(targetDate || '').trim();
+  const effectiveTargetDate = /^\d{4}-\d{2}-\d{2}$/.test(normalizedTargetDate)
+    ? normalizedTargetDate
+    : new Date().toISOString().split('T')[0];
+  const targetDateSql = effectiveTargetDate.replace(/'/g, "''");
+  const result = await db.query(`
     SELECT
       T0.Series,
       T0.SeriesName,
       T0.Indicator,
       T0.NextNumber,
-      FY.FinancialYear,
-      FY.FromDate,
-      FY.ToDate,
+      T1.Name AS FinancialYear,
+      T1.F_RefDate AS FromDate,
+      T1.T_RefDate AS ToDate,
+      CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault
+    FROM NNM1 T0
+    INNER JOIN OFPR T1 ON T1.Indicator = T0.Indicator
+    LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
+    WHERE T0.ObjectCode = '20'
+      AND T0.Locked = 'N'
+      AND CAST('${targetDateSql}' AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate
+    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName, T0.Series
+  `);
+
+  const activeRows = result.recordset || [];
+  if (activeRows.length) {
+    return { series: keepSapVisibleNumberingSeries(activeRows) };
+  }
+
+  const fallback = await db.query(`
+    SELECT
+      T0.Series,
+      T0.SeriesName,
+      T0.Indicator,
+      T0.NextNumber,
+      NULL AS FinancialYear,
+      NULL AS FromDate,
+      NULL AS ToDate,
       CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault
     FROM NNM1 T0
     LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
-    LEFT JOIN (
-      SELECT
-        Indicator,
-        MAX(Name) AS FinancialYear,
-        MIN(F_RefDate) AS FromDate,
-        MAX(T_RefDate) AS ToDate
-      FROM OFPR
-      GROUP BY Indicator
-    ) FY ON FY.Indicator = T0.Indicator
     WHERE T0.ObjectCode = '20'
       AND T0.Locked = 'N'
-    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName
-  `));
+    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName, T0.Series
+  `);
 
-  return { series: result };
+  return { series: keepSapVisibleNumberingSeries(fallback.recordset || []) };
 };
 
 const getNextNumber = async (series) => {

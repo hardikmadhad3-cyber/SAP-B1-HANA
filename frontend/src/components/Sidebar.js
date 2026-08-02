@@ -4,6 +4,11 @@ import { useAuth } from '../auth/AuthContext';
 import { useSapWindowTaskbar, useSapWindowTaskbarActions } from './SapWindowTaskbarContext';
 import { normalizePath } from '../auth/routeUtils';
 import { restoreTargetWindowState } from '../utils/copyToState';
+import {
+  createMenuWindowRouteState,
+  supportsMultipleMenuWindows,
+} from '../utils/menuWindowNavigation';
+import { matchesSapSearchText } from '../utils/sapSearch';
 import '../styles/sidebar.css';
 
 const DASHBOARD_PATH = '/dashboard';
@@ -544,21 +549,37 @@ export default function Sidebar() {
     () => flattenSidebarSearchItems(sidebarMenus),
     [sidebarMenus],
   );
-  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const normalizedSearchQuery = searchQuery.trim();
   const sidebarSearchResults = normalizedSearchQuery
     ? sidebarSearchItems
-        .filter((item) => item.searchText.includes(normalizedSearchQuery))
+        .filter((item) => matchesSapSearchText(item.searchText, normalizedSearchQuery))
         .slice(0, 10)
     : [];
 
-  const restoreExistingTaskForPath = (menuPath) => {
+  const findExistingTaskForPath = (menuPath) => {
     const normalizedMenuPath = normalizePath(menuPath);
-    const matchingTask = [...(taskbar?.tasks || [])]
+    return [...(taskbar?.tasks || [])]
       .reverse()
       .find((task) => getComparableTaskPath(task?.path) === normalizedMenuPath);
+  };
 
+  const restoreExistingTaskForPath = (menuPath) => {
+    const matchingTask = findExistingTaskForPath(menuPath);
     if (!matchingTask) return false;
     return restoreTask(matchingTask);
+  };
+
+  const openNewWindowForExistingTask = (menuPath, matchingTask) => {
+    if (!matchingTask || !supportsMultipleMenuWindows(menuPath)) return false;
+
+    const routeState = createMenuWindowRouteState({
+      path: menuPath,
+      title: matchingTask.title || 'A/P Credit Memo',
+      company,
+    });
+    restoreTargetWindowState(menuPath, routeState.sapWindow.id);
+    navigate(menuPath, { state: routeState });
+    return true;
   };
 
   const handleNavigate = (event, menuPath) => {
@@ -575,6 +596,10 @@ export default function Sidebar() {
     }
 
     event.preventDefault();
+    const matchingTask = findExistingTaskForPath(menuPath);
+    if (openNewWindowForExistingTask(menuPath, matchingTask)) {
+      return;
+    }
     if (restoreExistingTaskForPath(menuPath)) {
       return;
     }
@@ -599,6 +624,9 @@ export default function Sidebar() {
     const normalizedPath = normalizePath(menuPath);
     if (isAdminMenuPath(normalizedPath)) {
       window.open(normalizedPath, '_blank', 'noopener,noreferrer');
+    } else if (openNewWindowForExistingTask(normalizedPath, findExistingTaskForPath(normalizedPath))) {
+      setSearchQuery('');
+      return;
     } else if (restoreExistingTaskForPath(normalizedPath)) {
       setSearchQuery('');
       return;

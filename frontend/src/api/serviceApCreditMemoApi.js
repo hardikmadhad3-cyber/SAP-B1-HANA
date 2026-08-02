@@ -11,10 +11,11 @@ export const fetchServiceAPCreditMemoVendorDetails = (vendorCode) =>
 export const fetchServiceAPCreditMemoVendorOptions = (params = {}) =>
   client.get(`${API_BASE}/vendors/search`, { params });
 
-export const fetchServiceAPCreditMemoSeries = (date = '', branch = '') =>
+export const fetchServiceAPCreditMemoSeries = (date = '', transactionType = '', branch = '') =>
   client.get(`${API_BASE}/series`, {
     params: {
       ...(date ? { date } : {}),
+      ...(transactionType ? { transactionType } : {}),
       ...(branch ? { branch } : {}),
     },
   });
@@ -35,7 +36,8 @@ export const updateServiceAPCreditMemo = (docEntry, data) =>
   client.patch(`${API_BASE}/${encodeURIComponent(docEntry)}`, data);
 
 export const generateServiceAPCreditMemoJournalEntry = ({ docEntry, payload, persist = false }) =>
-  client.post('/journal-entry/generate-from-ap-credit-memo', {
+  client.post('/journal-entry/preview', {
+    documentType: 'serviceApCreditMemo',
     docEntry,
     payload,
     persist,

@@ -3,9 +3,14 @@
  * Mirrors salesOrderDbService.js but targets OQUT/QUT1 tables (ObjectCode = '23').
  */
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const { createMarketingDocumentLineLookupRepository } = require('./marketingDocumentLineLookupDbService');
+const {
+  buildAddressExtensionSelectFields,
+  buildDocumentAddressComponents,
+} = require('./documentAddressDbUtils');
 const {
   escapeLike,
   normalizeTopLimit,
@@ -337,6 +342,9 @@ const SALES_QUOTATION_MATRIX_COLUMN_DEFS = [
   { key: 'stdDiscount', label: 'Discount %', minWidth: 95, numeric: true, sapField: 'DiscPrcnt', sapColumnIds: ['15', 'DiscPrcnt', 'DiscountPercent', 'Discount %', 'Disc%'] },
   { key: 'taxCode', label: 'Tax Code', minWidth: 115, sapField: 'TaxCode', alternativeFields: ['VatGroup'], sapColumnIds: ['160', '234000377', 'TaxCode', 'VatGroup', 'Tax Code'] },
   { key: 'totalLC', label: 'Total (LC)', minWidth: 115, readOnly: true, numeric: true, sapField: 'LineTotal', sapColumnIds: ['160', '17', 'GTotal', 'LineTotal', 'Total', 'Total (LC)'] },
+  { key: 'U_PackingType', label: 'Packing-Type', minWidth: 135, isUdf: true, sapField: 'U_PackingType', alternativeFields: ['U_PACKINGTYPE', 'U_Packing_Type'], sapColumnIds: ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'Packing-Type'] },
+  { key: 'taxCodeRepeat', label: 'TaxCode', minWidth: 110, valueKey: 'U_TAXCODE', rendererKey: 'taxCodeRepeat', isUdf: true, sapField: 'U_TAXCODE', alternativeFields: ['U_TaxCode'], sapColumnIds: ['U_TAXCODE', 'U_TaxCode', 'TaxCode'] },
+  { key: 'price', label: 'Price', minWidth: 95, valueKey: 'U_PRICE', rendererKey: 'price', isUdf: true, numeric: true, sapField: 'U_PRICE', alternativeFields: ['U_Price'], sapColumnIds: ['U_PRICE', 'U_Price', 'Price'] },
   { key: 'distRule', label: 'Distr. Rule', minWidth: 115, sapField: 'OcrCode', sapColumnIds: ['21', 'OcrCode', 'DistributionRule', 'Distr. Rule'] },
   { key: 'cogsDistRule', label: 'COGS Distr. Rule', minWidth: 130, sapField: 'CogsOcrCod', sapColumnIds: ['29', 'CogsOcrCod', 'COGS Distr. Rule'] },
   { key: 'countryOfOrigin', label: 'Country/Region of Origin', minWidth: 180, sapField: 'CountryOrg', sapColumnIds: ['10002037', 'CountryOrg', 'Country/Region of Origin'] },
@@ -362,6 +370,8 @@ const SALES_QUOTATION_MATRIX_COLUMN_DEFS = [
   { key: 'specialRebate', label: 'Special Rebate', minWidth: 120, sapField: 'U_SPLRBT', sapColumnIds: ['U_SPLRBT', 'Special Rebate'] },
   { key: 'commission', label: 'Commision', minWidth: 110, sapField: 'U_COMPRC', sapColumnIds: ['U_COMPRC', 'Commission', 'Commision'] },
   { key: 'sellerBrokeragePerQty', label: 'BrokPerQty', minWidth: 110, sapField: 'U_S_BrokPerQty', sapColumnIds: ['U_S_BrokPerQty', 'BrokPerQty'] },
+  { key: 'U_Fix_Brock_B', label: 'FIX Brok BUYER', minWidth: 135, isUdf: true, numeric: true, sapField: 'U_Fix_Brock_B', alternativeFields: ['U_Fix_Brok_B', 'U_FIX_BROK_BUYER', 'U_FIXBROKBUYER'], sapColumnIds: ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'FIX Brok BUYER'] },
+  { key: 'U_Fix_Brock_S', label: 'Fix Brock Seller', minWidth: 140, isUdf: true, numeric: true, sapField: 'U_Fix_Brock_S', alternativeFields: ['U_Fix_Brok_S', 'U_Fix_Brock_Seller', 'U_FIXBROCKSELLER', 'U_FIXBROKSELLER'], sapColumnIds: ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'Fix Brock Seller'] },
   { key: 'freightPurchase', label: 'Freight Purchase', minWidth: 130, sapField: 'U_Freight_pur', sapColumnIds: ['U_Freight_pur', 'Freight Purchase'] },
   { key: 'freightSales', label: 'Freight Sales', minWidth: 120, sapField: 'U_Freight_sales', sapColumnIds: ['U_Freight_sales', 'Freight Sales'] },
   { key: 'freightProvider', label: 'Freight Provider', minWidth: 120, sapField: 'U_Fr_trans', sapColumnIds: ['U_Fr_trans', 'Freight Provider'] },
@@ -675,15 +685,10 @@ const getContactsByCustomer = async (cardCode) => {
   `, { cardCode }));
 };
 
-const getAddressesByCustomer = (cardCode) => safe(db.query(`
-  SELECT CRD1.*, CardCode, AdresType, Address,
-         Street, StreetNo, Block, Building,
-         Address2, Address3,
-         City, County, State, ZipCode, Country
-  FROM   CRD1
-  WHERE  CardCode = @cardCode
-  ORDER  BY AdresType, Address
-`, { cardCode }));
+const getAddressesByCustomer = async (cardCode) => {
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'Sales Quotation' });
+  return addresses;
+};
 
 const getStateFromAddress = async (cardCode, addressCode) => {
   if (!cardCode || !addressCode) return { state: '' };
@@ -800,11 +805,20 @@ const getReferenceData = async () => {
 };
 
 const getCustomerDetails = async (cardCode) => {
+  if (!String(cardCode || '').trim()) {
+    return {
+      contacts: [],
+      bill_to_addresses: [],
+      pay_to_addresses: [],
+      ship_to_addresses: [],
+    };
+  }
   const [contacts, addresses] = await Promise.all([
     getContactsByCustomer(cardCode),
     getAddressesByCustomer(cardCode),
   ]);
   const billTo = addresses.filter(a => a.AdresType === 'B');
+  const shipTo = addresses.filter(a => a.AdresType === 'S');
   return {
     contacts: contacts.map(c => ({
       CardCode: c.CardCode, CntctCode: c.CntctCode,
@@ -814,6 +828,7 @@ const getCustomerDetails = async (cardCode) => {
     })),
     bill_to_addresses: billTo,
     pay_to_addresses: billTo,
+    ship_to_addresses: shipTo,
   };
 };
 
@@ -909,6 +924,13 @@ const getSalesQuotationList = async ({
 
 const getSalesQuotation = async (docEntry) => {
   const lineFieldMetadata = await getTableFieldMetadata('QUT1');
+  const addressExtensionFieldMetadata = await getTableFieldMetadata('QUT12');
+  const addressExtensionSelectFields = buildAddressExtensionSelectFields({
+    fieldMetadata: addressExtensionFieldMetadata,
+    tableAlias: 'T12',
+    quoteIdentifier: sqlAlias,
+    quoteAlias: sqlAlias,
+  });
   const lineField = (columnName, alias, fallback = "NULL") => (
     hasTableField(lineFieldMetadata, columnName)
       ? `T1.${columnName} AS ${sqlAlias(alias)}`
@@ -932,6 +954,7 @@ const getSalesQuotation = async (docEntry) => {
       T0.NumAtCard, T0.Comments AS Remarks, T0.DocTotal, T0.DocCur,
       T0.CntctCode, T0.BPLId, T0.GroupNum,
       T0.ShipToCode, T0.PayToCode, T0.Address, T0.Address2,
+      ${addressExtensionSelectFields.join(',\n      ')},
       T0.TrnspCode, T0.Confirmed, T0.JrnlMemo, T0.Series, NNM.SeriesName, NNM.Indicator AS SeriesIndicator, T0.DiscPrcnt,
       T0.SlpCode,
       SLP.SlpName AS SalesEmployeeName,
@@ -959,6 +982,7 @@ const getSalesQuotation = async (docEntry) => {
       ${lineField('U_PackingType', 'U_PackingType')},
       CHP.ChapterID AS HSNCode
     FROM OQUT T0
+    LEFT JOIN QUT12 T12 ON T12.DocEntry = T0.DocEntry
     INNER JOIN QUT1 T1 ON T0.DocEntry = T1.DocEntry
     LEFT JOIN OSLP SLP ON SLP.SlpCode = T0.SlpCode
     LEFT JOIN NNM1 NNM ON NNM.ObjectCode = '23' AND NNM.Series = T0.Series
@@ -989,6 +1013,8 @@ const getSalesQuotation = async (docEntry) => {
   if (!rows.length) throw new Error(`Sales Quotation ${docEntry} not found`);
 
   const header = rows[0];
+  const shipToAddressComponents = buildDocumentAddressComponents(header, 'ShipTo');
+  const billToAddressComponents = buildDocumentAddressComponents(header, 'BillTo');
   const [metadataHeaderUdfs, metadataLineUdfs, physicalHeaderUdfs, physicalLineUdfs] = await Promise.all([
     getHeaderUdfValues({ tableId: 'OQUT', keyValue: docEntry }),
     getLineUdfValues({ tableId: 'QUT1', keyValue: docEntry }),
@@ -1075,6 +1101,8 @@ const getSalesQuotation = async (docEntry) => {
         payToCode: header.PayToCode || '',
         shipTo: header.Address || '',
         payTo: header.Address2 || '',
+        shipToAddressComponents,
+        billToAddressComponents,
         shippingType: String(header.TrnspCode || ''),
         confirmed: header.Confirmed === 'Y',
         journalRemark: header.JrnlMemo || '',
@@ -1243,6 +1271,7 @@ const getSalesQuotationForCopy = async (docEntry) => {
       T0.JrnlMemo,
       T0.Series,
       T0.DiscPrcnt,
+      T0.RoundDif,
       T0.SlpCode,
       SLP.SlpName AS SalesEmployeeName,
       T0.OwnerCode,

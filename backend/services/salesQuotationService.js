@@ -1,8 +1,10 @@
 const sapService = require('./sapService');
 const salesQuotationDb = require('./salesQuotationDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { buildMarketingDocumentAddressPayload } = require('./documentAddressPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { normalizeUdfValue, normalizeUdfValues, applyUdfsRobust } = require('./udfPayloadUtils');
+const { buildDocumentSeriesPayload } = require('./documentSeriesPayloadUtils');
 
 const normalizeBranchId = (branch) => {
   const normalized = String(branch || '').trim();
@@ -17,43 +19,60 @@ const toNumberOrUndefined = (value) => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+const toSapYesNo = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized) ? 'tYES' : 'tNO';
+};
+
+const firstLineValueByAliases = (line = {}, aliases = []) => {
+  for (const alias of aliases) {
+    const value = line?.[alias] ?? line?.udf?.[alias];
+    if (hasValue(value)) return value;
+  }
+  return undefined;
+};
+
 const SALES_QUOTATION_LINE_UDF_MAPPINGS = [
+  { sapFields: ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type'], getValue: (line) => firstLineValueByAliases(line, ['U_PackingType', 'U_PACKINGTYPE', 'U_Packing_Type', 'U_PackingStatus', 'packingType']) },
+  { sapFields: ['U_TAXCODE', 'U_TaxCode'], getValue: (line) => firstLineValueByAliases(line, ['U_TAXCODE', 'U_TaxCode', 'taxCodeRepeat', 'taxCode']) },
+  { sapFields: ['U_PRICE', 'U_Price'], getValue: (line) => firstLineValueByAliases(line, ['U_PRICE', 'U_Price', 'price']) },
   { sapField: 'U_Required_Date', getValue: (line) => line.requiredDate },
   { sapField: 'U_ReqDate', getValue: (line) => line.requiredDate },
   { sapField: 'U_Quoted_Date', getValue: (line) => line.quotedDate },
   { sapField: 'U_QuoteDate', getValue: (line) => line.quotedDate },
   { sapField: 'U_Req_Qty', getValue: (line) => line.requiredQty },
   { sapField: 'U_ReqQty', getValue: (line) => line.requiredQty },
-  { sapField: 'U_SPLRBT', getValue: (line) => line.specialRebate },
-  { sapField: 'U_COMPRC', getValue: (line) => line.commission },
-  { sapField: 'U_S_BrokPerQty', getValue: (line) => line.sellerBrokeragePerQty },
+  { sapField: 'U_SPLRBT', getValue: (line) => firstLineValueByAliases(line, ['specialRebate', 'U_SPLRBT', 'U_SpecialRebate']) },
+  { sapField: 'U_COMPRC', getValue: (line) => firstLineValueByAliases(line, ['commission', 'commision', 'U_COMPRC', 'U_Commision', 'U_Commission']) },
+  { sapField: 'U_S_BrokPerQty', getValue: (line) => firstLineValueByAliases(line, ['sellerBrokeragePerQty', 'brokPerQty', 'U_S_BrokPerQty', 'U_S_BROKPERQTY']) },
   { sapField: 'U_Unit_Price', getValue: (line) => line.unitPriceUdf },
-  { sapField: 'U_Brok_Seller', getValue: (line) => line.sellerBrokerage },
-  { sapField: 'U_Brok_Buyer', getValue: (line) => line.buyerBrokerage },
-  { sapField: 'U_Buyer_Delivery', getValue: (line) => line.buyerDelivery },
-  { sapField: 'U_Seller_Delivery', getValue: (line) => line.sellerDelivery },
-  { sapField: 'U_Buyer_Payment_Terms', getValue: (line) => line.buyerPaymentTerms },
-  { sapField: 'U_Seller_Payment_Term', getValue: (line) => line.sellerPaymentTerms },
-  { sapField: 'U_Seller_Payment_Terms', getValue: (line) => line.sellerPaymentTerms },
-  { sapField: 'U_Buyer_Quality', getValue: (line) => line.buyerQuality },
-  { sapField: 'U_Seller_Quality', getValue: (line) => line.sellerQuality },
-  { sapField: 'U_Buyer_Price', getValue: (line) => line.buyerPrice },
-  { sapField: 'U_Seller_Price', getValue: (line) => line.sellerPrice },
-  { sapField: 'U_Buyer_SPINS', getValue: (line) => line.buyerSpecialInstruction },
-  { sapField: 'U_Seller_SPINS', getValue: (line) => line.sellerSpecialInstruction },
-  { sapField: 'U_Sel_Brok_AP', getValue: (line) => line.sellerBrokerageAmtPer },
-  { sapField: 'U_Seller_Brok_Per', getValue: (line) => line.sellerBrokeragePercent },
+  { sapField: 'U_Brok_Seller', getValue: (line) => firstLineValueByAliases(line, ['sellerBrokerage', 'U_Brok_Seller', 'U_BROK_SELLER']) },
+  { sapField: 'U_Brok_Buyer', getValue: (line) => firstLineValueByAliases(line, ['buyerBrokerage', 'U_Brok_Buyer', 'U_BROK_BUYER', 'U_Buyer_Brokerage']) },
+  { sapField: 'U_Buyer_Delivery', getValue: (line) => firstLineValueByAliases(line, ['buyerDelivery', 'U_Buyer_Delivery', 'U_BUYER_DELIVERY']) },
+  { sapField: 'U_Seller_Delivery', getValue: (line) => firstLineValueByAliases(line, ['sellerDelivery', 'U_Seller_Delivery', 'U_SELLER_DELIVERY']) },
+  { sapField: 'U_Buyer_Payment_Terms', getValue: (line) => firstLineValueByAliases(line, ['buyerPaymentTerms', 'buyerTermsOfPayment', 'U_Buyer_Payment_Terms', 'U_BUYER_PAYMENT_TERMS']) },
+  { sapField: 'U_Seller_Payment_Term', getValue: (line) => firstLineValueByAliases(line, ['sellerPaymentTerms', 'sellerPaymentTermsRepeat', 'sellerTermsOfPayment', 'U_Seller_Payment_Term', 'U_Seller_Payment_Terms', 'U_SELLER_PAYMENT_TERM', 'U_SELLER_PAYMENT_TERMS']) },
+  { sapField: 'U_Seller_Payment_Terms', getValue: (line) => firstLineValueByAliases(line, ['sellerPaymentTerms', 'sellerPaymentTermsRepeat', 'sellerTermsOfPayment', 'U_Seller_Payment_Term', 'U_Seller_Payment_Terms', 'U_SELLER_PAYMENT_TERM', 'U_SELLER_PAYMENT_TERMS']) },
+  { sapField: 'U_Buyer_Quality', getValue: (line) => firstLineValueByAliases(line, ['buyerQuality', 'U_Buyer_Quality', 'U_BUYER_QUALITY']) },
+  { sapField: 'U_Seller_Quality', getValue: (line) => firstLineValueByAliases(line, ['sellerQuality', 'U_Seller_Quality', 'U_SELLER_QUALITY']) },
+  { sapField: 'U_Buyer_Price', getValue: (line) => firstLineValueByAliases(line, ['buyerPrice', 'U_Buyer_Price', 'U_BUYER_PRICE']) },
+  { sapField: 'U_Seller_Price', getValue: (line) => firstLineValueByAliases(line, ['sellerPrice', 'U_Seller_Price', 'U_SELLER_PRICE']) },
+  { sapField: 'U_Buyer_SPINS', getValue: (line) => firstLineValueByAliases(line, ['buyerSpecialInstruction', 'deliverySpecialInstruction', 'U_Buyer_SPINS', 'U_BUYER_SPINS']) },
+  { sapField: 'U_Seller_SPINS', getValue: (line) => firstLineValueByAliases(line, ['sellerSpecialInstruction', 'qtySpecialInstruction', 'U_Seller_SPINS', 'U_SELLER_SPINS']) },
+  { sapField: 'U_Sel_Brok_AP', getValue: (line) => firstLineValueByAliases(line, ['sellerBrokerageAmtPer', 'sellerBrokerageAmountPer', 'U_Sel_Brok_AP', 'U_SEL_BROK_AP']) },
+  { sapField: 'U_Seller_Brok_Per', getValue: (line) => firstLineValueByAliases(line, ['sellerBrokeragePercent', 'sellerBrokeragePercentage', 'U_Seller_Brok_Per', 'U_SELLER_BROK_PER']) },
   { sapField: 'U_Buyer_Bill_Disc', getValue: (line) => line.buyerBillDiscount },
   { sapField: 'U_Seller_Bill_Disc', getValue: (line) => line.sellerBillDiscount },
-  { sapField: 'U_SELLTCODE', getValue: (line) => line.stcode },
-  { sapField: 'U_S_Item', getValue: (line) => line.sellerItem },
-  { sapField: 'U_S_Qty', getValue: (line) => line.sellerQty },
+  { sapField: 'U_SELLTCODE', getValue: (line) => firstLineValueByAliases(line, ['stcode', 'STCODE', 'U_SELLTCODE', 'U_STCODE']) },
+  { sapField: 'U_S_Item', getValue: (line) => firstLineValueByAliases(line, ['sellerItem', 'U_S_Item', 'U_S_ITEM', 'U_SItem']) },
+  { sapField: 'U_S_Qty', getValue: (line) => firstLineValueByAliases(line, ['sellerQty', 'sellerQuantity', 'U_S_Qty', 'U_S_QTY']) },
+  { sapFields: ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER', 'U_FIXBROKBUYER'], getValue: (line) => firstLineValueByAliases(line, ['U_Fix_Brock_B', 'U_Fix_Brok_B', 'U_FIX_BROK_BUYER', 'U_FIXBROKBUYER', 'fixBrokBuyer']) },
+  { sapFields: ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller', 'U_FIXBROCKSELLER', 'U_FIXBROKSELLER'], getValue: (line) => firstLineValueByAliases(line, ['U_Fix_Brock_S', 'U_Fix_Brok_S', 'U_Fix_Brock_Seller', 'U_FIXBROCKSELLER', 'U_FIXBROKSELLER', 'fixBrockSeller']) },
   { sapField: 'U_Freight_pur', getValue: (line) => line.freightPurchase },
   { sapField: 'U_Freight_sales', getValue: (line) => line.freightSales },
   { sapField: 'U_Fr_trans', getValue: (line) => line.freightProvider },
   { sapField: 'U_Fr_trans_name', getValue: (line) => line.freightProviderName },
   { sapField: 'U_BDNum', getValue: (line) => line.brokerageNumber },
-  { sapField: 'U_PackingType', getValue: (line) => line.udf?.U_PackingType ?? line.udf?.U_PACKINGTYPE ?? line.udf?.U_Packing_Type ?? line.U_PackingType ?? line.packingType },
 ];
 
 const SALES_QUOTATION_LABEL_UDF_MAPPINGS = [
@@ -77,6 +96,18 @@ const SALES_QUOTATION_LABEL_UDF_MAPPINGS = [
 ];
 
 const compactLabel = (value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+const resolveAvailableUdfKey = (availableUdfKeys = new Set(), aliases = []) => {
+  const availableKeys = Array.from(availableUdfKeys || []);
+  for (const alias of aliases) {
+    if (availableUdfKeys.has(alias)) return alias;
+
+    const normalizedAlias = compactLabel(alias);
+    const matchedKey = availableKeys.find((key) => compactLabel(key) === normalizedAlias);
+    if (matchedKey) return matchedKey;
+  }
+  return '';
+};
 
 const getSalesQuotationLineUdfMetadata = async () => {
   const definitions = await getUdfDefinitions('QUT1');
@@ -110,9 +141,11 @@ const buildValidatedLineUdfs = (line, udfMetadata) => {
     }
   });
 
-  SALES_QUOTATION_LINE_UDF_MAPPINGS.forEach(({ sapField, getValue }) => {
-    if (!availableUdfKeys.has(sapField)) return;
-    udfs[sapField] = normalizeUdfValue(getValue(line));
+  SALES_QUOTATION_LINE_UDF_MAPPINGS.forEach(({ sapField, sapFields, getValue }) => {
+    const aliases = sapFields || [sapField];
+    const resolvedSapField = resolveAvailableUdfKey(availableUdfKeys, aliases);
+    if (!resolvedSapField) return;
+    udfs[resolvedSapField] = normalizeUdfValue(getValue(line));
   });
 
   SALES_QUOTATION_LABEL_UDF_MAPPINGS.forEach(({ labels, getValue }) => {
@@ -133,6 +166,7 @@ const buildDocumentLines = async (lines = [], includeLineNum = false) => {
       const documentLine = {
         ...(includeLineNum && lineNum !== undefined && lineNum !== null && lineNum !== '' ? { LineNum: Number(lineNum) } : {}),
         ItemCode: line.itemNo,
+        ItemDescription: line.itemDescription || undefined,
         Quantity: toNumberOrUndefined(line.quantity),
         Price: toNumberOrUndefined(line.unitPrice),
         UnitPrice: toNumberOrUndefined(line.unitPrice),
@@ -248,7 +282,7 @@ const getCustomerDetails = async (customerCode) => {
     return await salesQuotationDb.getCustomerDetails(customerCode);
   } catch (error) {
     console.error('[Sales Quotation Service] Failed to load customer details:', error);
-    return { contacts: [], bill_to_addresses: [], pay_to_addresses: [] };
+    throw error;
   }
 };
 
@@ -362,8 +396,7 @@ const submitSalesQuotation = async (payload) => {
 
     const sapPayload = {
       CardCode: payload.header.vendor.trim(),
-      ...(payload.header.series && Number(payload.header.series) > 0
-        ? { Series: Number(payload.header.series) } : {}),
+      ...buildDocumentSeriesPayload(payload.header),
       DocDate: payload.header.postingDate,
       DocDueDate: payload.header.deliveryDate,
       TaxDate: payload.header.documentDate,
@@ -376,7 +409,9 @@ const submitSalesQuotation = async (payload) => {
       ...(OwnerCode !== null && OwnerCode !== undefined ? { DocumentsOwner: OwnerCode } : {}),
       ...(Remarks ? { Comments: Remarks } : {}),
       ...(Freight > 0 ? { TotalExpenses: Freight } : {}),
+      Rounding: toSapYesNo(payload.header.rounding),
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(payload.header),
       NumAtCard: payload.header.customerRefNo || undefined,
       DocumentLines: documentLines,
     };
@@ -471,7 +506,9 @@ const updateSalesQuotation = async (docEntry, payload) => {
       ...(OwnerCode !== null && OwnerCode !== undefined && { DocumentsOwner: OwnerCode }),
       ...(Remarks && { Comments: Remarks }),
       ...(Freight > 0 && { TotalExpenses: Freight }),
+      Rounding: toSapYesNo(payload.header.rounding),
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      ...buildMarketingDocumentAddressPayload(payload.header),
       DocumentLines: documentLines,
     };
 

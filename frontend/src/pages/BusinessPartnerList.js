@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { searchBP } from '../api/businessPartnerApi';
 import { createCompanyScopedRouteState } from '../utils/companyStorageScope';
+import { matchesSapSearchText } from '../utils/sapSearch';
 import '../modules/item-master/styles/itemMaster.css';
 import '../styles/sales-order-list.css';
 
@@ -32,11 +33,13 @@ const STATUS_OPTIONS = [
   { code: 'inactive', name: 'Inactive' },
 ];
 
-const includesText = (value, query) =>
-  String(value || '').toLowerCase().includes(String(query || '').trim().toLowerCase());
+const includesText = (value, query) => matchesSapSearchText(value, query);
 
 const getErrorMessage = (error, fallbackMessage) =>
   error?.response?.data?.message || error?.message || fallbackMessage;
+
+const hasTextSearchFilter = (filterState = {}) =>
+  ['query', 'cardCode', 'cardName', 'phone', 'email'].some((key) => String(filterState[key] || '').trim());
 
 function BusinessPartnerListPage() {
   const navigate = useNavigate();
@@ -55,7 +58,12 @@ function BusinessPartnerListPage() {
       setPageState({ loading: true, error: '' });
       try {
         const query = appliedFilters.query || appliedFilters.cardCode || appliedFilters.cardName || '';
-        const rows = await searchBP(query, appliedFilters.cardType, MAX_ROWS, 0);
+        let rows = await searchBP(query, appliedFilters.cardType, MAX_ROWS, 0);
+
+        if (Array.isArray(rows) && rows.length === 0 && hasTextSearchFilter(appliedFilters)) {
+          rows = await searchBP('', appliedFilters.cardType, MAX_ROWS, 0);
+        }
+
         if (!ignore) {
           setPartners(Array.isArray(rows) ? rows : []);
           setPageState({ loading: false, error: '' });

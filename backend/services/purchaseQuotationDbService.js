@@ -3,12 +3,13 @@
  * Reads data directly from SAP B1 SQL Server database
  */
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const {
-  escapeLike,
   normalizeTopLimit,
   buildMarketingDocumentListFilterQuery,
+  appendSapSearchCondition,
 } = require('./documentListUtils');
 
 const safe = async (promise) => {
@@ -50,6 +51,15 @@ const searchVendors = async ({ query = '', cardCode = '', cardName = '', top, so
   const normalizedCardCode = String(cardCode || '').trim();
   const normalizedCardName = String(cardName || '').trim();
   const normalizedTop = normalizeTopLimit(top);
+  const queryClauses = [];
+  const queryParams = {};
+  appendSapSearchCondition(queryClauses, queryParams, ['CardCode', 'CardName'], normalizedQuery, 'query');
+  const cardCodeClauses = [];
+  const cardCodeParams = {};
+  appendSapSearchCondition(cardCodeClauses, cardCodeParams, ['CardCode'], normalizedCardCode, 'cardCode');
+  const cardNameClauses = [];
+  const cardNameParams = {};
+  appendSapSearchCondition(cardNameClauses, cardNameParams, ['CardName'], normalizedCardName, 'cardName');
   const orderBy = String(sortBy || '').trim().toLowerCase() === 'name'
     ? 'CardName, CardCode'
     : 'CardCode, CardName';
@@ -60,18 +70,15 @@ const searchVendors = async ({ query = '', cardCode = '', cardName = '', top, so
       *
     FROM OCRD
     WHERE CardType = 'S'
-      AND (@query = '' OR CardCode LIKE @queryLike OR CardName LIKE @queryLike)
-      AND (@cardCode = '' OR CardCode LIKE @cardCodeLike)
-      AND (@cardName = '' OR CardName LIKE @cardNameLike)
+      ${queryClauses.length ? `AND ${queryClauses.join(' AND ')}` : ''}
+      ${cardCodeClauses.length ? `AND ${cardCodeClauses.join(' AND ')}` : ''}
+      ${cardNameClauses.length ? `AND ${cardNameClauses.join(' AND ')}` : ''}
     ORDER BY ${orderBy}
   `, {
     ...(normalizedTop ? { top: normalizedTop } : {}),
-    query: normalizedQuery,
-    queryLike: `%${escapeLike(normalizedQuery)}%`,
-    cardCode: normalizedCardCode,
-    cardCodeLike: `%${escapeLike(normalizedCardCode)}%`,
-    cardName: normalizedCardName,
-    cardNameLike: `%${escapeLike(normalizedCardName)}%`,
+    ...queryParams,
+    ...cardCodeParams,
+    ...cardNameParams,
   }));
 };
 
@@ -184,29 +191,8 @@ const getContactsByVendor = async (cardCode) => {
 };
 
 const getAddressesByVendor = async (cardCode) => {
-  const result = await safe(db.query(`
-    SELECT T0.*,
-      T0.CardCode,
-      T0.Address,
-      T0.AdresType,
-      T0.Street,
-      T0.StreetNo,
-      T0.Block,
-      T0.Building,
-      T0.Address2,
-      T0.Address3,
-      T0.City,
-      T0.County,
-      T0.State,
-      T0.ZipCode,
-      T0.Country,
-      T0.GSTRegnNo AS GSTIN
-    FROM CRD1 T0
-    WHERE T0.CardCode = @cardCode
-    ORDER BY T0.Address
-  `, { cardCode }));
-
-  return result;
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'Purchase Quotation' });
+  return addresses;
 };
 
 // ── PURCHASE ORDER LIST ───────────────────────────────────────────────────────
@@ -318,6 +304,7 @@ const getPurchaseQuotation = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
@@ -428,6 +415,8 @@ const getPurchaseQuotation = async (docEntry) => {
         paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
         otherInstruction: header.Remarks || '',
         discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+        rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         freight: header.Freight != null ? String(header.Freight) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
@@ -540,6 +529,7 @@ const getPurchaseQuotationForCopy = async (docEntry) => {
       T0.BPLId AS BPL_IDAssignedToInvoice,
       T0.GroupNum,
       T0.DiscPrcnt,
+      T0.RoundDif,
       T0.TotalExpns AS Freight
     FROM OPQT T0
     WHERE T0.DocEntry = @docEntry
@@ -752,6 +742,8 @@ const getVendorDetails = async (vendorCode) => {
     return {
       contacts: [],
       pay_to_addresses: [],
+      bill_to_addresses: [],
+      ship_to_addresses: [],
     };
   }
 
@@ -764,10 +756,15 @@ const getVendorDetails = async (vendorCode) => {
   const payToAddresses = addresses.filter(a => 
     a.AdresType === 'B' || a.AdresType === 'bo_BillTo'
   );
+  const shipToAddresses = addresses.filter(a =>
+    a.AdresType === 'S' || a.AdresType === 'bo_ShipTo'
+  );
 
   return {
     contacts,
     pay_to_addresses: payToAddresses,
+    bill_to_addresses: payToAddresses,
+    ship_to_addresses: shipToAddresses,
   };
 };
 

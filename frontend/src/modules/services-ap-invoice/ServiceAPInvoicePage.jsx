@@ -9,11 +9,13 @@ import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import { copyToDocument } from '../../services/documentCopyService';
+import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { createActiveCompanyScopedRouteState } from '../../utils/companyStorageScope';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
 import { BASE_TYPE, normaliseDocumentHeader, unwrapCopyFromDocument } from '../../api/copyFromApi';
@@ -27,7 +29,17 @@ import AttachmentsTab from '../APInvoice/components/AttachmentsTab';
 import AddressModal from '../../components/document/AddressComponentModal';
 import { mapAddressFields } from '../../utils/documentAddress';
 import TaxInfoModal from '../APInvoice/components/TaxInfoModal';
+import WithholdingTaxTableModal from '../APInvoice/components/WithholdingTaxTableModal';
 import JournalEntryPreviewModal from '../services-ar-invoice/JournalEntryPreviewModal';
+import {
+  calculateWithholdingTaxAmount,
+  createDefaultWithholdingRows,
+  createEmptyWithholdingTaxState,
+  isYesValue,
+  normalizePartnerWithholdingTax,
+  recalcWithholdingRows,
+  roundTo,
+} from '../../utils/withholdingTax';
 import {
   fetchOpenServiceGRPOForAPInvoice,
   fetchOpenServicePurchaseOrdersForAPInvoice,
@@ -441,6 +453,127 @@ const includeSelectedSeries = (series = [], selectedSeries = '', selectedSeriesN
   }, ...series];
 };
 
+const dedupeSeriesOptions = (series = []) => {
+  const seen = new Set();
+  return (Array.isArray(series) ? series : []).filter((item) => {
+    const id = String(item?.Series || '').trim();
+    const label = String(item?.SeriesName || item?.DisplayName || item?.RawSeriesName || item?.BeginStr || id).trim().toUpperCase();
+    const indicator = String(item?.Indicator || '').trim().toUpperCase();
+    const docSubType = String(item?.DocSubType || '').trim().toUpperCase();
+    const key = label ? `${label}|${indicator}|${docSubType}` : id;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const normalizeSeriesIdentity = (value) =>
+  String(value || '').toUpperCase().replace(/FY/g, '').replace(/[^A-Z0-9]/g, '');
+
+const resolveTransactionSeriesKind = (transactionType = '') => {
+  const normalizedType = normalizeSeriesIdentity(transactionType);
+  if (normalizedType.includes('DEBIT')) return 'debit';
+  if (normalizedType.includes('BILLOFSUPPLY') || normalizedType.includes('SUPPLY')) return 'bill';
+  if (normalizedType.includes('TAXINVOICE') || normalizedType.includes('GST')) return 'tax';
+  return '';
+};
+
+const scoreSeriesForTransactionType = (series = {}, transactionType = '') => {
+  const targetKind = resolveTransactionSeriesKind(transactionType);
+  if (!targetKind) return 0;
+
+  const text = normalizeSeriesIdentity([
+    series.SeriesName,
+    series.DisplayName,
+    series.RawSeriesName,
+    series.BeginStr,
+    series.Indicator,
+    series.DocSubType,
+  ].filter(Boolean).join(' '));
+  const docSubType = String(series.DocSubType || '').trim().toUpperCase();
+  const isManual = Number(series.Series) === -1 || String(series.SeriesName || '').trim().toUpperCase() === 'MANUAL';
+  if (isManual) return -10000;
+
+  let score = series.IsDefault || series.isDefault ? 25 : 0;
+  if (targetKind === 'debit') {
+    if (docSubType === 'GD') score += 250;
+    if (text.includes('CAN')) score += 180;
+    if (text.includes('DEBIT') || text.includes('DBN')) score += 160;
+    if (text.includes('AP')) score -= 40;
+    if (docSubType === 'GA' || text.includes('TAX')) score -= 80;
+  } else if (targetKind === 'bill') {
+    if (docSubType === '--') score += 120;
+    if (text.includes('BILLOFSUPPLY') || text.includes('SUPPLY') || text.includes('BOS') || text.includes('BILL')) score += 180;
+    if (text.includes('AP')) score += 140;
+    if (text.includes('CAN') || text.includes('DEBIT') || docSubType === 'GD') score -= 120;
+    if (docSubType === 'GA' || text.includes('TAX')) score -= 60;
+  } else if (targetKind === 'tax') {
+    if (docSubType === 'GA') score += 180;
+    if (text.includes('GST') || text.includes('TAXINVOICE') || text.includes('TAX')) score += 160;
+    if (!text.includes('AP') && !text.includes('CAN') && !text.includes('DEBIT') && !text.includes('BILL')) score += 120;
+    if (text.includes('AP')) score -= 100;
+    if (text.includes('CAN') || text.includes('DEBIT') || docSubType === 'GD') score -= 160;
+  }
+  return score;
+};
+
+const pickSapSeriesForTransactionType = (series = [], transactionType = '') => {
+  const rows = (Array.isArray(series) ? series : []).filter(Boolean);
+  if (!rows.length || !String(transactionType || '').trim()) return null;
+  const candidates = rows.filter((row) => (
+    Number(row.Series) !== -1 &&
+    String(row.SeriesName || '').trim().toUpperCase() !== 'MANUAL'
+  ));
+  const pool = candidates.length ? candidates : rows;
+  return [...pool]
+    .map((row, index) => ({ row, index, score: scoreSeriesForTransactionType(row, transactionType) }))
+    .sort((left, right) =>
+      right.score - left.score ||
+      Number(right.row.IsDefault || right.row.isDefault || 0) - Number(left.row.IsDefault || left.row.isDefault || 0) ||
+      left.index - right.index)[0]?.row || null;
+};
+
+const getSeriesFamilyKey = (series = {}) => {
+  const label = String(
+    series.SeriesName ||
+    series.DisplayName ||
+    series.RawSeriesName ||
+    series.BeginStr ||
+    series.Indicator ||
+    ''
+  );
+  return label
+    .replace(/^U_/i, '')
+    .replace(/[^a-z0-9]+/gi, '')
+    .toLowerCase()
+    .replace(/(?:fy)?\d{2}\d{2}$/i, '')
+    .replace(/\d{4,}$/i, '')
+    .replace(/\d{2}$/i, '');
+};
+
+const pickSeriesForNewDocument = (series = [], preferredSeries = '', sourceSeries = []) => {
+  const available = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (!available.length) return null;
+  const sourceAvailable = toArray(sourceSeries, ['series']);
+
+  const preferred = String(preferredSeries || '').trim();
+  const currentMatch = preferred
+    ? available.find((item) => String(item.Series || '') === preferred)
+    : null;
+  if (currentMatch) return currentMatch;
+
+  const oldSeries = preferred
+    ? sourceAvailable.find((item) => String(item.Series || '') === preferred)
+    : null;
+  const familyKey = getSeriesFamilyKey(oldSeries);
+  const familyMatch = familyKey
+    ? available.find((item) => getSeriesFamilyKey(item) === familyKey)
+    : null;
+  if (familyMatch) return familyMatch;
+
+  return available.find((item) => item.IsDefault || item.isDefault) || available[0];
+};
+
 const normalizeServiceApColumnToken = (value) =>
   String(value || '')
     .trim()
@@ -657,9 +790,25 @@ const readLineAliasValue = (line = {}, aliases = []) => {
   return '';
 };
 
+const normalizeAccountCode = (value) => String(value || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+
+const findAccountByCode = (accounts = [], code = '') => {
+  const normalizedCode = normalizeAccountCode(code);
+  if (!normalizedCode) return null;
+  return accounts.find((item) => [
+    item?.code,
+    item?.AcctCode,
+    item?.FormatCode,
+    item?.accountCode,
+    item?.value,
+  ].some((value) => normalizeAccountCode(value) === normalizedCode)) || null;
+};
+
+const getAccountName = (account = {}) => account?.name || account?.AcctName || account?.accountName || account?.description || '';
+
 const normalizeCopyLine = (line, idx, docEntry, baseType, accounts) => {
   const glAccount = String(line.AccountCode || line.AcctCode || line.glAccount || '').trim();
-  const account = accounts.find((item) => String(item.code) === glAccount);
+  const account = findAccountByCode(accounts, glAccount);
   const quantity = line.Quantity != null ? String(line.Quantity) : String(line.sQty || '');
   const unitPrice = line.UnitPrice != null ? String(line.UnitPrice) : String(line.unitPrice || '');
   const lineTotal = line.LineTotal != null
@@ -673,7 +822,7 @@ const normalizeCopyLine = (line, idx, docEntry, baseType, accounts) => {
     sac: String(line.SAC || line.SACEntry || line.sac || ''),
     description: String(line.ItemDescription || line.Dscription || line.description || ''),
     glAccount,
-    glAccountName: line.AccountName || line.AcctName || account?.name || '',
+    glAccountName: line.glAccountName || line.AccountName || line.AcctName || getAccountName(account),
     distRule: String(line.DistributionRule || line.OcrCode || line.distRule || ''),
     taxCode: String(line.TaxCode || line.taxCode || ''),
     totalLC: lineTotal,
@@ -731,6 +880,7 @@ const normalizeCopyLine = (line, idx, docEntry, baseType, accounts) => {
 function ServiceAPInvoicePage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const workspaceRef = useRef(null);
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
   const requestedDocEntry = location.state?.serviceApInvoiceDocEntry;
   const handledCopyFromRef = useRef('');
@@ -743,6 +893,7 @@ function ServiceAPInvoicePage() {
   const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(CONTENT_COLUMNS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
+  const [withholdingTax, setWithholdingTax] = useState(createEmptyWithholdingTaxState);
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
@@ -756,6 +907,22 @@ function ServiceAPInvoicePage() {
   const [pageState, setPageState] = useState({ loading: true, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
   const [isDirty, setIsDirty] = useState(false);
+
+  useStandardDocumentDraftTask({
+    draftKey: 'serviceApInvoiceDraft',
+    title: 'Service A/P Invoice',
+    draftValues: { currentDocEntry, header, lines, headerUdfs, activeTab, isDirty },
+    restoreDraft: (draft) => {
+      setCurrentDocEntry(draft.currentDocEntry || null);
+      setHeader(draft.header || INIT_HEADER);
+      setLines(Array.isArray(draft.lines) && draft.lines.length
+        ? draft.lines
+        : [createLine(ROW_UDF_DEFINITIONS)]);
+      setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+      setActiveTab(draft.activeTab || 'Contents');
+      setIsDirty(Boolean(draft.isDirty));
+    },
+  });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyFromDocType, setCopyFromDocType] = useState('purchaseOrder');
   const [bpModalOpen, setBpModalOpen] = useState(false);
@@ -803,6 +970,7 @@ function ServiceAPInvoicePage() {
     open: false,
     loading: false,
     data: null,
+    error: '',
   });
   const [lineLookupModal, setLineLookupModal] = useState({
     open: false,
@@ -842,11 +1010,12 @@ function ServiceAPInvoicePage() {
   const distributionRules = toArray(refData.distribution_rules, ['distribution_rules']);
   const paymentTerms = toArray(refData.payment_terms, ['payment_terms']);
   const shippingTypes = toArray(refData.shipping_types, ['shipping_types']);
-  const seriesOptions = useMemo(() => includeSelectedSeries(
-    toArray(refData.series, ['series']),
-    header.series,
-    header.seriesName
-  ), [refData.series, header.series, header.seriesName]);
+  const seriesOptions = useMemo(() => {
+    const availableSeries = dedupeSeriesOptions(toArray(refData.series, ['series']));
+    return currentDocEntry
+      ? dedupeSeriesOptions(includeSelectedSeries(availableSeries, header.series, header.seriesName))
+      : availableSeries;
+  }, [currentDocEntry, refData.series, header.series, header.seriesName]);
   const salesEmployeeOptions = toArray(refData.sales_employees, ['sales_employees']);
   const stateOptions = toArray(refData.states, ['states']);
   const vendorPayToAddresses = toArray(refData.pay_to_addresses, ['pay_to_addresses']).filter((address) => String(address.CardCode || '') === String(header.vendor || ''));
@@ -1099,12 +1268,61 @@ function ServiceAPInvoicePage() {
     const discountAmount = subtotal * parseNum(header.discount) / 100;
     const freight = parseNum(header.freight);
     const downPayment = parseNum(header.totalDownPayment);
-    const roundingAmount = parseNum(header.roundingAmount);
-    const total = Math.max(0, subtotal - discountAmount - downPayment) + freight + tax + roundingAmount;
+    const totalBeforeRounding = Math.max(0, subtotal - discountAmount - downPayment) + freight + tax;
+    const { roundingAmount, total } = calculateDocumentRounding(totalBeforeRounding, header.rounding, 2);
     const appliedAmount = parseNum(header.appliedAmount);
     const balanceDue = Math.max(0, total - appliedAmount);
     return { subtotal, tax, discountAmount, freight, downPayment, roundingAmount, total, appliedAmount, balanceDue, wtaxAmount: 0 };
-  }, [currentDocEntry, header.appliedAmount, header.balanceDue, header.discount, header.discountAmount, header.freight, header.roundingAmount, header.tax, header.totalBeforeDiscount, header.totalDownPayment, header.totalPaymentDue, header.wtaxAmount, lines]);
+  }, [currentDocEntry, header.appliedAmount, header.balanceDue, header.discount, header.discountAmount, header.freight, header.rounding, header.roundingAmount, header.tax, header.totalBeforeDiscount, header.totalDownPayment, header.totalPaymentDue, header.wtaxAmount, lines]);
+
+  const wtaxDecimals = { total: 2, tax: 2, totalPaymentDue: 2 };
+  const hasSavedWTaxAmount = Boolean(currentDocEntry && Math.abs(parseNum(header.wtaxAmount)) > 0);
+  const hasWTaxLiableLines = lines.some((line) => isYesValue(line.wtaxLiable || line.wTaxLiable)) || hasSavedWTaxAmount;
+  const wtaxBaseAmount = {
+    netAmount: roundTo(Math.max(0, totals.subtotal - totals.discountAmount - totals.downPayment) + totals.freight, 2),
+    taxAmount: totals.tax,
+    grossAmount: totals.total,
+  };
+  const wtaxRowsForTotals = hasWTaxLiableLines && withholdingTax.partnerSubject
+    ? recalcWithholdingRows(withholdingTax.rows, wtaxBaseAmount, wtaxDecimals)
+    : [];
+  const withholdingModalRows = withholdingTax.open
+    ? recalcWithholdingRows(
+      withholdingTax.rows.length
+        ? withholdingTax.rows
+        : createDefaultWithholdingRows(withholdingTax, wtaxBaseAmount, wtaxDecimals),
+      wtaxBaseAmount,
+      wtaxDecimals
+    )
+    : wtaxRowsForTotals;
+  const wtaxAmount = calculateWithholdingTaxAmount({
+    currentDocEntry,
+    savedAmount: header.wtaxAmount,
+    hasLiableLines: hasWTaxLiableLines,
+    withholdingTax,
+    baseAmount: wtaxBaseAmount,
+    decimals: wtaxDecimals,
+  });
+  const totalPaymentDueAfterWTax = roundTo(totals.total - wtaxAmount, wtaxDecimals.totalPaymentDue);
+  const balanceDueAfterWTax = currentDocEntry && String(header.balanceDue || '').trim()
+    ? totals.balanceDue
+    : Math.max(0, totalPaymentDueAfterWTax - totals.appliedAmount);
+
+  const openWithholdingTaxTable = () => {
+    if (!String(header.vendor || '').trim()) {
+      setPageState((prev) => ({ ...prev, error: 'Select a vendor before opening withholding tax table.', success: '' }));
+      return;
+    }
+    if (!withholdingTax.partnerSubject) {
+      setPageState((prev) => ({ ...prev, error: 'Selected vendor does not have withholding tax setup.', success: '' }));
+      return;
+    }
+    setWithholdingTax((prev) => ({
+      ...prev,
+      open: true,
+      rows: prev.rows.length ? recalcWithholdingRows(prev.rows, wtaxBaseAmount, wtaxDecimals) : createDefaultWithholdingRows(prev, wtaxBaseAmount, wtaxDecimals),
+    }));
+  };
 
   useEffect(() => {
     const handler = (event) => {
@@ -1124,7 +1342,7 @@ function ServiceAPInvoicePage() {
       try {
         const [refRes, seriesRes, layoutRes] = await Promise.all([
           fetchServiceAPInvoiceReferenceData(),
-          fetchServiceAPInvoiceSeries(header.postingDate),
+          fetchServiceAPInvoiceSeries(header.postingDate, header.transactionType),
           getDocumentLayout({ documentType: 'SERVICE_AP_INVOICE' }).catch((error) => ({
             data: {
               success: false,
@@ -1145,7 +1363,7 @@ function ServiceAPInvoicePage() {
         let nextRefData = normalizeReferenceData(refRes.data, seriesRes.data?.series || seriesRes.data);
         if (defaultBranch) {
           try {
-            const branchSeriesRes = await fetchServiceAPInvoiceSeries(header.postingDate, defaultBranch);
+            const branchSeriesRes = await fetchServiceAPInvoiceSeries(header.postingDate, header.transactionType, defaultBranch);
             if (ignore) return;
             nextRefData = normalizeReferenceData(refRes.data, branchSeriesRes.data?.series || branchSeriesRes.data);
           } catch (_seriesError) {
@@ -1220,7 +1438,11 @@ function ServiceAPInvoicePage() {
         const loadedHeader = { ...doc.header };
         if (loadedHeader.postingDate) {
           try {
-            const seriesRes = await fetchServiceAPInvoiceSeries(loadedHeader.postingDate, loadedHeader.branch || '');
+            const seriesRes = await fetchServiceAPInvoiceSeries(
+              loadedHeader.postingDate,
+              loadedHeader.transactionType || header.transactionType,
+              loadedHeader.branch || '',
+            );
             if (ignore) return;
             const documentSeries = toArray(seriesRes.data?.series || seriesRes.data, ['series']);
             if (documentSeries.length) {
@@ -1307,6 +1529,7 @@ function ServiceAPInvoicePage() {
     if (!normalizedVendorCode) {
       setRefData((prev) => ({ ...prev, contacts: [] }));
       setHeader((prev) => ({ ...prev, contactPerson: '' }));
+      setWithholdingTax(createEmptyWithholdingTaxState());
       return;
     }
     try {
@@ -1320,6 +1543,8 @@ function ServiceAPInvoicePage() {
         ship_to_addresses: toArray(res.data?.ship_to_addresses, ['ship_to_addresses']),
         bill_to_addresses: toArray(res.data?.bill_to_addresses, ['bill_to_addresses']),
       }));
+      const vendorWithholdingTax = normalizePartnerWithholdingTax(res.data?.withholding_tax || {});
+      setWithholdingTax((prev) => ({ ...prev, ...vendorWithholdingTax, rows: [] }));
       const vendor = res.data?.vendor;
       if (vendor) {
         const shipToAddresses = toArray(res.data?.ship_to_addresses, ['ship_to_addresses']);
@@ -1446,17 +1671,15 @@ function ServiceAPInvoicePage() {
       setHeader((prev) => ({ ...prev, postingDate: value }));
       setPageState((prev) => ({ ...prev, seriesLoading: true }));
       try {
-        const res = await fetchServiceAPInvoiceSeries(value, header.branch);
-        const nextSeries = toArray(res.data?.series || res.data, ['series']);
+        const res = await fetchServiceAPInvoiceSeries(value, header.transactionType, header.branch);
+        const nextSeries = dedupeSeriesOptions(toArray(res.data?.series || res.data, ['series']));
         setRefData((prev) => ({ ...prev, series: nextSeries }));
         setHeader((prev) => {
           if (prev.series === 'manual') {
             return { ...prev, postingDate: value };
           }
 
-          const selectedSeries =
-            nextSeries.find((series) => String(series.Series || '') === String(prev.series || '')) ||
-            nextSeries[0];
+          const selectedSeries = pickSeriesForNewDocument(nextSeries, prev.series, refData.series || []);
 
           return {
             ...prev,
@@ -1528,7 +1751,67 @@ function ServiceAPInvoicePage() {
         ...prev,
         transactionType: value,
         indicator: selectedOption?.indicator || prev.indicator,
+        series: '',
+        nextNumber: '',
+        docNo: '',
       }));
+      setPageState((prev) => ({ ...prev, seriesLoading: true }));
+      try {
+        const res = await fetchServiceAPInvoiceSeries(header.postingDate, value, header.branch);
+        let nextSeries = dedupeSeriesOptions(toArray(res.data?.series || res.data, ['series']));
+        if (!nextSeries.length) {
+          const fallbackRes = await fetchServiceAPInvoiceSeries(header.postingDate, '', header.branch);
+          nextSeries = dedupeSeriesOptions(toArray(fallbackRes.data?.series || fallbackRes.data, ['series']));
+        }
+        const selectedSeries =
+          pickSapSeriesForTransactionType(nextSeries, value) ||
+          pickSeriesForNewDocument(nextSeries, '', refData.series || []);
+        if (nextSeries.length) {
+          setRefData((prev) => ({ ...prev, series: nextSeries }));
+        }
+        if (selectedSeries) {
+          const numberRes = await fetchServiceAPInvoiceNextNumber(selectedSeries.Series);
+          setHeader((prev) => ({
+            ...prev,
+            transactionType: value,
+            indicator: selectedOption?.indicator || prev.indicator,
+            branch: prev.branch || String(selectedSeries.BPLId || ''),
+            series: String(selectedSeries.Series || ''),
+            nextNumber: String(numberRes.data?.nextNumber || selectedSeries.NextNumber || ''),
+            docNo: '',
+          }));
+        } else {
+          setHeader((prev) => ({
+            ...prev,
+            transactionType: value,
+            indicator: selectedOption?.indicator || prev.indicator,
+            series: '',
+            nextNumber: '',
+            docNo: '',
+          }));
+        }
+      } catch (_error) {
+        const selectedSeries = pickSapSeriesForTransactionType(refData.series || [], value);
+        if (selectedSeries) {
+          setHeader((prev) => ({
+            ...prev,
+            transactionType: value,
+            indicator: selectedOption?.indicator || prev.indicator,
+            branch: prev.branch || String(selectedSeries.BPLId || ''),
+            series: String(selectedSeries.Series || ''),
+            nextNumber: String(selectedSeries.NextNumber || ''),
+            docNo: '',
+          }));
+        } else {
+          setHeader((prev) => ({
+            ...prev,
+            transactionType: value,
+            indicator: selectedOption?.indicator || prev.indicator,
+          }));
+        }
+      } finally {
+        setPageState((prev) => ({ ...prev, seriesLoading: false }));
+      }
       return;
     }
 
@@ -1711,7 +1994,11 @@ function ServiceAPInvoicePage() {
   };
 
   const buildPayload = () => ({
-    header,
+    header: {
+      ...header,
+      wtaxAmount,
+      totalPaymentDue: totalPaymentDueAfterWTax,
+    },
     lines: lines
       .filter((line) => String(line.description || line.glAccount || line.totalLC || '').trim())
       .map((line) => ({
@@ -1719,7 +2006,8 @@ function ServiceAPInvoicePage() {
         udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
       })),
     header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
-    totals,
+    totals: { ...totals, wtaxAmount, total: totalPaymentDueAfterWTax, balanceDue: balanceDueAfterWTax },
+    withholdingTaxRows: wtaxRowsForTotals,
   });
 
   const openJournalLinkedMaster = (line = {}) => {
@@ -1754,19 +2042,19 @@ function ServiceAPInvoicePage() {
       return null;
     }
 
-    setJournalPreview((prev) => ({ ...prev, open: true, loading: true }));
+    setJournalPreview((prev) => ({ ...prev, open: true, loading: true, error: '' }));
     try {
       const res = await generateServiceAPInvoiceJournalEntry({
         docEntry,
         payload: docEntry ? null : buildPayload(),
         persist,
       });
-      setJournalPreview({ open: true, loading: false, data: res.data });
+      setJournalPreview({ open: true, loading: false, data: res.data, error: '' });
       setPageState((prev) => ({ ...prev, error: '' }));
       return res.data;
     } catch (error) {
       const message = error.response?.data?.message || error.message || 'Failed to preview Journal Entry.';
-      setJournalPreview((prev) => ({ ...prev, loading: false }));
+      setJournalPreview((prev) => ({ ...prev, loading: false, error: message }));
       setPageState((prev) => ({ ...prev, success: '', error: message }));
       return null;
     }
@@ -1818,7 +2106,7 @@ function ServiceAPInvoicePage() {
     setLines([createLine(rowUdfDefinitions)]);
     setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
-    setJournalPreview({ open: false, loading: false, data: null });
+    setJournalPreview({ open: false, loading: false, data: null, error: '' });
     setPageState((prev) => ({ ...prev, error: '', success: '' }));
   };
 
@@ -1865,7 +2153,68 @@ function ServiceAPInvoicePage() {
     return null;
   };
 
-  const handleCopyFrom = (data, sourceType) => {
+  const refreshSeriesForNewDocument = async ({
+    postingDate = header.postingDate,
+    transactionType = header.transactionType,
+    branch = header.branch,
+    preferredSeries = header.series,
+  } = {}) => {
+    if (String(preferredSeries || '') === 'manual') {
+      setHeader((prev) => ({ ...prev, series: 'manual', nextNumber: '', docNo: '' }));
+      return;
+    }
+
+    setPageState((prev) => ({ ...prev, seriesLoading: true }));
+    try {
+      const res = await fetchServiceAPInvoiceSeries(postingDate, transactionType, branch);
+      let nextSeries = dedupeSeriesOptions(toArray(res.data?.series || res.data, ['series']));
+      if (!nextSeries.length) {
+        const fallbackRes = await fetchServiceAPInvoiceSeries(postingDate, '', branch);
+        nextSeries = dedupeSeriesOptions(toArray(fallbackRes.data?.series || fallbackRes.data, ['series']));
+      }
+      const selectedSeries =
+        pickSapSeriesForTransactionType(nextSeries, transactionType) ||
+        pickSeriesForNewDocument(nextSeries, preferredSeries, refData.series || []);
+      if (nextSeries.length) {
+        setRefData((prev) => ({ ...prev, series: nextSeries }));
+      }
+      if (selectedSeries) {
+        const numberRes = await fetchServiceAPInvoiceNextNumber(selectedSeries.Series);
+        setHeader((prev) => ({
+          ...prev,
+          postingDate,
+          documentDate: postingDate,
+          deliveryDate: postingDate,
+          transactionType,
+          branch: branch || prev.branch || String(selectedSeries.BPLId || ''),
+          series: String(selectedSeries.Series || ''),
+          nextNumber: String(numberRes.data?.nextNumber || selectedSeries.NextNumber || ''),
+          docNo: '',
+        }));
+      }
+    } catch (_error) {
+      const selectedSeries =
+        pickSapSeriesForTransactionType(refData.series || [], transactionType) ||
+        pickSeriesForNewDocument(refData.series || [], preferredSeries, refData.series || []);
+      if (selectedSeries) {
+        setHeader((prev) => ({
+          ...prev,
+          postingDate,
+          documentDate: postingDate,
+          deliveryDate: postingDate,
+          transactionType,
+          branch: branch || prev.branch || String(selectedSeries.BPLId || ''),
+          series: String(selectedSeries.Series || ''),
+          nextNumber: String(selectedSeries.NextNumber || ''),
+          docNo: '',
+        }));
+      }
+    } finally {
+      setPageState((prev) => ({ ...prev, seriesLoading: false }));
+    }
+  };
+
+  const handleCopyFrom = async (data, sourceType) => {
     const copySource = unwrapCopyFromDocument(data);
     const sourceLines = toArray(copySource.lines, ['lines', 'DocumentLines']);
     const copyKey = `${sourceType}-${copySource.docEntry}-${sourceLines.length}`;
@@ -1873,11 +2222,26 @@ function ServiceAPInvoicePage() {
     handledCopyFromRef.current = copyKey;
 
     const normalizedHeader = normaliseDocumentHeader(copySource.header);
+    const copyDate = today();
+    const copyTransactionType = normalizedHeader.transactionType
+      || header.transactionType
+      || transactionTypeOptions[0]?.value
+      || 'GST Tax Invoice';
+    const copyBranch = normalizedHeader.branch || header.branch || '';
     setHeader((prev) => ({
       ...prev,
       ...normalizedHeader,
-      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice',
+      postingDate: copyDate,
+      documentDate: copyDate,
+      deliveryDate: copyDate,
+      transactionType: copyTransactionType,
+      branch: copyBranch,
+      wtaxAmount: '',
+      series: '',
+      nextNumber: '',
+      docNo: '',
     }));
+    setWithholdingTax(createEmptyWithholdingTaxState());
     const baseType = BASE_TYPE[sourceType] || 17;
     const copyLines = sourceLines;
     setLines(copyLines.length
@@ -1887,6 +2251,15 @@ function ServiceAPInvoicePage() {
       }))
       : [createLine(rowUdfDefinitions)]);
     setActiveTab('Contents');
+    if (normalizedHeader.vendor) {
+      loadVendorDetails(normalizedHeader.vendor);
+    }
+    await refreshSeriesForNewDocument({
+      postingDate: copyDate,
+      transactionType: copyTransactionType,
+      branch: copyBranch,
+      preferredSeries: '',
+    });
     setPageState((prev) => ({ ...prev, success: 'Copied service document lines.', error: '' }));
   };
 
@@ -1911,7 +2284,10 @@ function ServiceAPInvoicePage() {
     });
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
+    const duplicateDate = today();
+    const duplicateTransactionType = header.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice';
+    const duplicateBranch = header.branch || '';
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -1931,16 +2307,25 @@ function ServiceAPInvoicePage() {
     });
 
     if (duplicated) {
-      const selectedSeries =
-        (refData.series || []).find((series) => String(series.Series || '') === String(header.series || '')) ||
-        (refData.series || [])[0];
-      if (selectedSeries) {
-        setHeader((prev) => ({
-          ...prev,
-          series: String(selectedSeries.Series || ''),
-          nextNumber: String(selectedSeries.NextNumber || ''),
-        }));
-      }
+      setHeader((prev) => ({
+        ...prev,
+        postingDate: duplicateDate,
+        documentDate: duplicateDate,
+        deliveryDate: duplicateDate,
+        transactionType: duplicateTransactionType,
+        branch: duplicateBranch,
+        wtaxAmount: '',
+        series: '',
+        nextNumber: '',
+        docNo: '',
+      }));
+      setWithholdingTax((prev) => ({ ...prev, rows: [], open: false }));
+      await refreshSeriesForNewDocument({
+        postingDate: duplicateDate,
+        branch: duplicateBranch,
+        transactionType: duplicateTransactionType,
+        preferredSeries: header.series,
+      });
     }
   };
 
@@ -2143,7 +2528,7 @@ function ServiceAPInvoicePage() {
   const tableMinWidth = 42 + 48 + visibleLineColumns.reduce((sum, column) => sum + column.width, 0);
 
   return (
-    <form className={`ap-invoice-page del-page sap-document-page service-ap-invoice-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form ref={workspaceRef} className={`ap-invoice-page del-page sap-document-page service-ap-invoice-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
       <div className="del-toolbar sap-document-toolbar">
         <span className="del-toolbar__title sap-document-toolbar__title">Service A/P Invoice{currentDocEntry ? ` - #${header.docNo || currentDocEntry}` : ''}</span>
         <button type="submit" className="del-btn del-btn--primary sap-document-toolbar__primary" disabled={pageState.posting || !isDocumentEditable} title={primaryActionLabel}>
@@ -2164,14 +2549,16 @@ function ServiceAPInvoicePage() {
           onSuccess={(message) => setPageState((prev) => ({ ...prev, error: '', success: message }))}
           onError={(message) => setPageState((prev) => ({ ...prev, success: '', error: message }))}
         />
-        <button
-          type="button"
-          className="del-btn sap-document-toolbar__journal-preview"
-          onClick={() => previewJournalEntry({ persist: false })}
-          disabled={pageState.posting || journalPreview.loading}
-        >
-          Preview Journal Entry
-        </button>
+        {!currentDocEntry && (
+          <button
+            type="button"
+            className="del-btn sap-document-toolbar__journal-preview"
+            onClick={() => previewJournalEntry({ persist: false })}
+            disabled={pageState.posting || journalPreview.loading}
+          >
+            Preview Journal Entry
+          </button>
+        )}
         <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/services/ap-invoice/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
@@ -2281,6 +2668,7 @@ function ServiceAPInvoicePage() {
                 <label className="del-field__label">No.</label>
                 <div className="service-ap-docnum">
                   <select className="del-field__select" name="series" value={header.series} onChange={handleHeaderChange} disabled={!isDocumentEditable || currentDocEntry || pageState.seriesLoading}>
+                    <option value="">Select Series</option>
                     <option value="manual">Manual</option>
                     {seriesOptions.map((series) => (
                       <option key={series.Series} value={series.Series}>{series.SeriesName}</option>
@@ -2393,7 +2781,9 @@ function ServiceAPInvoicePage() {
         )}
 
         {activeTab === 'Tax' && (
-          <TaxTab onOpenTaxInfoModal={openTaxInfoModal} isEditable={isDocumentEditable} />
+          <div className="sap-b1-tax-panel">
+            <TaxTab onOpenTaxInfoModal={openTaxInfoModal} isEditable={isDocumentEditable} />
+          </div>
         )}
 
         {activeTab === 'Electronic Documents' && (
@@ -2438,10 +2828,20 @@ function ServiceAPInvoicePage() {
                   <tr><td>Freight</td><td><input className="del-grid__input" name="freight" value={header.freight} onChange={handleHeaderChange} disabled={!isDocumentEditable} /></td></tr>
                   <tr><td><label className="service-ap-checkbox"><input type="checkbox" name="rounding" checked={header.rounding || parseNum(header.roundingAmount) !== 0} onChange={handleHeaderChange} disabled={!isDocumentEditable} /> Rounding</label></td><td><input className="del-grid__input" value={`INR ${fmt(totals.roundingAmount)}`} readOnly /></td></tr>
                   <tr><td>Tax</td><td><input className="del-grid__input" value={fmt(totals.tax)} readOnly /></td></tr>
-                  <tr><td>WTax Amount</td><td><input className="del-grid__input" value={fmt(totals.wtaxAmount)} readOnly /></td></tr>
-                  <tr style={{ borderTop: '2px solid #a0aab4' }}><td style={{ fontWeight: 700 }}>Total</td><td><input className="del-grid__input" value={fmt(totals.total)} readOnly style={{ fontWeight: 700 }} /></td></tr>
+                  {hasWTaxLiableLines && (
+                    <tr>
+                      <td>WTax Amount</td>
+                      <td>
+                        <div className="service-ap-wtax-cell">
+                          <input className="del-grid__input service-ap-wtax-input" value={fmt(wtaxAmount)} readOnly />
+                          <button type="button" className="del-btn service-ap-wtax-btn" onClick={openWithholdingTaxTable} disabled={!isDocumentEditable}>→</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  <tr style={{ borderTop: '2px solid #a0aab4' }}><td style={{ fontWeight: 700 }}>Total</td><td><input className="del-grid__input" value={fmt(totalPaymentDueAfterWTax)} readOnly style={{ fontWeight: 700 }} /></td></tr>
                   <tr><td>Applied Amount</td><td><input className="del-grid__input" name="appliedAmount" value={header.appliedAmount} onChange={handleHeaderChange} disabled={!isDocumentEditable} /></td></tr>
-                  <tr><td>Balance Due</td><td><input className="del-grid__input" value={fmt(totals.balanceDue)} readOnly /></td></tr>
+                  <tr><td>Balance Due</td><td><input className="del-grid__input" value={fmt(balanceDueAfterWTax)} readOnly /></td></tr>
                 </tbody>
               </table>
             </div>
@@ -2542,9 +2942,23 @@ function ServiceAPInvoicePage() {
         onFormChange={handleTaxInfoFormChange}
       />
 
+      <WithholdingTaxTableModal
+        isOpen={withholdingTax.open}
+        onClose={() => setWithholdingTax((prev) => ({ ...prev, open: false }))}
+        rows={withholdingModalRows}
+        allowedCodes={withholdingTax.allowedCodes.length ? withholdingTax.allowedCodes : refData.withholding_tax_codes}
+        baseAmount={wtaxBaseAmount}
+        workspaceRef={workspaceRef}
+        onRowsChange={(rows) => setWithholdingTax((prev) => ({
+          ...prev,
+          rows: recalcWithholdingRows(rows, wtaxBaseAmount, wtaxDecimals),
+        }))}
+      />
+
       <JournalEntryPreviewModal
         isOpen={journalPreview.open}
         loading={journalPreview.loading}
+        error={journalPreview.error}
         journalEntry={journalPreview.data}
         onClose={() => setJournalPreview((prev) => ({ ...prev, open: false }))}
         onOpenLinkedMaster={openJournalLinkedMaster}

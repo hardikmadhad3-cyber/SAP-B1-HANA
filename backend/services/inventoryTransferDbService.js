@@ -1,4 +1,5 @@
 const db = require('../db/odbc');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const { getHeaderUdfValues, getLineUdfValues } = require('./udfMetadataService');
 const { mapInventoryPriceLists } = require('./inventoryPriceListUtils');
 
@@ -258,7 +259,7 @@ const getSalesEmployees = async () =>
   );
 
 const getBusinessPartnerDetails = async (cardCode) => {
-  const [contactRows, addressRows] = await Promise.all([
+  const [contactRows, addressGroups] = await Promise.all([
     safe(
       db.query(
         `
@@ -272,25 +273,7 @@ const getBusinessPartnerDetails = async (cardCode) => {
         { cardCode }
       )
     ),
-    safe(
-      db.query(
-        `
-          SELECT
-            Address,
-            Street,
-            Block,
-            City,
-            ZipCode,
-            State,
-            Country
-          FROM CRD1
-          WHERE CardCode = @cardCode
-            AND AdresType = 'S'
-          ORDER BY Address
-        `,
-        { cardCode }
-      )
-    ),
+    loadBusinessPartnerAddresses(db, cardCode, { context: 'Inventory Transfer' }),
   ]);
 
   return {
@@ -298,7 +281,7 @@ const getBusinessPartnerDetails = async (cardCode) => {
       id: String(row.CntctCode),
       name: row.Name || '',
     })),
-    shipToAddresses: addressRows.map((row) => ({
+    shipToAddresses: addressGroups.shipTo.map((row) => ({
       id: row.Address || '',
       label: row.Address || '',
       fullAddress: buildAddressText(row),

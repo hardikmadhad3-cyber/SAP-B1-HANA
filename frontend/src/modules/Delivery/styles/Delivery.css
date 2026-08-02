@@ -1171,6 +1171,99 @@
   border-bottom: 1px solid #e0e6ed;
 }
 
+/* ── Logistics: compact SAP B1 address layout ── */
+.del-logistics-panel {
+  padding: 10px;
+}
+
+.del-logistics-panel .sap-tab-grid {
+  grid-template-columns: repeat(2, minmax(270px, 1fr));
+  column-gap: 28px;
+  row-gap: 12px;
+}
+
+.del-logistics-panel .del-logistics-section {
+  display: grid;
+  gap: 0;
+  align-content: start;
+}
+
+.del-logistics-panel .del-section-title {
+  margin: 0 0 8px;
+}
+
+.del-logistics-panel .del-logistics-field {
+  grid-template-columns: 126px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 10px;
+  min-height: 26px;
+  margin-bottom: 6px;
+}
+
+.app-shell .del-page .del-logistics-panel .del-logistics-field > .del-field__label {
+  width: auto;
+  max-width: none;
+  overflow: visible;
+  color: var(--sap-text-muted, #5f6b75);
+  line-height: 1.2;
+  text-align: left;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.del-logistics-panel .del-logistics-field--address {
+  align-items: start;
+}
+
+.del-logistics-panel .del-logistics-field--address > .del-field__label {
+  padding-top: 4px;
+}
+
+.del-logistics-panel .del-logistics-field .sap-input-group,
+.del-logistics-panel .del-logistics-field > .del-field__input,
+.del-logistics-panel .del-logistics-field > .del-field__select,
+.del-logistics-panel .del-logistics-field > .del-textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.del-logistics-panel .del-logistics-field > .del-textarea {
+  height: 72px;
+  min-height: 72px;
+  padding: 5px 6px;
+  line-height: 1.3;
+}
+
+.del-logistics-panel .del-logistics-checkbox {
+  justify-content: flex-start;
+  width: 100%;
+  margin: 2px 0 6px;
+  text-align: left;
+}
+
+.del-logistics-panel .del-logistics-checkbox label {
+  color: var(--sap-text, #1a1a1a);
+  line-height: 1.25;
+}
+
+@media (max-width: 760px) {
+  .del-logistics-panel .sap-tab-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 18px;
+  }
+}
+
+@media (max-width: 520px) {
+  .del-logistics-panel .del-logistics-field {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 3px;
+  }
+
+  .del-logistics-panel .del-logistics-field--address > .del-field__label {
+    padding-top: 0;
+  }
+}
+
 /* ── Modal ── */
 .del-modal-overlay {
   position: fixed;
@@ -1228,6 +1321,19 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.del-batch-modal-overlay {
+  align-items: flex-start;
+  padding: 72px 16px 24px;
+  box-sizing: border-box;
+  overflow: auto;
+}
+
+.del-batch-modal {
+  width: min(980px, 100%);
+  max-height: calc(100% - 96px);
+  overflow: hidden;
 }
 
 .del-tax-info-modal {

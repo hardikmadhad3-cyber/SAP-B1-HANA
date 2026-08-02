@@ -50,9 +50,9 @@ const normalizeConsolidationType = (value) =>
   value === "cDelivery_sum" ? "DeliveryConsolidation" : "PaymentConsolidation";
 
 const normalizeWithholdingFlag = (value) => {
-  if (value === "boYES") return "boYES";
-  if (value === "boNone") return "boNone";
-  return "boNO";
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["bonone", "bononeenum", "none", ""].includes(normalized)) return "boNONE";
+  return ["tyes", "boyes", "yes", "y", "true", "1"].includes(normalized) ? "boYES" : "boNO";
 };
 
 const normalizeGenderValue = (value) => {
@@ -180,6 +180,14 @@ const normalizeBP = (data) => {
   if (!d.BPBankAccounts)   d.BPBankAccounts   = [];
   if (!d.BPWithholdingTaxCollection) d.BPWithholdingTaxCollection = [];
   if (!d.BPFiscalTaxIDCollection) d.BPFiscalTaxIDCollection = [];
+  d.BPWithholdingTaxCollection = d.BPWithholdingTaxCollection.map((row) => ({
+    ...row,
+    WTCode: row.WTCode || "",
+    WTCodeName: row.WTCodeName || row.name || "",
+    AssesseeType: row.AssesseeType || row.assesseeType || "",
+    AssesseeTypeLabel: row.AssesseeTypeLabel || row.assesseeTypeLabel || "",
+    WTTaxCategoryLabel: row.WTTaxCategoryLabel || row.taxCategory || "",
+  }));
   d.ContactEmployees = d.ContactEmployees.map((contact) => ({
     ...contact,
     Address: contact.Address || contact.Department || "",
@@ -410,7 +418,7 @@ function buildPayload(form) {
   else if (form.DunningLevel === "") p.DunningLevel = null;
   if (opt(form.DunningDate)) p.DunningDate = form.DunningDate;
   else if (form.DunningDate === "") p.DunningDate = null;
-  p.SubjectToWithholdingTax = form.SubjectToWithholdingTax || "boNO";
+  p.SubjectToWithholdingTax = normalizeWithholdingFlag(form.SubjectToWithholdingTax);
   p.WTCode = opt(form.WTCode) ? form.WTCode : null;
   if (opt(form.CertificateNumber)) p.CertificateNumber = form.CertificateNumber;
   else if (form.CertificateNumber === "") p.CertificateNumber = null;
@@ -586,7 +594,7 @@ function buildPayload(form) {
   p.BPWithholdingTaxCollection = (form.BPWithholdingTaxCollection || [])
     .filter((row) => opt(row?.WTCode))
     .map((row) => ({
-      WTCode: row.WTCode,
+      WTCode: String(row.WTCode || "").trim(),
       ...(row.BPCode ? { BPCode: row.BPCode } : {}),
     }));
 
@@ -1094,7 +1102,9 @@ export default function BusinessPartnerModule() {
     try {
       const normalizedForm = await normalizeContactBirthCountries(form);
       if (normalizedForm !== form) setForm(normalizedForm);
-      await updateBP(cardCode, buildPayload(normalizedForm));
+      const updated = await updateBP(cardCode, buildPayload(normalizedForm));
+      const updatedData = updated?.CardCode ? updated : await getBP(cardCode);
+      setForm({ ...EMPTY_FORM, ...normalizeBP(updatedData) });
       showAlert("success", `"${cardCode}" updated successfully.`);
     } catch (err) {
       showAlert("error", err.response?.data?.message || err.message || "Failed to update.");

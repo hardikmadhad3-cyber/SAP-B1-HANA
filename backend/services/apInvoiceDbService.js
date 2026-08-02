@@ -1,7 +1,9 @@
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
+const { getPlaceOfSupplyUdfValue } = require('./placeOfSupplyUtils');
 
 const safe = async (promise) => {
   try {
@@ -43,7 +45,133 @@ const parseSeriesDate = (value) => {
 };
 
 const normalizeSeriesText = (value) =>
-  String(value || '').toUpperCase().replace(/FY/g, '').replace(/[-/\s]/g, '');
+  String(value || '').toUpperCase().replace(/FY/g, '').replace(/[^A-Z0-9]/g, '');
+
+const resolveTransactionSeriesKind = (transactionType = '') => {
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (normalizedType.includes('DEBIT')) return 'debit';
+  if (normalizedType.includes('BILLOFSUPPLY') || normalizedType.includes('SUPPLY')) return 'bill';
+  if (normalizedType.includes('TAXINVOICE') || normalizedType.includes('GST')) return 'tax';
+  return '';
+};
+
+const getSeriesKind = (series = {}) => {
+  const text = normalizeSeriesText([
+    series.SeriesName,
+    series.DisplayName,
+    series.RawSeriesName,
+    series.BeginStr,
+    series.Indicator,
+    series.DocSubType,
+  ].filter(Boolean).join(' '));
+  const docSubType = String(series.DocSubType || '').trim().toUpperCase();
+
+  if (docSubType === 'GD' || text.includes('DEBIT') || text.includes('DBN') || text.includes('CAN')) return 'debit';
+  if (docSubType === '--' || text.includes('BILLOFSUPPLY') || text.includes('SUPPLY') || text.includes('BOS') || text.includes('BILL')) return 'bill';
+  if (docSubType === 'GA' || text.includes('TAXINVOICE') || text.includes('GST')) return 'tax';
+  if (text.includes('AP') && !text.includes('CAN')) return 'bill';
+  return 'tax';
+};
+
+const filterSeriesByTransactionType = (series = [], transactionType = '') => {
+  const targetKind = resolveTransactionSeriesKind(transactionType);
+  if (!targetKind) return series;
+
+  const matched = (Array.isArray(series) ? series : []).filter((row) => {
+    if (Number(row.Series) === -1 || String(row.SeriesName || '').trim().toUpperCase() === 'MANUAL') return false;
+    return getSeriesKind(row) === targetKind;
+  });
+
+  return matched.length ? matched : series;
+};
+
+const scoreSeriesForTransactionType = (series = {}, transactionType = '') => {
+  const targetKind = resolveTransactionSeriesKind(transactionType);
+  if (!targetKind) return 0;
+
+  const text = normalizeSeriesText([
+    series.SeriesName,
+    series.DisplayName,
+    series.RawSeriesName,
+    series.BeginStr,
+    series.Indicator,
+    series.DocSubType,
+  ].filter(Boolean).join(' '));
+  const docSubType = String(series.DocSubType || '').trim().toUpperCase();
+  const isManual = Number(series.Series) === -1 || String(series.SeriesName || '').trim().toUpperCase() === 'MANUAL';
+  if (isManual) return -10000;
+
+  let score = 0;
+  if (series.IsDefault || series.isDefault) score += 25;
+
+  if (targetKind === 'debit') {
+    if (docSubType === 'GD') score += 250;
+    if (text.includes('CAN')) score += 180;
+    if (text.includes('DEBIT') || text.includes('DBN')) score += 160;
+    if (text.includes('AP')) score -= 40;
+    if (docSubType === 'GA' || text.includes('TAX')) score -= 80;
+  } else if (targetKind === 'bill') {
+    if (docSubType === '--') score += 120;
+    if (text.includes('BILLOFSUPPLY') || text.includes('SUPPLY') || text.includes('BOS') || text.includes('BILL')) score += 180;
+    if (text.includes('AP')) score += 140;
+    if (text.includes('CAN') || text.includes('DEBIT') || docSubType === 'GD') score -= 120;
+    if (docSubType === 'GA' || text.includes('TAX')) score -= 60;
+  } else if (targetKind === 'tax') {
+    if (docSubType === 'GA') score += 180;
+    if (text.includes('GST') || text.includes('TAXINVOICE') || text.includes('TAX')) score += 160;
+    if (!text.includes('AP') && !text.includes('CAN') && !text.includes('DEBIT') && !text.includes('BILL')) score += 120;
+    if (text.includes('AP')) score -= 100;
+    if (text.includes('CAN') || text.includes('DEBIT') || docSubType === 'GD') score -= 160;
+  }
+
+  return score;
+};
+
+const pickSapSeriesForTransactionType = (series = [], transactionType = '') => {
+  const rows = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (!String(transactionType || '').trim()) return null;
+
+  const nonManualRows = rows.filter((row) => (
+    Number(row.Series) !== -1 &&
+    String(row.SeriesName || '').trim().toUpperCase() !== 'MANUAL'
+  ));
+  const candidates = nonManualRows.length ? nonManualRows : rows;
+  if (!candidates.length) return null;
+
+  const scored = candidates
+    .map((row, index) => ({ row, index, score: scoreSeriesForTransactionType(row, transactionType) }))
+    .sort((left, right) =>
+      right.score - left.score ||
+      Number(right.row.IsDefault || right.row.isDefault || 0) - Number(left.row.IsDefault || left.row.isDefault || 0) ||
+      left.index - right.index);
+
+  return scored[0]?.row || null;
+};
+
+const keepSapVisibleNumberingSeries = (series = []) => {
+  const rows = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (rows.length <= 1) return rows;
+
+  const nonManualRows = rows.filter((row) => Number(row.Series) !== -1 && String(row.SeriesName || '').trim().toUpperCase() !== 'MANUAL');
+  const candidates = nonManualRows.length ? nonManualRows : rows;
+  const defaultRows = candidates.filter((row) => row.IsDefault || row.isDefault);
+  if (defaultRows.length) return [defaultRows[0]];
+
+  return [candidates[0]];
+};
+
+const dedupeNumberingSeries = (series = []) => {
+  const seen = new Set();
+  return (Array.isArray(series) ? series : []).filter((row) => {
+    const name = normalizeSeriesText(row.SeriesName || row.DisplayName || row.RawSeriesName || row.BeginStr || row.Series);
+    const indicator = normalizeSeriesText(row.Indicator);
+    const docSubType = String(row.DocSubType || '').trim().toUpperCase();
+    const key = `${name}|${indicator}|${docSubType}`;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
 
 const getFinancialYearTokens = (docDate) => {
   const year = docDate.getFullYear();
@@ -65,7 +193,7 @@ const isDateBetween = (date, fromDate, toDate) => {
   return date >= from && date <= to;
 };
 
-const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = '' } = {}) => {
+const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = '', transactionType = '' } = {}) => {
   const docDate = parseSeriesDate(date);
   const branchId = String(branch || '').trim() === '' ? null : Number.parseInt(branch, 10);
   const normalizedBranchId = Number.isInteger(branchId) ? branchId : null;
@@ -73,6 +201,9 @@ const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = ''
   const nnm1Columns = await getTableColumns('NNM1');
   const hasBranchColumn = nnm1Columns.has('BPLId');
   const branchSelect = hasBranchColumn ? 'T0.BPLId,' : 'NULL AS BPLId,';
+  const beginStrSelect = optionalColumn(nnm1Columns, 'T0', 'BeginStr', 'BeginStr', "''");
+  const endStrSelect = optionalColumn(nnm1Columns, 'T0', 'EndStr', 'EndStr', "''");
+  const docSubTypeSelect = optionalColumn(nnm1Columns, 'T0', 'DocSubType', 'DocSubType', "''");
   const branchFilter = hasBranchColumn && normalizedBranchId != null
     ? 'AND (T0.BPLId IS NULL OR T0.BPLId IN (-1, 0, @branchId))'
     : '';
@@ -83,6 +214,9 @@ const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = ''
       T0.SeriesName,
       T0.Indicator,
       T0.NextNumber,
+      ${beginStrSelect},
+      ${endStrSelect},
+      ${docSubTypeSelect},
       ${branchSelect}
       FY.FinancialYear,
       FY.FromDate,
@@ -134,11 +268,11 @@ const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = ''
       if (!bySeriesNameAndIndicator.has(key)) bySeriesNameAndIndicator.set(key, row);
     });
 
-  const series = [...bySeriesNameAndIndicator.values()]
+  const series = dedupeNumberingSeries([...bySeriesNameAndIndicator.values()]
     .filter((row) => (
       row.IsManual === 1 ||
-      (hasYearMatchedRows && row.IsYearNameMatch === 1) ||
-      (!hasYearMatchedRows && row.IsDateMatch === 1)
+      row.IsDateMatch === 1 ||
+      row.IsYearNameMatch === 1
     ))
     .filter((row) => (
       !hasBranchColumn ||
@@ -150,9 +284,17 @@ const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = ''
     .sort((left, right) =>
       left.IsManual - right.IsManual ||
       Number(right.IsDefault || 0) - Number(left.IsDefault || 0) ||
-      String(left.SeriesName || '').localeCompare(String(right.SeriesName || '')));
+      String(left.SeriesName || '').localeCompare(String(right.SeriesName || ''))));
 
-  return { series };
+  const transactionMatchedSeries = filterSeriesByTransactionType(series, transactionType);
+  const selectedTransactionSeries = pickSapSeriesForTransactionType(transactionMatchedSeries, transactionType)
+    || pickSapSeriesForTransactionType(series, transactionType);
+
+  return {
+    series: String(transactionType || '').trim()
+      ? (selectedTransactionSeries ? [selectedTransactionSeries] : keepSapVisibleNumberingSeries(series))
+      : keepSapVisibleNumberingSeries(series),
+  };
 };
 
 const getVendors = () => safe(db.query(`
@@ -291,27 +433,10 @@ const getContactsByVendor = async (cardCode) => safe(db.query(`
   ORDER BY T0.Name
 `, { cardCode }));
 
-const getAddressesByVendor = async (cardCode) => safe(db.query(`
-  SELECT T0.*,
-    T0.CardCode,
-    T0.Address,
-    T0.AdresType,
-    T0.Street,
-    T0.StreetNo,
-    T0.Block,
-    T0.Building,
-    T0.Address2,
-    T0.Address3,
-    T0.City,
-    T0.County,
-    T0.State,
-    T0.ZipCode,
-    T0.Country,
-    T0.GSTRegnNo AS GSTIN
-  FROM CRD1 T0
-  WHERE T0.CardCode = @cardCode
-  ORDER BY T0.Address
-`, { cardCode }));
+const getAddressesByVendor = async (cardCode) => {
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'AP Invoice' });
+  return addresses;
+};
 
 const getVendorGSTProfile = async (cardCode) => {
   const rows = await safe(db.query(`
@@ -379,6 +504,14 @@ const getOpenGRPO = async (vendorCode = null) => {
         T0.DocTotal
       FROM OPDN T0
       WHERE T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND EXISTS (
+          SELECT 1
+          FROM PDN1 T1
+          WHERE T1.DocEntry = T0.DocEntry
+            AND T1.LineStatus = 'O'
+            AND ISNULL(T1.OpenQty, 0) > 0
+        )
         AND T0.CardCode = @vendorCode
       ORDER BY T0.DocEntry DESC
     `
@@ -393,11 +526,50 @@ const getOpenGRPO = async (vendorCode = null) => {
         T0.DocTotal
       FROM OPDN T0
       WHERE T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND EXISTS (
+          SELECT 1
+          FROM PDN1 T1
+          WHERE T1.DocEntry = T0.DocEntry
+            AND T1.LineStatus = 'O'
+            AND ISNULL(T1.OpenQty, 0) > 0
+        )
       ORDER BY T0.DocEntry DESC
     `;
 
   const result = await safe(vendorCode ? db.query(query, { vendorCode }) : db.query(query));
   return { orders: result };
+};
+
+const getGRPOTargetInvoices = async (docEntry, lineNum = null) => {
+  const params = { docEntry };
+  const lineFilter = lineNum == null ? '' : 'AND T1.BaseLine = @lineNum';
+  if (lineNum != null) params.lineNum = lineNum;
+
+  return safe(db.query(`
+    SELECT TOP 10
+      T0.DocEntry,
+      T0.DocNum,
+      T0.Series,
+      NNM.SeriesName,
+      NNM.Indicator,
+      T1.BaseLine
+    FROM PCH1 T1
+    INNER JOIN OPCH T0 ON T0.DocEntry = T1.DocEntry
+    LEFT JOIN NNM1 NNM ON NNM.Series = T0.Series AND NNM.ObjectCode = '18'
+    WHERE T1.BaseType = 20
+      AND T1.BaseEntry = @docEntry
+      ${lineFilter}
+      AND T0.CANCELED <> 'Y'
+    ORDER BY T0.DocEntry DESC
+  `, params));
+};
+
+const formatTargetInvoiceReference = (target) => {
+  if (!target) return '';
+  const invoiceNumber = target.DocNum || target.DocEntry;
+  const seriesName = String(target.SeriesName || target.Series || '').trim();
+  return `A/P Invoice ${invoiceNumber}${seriesName ? ` (series ${seriesName})` : ''}`;
 };
 
 const getGRPOForCopy = async (docEntry) => {
@@ -420,6 +592,7 @@ const getGRPOForCopy = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue
@@ -446,7 +619,7 @@ const getGRPOForCopy = async (docEntry) => {
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
-      ${optionalColumn(lineColumns, 'T0', 'WTLiable', 'WTLiable', "'N'")},
+      'N' AS WTLiable,
       T0.LineTotal,
       T0.WhsCode AS Warehouse,
       ${optionalColumn(lineColumns, 'T0', 'AcctCode', 'GLAccount', "''")},
@@ -463,6 +636,18 @@ const getGRPOForCopy = async (docEntry) => {
     ORDER BY T0.LineNum
   `, { docEntry }));
 
+  if (!lineRows.length) {
+    const targetInvoices = await getGRPOTargetInvoices(docEntry);
+    const targetReference = formatTargetInvoiceReference(targetInvoices[0]);
+    throw createBaseDocumentError(
+      'GRPO_ALREADY_INVOICED',
+      targetReference
+        ? `This Goods Receipt PO has no open quantity left. It was already copied to ${targetReference}.`
+        : 'This Goods Receipt PO is closed or has no open quantity left to copy to an A/P Invoice.',
+      { docEntry, targetInvoices },
+    );
+  }
+
   const itemCodes = lineRows.map((l) => l.ItemCode).filter(Boolean);
   let itemInfoMap = {};
 
@@ -471,7 +656,8 @@ const getGRPOForCopy = async (docEntry) => {
     const itemRows = await safe(db.query(`
       SELECT T0.ItemCode,
              CHP.ChapterID AS HSNCode,
-             T0.ManBtchNum AS BatchManaged
+             T0.ManBtchNum AS BatchManaged,
+             T0.WTLiable AS ItemWTLiable
       FROM OITM T0
       LEFT JOIN OCHP CHP ON CHP.AbsEntry = T0.ChapterID
       WHERE T0.ItemCode IN (${itemCodes.map((_, i) => `@item${i}`).join(',')})
@@ -481,6 +667,7 @@ const getGRPOForCopy = async (docEntry) => {
       acc[row.ItemCode] = {
         hsnCode: row.HSNCode || '',
         batchManaged: row.BatchManaged === 'Y',
+        wtaxLiable: String(row.ItemWTLiable || '').toUpperCase() === 'Y',
       };
       return acc;
     }, {});
@@ -495,9 +682,11 @@ const getGRPOForCopy = async (docEntry) => {
       branch: header.Branch ? String(header.Branch) : '',
       paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
       otherInstruction: header.Remarks || '',
+      rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+      roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
     },
     lines: lineRows.map((l) => {
-      const itemInfo = itemInfoMap[l.ItemCode] || { hsnCode: '', batchManaged: false };
+      const itemInfo = itemInfoMap[l.ItemCode] || { hsnCode: '', batchManaged: false, wtaxLiable: false };
       return {
         baseEntry: docEntry,
         baseType: 20,
@@ -510,7 +699,7 @@ const getGRPOForCopy = async (docEntry) => {
         unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
         stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
         taxCode: l.TaxCode || '',
-        wtaxLiable: String(l.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
+        wtaxLiable: itemInfo.wtaxLiable ? 'Y' : 'N',
         total: l.LineTotal != null ? String(l.LineTotal) : '',
         whse: l.Warehouse || '',
         glAccount: l.GLAccount || '',
@@ -627,6 +816,8 @@ const getAPInvoice = async (docEntry) => {
       T0.DocEntry,
       T0.DocNum,
       T0.Series,
+      NNM.SeriesName,
+      NNM.Indicator AS SeriesIndicator,
       T0.CardCode,
       T0.CardName,
       T0.CntctCode AS ContactPersonCode,
@@ -642,8 +833,10 @@ const getAPInvoice = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
+      T0.WTSum AS WTaxAmount,
       T0.DocTotal AS TotalPaymentDue,
       CASE T0.DocStatus
         WHEN 'O' THEN 'Open'
@@ -652,6 +845,7 @@ const getAPInvoice = async (docEntry) => {
       END AS DocumentStatus
     FROM OPCH T0
     LEFT JOIN OSLP T1 ON T1.SlpCode = T0.SlpCode
+    LEFT JOIN NNM1 NNM ON NNM.Series = T0.Series AND NNM.ObjectCode = '18'
     WHERE T0.DocEntry = @docEntry
   `, { docEntry }));
 
@@ -665,7 +859,10 @@ const getAPInvoice = async (docEntry) => {
     getLineUdfValues({ tableId: 'PCH1', keyValue: docEntry }),
   ]);
 
-  const lineColumns = await getTableColumns('PCH1');
+  const [lineColumns, withholdingColumns] = await Promise.all([
+    getTableColumns('PCH1'),
+    getTableColumns('PCH5'),
+  ]);
   const lineRows = await safe(db.query(`
     SELECT 
       T0.LineNum,
@@ -692,6 +889,127 @@ const getAPInvoice = async (docEntry) => {
     WHERE T0.DocEntry = @docEntry
     ORDER BY T0.LineNum
   `, { docEntry }));
+
+  const withholdingRows = await safe(db.query(`
+    SELECT
+      T0.LineNum,
+      T0.WTCode,
+      ISNULL(T1.WTName, '') AS WTName,
+      T0.Rate,
+      T0.TaxbleAmnt AS TaxableAmount,
+      T0.WTAmnt AS WTAmount,
+      T0.Category,
+      ${optionalColumn(withholdingColumns, 'T0', 'BaseType', 'BaseType', "'N'")},
+      ${optionalColumn(withholdingColumns, 'T0', 'Criteria', 'Criteria', "'C'")},
+      ${optionalColumn(withholdingColumns, 'T0', 'Doc1LineNo', 'DocumentLineNumber', '-1')},
+      ${optionalColumn(withholdingColumns, 'T0', 'TdsAcc', 'TdsAccount', "''")},
+      ${optionalColumn(withholdingColumns, 'T0', 'SurAcc', 'SurchargeAccount', "''")},
+      ${optionalColumn(withholdingColumns, 'T0', 'CessAcc', 'CessAccount', "''")},
+      ${optionalColumn(withholdingColumns, 'T0', 'HscAcc', 'HscAccount', "''")},
+      ${optionalColumn(withholdingColumns, 'T0', 'TDSType', 'TDSType', "'E'")},
+      ${optionalColumn(withholdingColumns, 'T0', 'IgstAcc', 'IGSTAccount', "''")},
+      ${optionalColumn(withholdingColumns, 'T0', 'CgstAcc', 'CGSTAccount', "''")},
+      ${optionalColumn(withholdingColumns, 'T0', 'SgstAcc', 'SGSTAccount', "''")},
+      ${optionalColumn(withholdingColumns, 'T0', 'UtgstAcc', 'UTGSTAccount', "''")},
+      ${optionalColumn(withholdingColumns, 'T0', 'CsgstAcc', 'CessGSTAccount', "''")},
+      ${optionalColumn(withholdingColumns, 'T0', 'TdsRate', 'TDSRate', 'T0.Rate')},
+      ${optionalColumn(withholdingColumns, 'T0', 'SurRate', 'SurchargeRate', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'CessRate', 'CessRate', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'HscRate', 'HSCRate', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'IgstRate', 'IGSTRate', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'CgstRate', 'CGSTRate', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'SgstRate', 'SGSTRate', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'UtgstRate', 'UTGSTRate', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'CsgstRate', 'CessGSTRate', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'TdsBAmt', 'TDSBaseAmount', 'T0.TaxbleAmnt')},
+      ${optionalColumn(withholdingColumns, 'T0', 'SurBAmt', 'SurchargeBaseAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'CessBAmt', 'CessBaseAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'HscBAmt', 'HSCBaseAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'IgstBAmt', 'IGSTBaseAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'CgstBAmt', 'CGSTBaseAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'SgstBAmt', 'SGSTBaseAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'UtgstBAmt', 'UTGSTBaseAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'CsgstBAmt', 'CessGSTBaseAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'TdsAmnt', 'TDSTaxAmount', 'T0.WTAmnt')},
+      ${optionalColumn(withholdingColumns, 'T0', 'SurAmnt', 'SurchargeTaxAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'CessAmnt', 'CessTaxAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'HscAmnt', 'HSCTaxAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'IgstAmnt', 'IGSTTaxAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'CgstAmnt', 'CGSTTaxAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'SgstAmnt', 'SGSTTaxAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'UtgstAmt', 'UTGSTTaxAmount', '0')},
+      ${optionalColumn(withholdingColumns, 'T0', 'CsgstAmt', 'CessGSTTaxAmount', '0')}
+    FROM PCH5 T0
+    LEFT JOIN OWHT T1 ON T1.WTCode = T0.WTCode
+    WHERE T0.AbsEntry = @docEntry
+    ORDER BY T0.LineNum
+  `, { docEntry }));
+
+  const categoryLabels = { I: 'Invoice', P: 'Payment' };
+  const baseTypeLabels = { G: 'Gross', N: 'Net', V: 'VAT', U: 'UoM', H: 'Gross - VAT' };
+  const criteriaLabels = { C: 'Cash', A: 'Accrual', Y: 'Cash', N: 'Accrual' };
+  const tdsTypeLabels = { E: 'eTDS', D: 'GST TDS', C: 'GST TCS', S: 'SALES TCS' };
+  const savedWithholdingRows = withholdingRows.map((row) => ({
+    lineNum: row.LineNum,
+    documentLineNumber: row.DocumentLineNumber,
+    code: row.WTCode || '',
+    name: row.WTName || '',
+    rate: Number(row.Rate || 0),
+    baseAmount: Number(row.TDSBaseAmount ?? row.TaxableAmount ?? 0),
+    taxableAmount: Number(row.TaxableAmount || 0),
+    wtaxAmount: Number(row.WTAmount || 0),
+    category: categoryLabels[String(row.Category || '').toUpperCase()] || row.Category || 'Invoice',
+    categoryCode: row.Category || 'I',
+    baseType: baseTypeLabels[String(row.BaseType || '').toUpperCase()] || row.BaseType || 'Net',
+    baseTypeCode: row.BaseType || 'N',
+    criteria: criteriaLabels[String(row.Criteria || '').toUpperCase()] || row.Criteria || 'Cash',
+    criteriaCode: row.Criteria || 'C',
+    tdsType: tdsTypeLabels[String(row.TDSType || '').toUpperCase()] || row.TDSType || 'eTDS',
+    tdsTypeCode: row.TDSType || 'E',
+    tdsAccount: row.TdsAccount || '',
+    surchargeAccount: row.SurchargeAccount || '',
+    cessAccount: row.CessAccount || '',
+    hscAccount: row.HscAccount || '',
+    igstAccount: row.IGSTAccount || '',
+    cgstAccount: row.CGSTAccount || '',
+    sgstAccount: row.SGSTAccount || '',
+    utgstAccount: row.UTGSTAccount || '',
+    cessGstAccount: row.CessGSTAccount || '',
+    tdsRate: Number(row.TDSRate ?? row.Rate ?? 0),
+    surchargeRate: Number(row.SurchargeRate || 0),
+    cessRate: Number(row.CessRate || 0),
+    hscRate: Number(row.HSCRate || 0),
+    igstRate: Number(row.IGSTRate || 0),
+    cgstRate: Number(row.CGSTRate || 0),
+    sgstRate: Number(row.SGSTRate || 0),
+    utgstRate: Number(row.UTGSTRate || 0),
+    cessGstRate: Number(row.CessGSTRate || 0),
+    tdsBaseAmount: Number(row.TDSBaseAmount ?? row.TaxableAmount ?? 0),
+    surchargeBaseAmount: Number(row.SurchargeBaseAmount || 0),
+    cessBaseAmount: Number(row.CessBaseAmount || 0),
+    hscBaseAmount: Number(row.HSCBaseAmount || 0),
+    igstBaseAmount: Number(row.IGSTBaseAmount || 0),
+    cgstBaseAmount: Number(row.CGSTBaseAmount || 0),
+    sgstBaseAmount: Number(row.SGSTBaseAmount || 0),
+    utgstBaseAmount: Number(row.UTGSTBaseAmount || 0),
+    cessGstBaseAmount: Number(row.CessGSTBaseAmount || 0),
+    tdsTaxAmount: Number(row.TDSTaxAmount ?? row.WTAmount ?? 0),
+    surchargeTaxAmount: Number(row.SurchargeTaxAmount || 0),
+    cessTaxAmount: Number(row.CessTaxAmount || 0),
+    hscTaxAmount: Number(row.HSCTaxAmount || 0),
+    igstTaxAmount: Number(row.IGSTTaxAmount || 0),
+    cgstTaxAmount: Number(row.CGSTTaxAmount || 0),
+    sgstTaxAmount: Number(row.SGSTTaxAmount || 0),
+    utgstTaxAmount: Number(row.UTGSTTaxAmount || 0),
+    cessGstTaxAmount: Number(row.CessGSTTaxAmount || 0),
+  }));
+
+  const savedDocumentLineNumbers = new Set(
+    savedWithholdingRows
+      .map((row) => Number(row.documentLineNumber))
+      .filter((lineNumber) => Number.isInteger(lineNumber) && lineNumber >= 0)
+  );
+  const hasSavedWithholdingTax = savedWithholdingRows.length > 0 || Number(header.WTaxAmount || 0) !== 0;
 
   const itemCodes = lineRows.map((l) => l.ItemCode).filter(Boolean);
   let itemInfoMap = {};
@@ -731,16 +1049,22 @@ const getAPInvoice = async (docEntry) => {
         docNo: header.DocNum ? String(header.DocNum) : '',
         status: header.DocumentStatus || 'Open',
         series: header.Series != null ? String(header.Series) : '',
+        seriesName: header.SeriesName || '',
+        seriesIndicator: header.SeriesIndicator || '',
         currency: header.Currency || '',
         postingDate: header.PostingDate ? header.PostingDate.toISOString().split('T')[0] : '',
         deliveryDate: header.DeliveryDate ? header.DeliveryDate.toISOString().split('T')[0] : '',
         documentDate: header.DocumentDate ? header.DocumentDate.toISOString().split('T')[0] : '',
         journalRemark: header.JournalRemark || '',
         paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
+        placeOfSupply: getPlaceOfSupplyUdfValue(headerUdfs),
         otherInstruction: header.Remarks || '',
         discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+        rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         freight: header.Freight != null ? String(header.Freight) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
+        wtaxAmount: header.WTaxAmount != null ? String(header.WTaxAmount) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
       },
       lines: lineRows.map((l) => {
@@ -756,7 +1080,11 @@ const getAPInvoice = async (docEntry) => {
           unitPrice: l.UnitPrice != null ? String(l.UnitPrice) : '',
           stdDiscount: l.DiscountPercent != null ? String(l.DiscountPercent) : '',
           taxCode: l.TaxCode || '',
-          wtaxLiable: String(l.WTLiable || '').toUpperCase() === 'Y' ? 'Y' : 'N',
+          wtaxLiable: (
+            String(l.WTLiable || '').toUpperCase() === 'Y'
+            || savedDocumentLineNumbers.has(Number(l.LineNum))
+            || (hasSavedWithholdingTax && savedDocumentLineNumbers.size === 0)
+          ) ? 'Y' : 'N',
           total: l.LineTotal != null ? String(l.LineTotal) : '',
           whse: l.Warehouse || '',
           glAccount: l.GLAccount || '',
@@ -771,13 +1099,14 @@ const getAPInvoice = async (docEntry) => {
           udf: lineUdfsByLineNum[l.LineNum] || {},
         };
       }),
+      withholding_tax_rows: savedWithholdingRows,
       header_udfs: headerUdfs,
     },
   };
 };
 
-const getDocumentSeries = async ({ date = null, branch = '' } = {}) => {
-  return getMarketingDocumentSeries({ objectCode: '18', date, branch });
+const getDocumentSeries = async ({ date = null, branch = '', transactionType = '' } = {}) => {
+  return getMarketingDocumentSeries({ objectCode: '18', date, branch, transactionType });
 };
 
 const getNextNumber = async (series) => {
@@ -1047,10 +1376,56 @@ const getItemValidation = async (itemCode) => {
 
 const getTaxCodeValidation = async (code) => masterDataDbService.getTaxCode(code);
 
+const createBaseDocumentError = (code, message, details = {}) => {
+  const error = new Error(message);
+  error.code = code;
+  error.status = 400;
+  error.statusCode = 400;
+  error.details = details;
+  return error;
+};
+
+const parseBaseNumber = (value, fieldName, details) => {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    throw createBaseDocumentError(
+      'BASE_DOCUMENT_NOT_FOUND',
+      `Base document ${fieldName} is required.`,
+      details,
+    );
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw createBaseDocumentError(
+      'BASE_DOCUMENT_NOT_FOUND',
+      `Base document ${fieldName} is invalid.`,
+      { ...details, [fieldName]: value },
+    );
+  }
+
+  return parsed;
+};
+
+const parseQuantity = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const hasPositiveBatchAssignment = (line = {}) => (
+  Array.isArray(line.batches) &&
+  line.batches.some((batch) => (
+    String(batch?.batchNumber || batch?.BatchNumber || batch?.BatchNum || '').trim() &&
+    parseQuantity(batch?.quantity ?? batch?.Quantity) > 0
+  ))
+);
+
 const getGRPOOpenLineValidation = async (docEntry, lineNum) => {
   const rows = await safe(db.query(`
     SELECT TOP 1
       T0.DocEntry,
+      H.DocNum,
+      H.DocStatus,
+      H.CANCELED,
       T0.LineNum,
       T0.OpenQty,
       T0.LineStatus
@@ -1060,6 +1435,95 @@ const getGRPOOpenLineValidation = async (docEntry, lineNum) => {
       AND T0.LineNum = @lineNum
   `, { docEntry, lineNum }));
   return rows[0] || null;
+};
+
+const validateAPInvoiceBaseDocuments = async (lines = []) => {
+  for (let index = 0; index < (lines || []).length; index += 1) {
+    const line = lines[index] || {};
+    const rawBaseType = line.baseType ?? line.BaseType;
+    const rawBaseEntry = line.baseEntry ?? line.BaseEntry;
+    const rawBaseLine = line.baseLine ?? line.BaseLine;
+    const hasBaseDocument =
+      rawBaseType !== undefined && rawBaseType !== null && String(rawBaseType).trim() !== '' &&
+      rawBaseEntry !== undefined && rawBaseEntry !== null && String(rawBaseEntry).trim() !== '' &&
+      rawBaseLine !== undefined && rawBaseLine !== null && String(rawBaseLine).trim() !== '';
+
+    if (!hasBaseDocument) continue;
+
+    const details = { lineIndex: index, itemCode: line.itemNo || line.ItemCode || '' };
+    const baseType = parseBaseNumber(rawBaseType, 'baseType', details);
+    const baseEntry = parseBaseNumber(rawBaseEntry, 'baseEntry', details);
+    const baseLine = parseBaseNumber(rawBaseLine, 'baseLine', details);
+    const requestedQty = parseQuantity(line.quantity ?? line.Quantity);
+
+    if (baseType !== 20) {
+      throw createBaseDocumentError(
+        'INVALID_BASE_DOCUMENT_TYPE',
+        `A/P Invoice can only be copied from an open GRPO. BaseType ${baseType} is not allowed.`,
+        { ...details, baseType, baseEntry, baseLine },
+      );
+    }
+
+    if (hasPositiveBatchAssignment(line)) {
+      throw createBaseDocumentError(
+        'BATCH_ASSIGNMENT_NOT_REQUIRED',
+        'Batch assignment is not required when creating an A/P Invoice from a GRPO.',
+        { ...details, baseType, baseEntry, baseLine },
+      );
+    }
+
+    const grpoLine = await getGRPOOpenLineValidation(baseEntry, baseLine);
+    if (!grpoLine) {
+      throw createBaseDocumentError(
+        'BASE_LINE_NOT_FOUND',
+        `GRPO line ${baseLine} was not found.`,
+        { ...details, baseType, baseEntry, baseLine },
+      );
+    }
+
+    if (String(grpoLine.CANCELED || '').toUpperCase() === 'Y' || String(grpoLine.DocStatus || '').toUpperCase() !== 'O') {
+      const targetInvoices = await getGRPOTargetInvoices(baseEntry, baseLine);
+      const targetReference = formatTargetInvoiceReference(targetInvoices[0]);
+      throw createBaseDocumentError(
+        'GRPO_ALREADY_INVOICED',
+        targetReference
+          ? `GRPO ${grpoLine.DocNum || baseEntry} was already copied to ${targetReference}; it cannot be copied again.`
+          : `GRPO ${grpoLine.DocNum || baseEntry} is closed and cannot be copied to A/P Invoice.`,
+        { ...details, baseType, baseEntry, baseLine, docStatus: grpoLine.DocStatus, targetInvoices },
+      );
+    }
+
+    if (String(grpoLine.LineStatus || '').toUpperCase() !== 'O') {
+      const targetInvoices = await getGRPOTargetInvoices(baseEntry, baseLine);
+      const targetReference = formatTargetInvoiceReference(targetInvoices[0]);
+      throw createBaseDocumentError(
+        'BASE_LINE_CLOSED',
+        targetReference
+          ? `GRPO line ${baseLine} was already copied to ${targetReference}; it cannot be invoiced again.`
+          : `GRPO line ${baseLine} is closed and cannot be invoiced again.`,
+        { ...details, baseType, baseEntry, baseLine, lineStatus: grpoLine.LineStatus, targetInvoices },
+      );
+    }
+
+    const openQty = parseQuantity(grpoLine.OpenQty);
+    if (openQty <= 0) {
+      throw createBaseDocumentError(
+        'NO_OPEN_QUANTITY',
+        'This GRPO line has already been fully invoiced.',
+        { ...details, baseType, baseEntry, baseLine, openQty },
+      );
+    }
+
+    if (requestedQty - openQty > 0.000001) {
+      throw createBaseDocumentError(
+        'QUANTITY_EXCEEDS_OPEN_QUANTITY',
+        `Quantity ${requestedQty} exceeds open quantity ${openQty} on GRPO line ${baseLine}.`,
+        { ...details, baseType, baseEntry, baseLine, requestedQty, openQty },
+      );
+    }
+  }
+
+  return { isValid: true };
 };
 
 const isDuplicateVendorInvoiceNumber = async (cardCode, vendorRefNo, excludeDocEntry = null) => {
@@ -1108,6 +1572,7 @@ module.exports = {
   getItemValidation,
   getTaxCodeValidation,
   getGRPOOpenLineValidation,
+  validateAPInvoiceBaseDocuments,
   isDuplicateVendorInvoiceNumber,
   hasItemGLAccount,
   getItemsForModal

@@ -3,12 +3,13 @@
  * Reads data directly from SAP B1 SQL Server database
  */
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
 const {
-  escapeLike,
   normalizeTopLimit,
   buildMarketingDocumentListFilterQuery,
+  appendSapSearchCondition,
 } = require('./documentListUtils');
 
 const safe = async (promise) => {
@@ -82,6 +83,15 @@ const searchVendors = async ({ query = '', cardCode = '', cardName = '', top, so
   const normalizedCardCode = String(cardCode || '').trim();
   const normalizedCardName = String(cardName || '').trim();
   const normalizedTop = normalizeTopLimit(top);
+  const queryClauses = [];
+  const queryParams = {};
+  appendSapSearchCondition(queryClauses, queryParams, ['CardCode', 'CardName'], normalizedQuery, 'query');
+  const cardCodeClauses = [];
+  const cardCodeParams = {};
+  appendSapSearchCondition(cardCodeClauses, cardCodeParams, ['CardCode'], normalizedCardCode, 'cardCode');
+  const cardNameClauses = [];
+  const cardNameParams = {};
+  appendSapSearchCondition(cardNameClauses, cardNameParams, ['CardName'], normalizedCardName, 'cardName');
   const orderBy = String(sortBy || '').trim().toLowerCase() === 'name'
     ? 'CardName, CardCode'
     : 'CardCode, CardName';
@@ -92,18 +102,15 @@ const searchVendors = async ({ query = '', cardCode = '', cardName = '', top, so
       *
     FROM OCRD
     WHERE CardType = 'S'
-      AND (@query = '' OR CardCode LIKE @queryLike OR CardName LIKE @queryLike)
-      AND (@cardCode = '' OR CardCode LIKE @cardCodeLike)
-      AND (@cardName = '' OR CardName LIKE @cardNameLike)
+      ${queryClauses.length ? `AND ${queryClauses.join(' AND ')}` : ''}
+      ${cardCodeClauses.length ? `AND ${cardCodeClauses.join(' AND ')}` : ''}
+      ${cardNameClauses.length ? `AND ${cardNameClauses.join(' AND ')}` : ''}
     ORDER BY ${orderBy}
   `, {
     ...(normalizedTop ? { top: normalizedTop } : {}),
-    query: normalizedQuery,
-    queryLike: `%${escapeLike(normalizedQuery)}%`,
-    cardCode: normalizedCardCode,
-    cardCodeLike: `%${escapeLike(normalizedCardCode)}%`,
-    cardName: normalizedCardName,
-    cardNameLike: `%${escapeLike(normalizedCardName)}%`,
+    ...queryParams,
+    ...cardCodeParams,
+    ...cardNameParams,
   }));
 };
 
@@ -667,29 +674,8 @@ const getContactsByVendor = async (cardCode) => {
 };
 
 const getAddressesByVendor = async (cardCode) => {
-  const result = await safe(db.query(`
-    SELECT T0.*,
-      T0.CardCode,
-      T0.Address,
-      T0.AdresType,
-      T0.Street,
-      T0.StreetNo,
-      T0.Block,
-      T0.Building,
-      T0.Address2,
-      T0.Address3,
-      T0.City,
-      T0.County,
-      T0.State,
-      T0.ZipCode,
-      T0.Country,
-      T0.GSTRegnNo AS GSTIN
-    FROM CRD1 T0
-    WHERE T0.CardCode = @cardCode
-    ORDER BY T0.Address
-  `, { cardCode }));
-
-  return result;
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'Purchase Order' });
+  return addresses;
 };
 
 // ── PURCHASE ORDER LIST ───────────────────────────────────────────────────────
@@ -800,6 +786,7 @@ const getPurchaseOrder = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
@@ -890,6 +877,8 @@ const getPurchaseOrder = async (docEntry) => {
         paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
         otherInstruction: header.Remarks || '',
         discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+        rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         freight: header.Freight != null ? String(header.Freight) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
@@ -921,34 +910,64 @@ const getPurchaseOrder = async (docEntry) => {
 
 // ── DOCUMENT SERIES ───────────────────────────────────────────────────────────
 
-const getDocumentSeries = async () => {
+const keepSapVisibleNumberingSeries = (series = []) => {
+  const rows = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (rows.length <= 1) return rows;
+
+  const defaultRows = rows.filter((row) => Number(row.IsDefault || 0) === 1);
+  if (defaultRows.length) return defaultRows;
+
+  return [rows[0]];
+};
+
+const getDocumentSeries = async (targetDate = null) => {
+  const normalizedTargetDate = String(targetDate || '').trim();
+  const effectiveTargetDate = /^\d{4}-\d{2}-\d{2}$/.test(normalizedTargetDate)
+    ? normalizedTargetDate
+    : new Date().toISOString().split('T')[0];
+  const targetDateSql = effectiveTargetDate.replace(/'/g, "''");
   const result = await db.query(`
     SELECT
       T0.Series,
       T0.SeriesName,
       T0.Indicator,
       T0.NextNumber,
-      FY.FinancialYear,
-      FY.FromDate,
-      FY.ToDate,
+      T1.Name AS FinancialYear,
+      T1.F_RefDate AS FromDate,
+      T1.T_RefDate AS ToDate,
+      CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault
+    FROM NNM1 T0
+    INNER JOIN OFPR T1 ON T1.Indicator = T0.Indicator
+    LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
+    WHERE T0.ObjectCode = '22'
+      AND T0.Locked = 'N'
+      AND CAST('${targetDateSql}' AS date) BETWEEN T1.F_RefDate AND T1.T_RefDate
+    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName, T0.Series
+  `);
+
+  const activeRows = result.recordset || [];
+  if (activeRows.length) {
+    return { series: keepSapVisibleNumberingSeries(activeRows) };
+  }
+
+  const fallback = await db.query(`
+    SELECT
+      T0.Series,
+      T0.SeriesName,
+      T0.Indicator,
+      T0.NextNumber,
+      NULL AS FinancialYear,
+      NULL AS FromDate,
+      NULL AS ToDate,
       CASE WHEN DEF.DfltSeries = T0.Series THEN 1 ELSE 0 END AS IsDefault
     FROM NNM1 T0
     LEFT JOIN ONNM DEF ON DEF.ObjectCode = T0.ObjectCode
-    LEFT JOIN (
-      SELECT
-        Indicator,
-        MAX(Name) AS FinancialYear,
-        MIN(F_RefDate) AS FromDate,
-        MAX(T_RefDate) AS ToDate
-      FROM OFPR
-      GROUP BY Indicator
-    ) FY ON FY.Indicator = T0.Indicator
     WHERE T0.ObjectCode = '22'
       AND T0.Locked = 'N'
-    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName
+    ORDER BY CASE WHEN DEF.DfltSeries = T0.Series THEN 0 ELSE 1 END, T0.SeriesName, T0.Series
   `);
 
-  return { series: result.recordset || [] };
+  return { series: keepSapVisibleNumberingSeries(fallback.recordset || []) };
 };
 
 const getNextNumber = async (series) => {

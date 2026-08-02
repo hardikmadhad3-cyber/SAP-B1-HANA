@@ -16,7 +16,7 @@
 }
 
 .glbp-window.is-maximized {
-  width: calc(100vw - 16px);
+  width: 100%;
   height: calc(100vh - 16px);
   max-width: none;
   max-height: calc(100vh - 16px);
@@ -25,12 +25,12 @@
 }
 
 .glbp-window--criteria {
-  width: min(720px, calc(100vw - 220px));
+  width: min(720px, 100%);
   max-width: none;
 }
 
 .glbp-window--report {
-  width: min(660px, calc(100vw - 260px));
+  width: min(660px, 100%);
   max-width: none;
   height: min(540px, calc(100vh - 170px));
   display: flex;
@@ -75,18 +75,18 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  color: #1e3146;
+  color: var(--sap-text, #223548);
   font-size: 13px;
   white-space: nowrap;
 }
 
 .glbp-checkbox-line input {
   margin: 0;
-  accent-color: #6b84a5;
+  accent-color: var(--sap-primary, #0a6ed1);
 }
 
 .glbp-checkbox-line.is-disabled {
-  color: #8d8d8d;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .glbp-code-row {
@@ -96,7 +96,7 @@
   align-items: center;
   margin-bottom: 8px;
   font-size: 13px;
-  color: #1e3146;
+  color: var(--sap-text, #223548);
 }
 
 .glbp-code-row.is-disabled,
@@ -111,14 +111,14 @@
   border: 0;
   padding: 0;
   background: transparent;
-  color: #1d3552;
+  color: var(--sap-primary-dark, #0854a0);
   font-size: 13px;
   text-decoration: underline;
   text-align: left;
 }
 
 .glbp-link-label:disabled {
-  color: #777;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .glbp-lookup-field {
@@ -131,11 +131,17 @@
   width: 24px;
   height: 24px;
   padding: 0;
-  border: 1px solid #ba8e14;
-  background: linear-gradient(180deg, #ffe8a3 0%, #f1c54f 100%);
-  color: #3e3010;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  border-radius: var(--sap-radius-xs, 4px);
+  background: linear-gradient(180deg, #ffffff 0%, var(--sap-toolbar-bg, #eef2f7) 100%);
+  color: var(--sap-text, #223548);
   font-size: 11px;
   line-height: 1;
+}
+
+.glbp-lookup-btn:hover {
+  background: linear-gradient(180deg, #ffffff 0%, #dfe8f1 100%);
+  border-color: var(--sap-primary, #0a6ed1);
 }
 
 .glbp-group-row {
@@ -144,7 +150,7 @@
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
-  color: #1e3146;
+  color: var(--sap-text, #223548);
   font-size: 13px;
 }
 
@@ -165,8 +171,9 @@
 .glbp-account-grid-wrap {
   height: 166px;
   overflow: auto;
-  border: 1px solid #b9b9b9;
-  background: #f6f6f6;
+  border: 1px solid var(--sap-border, #d5dce3);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: var(--sap-surface, #ffffff);
 }
 
 .glbp-account-grid {
@@ -181,19 +188,19 @@
   top: 0;
   z-index: 1;
   padding: 4px 5px;
-  border: 1px solid #c6c6c6;
-  background: linear-gradient(180deg, #e4e4e4 0%, #d3d3d3 100%);
-  color: #193550;
-  font-weight: 400;
+  border: 1px solid var(--sap-border, #d5dce3);
+  background: var(--sap-toolbar-bg, #eef2f7);
+  color: var(--sap-heading, #0a4a85);
+  font-weight: 700;
   text-align: left;
 }
 
 .glbp-account-grid td {
   height: 22px;
   padding: 2px 5px;
-  border: 1px solid #d2d2d2;
-  background: #eeeeee;
-  color: #1e1e1e;
+  border: 1px solid var(--sap-border-soft, #e3e8ee);
+  background: var(--sap-surface, #ffffff);
+  color: var(--sap-text, #223548);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -204,11 +211,11 @@
 }
 
 .glbp-account-grid tr.is-selected td {
-  background: #f4f4f4;
+  background: #e7f2fb;
 }
 
 .glbp-account-grid tr.is-focused td {
-  outline: 1px solid #f2b000;
+  outline: 1px solid var(--sap-primary, #0a6ed1);
   outline-offset: -1px;
 }
 
@@ -233,13 +240,13 @@
   place-items: center;
   width: 18px;
   height: 14px;
-  color: #c79a00;
+  color: var(--sap-warning, #8a5a00);
   font-weight: 700;
 }
 
 .glbp-status {
   margin-top: 8px;
-  color: #31506f;
+  color: var(--sap-text-muted, #64748b);
   font-size: 12px;
 }
 
@@ -309,7 +316,7 @@
   height: 16px;
   border: 0;
   background: transparent;
-  color: #d0a000;
+  color: var(--sap-primary, #0a6ed1);
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
@@ -317,13 +324,13 @@
 }
 
 .glbp-drill-btn:hover {
-  color: #9b7200;
+  color: var(--sap-primary-dark, #0854a0);
 }
 
 .glbp-empty-cell,
 .glbp-empty-state {
   padding: 14px 10px;
-  color: #5d6872;
+  color: var(--sap-text-muted, #64748b);
   text-align: center;
 }
 
@@ -333,7 +340,7 @@
   gap: 14px;
   align-items: center;
   padding: 10px 12px 12px;
-  background: #efefef;
+  background: var(--sap-surface, #ffffff);
 }
 
 .glbp-report-options {
@@ -346,7 +353,7 @@
 .glbp-currency-control {
   display: grid;
   gap: 5px;
-  color: #1e3146;
+  color: var(--sap-text, #223548);
   font-size: 12px;
 }
 
@@ -365,7 +372,7 @@
 @media (max-width: 1100px) {
   .glbp-window--criteria,
   .glbp-window--report {
-    width: calc(100vw - 36px);
+    width: 100%;
   }
 
   .glbp-criteria-grid {

@@ -1,0 +1,225 @@
+.service-je-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(28, 35, 43, 0.24);
+}
+
+.service-je-window {
+  display: flex;
+  flex-direction: column;
+  width: min(1280px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
+  border: 1px solid #8d98a4;
+  background: #f4f5f6;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.25);
+  color: #111;
+  font-size: 11px;
+}
+
+.service-je-titlebar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 8px 0 12px;
+  border-bottom: 3px solid #e5a100;
+  background: linear-gradient(180deg, #f7f8fa 0%, #cfd6dc 100%);
+  font-weight: 700;
+}
+
+.service-je-titlebar > span {
+  margin-right: auto;
+}
+
+.service-je-close {
+  width: 22px;
+  height: 20px;
+  border: 1px solid #8d98a4;
+  background: #eef1f4;
+  line-height: 16px;
+}
+
+.service-je-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #b8c0c8;
+  background: #edf0f2;
+}
+
+.service-je-titlebar .service-je-actions {
+  padding: 0;
+  border-bottom: 0;
+  background: transparent;
+}
+
+.service-je-note {
+  flex: 0 0 auto;
+  margin: 7px 10px 0;
+  padding: 5px 7px;
+  border: 1px solid #c7b46f;
+  background: #fff8d7;
+}
+
+.service-je-header {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 4px 12px;
+  padding: 9px 10px;
+  border-bottom: 1px solid #aeb8c2;
+  overflow-y: auto;
+  max-height: 190px;
+}
+
+.service-je-header > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.service-je-header label {
+  flex: 0 0 92px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.service-je-header input {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  border: 1px solid #aeb8c2;
+  background: #fff;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
+.service-je-header__wide {
+  grid-column: span 2;
+}
+
+.service-je-grid-wrap {
+  flex: 1 1 auto;
+  min-height: 180px;
+  margin: 8px 10px 0;
+  overflow: auto;
+  border: 1px solid #aeb8c2;
+  background: #fff;
+}
+
+.service-je-grid {
+  width: max-content;
+  min-width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.service-je-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 23px;
+  border: 1px solid #bdc5cc;
+  background: #e3e7eb;
+  padding: 2px 5px;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.service-je-grid td {
+  height: 21px;
+  border: 1px solid #d1d6db;
+  padding: 0;
+  background: #fff;
+}
+
+.service-je-rownum {
+  background: #eef1f3 !important;
+  color: #465462;
+  text-align: center;
+}
+
+.service-je-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.service-je-cell input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  border: 0;
+  background: transparent;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
+.service-je-golden {
+  width: 100%;
+  height: 20px;
+  border: 0;
+  background: transparent;
+  color: #003b73;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: left;
+  text-decoration: underline;
+}
+
+.service-je-total {
+  padding: 0 4px !important;
+  background: #eef1f4 !important;
+  text-align: right;
+  font-weight: 700;
+}
+
+.service-je-footer {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 24px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid #b8c0c8;
+  background: #f4f5f6;
+}
+
+.service-je-balanced {
+  color: #0b5f35;
+}
+
+.service-je-unbalanced {
+  color: #9a1d1d;
+}
+
+@media (max-width: 1100px) {
+  .service-je-header {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: 220px;
+  }
+
+  .service-je-header__wide {
+    grid-column: auto;
+  }
+
+  .service-je-footer {
+    justify-content: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}

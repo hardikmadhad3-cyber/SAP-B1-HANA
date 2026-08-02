@@ -62,7 +62,6 @@ export const buildVisibleEnteredRowUdfPayload = (
     }
 
     const field = definitionsByKey.get(key);
-    if (!field) return;
 
     const setting = getRowUdfSetting(key, rowSettings, matrixSettings);
     if (canIncludeRowUdf(field, setting)) {

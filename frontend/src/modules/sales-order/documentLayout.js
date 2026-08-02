@@ -497,6 +497,31 @@ const buildSyntheticColumn = (layoutColumn, key, extras = {}) => ({
   field: extras.field,
 });
 
+const buildStandardLayoutColumn = (layoutColumn, liveField, internalKey, index) => {
+  const standardOverride = STANDARD_FIELD_OVERRIDES[internalKey] || {};
+  return {
+    ...(liveField || {}),
+    ...standardOverride,
+    key: liveField?.key || internalKey,
+    valueKey: liveField?.key || internalKey,
+    rendererKey: liveField?.key || internalKey,
+    fieldName: layoutColumn.fieldName || layoutColumn.columnUid || liveField?.fieldName || internalKey,
+    layoutFieldName: layoutColumn.fieldName || layoutColumn.columnUid || liveField?.fieldName || internalKey,
+    label: layoutColumn.columnTitle || liveField?.label || internalKey,
+    visible: layoutColumn.visible !== false,
+    active: layoutColumn.editable !== false,
+    readOnly: standardOverride.readOnly ?? liveField?.readOnly ?? (layoutColumn.editable === false),
+    minWidth: Number(layoutColumn.width) || standardOverride.minWidth || liveField?.minWidth || 125,
+    width: Number(layoutColumn.width) || standardOverride.minWidth || liveField?.minWidth || 125,
+    order: Number(layoutColumn.columnOrder) || index + 1,
+    columnOrder: Number(layoutColumn.columnOrder) || index + 1,
+    sapControlled: layoutColumn.source !== 'fallback' && liveField?.sapControlled !== false,
+    importedLayout: true,
+    source: layoutColumn.source || 'imported-layout',
+    isUdf: false,
+  };
+};
+
 const buildGenericUdfField = (layoutColumn, fieldName) => ({
   key: fieldName,
   sapField: fieldName,
@@ -568,6 +593,10 @@ export const buildSalesOrderMatrixColumnsFromLayout = ({
       });
     }
 
+    if (internalKey === 'itemNo') {
+      return buildStandardLayoutColumn(layoutColumn, liveField, internalKey, index);
+    }
+
     if (udfField && layoutIsUdf) {
       return buildSyntheticColumn(layoutColumn, udfField.key, {
         label: layoutColumn.columnTitle || udfField.label,
@@ -584,27 +613,7 @@ export const buildSalesOrderMatrixColumnsFromLayout = ({
     }
 
     if (liveField && STANDARD_RENDERER_KEYS.has(internalKey)) {
-      const standardOverride = STANDARD_FIELD_OVERRIDES[internalKey] || {};
-      return {
-        ...liveField,
-        ...standardOverride,
-        key: liveField.key,
-        valueKey: liveField.key,
-        rendererKey: liveField.key,
-        fieldName,
-        layoutFieldName: fieldName,
-        label: layoutColumn.columnTitle || liveField.label || liveField.key,
-        visible: layoutColumn.visible !== false,
-        active: layoutColumn.editable !== false,
-        minWidth: Number(layoutColumn.width) || standardOverride.minWidth || liveField.minWidth || 125,
-        width: Number(layoutColumn.width) || standardOverride.minWidth || liveField.minWidth || 125,
-        order: Number(layoutColumn.columnOrder) || index + 1,
-        columnOrder: Number(layoutColumn.columnOrder) || index + 1,
-        sapControlled: layoutColumn.source !== 'fallback' && liveField.sapControlled !== false,
-        importedLayout: true,
-        source: layoutColumn.source || 'imported-layout',
-        isUdf: false,
-      };
+      return buildStandardLayoutColumn(layoutColumn, liveField, internalKey, index);
     }
 
     if (!liveField && internalKey && STANDARD_RENDERER_KEYS.has(internalKey)) {

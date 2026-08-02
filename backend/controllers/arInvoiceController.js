@@ -1,13 +1,21 @@
 const arInvoiceService = require('../services/arInvoiceService');
 
-const getErrorPayload = (error, fallbackMessage) => ({
-  detail:
+const getErrorPayload = (error, fallbackMessage) => {
+  const detail =
     error.response?.data?.error?.message?.value ||
     error.response?.data?.error?.message ||
     error.response?.data ||
     error.message ||
-    fallbackMessage,
-});
+    fallbackMessage;
+
+  return {
+    success: false,
+    code: error.code || error.response?.data?.code,
+    message: error.message || fallbackMessage,
+    detail,
+    details: error.details,
+  };
+};
 
 const parseTopParam = (value) => {
   if (value == null || value === '') return undefined;
@@ -28,7 +36,7 @@ const getReferenceData = async (req, res) => {
     const data = await arInvoiceService.getReferenceData(req.query.company_id);
     res.json(data);
   } catch (error) {
-    res.status(500).json(getErrorPayload(error, 'Failed to load AR invoice reference data.'));
+    res.status(Number(error?.status) || 500).json(getErrorPayload(error, 'Failed to load AR invoice reference data.'));
   }
 };
 
@@ -93,7 +101,7 @@ const submitARInvoice = async (req, res) => {
   try {
     res.json(await arInvoiceService.submitARInvoice(req.body));
   } catch (error) {
-    res.status(500).json(getErrorPayload(error, 'Failed to submit AR invoice.'));
+    res.status(Number(error?.status) || 500).json(getErrorPayload(error, 'Failed to submit AR invoice.'));
   }
 };
 

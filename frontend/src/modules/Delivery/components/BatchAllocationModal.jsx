@@ -31,10 +31,12 @@ export default function BatchAllocationModal({
   availableBatches = [],
   loading = false,
   error = '',
+  workspaceRef,
   onClose,
   onSave,
 }) {
   const [rows, setRows] = useState([]);
+  const [workspaceBounds, setWorkspaceBounds] = useState(null);
   const lineQty = parseBatchNumber(line?.quantity);
   const uomFactor = getLineUomFactor(line);
   const baseQty = getRequiredBatchQty(line);
@@ -79,6 +81,35 @@ export default function BatchAllocationModal({
     );
   }, [availableBatches, isOpen, line, uomFactor]);
 
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const updateBounds = () => {
+      const rect = workspaceRef?.current?.getBoundingClientRect?.();
+      if (!rect) {
+        setWorkspaceBounds(null);
+        return;
+      }
+      const topbarBottom = document.querySelector('.topbar')?.getBoundingClientRect?.().bottom || 0;
+      const top = Math.max(0, rect.top, topbarBottom);
+      const left = Math.max(0, rect.left);
+      setWorkspaceBounds({
+        top,
+        left,
+        right: 'auto',
+        bottom: 'auto',
+        width: Math.max(320, window.innerWidth - left),
+        height: Math.max(240, window.innerHeight - top),
+      });
+    };
+    updateBounds();
+    window.addEventListener('resize', updateBounds);
+    window.addEventListener('scroll', updateBounds, true);
+    return () => {
+      window.removeEventListener('resize', updateBounds);
+      window.removeEventListener('scroll', updateBounds, true);
+    };
+  }, [isOpen, workspaceRef]);
+
   const assignedQty = useMemo(() => sumBatchQty(rows), [rows]);
   const selectedWarehouse = String(line?.whse || '').trim();
   const otherWarehouseRows = useMemo(
@@ -109,14 +140,15 @@ export default function BatchAllocationModal({
       prev.map((row) => {
         if (row.key !== rowKey) return row;
         const numericValue = sanitizeNumericInput(value);
-        const cappedBaseQty = clampBatchQty(numericValue, row.availableQty);
+        const hasCompleteNumber = numericValue !== '' && numericValue !== '.';
+        const baseQtyValue = hasCompleteNumber ? parseBatchNumber(numericValue) : 0;
         return {
           ...row,
-          quantity: numericValue === '' ? '' : toInputValue(cappedBaseQty),
+          quantity: numericValue,
           documentQuantity:
-            numericValue === '' || !hasDocumentUomConversion
+            !hasCompleteNumber || !hasDocumentUomConversion
               ? ''
-              : toInputValue(cappedBaseQty / uomFactor),
+              : toInputValue(baseQtyValue / uomFactor),
         };
       })
     );
@@ -127,18 +159,15 @@ export default function BatchAllocationModal({
       prev.map((row) => {
         if (row.key !== rowKey) return row;
         const numericValue = sanitizeNumericInput(value);
-        const requestedBaseQty = parseBatchNumber(numericValue) * uomFactor;
-        const cappedBaseQty = clampBatchQty(requestedBaseQty, row.availableQty);
+        const hasCompleteNumber = numericValue !== '' && numericValue !== '.';
+        const requestedBaseQty = hasCompleteNumber ? parseBatchNumber(numericValue) * uomFactor : 0;
         return {
           ...row,
-          documentQuantity:
-            numericValue === '' || !hasDocumentUomConversion
-              ? ''
-              : toInputValue(cappedBaseQty / uomFactor),
+          documentQuantity: hasDocumentUomConversion ? numericValue : '',
           quantity:
-            numericValue === '' || !hasDocumentUomConversion
+            !hasCompleteNumber || !hasDocumentUomConversion
               ? ''
-              : toInputValue(cappedBaseQty),
+              : toInputValue(requestedBaseQty),
         };
       })
     );
@@ -173,10 +202,13 @@ export default function BatchAllocationModal({
   };
 
   return createPortal(
-    <div className="del-modal-overlay" onClick={onClose}>
+    <div
+      className="del-modal-overlay del-batch-modal-overlay"
+      style={workspaceBounds || undefined}
+      onClick={onClose}
+    >
       <div
-        className="del-modal"
-        style={{ width: 'min(980px, 100%)', maxHeight: '90vh', overflow: 'auto' }}
+        className="del-modal del-batch-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="del-modal__header">

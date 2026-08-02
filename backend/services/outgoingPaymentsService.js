@@ -79,6 +79,25 @@ const getPaymentMeansAmount = (paymentMeans = {}) =>
   parseAmount(paymentMeans.cheque?.amount) +
   parseAmount(paymentMeans.creditCard?.amount);
 
+const OUTGOING_PAYMENT_INVOICE_TYPES = {
+  13: { code: "IN", label: "A/R Invoice", serviceLayer: "it_Invoice" },
+  14: { code: "CN", label: "A/R Credit Memo", serviceLayer: "it_CredItnote" },
+  18: { code: "IN", label: "A/P Invoice", serviceLayer: "it_PurchaseInvoice" },
+  19: { code: "CN", label: "A/P Credit Memo", serviceLayer: "it_PurchaseCreditNote" },
+  30: { code: "JE", label: "Journal Entry", serviceLayer: "it_JournalEntry" },
+  [-2]: { code: "OB", label: "Opening Balance", serviceLayer: "it_OpeningBalance" },
+  [-3]: { code: "OB", label: "Opening Balance", serviceLayer: "it_OpeningBalance" },
+};
+
+const getOutgoingPaymentInvoiceType = (value) => {
+  const numericValue = Number(value);
+  return OUTGOING_PAYMENT_INVOICE_TYPES[numericValue] || {
+    code: numericValue ? String(numericValue) : "",
+    label: numericValue ? `Transaction ${numericValue}` : "Transaction",
+    serviceLayer: numericValue ? `it_${numericValue}` : "it_PurchaseInvoice",
+  };
+};
+
 const buildPaymentMeansPayload = async ({ paymentMeans = {}, dueAmount = 0, fallbackCashAccount = "" } = {}) => {
   const totalDue = Number(dueAmount || 0);
   const normalizedMeans = paymentMeans;
@@ -548,22 +567,27 @@ const getOutgoingPaymentByDocEntry = async (docEntry) => {
       T1.InvType,
       T1.InstId,
       T1.SumApplied,
-      T2.DocNum,
-      T2.DocDate,
-      T2.DocDueDate,
-      T2.DocTotal,
-      T2.DocTotal - T2.PaidToDate AS BalanceDue,
-      T2.DocCur,
-      T2.Project,
-      T2.PaymentRef,
-      T2.BPLId,
+      COALESCE(CAST(T2.DocNum AS NVARCHAR(30)), CAST(T4.DocNum AS NVARCHAR(30)), CAST(T5.DocNum AS NVARCHAR(30)), CAST(T6.DocNum AS NVARCHAR(30)), CAST(T7.Number AS NVARCHAR(30)), CAST(T1.DocEntry AS NVARCHAR(30))) AS DocNum,
+      COALESCE(T2.DocDate, T4.DocDate, T5.DocDate, T6.DocDate, T7.RefDate) AS DocDate,
+      COALESCE(T2.DocDueDate, T4.DocDueDate, T5.DocDueDate, T6.DocDueDate, T7.DueDate) AS DocDueDate,
+      COALESCE(T2.DocTotal, T4.DocTotal, T5.DocTotal, T6.DocTotal, ABS(T1.SumApplied)) AS DocTotal,
+      COALESCE(T2.DocTotal - T2.PaidToDate, -1 * (T4.DocTotal - T4.PaidToDate), T5.DocTotal - T5.PaidToDate, -1 * (T6.DocTotal - T6.PaidToDate), T8.BalDueCred - T8.BalDueDeb, T1.SumApplied) AS BalanceDue,
+      COALESCE(T2.DocCur, T4.DocCur, T5.DocCur, T6.DocCur, T8.FCCurrency) AS DocCur,
+      COALESCE(T2.Project, T4.Project, T5.Project, T6.Project, T8.Project) AS Project,
+      COALESCE(T2.PaymentRef, T4.PaymentRef, T5.PaymentRef, T6.PaymentRef, '') AS PaymentRef,
+      COALESCE(T2.BPLId, T4.BPLId, T5.BPLId, T6.BPLId, T8.BPLId) AS BPLId,
       T3.BPLName
     FROM VPM2 T1
     LEFT JOIN OPCH T2 ON T2.DocEntry = T1.DocEntry AND T1.InvType = 18
-    LEFT JOIN OBPL T3 ON T3.BPLId = T2.BPLId
+    LEFT JOIN ORPC T4 ON T4.DocEntry = T1.DocEntry AND T1.InvType = 19
+    LEFT JOIN ORIN T5 ON T5.DocEntry = T1.DocEntry AND T1.InvType = 14
+    LEFT JOIN OINV T6 ON T6.DocEntry = T1.DocEntry AND T1.InvType = 13
+    LEFT JOIN OJDT T7 ON T7.TransId = T1.DocEntry AND T1.InvType IN (30, -2, -3)
+    LEFT JOIN JDT1 T8 ON T8.TransId = T1.DocEntry AND T8.ShortName = @cardCode AND T1.InvType IN (30, -2, -3)
+    LEFT JOIN OBPL T3 ON T3.BPLId = COALESCE(T2.BPLId, T4.BPLId, T5.BPLId, T6.BPLId, T8.BPLId)
     WHERE T1.DocNum = @docEntry
     ORDER BY T1.DocEntry, T1.InvType, T1.InstId
-  `, { docEntry: docEntryNumber });
+  `, { docEntry: docEntryNumber, cardCode: header.CardCode || "" });
 
   const accountRows = await queryRows(`
     SELECT
@@ -598,27 +622,33 @@ const getOutgoingPaymentByDocEntry = async (docEntry) => {
     totalAmount: toNumber(header.DocTotal),
     paymentOnAccountAmount: toNumber(header.NoDocSum),
     cashAccount: header.CashAcct || "",
-    invoices: invoiceRows.map((row, index) => ({
-      id: `posted-${row.BaseDocEntry || index}-${index}`,
-      docEntry: row.BaseDocEntry,
-      documentNo: String(row.DocNum || row.BaseDocEntry || ""),
-      installment: row.InstId ? String(row.InstId) : "1",
-      documentType: row.InvType === 18 ? "A/P Invoice" : String(row.InvType || ""),
-      date: toDateString(row.DocDate),
-      dueDate: toDateString(row.DocDueDate),
-      total: toNumber(row.DocTotal || row.SumApplied),
-      balanceDue: toNumber(row.BalanceDue),
-      totalPayment: toNumber(row.SumApplied),
-      distributionRule: row.Project || "",
-      overdueDays: 0,
-      paymentOrderRun: row.PaymentRef || "",
-      branch: row.BPLId ? String(row.BPLId) : "",
-      branchName: row.BPLName || "",
-      branchDisplay: row.BPLId ? `${row.BPLId} - ${row.BPLName || ""}`.trim() : "",
-      currency: row.DocCur || "",
-      selected: true,
-      cashDiscountPercent: "0.00",
-    })),
+    invoices: invoiceRows.map((row, index) => {
+      const type = getOutgoingPaymentInvoiceType(row.InvType);
+      return {
+        id: `posted-${row.InvType || ""}-${row.BaseDocEntry || index}-${index}`,
+        docEntry: row.BaseDocEntry,
+        invoiceTypeCode: Number(row.InvType || 0),
+        invoiceType: type.serviceLayer,
+        documentTypeCode: type.code,
+        documentNo: String(row.DocNum || row.BaseDocEntry || ""),
+        installment: row.InstId ? String(row.InstId) : "1",
+        documentType: type.label,
+        date: toDateString(row.DocDate),
+        dueDate: toDateString(row.DocDueDate),
+        total: toNumber(row.DocTotal || row.SumApplied),
+        balanceDue: toNumber(row.BalanceDue),
+        totalPayment: toNumber(row.SumApplied),
+        distributionRule: row.Project || "",
+        overdueDays: 0,
+        paymentOrderRun: row.PaymentRef || "",
+        branch: row.BPLId ? String(row.BPLId) : "",
+        branchName: row.BPLName || "",
+        branchDisplay: row.BPLId ? `${row.BPLId} - ${row.BPLName || ""}`.trim() : "",
+        currency: row.DocCur || "",
+        selected: true,
+        cashDiscountPercent: "0.00",
+      };
+    }),
     accountRows: accountRows.map((row, index) => ({
       id: `account-${row.AcctCode || index}-${index}`,
       accountCode: row.AcctCode || "",
@@ -664,53 +694,188 @@ const getOpenInvoices = async (cardCode, branch = "") => {
 
   const rows = await queryRows(`
     SELECT TOP 200
-      T0.DocEntry,
-      T0.DocNum,
-      T0.DocDate,
-      T0.DocDueDate,
-      T0.DocTotal,
-      T0.DocTotal - T0.PaidToDate AS BalanceDue,
-      T0.DocCur,
-      T0.BPLId,
-      T0.NumAtCard,
-      T0.Project,
-      T0.PaymentRef,
-      T0.JrnlMemo,
-      T0.CtlAccount,
-      T1.BPLName,
-      DATEDIFF(DAY, T0.DocDueDate, GETDATE()) AS OverdueDays
-    FROM OPCH T0
-    LEFT JOIN OBPL T1 ON T1.BPLId = T0.BPLId
-    WHERE T0.CardCode = @cardCode
-      AND (@branchId = 0 OR T0.BPLId = @branchId)
-      AND T0.DocStatus = 'O'
-      AND T0.CANCELED <> 'Y'
-      AND (T0.DocTotal - T0.PaidToDate) > 0
-    ORDER BY T0.DocDueDate, T0.DocNum
+      OpenRows.DocEntry,
+      OpenRows.DocNum,
+      OpenRows.LineId,
+      OpenRows.InvoiceTypeCode,
+      OpenRows.DocDate,
+      OpenRows.DocDueDate,
+      OpenRows.DocTotal,
+      OpenRows.BalanceDue,
+      OpenRows.DocCur,
+      OpenRows.BPLId,
+      OpenRows.NumAtCard,
+      OpenRows.Project,
+      OpenRows.PaymentRef,
+      OpenRows.JrnlMemo,
+      OpenRows.CtlAccount,
+      OpenRows.BPLName,
+      DATEDIFF(DAY, OpenRows.DocDueDate, GETDATE()) AS OverdueDays
+    FROM (
+      SELECT
+        T0.DocEntry,
+        CAST(T0.DocNum AS NVARCHAR(30)) AS DocNum,
+        0 AS LineId,
+        18 AS InvoiceTypeCode,
+        T0.DocDate,
+        T0.DocDueDate,
+        T0.DocTotal,
+        T0.DocTotal - T0.PaidToDate AS BalanceDue,
+        T0.DocCur,
+        T0.BPLId,
+        T0.NumAtCard,
+        T0.Project,
+        T0.PaymentRef,
+        T0.JrnlMemo,
+        T0.CtlAccount,
+        T1.BPLName
+      FROM OPCH T0
+      LEFT JOIN OBPL T1 ON T1.BPLId = T0.BPLId
+      WHERE T0.CardCode = @cardCode
+        AND (@branchId = 0 OR T0.BPLId = @branchId)
+        AND T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND (T0.DocTotal - T0.PaidToDate) > 0
+
+      UNION ALL
+
+      SELECT
+        T0.DocEntry,
+        CAST(T0.DocNum AS NVARCHAR(30)) AS DocNum,
+        0 AS LineId,
+        19 AS InvoiceTypeCode,
+        T0.DocDate,
+        T0.DocDueDate,
+        T0.DocTotal,
+        -1 * (T0.DocTotal - T0.PaidToDate) AS BalanceDue,
+        T0.DocCur,
+        T0.BPLId,
+        T0.NumAtCard,
+        T0.Project,
+        T0.PaymentRef,
+        T0.JrnlMemo,
+        T0.CtlAccount,
+        T1.BPLName
+      FROM ORPC T0
+      LEFT JOIN OBPL T1 ON T1.BPLId = T0.BPLId
+      WHERE T0.CardCode = @cardCode
+        AND (@branchId = 0 OR T0.BPLId = @branchId)
+        AND T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND (T0.DocTotal - T0.PaidToDate) > 0
+
+      UNION ALL
+
+      SELECT
+        T0.DocEntry,
+        CAST(T0.DocNum AS NVARCHAR(30)) AS DocNum,
+        0 AS LineId,
+        14 AS InvoiceTypeCode,
+        T0.DocDate,
+        T0.DocDueDate,
+        T0.DocTotal,
+        T0.DocTotal - T0.PaidToDate AS BalanceDue,
+        T0.DocCur,
+        T0.BPLId,
+        T0.NumAtCard,
+        T0.Project,
+        T0.PaymentRef,
+        T0.JrnlMemo,
+        T0.CtlAccount,
+        T1.BPLName
+      FROM ORIN T0
+      LEFT JOIN OBPL T1 ON T1.BPLId = T0.BPLId
+      WHERE T0.CardCode = @cardCode
+        AND (@branchId = 0 OR T0.BPLId = @branchId)
+        AND T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND (T0.DocTotal - T0.PaidToDate) > 0
+
+      UNION ALL
+
+      SELECT
+        T0.DocEntry,
+        CAST(T0.DocNum AS NVARCHAR(30)) AS DocNum,
+        0 AS LineId,
+        13 AS InvoiceTypeCode,
+        T0.DocDate,
+        T0.DocDueDate,
+        T0.DocTotal,
+        -1 * (T0.DocTotal - T0.PaidToDate) AS BalanceDue,
+        T0.DocCur,
+        T0.BPLId,
+        T0.NumAtCard,
+        T0.Project,
+        T0.PaymentRef,
+        T0.JrnlMemo,
+        T0.CtlAccount,
+        T1.BPLName
+      FROM OINV T0
+      LEFT JOIN OBPL T1 ON T1.BPLId = T0.BPLId
+      WHERE T0.CardCode = @cardCode
+        AND (@branchId = 0 OR T0.BPLId = @branchId)
+        AND T0.DocStatus = 'O'
+        AND T0.CANCELED <> 'Y'
+        AND (T0.DocTotal - T0.PaidToDate) > 0
+
+      UNION ALL
+
+      SELECT
+        T0.TransId AS DocEntry,
+        CAST(ISNULL(T0.BaseRef, T1.Number) AS NVARCHAR(30)) AS DocNum,
+        T0.Line_ID AS LineId,
+        CASE WHEN T0.TransType IN (-2, -3) THEN -2 ELSE 30 END AS InvoiceTypeCode,
+        T0.RefDate AS DocDate,
+        T0.DueDate AS DocDueDate,
+        CAST(ISNULL(T0.BalDueCred, 0) - ISNULL(T0.BalDueDeb, 0) AS DECIMAL(19, 6)) AS DocTotal,
+        CAST(ISNULL(T0.BalDueCred, 0) - ISNULL(T0.BalDueDeb, 0) AS DECIMAL(19, 6)) AS BalanceDue,
+        T0.FCCurrency AS DocCur,
+        T0.BPLId,
+        T1.Ref1 AS NumAtCard,
+        T0.Project,
+        '' AS PaymentRef,
+        T1.Memo AS JrnlMemo,
+        T0.Account AS CtlAccount,
+        T2.BPLName
+      FROM JDT1 T0
+      INNER JOIN OJDT T1 ON T1.TransId = T0.TransId
+      LEFT JOIN OBPL T2 ON T2.BPLId = T0.BPLId
+      WHERE T0.ShortName = @cardCode
+        AND (@branchId = 0 OR T0.BPLId = @branchId)
+        AND ISNULL(T0.TransType, 30) NOT IN (13, 14, 18, 19, 24, 46)
+        AND ABS(ISNULL(T0.BalDueCred, 0) - ISNULL(T0.BalDueDeb, 0)) > 0.000001
+    ) OpenRows
+    ORDER BY OpenRows.DocDueDate, OpenRows.DocNum
   `, { cardCode, branchId });
 
-  return rows.map((row) => ({
-    id: String(row.DocEntry),
-    docEntry: row.DocEntry,
-    documentNo: String(row.DocNum || ""),
-    installment: "1",
-    documentType: "A/P Invoice",
-    date: toDateString(row.DocDate),
-    dueDate: toDateString(row.DocDueDate),
-    total: toNumber(row.DocTotal),
-    balanceDue: toNumber(row.BalanceDue),
-    totalPayment: toNumber(row.BalanceDue),
-    distributionRule: row.Project || "",
-    overdueDays: Math.max(0, toNumber(row.OverdueDays)),
-    paymentOrderRun: row.PaymentRef || "",
-    branch: row.BPLId ? String(row.BPLId) : "",
-    branchName: row.BPLName || "",
-    branchDisplay: row.BPLId ? `${row.BPLId} - ${row.BPLName || ""}`.trim() : "",
-    reference: row.NumAtCard || "",
-    controlAccount: row.CtlAccount || "",
-    currency: row.DocCur || "",
-    journalMemo: row.JrnlMemo || "",
-  }));
+  return rows.map((row) => {
+    const type = getOutgoingPaymentInvoiceType(row.InvoiceTypeCode);
+    return {
+      id: `${row.InvoiceTypeCode || ""}-${row.DocEntry}-${row.LineId || 0}`,
+      docEntry: row.DocEntry,
+      invoiceTypeCode: Number(row.InvoiceTypeCode || 0),
+      invoiceType: type.serviceLayer,
+      documentTypeCode: type.code,
+      documentNo: String(row.DocNum || ""),
+      installment: "1",
+      documentType: type.label,
+      date: toDateString(row.DocDate),
+      dueDate: toDateString(row.DocDueDate),
+      total: toNumber(row.DocTotal),
+      balanceDue: toNumber(row.BalanceDue),
+      totalPayment: toNumber(row.BalanceDue),
+      distributionRule: row.Project || "",
+      overdueDays: Math.max(0, toNumber(row.OverdueDays)),
+      paymentOrderRun: row.PaymentRef || "",
+      branch: row.BPLId ? String(row.BPLId) : "",
+      branchName: row.BPLName || "",
+      branchDisplay: row.BPLId ? `${row.BPLId} - ${row.BPLName || ""}`.trim() : "",
+      reference: row.NumAtCard || "",
+      controlAccount: row.CtlAccount || "",
+      currency: row.DocCur || "",
+      journalMemo: row.JrnlMemo || "",
+    };
+  });
 };
 
 const createOutgoingPayment = async (payload = {}) => {
@@ -729,11 +894,12 @@ const createOutgoingPayment = async (payload = {}) => {
       ...invoice,
       appliedAmount: parseAmount(invoice.totalPayment),
       balanceDue: parseAmount(invoice.balanceDue),
+      invoiceType: invoice.invoiceType || getOutgoingPaymentInvoiceType(invoice.invoiceTypeCode).serviceLayer,
     }))
-    .filter((invoice) => Number(invoice.docEntry) > 0 && invoice.appliedAmount > 0);
+    .filter((invoice) => Number(invoice.docEntry) > 0 && Math.abs(invoice.appliedAmount) > 0.01);
 
   const overAppliedInvoice = selectedInvoices.find(
-    (invoice) => invoice.balanceDue > 0 && invoice.appliedAmount - invoice.balanceDue > 0.01,
+    (invoice) => Math.abs(invoice.balanceDue) > 0.01 && Math.abs(invoice.appliedAmount) - Math.abs(invoice.balanceDue) > 0.01,
   );
   if (overAppliedInvoice) {
     throw new Error(`Payment amount is greater than invoice amount for document ${overAppliedInvoice.documentNo || overAppliedInvoice.docEntry}.`);
@@ -791,7 +957,7 @@ const createOutgoingPayment = async (payload = {}) => {
     PaymentInvoices: !isAccountPayment && selectedInvoices.length
       ? selectedInvoices.map((invoice) => ({
           DocEntry: Number(invoice.docEntry),
-          InvoiceType: isCustomerPayment ? "it_Invoice" : "it_PurchaseInvoice",
+          InvoiceType: invoice.invoiceType || (isCustomerPayment ? "it_Invoice" : "it_PurchaseInvoice"),
           SumApplied: Number(invoice.appliedAmount.toFixed(2)),
           DiscountPercent: parseAmount(invoice.cashDiscountPercent),
           DistributionRule: String(invoice.distributionRule || "").trim() || undefined,

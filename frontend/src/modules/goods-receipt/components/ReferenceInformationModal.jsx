@@ -5,6 +5,7 @@ import { fetchGoodsReceipts } from '../../../api/goodsReceiptApi';
 import { fetchInventoryTransferRequestList } from '../../../api/inventoryTransferRequestApi';
 import { fetchInventoryTransferList } from '../../../api/inventoryTransferApi';
 import SapGoldenArrowButton from '../../../components/document/SapGoldenArrowButton';
+import { matchesSapSearchText } from '../../../utils/sapSearch';
 
 const MIN_REFERENCE_ROWS = 8;
 const DEFAULT_TRANSACTION_TYPE_GROUPS = [
@@ -434,13 +435,13 @@ function ReferenceInformationModal({
   }, [documentDate, documentTotal, referencedDocument, remarks]);
 
   const filteredPickerDocuments = useMemo(() => {
-    const term = pickerState.searchTerm.trim().toLowerCase();
+    const term = pickerState.searchTerm.trim();
     if (!term) return pickerState.documents;
 
     return pickerState.documents.filter((document) =>
       [document.docNum, document.partnerName, document.remarks, document.extDocNumber]
         .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(term))
+        .some((value) => matchesSapSearchText(value, term))
     );
   }, [pickerState.documents, pickerState.searchTerm]);
 

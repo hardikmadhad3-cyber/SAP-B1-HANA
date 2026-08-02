@@ -86,6 +86,31 @@ test('filters provided rows with the Find field', () => {
   expect(screen.getByText('Beta')).toBeInTheDocument();
 });
 
+test('filters provided rows with SAP-style exact and similar matching', () => {
+  render(
+    <SapLookupModal
+      open
+      title="List"
+      columns={columns}
+      rows={[
+        { code: 'DC0606', name: '"SACHIN RADHESHAM ZANWAR "' },
+        { code: 'DC0580', name: 'MAMTA SACHIN ZANWAR' },
+      ]}
+      onClose={jest.fn()}
+      onSelect={jest.fn()}
+    />,
+  );
+
+  fireEvent.change(screen.getByLabelText('Find'), { target: { value: '"SACHIN RADHESHAM ZANWAR"' } });
+
+  expect(screen.getByText('"SACHIN RADHESHAM ZANWAR "')).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText('Find'), { target: { value: 'zanwar sachin' } });
+
+  expect(screen.getByText('"SACHIN RADHESHAM ZANWAR "')).toBeInTheDocument();
+  expect(screen.getByText('MAMTA SACHIN ZANWAR')).toBeInTheDocument();
+});
+
 test('fetches rows from a query and renders optional new action', async () => {
   const fetchOptions = jest.fn().mockResolvedValue([{ code: 'B2', name: 'Beta' }]);
 

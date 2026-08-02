@@ -24,15 +24,22 @@ import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import SapGoldenArrowButton from '../../components/document/SapGoldenArrowButton';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from '../../components/document/CopyFromModal';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import { copyToDocument } from '../../services/documentCopyService';
 import { filterWarehousesByBranch, getWarehouseBranchId } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import {
+  SAP_MANUAL_SERIES_VALUE,
+  isManualDocumentSeries,
+  isValidManualDocumentNumber,
+} from '../../utils/documentSeries';
 import { readGeneralSettings } from '../../utils/generalSettingsStorage';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
@@ -484,6 +491,7 @@ const INIT_HEADER = {
   billToAddress: '', billToCode: '', shipToAddress: '',
   shipToAddressComponents: null, billToAddressComponents: null,
   edocGenerationType: 'edocGenerateLater', edocExportFormat: '', edocStatus: '',
+  genericEdocGenerationType: 'edocGenerateLater', genericEdocExportFormat: '', genericEdocStatus: '',
   languageCode: '', trackingNo: '', stampNo: '', pickAndPackRemarks: '', bpChannelCode: '', bpChannelContact: '',
   centralBankIndicator: '', projectCode: '', qrCodeSource: '', indicator: '', orderNumber: '',
   consolidationType: '', consolidatingBP: '', useShippedGoodsAccount: false,
@@ -837,6 +845,13 @@ function Delivery() {
     setActiveTab(draft.activeTab || 'Contents');
     setIsDirty(Boolean(draft.isDirty));
     setReferenceDocumentsModal(Boolean(draft.referenceDocumentsModalOpen));
+    if (Array.isArray(draft.freightCharges)) {
+      setFreightModal((prev) => ({
+        ...prev,
+        freightCharges: draft.freightCharges,
+        loading: false,
+      }));
+    }
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.state, navigate, location.pathname]);
 
@@ -851,10 +866,16 @@ function Delivery() {
         : referenceDocuments,
       referenceDocumentsChanged: overrides.referenceDocumentsChanged ?? referenceDocumentsChanged,
       referenceDocumentsModalOpen: overrides.referenceDocumentsModalOpen ?? referenceDocumentsModal,
+      freightCharges: freightModal.freightCharges,
       activeTab,
       isDirty,
     },
-  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
+  }), [activeTab, currentDocEntry, freightModal.freightCharges, header, headerUdfs, isDirty, lines, referenceDocuments, referenceDocumentsChanged, referenceDocumentsModal]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'Delivery',
+  });
 
   const openBusinessPartnerLink = useCallback(() => {
     openLinkedBusinessPartner({
@@ -950,7 +971,9 @@ function Delivery() {
       ''
     ).trim();
     const numericFactor = parseFloat(rawUomCode);
-    const explicitFactor = Number(line?.uomFactor);
+    const explicitFactor = Number(
+      line?.uomFactor ?? line?.UomFactor ?? line?.NumPerMsr ?? line?.numPerMsr
+    );
     const uomFactor = Number.isFinite(explicitFactor) && explicitFactor > 0
       ? explicitFactor
       : Number.isFinite(numericFactor) && numericFactor > 0
@@ -1243,6 +1266,7 @@ function Delivery() {
             quality_options: refDataRes.data.quality_options || { buyer: [], seller: [] },
             price_options: refDataRes.data.price_options || { buyer: [], seller: [] },
             eway_bill_formats: refDataRes.data.eway_bill_formats || [],
+            generic_edoc_formats: refDataRes.data.generic_edoc_formats || [],
             eway_bill_transporters: refDataRes.data.eway_bill_transporters || [],
             eway_bill_options: refDataRes.data.eway_bill_options || {},
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
@@ -1298,6 +1322,8 @@ function Delivery() {
         if (ignore || requestedEditDocEntry || isHydratingDocumentRef.current) return;
 
         setRefData(prev => ({ ...prev, series: availableSeries }));
+
+        if (isManualDocumentSeries(header.series)) return;
 
         if (!availableSeries.length) {
           setHeader(prev => ({ ...prev, series: '', nextNumber: '' }));
@@ -1398,6 +1424,12 @@ function Delivery() {
             series: mergedEditSeries,
           }));
         }
+        const savedEdocExportFormat = String(so.header?.edocExportFormat || '');
+        const isSavedEWayBillFormat = savedEdocExportFormat && (refData.eway_bill_formats || [])
+          .some((format) => String(format.AbsEntry) === savedEdocExportFormat);
+        const isSavedGenericEdocFormat = savedEdocExportFormat && (refData.generic_edoc_formats || [])
+          .some((format) => String(format.AbsEntry) === savedEdocExportFormat);
+        const defaultEWayBillFormat = (refData.eway_bill_formats || [])[0]?.AbsEntry;
         setHeader(prev => ({
           ...prev,
           ...INIT_HEADER,
@@ -1421,6 +1453,15 @@ function Delivery() {
           docNo: so.header?.docNo || so.header?.docNum || '',
           series: so.header?.series || '',
           nextNumber: so.header?.docNo || so.header?.docNum || '',
+          edocGenerationType: so.header?.edocGenerationType || 'edocGenerateLater',
+          edocExportFormat: isSavedGenericEdocFormat
+            ? (defaultEWayBillFormat != null ? String(defaultEWayBillFormat) : '')
+            : savedEdocExportFormat,
+          edocStatus: so.header?.edocStatus || '',
+          genericEdocGenerationType: so.header?.genericEdocGenerationType || so.header?.edocGenerationType || 'edocGenerateLater',
+          genericEdocExportFormat: so.header?.genericEdocExportFormat
+            || (isSavedEWayBillFormat ? '' : savedEdocExportFormat),
+          genericEdocStatus: so.header?.genericEdocStatus || so.header?.edocStatus || '',
         }));
         
         const hydratedLoadedLines = loadedLines.length
@@ -2369,6 +2410,12 @@ function Delivery() {
   
   const handleSeriesChange = async (seriesValue) => {
     if (!seriesValue) return;
+
+    if (isManualDocumentSeries(seriesValue)) {
+      setHeader(p => ({ ...p, series: SAP_MANUAL_SERIES_VALUE, nextNumber: '' }));
+      setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+      return;
+    }
     
     setPageState(p => ({ ...p, seriesLoading: true }));
     setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
@@ -3569,6 +3616,12 @@ function Delivery() {
   const validate = async ({ validateDocumentLines = true } = {}) => {
     const isUpdate = !!currentDocEntry;
     const e = { header: {}, lines: {}, form: '' };
+
+    if (!isUpdate && isManualDocumentSeries(header.series) && !isValidManualDocumentNumber(header.nextNumber)) {
+      e.header.nextNumber = 'Enter a positive document number for Manual series.';
+      e.form = 'Please correct the highlighted fields.';
+      return e;
+    }
     
     // Frontend basic validation first
     if (!isUpdate) {
@@ -3683,13 +3736,14 @@ function Delivery() {
       const validationPayload = {
         _isUpdate: isUpdate,
         validateDocumentLines,
-        header: {
-          customerCode: header.vendor,
-          postingDate: header.postingDate,
-          documentDate: header.documentDate,
-          branch: submitBranch,
-          series: header.series
-        },
+                        header: {
+                          customerCode: header.vendor,
+                          postingDate: header.postingDate,
+                          documentDate: header.documentDate,
+                          branch: submitBranch,
+                          series: header.series,
+                          nextNumber: header.nextNumber,
+                        },
         lines: lines.filter(l => String(l.itemNo || '').trim()).map(l => ({
           itemNo: l.itemNo,
           quantity: l.quantity,
@@ -4337,6 +4391,13 @@ function Delivery() {
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
         />
+        <JournalEntryPreviewButton
+          documentType="delivery"
+          documentLabel="Delivery"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges, referenceDocuments })}
+          disabled={pageState.posting || pageState.loading}
+        />
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
           <button
             type="button"
@@ -4597,6 +4658,7 @@ function Delivery() {
                         disabled={!!currentDocEntry || pageState.seriesLoading}
                       >
                         <option value="">Select Series</option>
+                        <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
                         {refData.series.map(s => (
                           <option key={s.Series} value={s.Series}>
                             {s.SeriesName} ({s.Indicator})
@@ -4610,11 +4672,13 @@ function Delivery() {
                       <label className="del-field__label">Number</label>
                       <input 
                         name="nextNumber" 
-                        className="del-field__input" 
+                        className={`del-field__input${valErrors.header.nextNumber ? ' del-field__input--error' : ''}`}
                         value={currentDocEntry ? (header.docNo || header.nextNumber || '') : (pageState.seriesLoading ? '...' : header.nextNumber)}
-                        readOnly 
-                        style={{ background: '#f0f2f5' }}
-                        title="Number will be assigned after saving"
+                        onChange={handleHeaderChange}
+                        readOnly={!!currentDocEntry || !isManualDocumentSeries(header.series)}
+                        inputMode="numeric"
+                        style={{ background: !currentDocEntry && isManualDocumentSeries(header.series) ? '#fff' : '#f0f2f5' }}
+                        title={isManualDocumentSeries(header.series) ? 'Enter the manual document number' : 'Number will be assigned from the selected series'}
                       />
                     </div>
 
@@ -4744,6 +4808,7 @@ function Delivery() {
                 header={header}
                 onHeaderChange={handleHeaderChange}
                 formats={refData.eway_bill_formats || []}
+                genericFormats={refData.generic_edoc_formats || []}
                 onOpenEWayBill={() => setEWayBillModalOpen(true)}
                 disabled={!isDocumentEditable}
               />
@@ -5022,6 +5087,7 @@ function Delivery() {
         availableBatches={batchModal.availableBatches}
         loading={batchModal.loading}
         error={batchModal.error}
+        workspaceRef={formRef}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />

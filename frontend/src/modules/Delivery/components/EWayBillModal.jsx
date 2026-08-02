@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { fetchHSNCodes } from '../../../api/hsnCodeApi';
+import { matchesSapSearchText } from '../../../utils/sapSearch';
 
 const FIELD_ALIASES = {
   ewayBillNo: ['U_EwbNo'],
@@ -34,6 +35,62 @@ const FALLBACK_OPTIONS = {
 };
 
 const token = (value) => String(value || '').trim().toUpperCase().replace(/^U_/, '').replace(/[^A-Z0-9]/g, '');
+const EWB_CODE_ALIASES = {
+  subSupplyType: {
+    SUPPLY: '1',
+    IMPORT: '2',
+    EXPORT: '3',
+    JOBWORK: '4',
+    FOROWNUSE: '5',
+    JOBWORKRETURNS: '6',
+    SALESRETURN: '7',
+    OTHERS: '8',
+    SKDCKDLOTS: '9',
+    LINESALES: '10',
+    RECIPIENTNOTKNOWN: '11',
+    EXHIBITIONORFAIRS: '12',
+  },
+  documentType: {
+    TAXINVOICE: 'INV',
+    INVOICE: 'INV',
+    BILLOFSUPPLY: 'BIL',
+    BILL: 'BIL',
+    BILLOFENTRY: 'BOE',
+    DELIVERYCHALLAN: 'CHL',
+    CHALLAN: 'CHL',
+    OTHERS: 'OTH',
+  },
+  transactionType: {
+    REGULAR: '1',
+    BILLTOSHIPTO: '2',
+    BILLFROMSHIPFROM: '3',
+    COMBINATIONOF2AND3: '4',
+    COMBINATION: '4',
+  },
+  mode: {
+    ROAD: '1',
+    RAIL: '2',
+    AIR: '3',
+    SHIP: '4',
+  },
+  vehicleType: {
+    REGULAR: 'R',
+    ODC: 'O',
+    OVERDIMENSIONALCARGO: 'O',
+  },
+};
+
+const normalizeOptionCode = (field, value, options = []) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const rawToken = token(raw);
+  const exact = (options || []).find((option) => token(option.value) === rawToken);
+  if (exact) return String(exact.value ?? '').trim();
+  const labelMatch = (options || []).find((option) => token(option.label) === rawToken);
+  if (labelMatch) return String(labelMatch.value ?? '').trim();
+  return EWB_CODE_ALIASES[field]?.[rawToken] || raw;
+};
+
 const normalizeDate = (value) => {
   const text = String(value || '').trim();
   if (!text) return '';
@@ -54,9 +111,14 @@ const readUdfValue = (values, definitions, aliases) => {
   return match ? match[1] ?? '' : '';
 };
 
-const buildInitialForm = (values, definitions, liveData) => Object.keys(FIELD_ALIASES).reduce((form, field) => {
-  const value = readUdfValue(values, definitions, FIELD_ALIASES[field]);
-  const effectiveValue = String(value ?? '').trim() === '' ? liveData[field] : value;
+export const buildInitialForm = (values, definitions, liveData) => Object.keys(FIELD_ALIASES).reduce((form, field) => {
+  const udfValue = readUdfValue(values, definitions, FIELD_ALIASES[field]);
+  const savedEWayBillValue = liveData[field];
+  // SAP B1 displays the standard document E-Way Bill fields from the
+  // document's E-Way Bill table (DLN26 for Delivery).
+  // Header UDFs may contain older duplicate values, so use them only when
+  // the standard E-Way Bill field has no saved value.
+  const effectiveValue = String(savedEWayBillValue ?? '').trim() === '' ? udfValue : savedEWayBillValue;
   form[field] = field.toLowerCase().includes('date') ? normalizeDate(effectiveValue) : String(effectiveValue ?? '');
   return form;
 }, {
@@ -116,7 +178,7 @@ const getRowValue = (row, keys) => {
 function LookupDialog({ title, rows, loading, columns, onClose, onSelect }) {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  const filteredRows = rows.filter((row) => columns.some((column) => String(column.value(row) || '').toLowerCase().includes(query.toLowerCase())));
+  const filteredRows = rows.filter((row) => columns.some((column) => matchesSapSearchText(column.value(row), query)));
 
   return (
     <div className="del-ewb-lookup-overlay" onClick={onClose}>
@@ -206,7 +268,7 @@ export default function EWayBillModal({
       ? dropdownOptions[field]
       : (definition?.options?.length ? definition.options : FALLBACK_OPTIONS[field].map(([value, label]) => ({ value, label })));
     const normalized = source.map((option) => typeof option === 'string' ? { value: option, label: option } : {
-      value: String(option.value ?? ''),
+      value: normalizeOptionCode(field, option.value ?? option.label ?? ''),
       label: String(option.label ?? option.value ?? ''),
     });
     const savedValue = String(liveData[field] ?? '');
@@ -222,11 +284,27 @@ export default function EWayBillModal({
     return result;
   }, {}), [dropdownOptions, liveData, udfDefinitions]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setForm((current) => {
+      const normalized = {
+        ...current,
+        subSupplyType: normalizeOptionCode('subSupplyType', current.subSupplyType, options.subSupplyType),
+        documentType: normalizeOptionCode('documentType', current.documentType, options.documentType),
+        transactionType: normalizeOptionCode('transactionType', current.transactionType, options.transactionType),
+        mode: normalizeOptionCode('mode', current.mode, options.mode),
+        vehicleType: normalizeOptionCode('vehicleType', current.vehicleType, options.vehicleType),
+      };
+      return JSON.stringify(normalized) === JSON.stringify(current) ? current : normalized;
+    });
+  }, [isOpen, options]);
+
   if (!isOpen) return null;
 
   const handleChange = (event) => {
     const { name, value } = event.target;
-    setForm((current) => ({ ...current, [name]: value }));
+    const normalizedValue = FALLBACK_OPTIONS[name] ? normalizeOptionCode(name, value, options[name]) : value;
+    setForm((current) => ({ ...current, [name]: normalizedValue }));
     setMessage('');
   };
 
@@ -248,12 +326,20 @@ export default function EWayBillModal({
   };
 
   const save = () => {
+    const normalizedForm = {
+      ...form,
+      subSupplyType: normalizeOptionCode('subSupplyType', form.subSupplyType, options.subSupplyType),
+      documentType: normalizeOptionCode('documentType', form.documentType, options.documentType),
+      transactionType: normalizeOptionCode('transactionType', form.transactionType, options.transactionType),
+      mode: normalizeOptionCode('mode', form.mode, options.mode),
+      vehicleType: normalizeOptionCode('vehicleType', form.vehicleType, options.vehicleType),
+    };
     const updates = {};
     Object.entries(FIELD_ALIASES).forEach(([field, aliases]) => {
       const definition = findDefinition(udfDefinitions, aliases);
-      updates[definition?.key || aliases[0]] = form[field] || '';
+      updates[definition?.key || aliases[0]] = normalizedForm[field] || '';
     });
-    onSave({ udfUpdates: updates, details: form });
+    onSave({ udfUpdates: updates, details: normalizedForm });
     onClose();
   };
 

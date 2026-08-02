@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import './styles/GoodsReceiptPO.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from './components/FormSettingsPanel';
@@ -18,6 +18,7 @@ import HSNCodeModal from '../../components/common/HSNCodeModal';
 import BusinessPartnerModal from './components/BusinessPartnerModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import SapGoldenArrowButton from '../../components/document/SapGoldenArrowButton';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
@@ -28,7 +29,14 @@ import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/docum
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue } from '../../utils/stateDisplay';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
 import { getItemPrice } from '../../utils/documentItemHydration';
+import {
+  SAP_MANUAL_SERIES_VALUE,
+  isManualDocumentSeries,
+  isValidManualDocumentNumber,
+} from '../../utils/documentSeries';
+import { normaliseDocumentHeader } from '../../api/copyFromApi';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import {
   BATCH_QTY_TOLERANCE,
@@ -69,6 +77,7 @@ import useValidationHighlights from '../../utils/useValidationHighlights';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
 import { hydrateWorkbookDocumentLine } from '../../utils/workbookLineHydration';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import {
   buildGRPOLineUdfPayload,
   getFirstLineValue,
@@ -303,6 +312,7 @@ const INIT_HEADER = {
   discount: '',
   freight: '',
   rounding: false,
+  roundingAmount: '',
   tax: '',
   totalPaymentDue: '',
   placeOfSupply: '',
@@ -331,6 +341,7 @@ function GoodsReceiptPO() {
   const location = useLocation();
   const navigate = useNavigate();
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
+  const formRef = useRef(null);
 
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
   const [header, setHeader] = useState(INIT_HEADER);
@@ -466,6 +477,17 @@ function GoodsReceiptPO() {
   const isDocumentEditable = !currentDocEntry || String(header.status || '').toLowerCase() === 'open';
   const hasUnsavedChanges = Boolean(currentDocEntry && isDirty);
   const updateActionLabel = hasUnsavedChanges ? 'Update' : 'OK';
+  const hasOpenCopyQuantity = Boolean(currentDocEntry) && lines.some((line = {}) => {
+    const rawOpenQty = line.openQty ?? line.OpenQty ?? line.OpenQuantity;
+    if (rawOpenQty !== undefined && rawOpenQty !== null && String(rawOpenQty).trim() !== '') {
+      return parseNum(rawOpenQty) > 0;
+    }
+
+    const lineStatus = String(line.lineStatus ?? line.LineStatus ?? '').trim().toUpperCase();
+    if (lineStatus && !['O', 'OPEN'].includes(lineStatus)) return false;
+
+    return parseNum(line.quantity ?? line.Quantity) > 0;
+  });
   const primaryActionLabel = pageState.posting
     ? 'Saving…'
     : currentDocEntry
@@ -487,6 +509,13 @@ function GoodsReceiptPO() {
     setHeaderUdfs(draft.headerUdfs || createUdfState(HEADER_UDF_DEFINITIONS));
     setActiveTab(draft.activeTab || 'Contents');
     setIsDirty(Boolean(draft.isDirty));
+    if (Array.isArray(draft.freightCharges)) {
+      setFreightModal((prev) => ({
+        ...prev,
+        freightCharges: draft.freightCharges,
+        loading: false,
+      }));
+    }
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.state, navigate, location.pathname]);
 
@@ -498,8 +527,14 @@ function GoodsReceiptPO() {
       headerUdfs,
       activeTab,
       isDirty,
+      freightCharges: freightModal.freightCharges,
     },
-  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines]);
+  }), [activeTab, currentDocEntry, freightModal.freightCharges, header, headerUdfs, isDirty, lines]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'Goods Receipt PO',
+  });
 
   const openBusinessPartnerLink = useCallback(() => {
     openLinkedBusinessPartner({
@@ -531,7 +566,7 @@ function GoodsReceiptPO() {
       try {
         const [refDataRes, seriesRes, layoutRes] = await Promise.all([
           fetchGRPOReferenceData(PURCHASE_ORDER_COMPANY_ID),
-          fetchDocumentSeries(),
+          fetchDocumentSeries(today()),
           getDocumentLayout({ documentType: 'GRPO' }).catch((error) => ({
             data: {
               success: false,
@@ -684,7 +719,7 @@ function GoodsReceiptPO() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -733,7 +768,7 @@ function GoodsReceiptPO() {
             {
               ...line,
               quantity: String(line.quantity || line.Quantity || line.OpenQty || 0),
-              stdDiscount: String(line.stdDiscount || line.discount || line.DiscountPercent || line.DiscPrcnt || 0),
+              stdDiscount: String(line.stdDiscount || line.DiscountPercent || line.DiscPrcnt || line.discount || 0),
               baseEntry: line.baseEntry ?? line.BaseEntry ?? baseDocument?.baseEntry ?? sourceDocEntry,
               baseType: line.baseType ?? line.BaseType ?? baseDocument?.baseType ?? 22,
               baseLine: line.baseLine ?? line.BaseLine ?? line.lineNum ?? line.LineNum ?? index,
@@ -763,6 +798,8 @@ function GoodsReceiptPO() {
           warehouse: sourceHeader.warehouse || firstLineWarehouse || prev.warehouse || '',
           placeOfSupply: sourceHeader.placeOfSupply || prev.placeOfSupply || '',
           otherInstruction: sourceHeader.otherInstruction || sourceHeader.Comments || '',
+          rounding: sourceHeader.rounding ?? normaliseDocumentHeader(sourceHeader).rounding ?? false,
+          roundingAmount: sourceHeader.roundingAmount || sourceHeader.RoundingAmount || sourceHeader.RoundDif || '',
         }));
         setLines(copiedLines);
         setHeaderUdfs((prev) => ({ ...prev, ...(copyData.headerUdfs || {}) }));
@@ -774,7 +811,7 @@ function GoodsReceiptPO() {
 
         setPendingCopyFrom(null);
         setPageState((prev) => ({ ...prev, loading: false, error: '', success: 'Copied from Purchase Order. Please review and save.' }));
-        navigate(location.pathname, { replace: true, state: null });
+        replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
       } catch (error) {
         if (!ignore) {
           setPendingCopyFrom(null);
@@ -971,7 +1008,12 @@ function GoodsReceiptPO() {
     taxAmt = roundTo(taxAmt, numDec.tax);
     if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
     taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+    const rounding = calculateDocumentRounding(
+      discSub + freight + taxAmt,
+      header.rounding,
+      numDec.totalPaymentDue,
+    );
+    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, ...rounding, taxBreakdown: Array.from(taxMap.values()) };
   };
 
   const totals = calcTotals();
@@ -986,6 +1028,7 @@ function GoodsReceiptPO() {
     ? {
       ...totals,
       taxAmt: header.tax !== '' ? parseNum(header.tax) : totals.taxAmt,
+      roundingAmount: header.roundingAmount !== '' ? parseNum(header.roundingAmount) : totals.roundingAmount,
       total: header.totalPaymentDue !== '' ? parseNum(header.totalPaymentDue) : totals.total,
     }
     : totals;
@@ -1047,7 +1090,12 @@ function GoodsReceiptPO() {
     if (!shouldAutoPopulateAddresses) return;
     setHeader(prev => {
       const existing = vendorEffectiveShipToAddresses.find(a => String(a.Address || '') === String(prev.shipToCode || ''));
-      if (existing) return prev;
+      if (existing) {
+        const savedOrAddressState = prev.placeOfSupply || String(existing.State || '').trim();
+        return savedOrAddressState === prev.placeOfSupply
+          ? prev
+          : { ...prev, placeOfSupply: savedOrAddressState };
+      }
       const def = vendorEffectiveShipToAddresses[0];
       if (!def) return prev;
       const fmt = fmtAddr(def);
@@ -1420,6 +1468,12 @@ function GoodsReceiptPO() {
   const handleSeriesChange = async (seriesValue) => {
     if (!seriesValue) return;
 
+    if (isManualDocumentSeries(seriesValue)) {
+      setHeader(p => ({ ...p, series: SAP_MANUAL_SERIES_VALUE, nextNumber: '' }));
+      setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+      return;
+    }
+
     setPageState(p => ({ ...p, seriesLoading: true }));
     setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
 
@@ -1431,6 +1485,21 @@ function GoodsReceiptPO() {
       setPageState(p => ({ ...p, error: 'Failed to get next document number' }));
     } finally {
       setPageState(p => ({ ...p, seriesLoading: false }));
+    }
+  };
+
+  const refreshDocumentSeries = async (targetDate = header.postingDate || today()) => {
+    if (currentDocEntry) return;
+    const effectiveDate = typeof targetDate === 'string'
+      ? targetDate
+      : (header.postingDate || today());
+
+    try {
+      const response = await fetchDocumentSeries(effectiveDate);
+      const liveSeries = Array.isArray(response.data?.series) ? response.data.series : [];
+      setRefData(p => ({ ...p, series: liveSeries }));
+    } catch (error) {
+      setPageState(p => ({ ...p, error: getErrMsg(error, 'Failed to load live SAP B1 Goods Receipt PO series.') }));
     }
   };
 
@@ -1659,6 +1728,8 @@ function GoodsReceiptPO() {
         ...prev,
         ...res.data.header,
         warehouse: res.data.header?.warehouse || firstLineWarehouse || prev.warehouse || '',
+        rounding: res.data.header?.rounding ?? normaliseDocumentHeader(res.data.header || {}).rounding ?? false,
+        roundingAmount: res.data.header?.roundingAmount || res.data.header?.RoundingAmount || res.data.header?.RoundDif || '',
       }));
       setHeaderUdfs((prev) => ({ ...prev, ...(res.data.header_udfs || {}) }));
       setLines(copiedLines);
@@ -1687,6 +1758,15 @@ function GoodsReceiptPO() {
   };
 
   const handleCopyTo = async (targetType) => {
+    if (currentDocEntry && !hasOpenCopyQuantity) {
+      setPageState(p => ({
+        ...p,
+        success: '',
+        error: 'This Goods Receipt PO has no open quantity left. It has already been fully copied to A/P Invoice.',
+      }));
+      return;
+    }
+
     await copyToDocument({
       sourceDocType: 'grpo',
       targetType,
@@ -1726,7 +1806,7 @@ function GoodsReceiptPO() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      refreshDuplicateSeries(refData.series, '', handleSeriesChange);
     }
   };
 
@@ -1819,6 +1899,11 @@ function GoodsReceiptPO() {
 
     if (!String(header.postingDate || '').trim()) { e.header.postingDate = 'Posting date is required.'; e.form = 'Please correct the highlighted fields.'; return e; }
     if (!String(header.documentDate || '').trim()) { e.header.documentDate = 'Document date is required.'; e.form = 'Please correct the highlighted fields.'; return e; }
+    if (!isUpdate && isManualDocumentSeries(header.series) && !isValidManualDocumentNumber(header.nextNumber)) {
+      e.header.nextNumber = 'Enter a positive document number for Manual series.';
+      e.form = 'Please correct the highlighted fields.';
+      return e;
+    }
 
     const pop = lines.filter(l => String(l.itemNo || '').trim());
     if (!pop.length) { e.form = 'Add at least one item line.'; return e; }
@@ -1926,7 +2011,7 @@ function GoodsReceiptPO() {
       const prep = {
         ...header,
         deliveryDate: header.deliveryDate || header.postingDate || header.documentDate,
-        series: header.series ? Number(header.series) : undefined,
+        series: header.series || undefined,
       };
 
       const payloadLines = lines.map((line) => ({
@@ -1990,7 +2075,7 @@ function GoodsReceiptPO() {
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <form className={`po-page sap-document-page grpo-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form ref={formRef} className={`po-page sap-document-page grpo-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
 
       {/* ── Toolbar ── */}
       <div className="po-toolbar sap-document-toolbar">
@@ -2039,10 +2124,16 @@ function GoodsReceiptPO() {
           <button
             type="button"
             className="po-btn"
-            disabled={!currentDocEntry}
+            disabled={!currentDocEntry || !hasOpenCopyQuantity}
+            title={!currentDocEntry
+              ? 'Open a saved goods receipt PO before using Copy To.'
+              : !hasOpenCopyQuantity
+                ? 'This Goods Receipt PO has no open quantity left.'
+                : 'Copy To'}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
+              if (!currentDocEntry || !hasOpenCopyQuantity) return;
               const dropdown = event.currentTarget.parentElement;
               const isActive = dropdown.classList.contains('active');
               document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
@@ -2077,6 +2168,14 @@ function GoodsReceiptPO() {
           disabled={pageState.posting || pageState.loading}
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, error: message, success: '' }))}
+        />
+        <JournalEntryPreviewButton
+          documentType="grpo"
+          documentLabel="Goods Receipt PO"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges })}
+          disabled={pageState.posting || pageState.loading}
+          className="po-btn sap-document-toolbar__journal-preview"
         />
         <span className={`po-mode-badge po-mode-badge--${currentDocEntry ? 'update' : 'add'}`}>
           {currentDocEntry ? 'Update' : 'Add'}
@@ -2198,11 +2297,30 @@ function GoodsReceiptPO() {
                 <div className="po-document-header-column po-header-grid__section po-header-grid__section--right">
                   <div className="po-field">
                     <label className="po-field__label">Series</label>
-                    <select name="series" className="po-field__select" value={header.series} onChange={handleHeaderChange} disabled={!!currentDocEntry || pageState.seriesLoading}>
+                    <select name="series" className="po-field__select" value={header.series} onChange={handleHeaderChange} onFocus={refreshDocumentSeries} disabled={!!currentDocEntry || pageState.seriesLoading}>
                       <option value="">Select Series</option>
-                      {refData.series.map(s => <option key={s.Series} value={s.Series}>{s.SeriesName} ({s.Indicator})</option>)}
+                      <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
+                      {refData.series.map(s => <option key={s.Series} value={s.Series}>{s.SeriesName}</option>)}
+                      {header.series && !isManualDocumentSeries(header.series) && !refData.series.some(s => String(s.Series) === String(header.series)) && (
+                        <option value={header.series}>{header.series}</option>
+                      )}
                     </select>
-                    <input type="text" className="po-field__input" style={{ width: 80, background: '#f0f2f5', textAlign: 'center' }} value={pageState.seriesLoading ? '...' : (currentDocEntry ? (header.docNo || header.nextNumber || '') : header.nextNumber)} readOnly title="Auto-assigned on save" />
+                    <input
+                      name="nextNumber"
+                      type="text"
+                      className="po-field__input"
+                      style={{
+                        width: 80,
+                        background: !currentDocEntry && isManualDocumentSeries(header.series) ? '#fff' : '#f0f2f5',
+                        textAlign: 'center',
+                        border: valErrors.header.nextNumber ? '1px solid #c00' : undefined,
+                      }}
+                      value={pageState.seriesLoading ? '...' : (currentDocEntry ? (header.docNo || header.nextNumber || '') : header.nextNumber)}
+                      onChange={handleHeaderChange}
+                      readOnly={!!currentDocEntry || !isManualDocumentSeries(header.series)}
+                      title={isManualDocumentSeries(header.series) ? 'Enter the manual document number' : 'Number will be assigned from the selected series'}
+                    />
+                    {valErrors.header.nextNumber && <span className="po-error-feedback">{valErrors.header.nextNumber}</span>}
                   </div>
                   <div className="po-field">
                     <label className="po-field__label">Status</label>
@@ -2393,7 +2511,7 @@ function GoodsReceiptPO() {
                             Rounding
                           </label>
                         </td>
-                        <td></td>
+                        <td><input className="po-grid__input" value={fmtDec(totalsForDisplay.roundingAmount, numDec.totalPaymentDue)} readOnly style={{ background: '#f5f8fc' }} /></td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: 600 }}>Tax</td>
@@ -2453,10 +2571,16 @@ function GoodsReceiptPO() {
                   <button
                     type="button"
                     className="po-btn"
-                    disabled={!currentDocEntry}
+                    disabled={!currentDocEntry || !hasOpenCopyQuantity}
+                    title={!currentDocEntry
+                      ? 'Open a saved goods receipt PO before using Copy To.'
+                      : !hasOpenCopyQuantity
+                        ? 'This Goods Receipt PO has no open quantity left.'
+                        : 'Copy To'}
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
+                      if (!currentDocEntry || !hasOpenCopyQuantity) return;
                       const dropdown = event.currentTarget.parentElement;
                       const isActive = dropdown.classList.contains('active');
                       document.querySelectorAll('.po-dropdown').forEach((node) => node.classList.remove('active'));
@@ -2554,6 +2678,7 @@ function GoodsReceiptPO() {
         loading={batchModal.loading}
         error={batchModal.error}
         onGenerateBatchNumber={() => fetchNextBatchNumber('JKL')}
+        workspaceRef={formRef}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />

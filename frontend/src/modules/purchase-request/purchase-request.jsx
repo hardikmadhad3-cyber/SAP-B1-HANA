@@ -23,6 +23,7 @@ import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
@@ -172,6 +173,7 @@ const INIT_HEADER = {
   discount: '',
   freight: '',
   rounding: false,
+  roundingAmount: '',
   tax: '',
   totalPaymentDue: '',
   placeOfSupply: '',
@@ -588,7 +590,12 @@ function PurchaseRequest() {
     taxAmt = roundTo(taxAmt, numDec.tax);
     if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
     taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+    const rounding = calculateDocumentRounding(
+      discSub + freight + taxAmt,
+      header.rounding,
+      numDec.totalPaymentDue,
+    );
+    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, ...rounding, taxBreakdown: Array.from(taxMap.values()) };
   };
 
   const totals = calcTotals();
@@ -1017,7 +1024,7 @@ function PurchaseRequest() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      refreshDuplicateSeries(refData.series, '', handleSeriesChange);
     }
   };
 
@@ -1764,6 +1771,15 @@ function PurchaseRequest() {
                               ...
                             </button>
                           </td>
+                        </tr>
+                        <tr>
+                          <td>
+                            <label className="po-checkbox-label">
+                              <input type="checkbox" name="rounding" checked={header.rounding} onChange={handleHeaderChange} />
+                              Rounding
+                            </label>
+                          </td>
+                          <td className="po-grid__cell--num"><input className="po-grid__input" value={fmtDec(totals.roundingAmount, numDec.totalPaymentDue)} readOnly /></td>
                         </tr>
                         <tr>
                           <td>Tax</td>

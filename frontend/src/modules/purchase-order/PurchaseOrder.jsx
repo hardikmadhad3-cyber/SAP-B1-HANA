@@ -23,12 +23,18 @@ import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmploy
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
 import { copyToDocument } from '../../services/documentCopyService';
-import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
-import { getItemPrice, hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
+import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
+import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/documentAddress';
+import {
+  SAP_MANUAL_SERIES_VALUE,
+  isManualDocumentSeries,
+  isValidManualDocumentNumber,
+} from '../../utils/documentSeries';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue } from '../../utils/stateDisplay';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
@@ -58,6 +64,7 @@ import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
 import { openLinkedBusinessPartner } from '../../utils/sapLinkedNavigation';
 import { normaliseDocumentHeader, normaliseDocumentLine, unwrapCopyFromDocument } from '../../api/copyFromApi';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import {
   BASE_MATRIX_COLUMNS,
   FORM_SETTINGS_STORAGE_KEY,
@@ -284,6 +291,7 @@ const INIT_HEADER = {
   discount: '',
   freight: '',
   rounding: false,
+  roundingAmount: '',
   tax: '',
   totalPaymentDue: '',
   placeOfSupply: '',
@@ -475,6 +483,13 @@ function PurchaseOrder() {
     setHeaderUdfs(draft.headerUdfs || createUdfState(HEADER_UDF_DEFINITIONS));
     setActiveTab(draft.activeTab || 'Contents');
     setIsDirty(Boolean(draft.isDirty));
+    if (Array.isArray(draft.freightCharges)) {
+      setFreightModal((prev) => ({
+        ...prev,
+        freightCharges: draft.freightCharges,
+        loading: false,
+      }));
+    }
     replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.state, navigate, location.pathname]);
 
@@ -486,8 +501,14 @@ function PurchaseOrder() {
       headerUdfs,
       activeTab,
       isDirty,
+      freightCharges: freightModal.freightCharges,
     },
-  }), [activeTab, currentDocEntry, header, headerUdfs, isDirty, lines]);
+  }), [activeTab, currentDocEntry, freightModal.freightCharges, header, headerUdfs, isDirty, lines]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'Purchase Order',
+  });
 
   const openBusinessPartnerLink = useCallback(() => {
     openLinkedBusinessPartner({
@@ -518,7 +539,7 @@ function PurchaseOrder() {
       try {
         const [refDataRes, seriesRes, hsnRes, layoutRes] = await Promise.all([
           fetchPurchaseOrderReferenceData(activeCompanyId),
-          fetchDocumentSeries(),
+          fetchDocumentSeries(today()),
           fetchHSNCodes(),
           getDocumentLayout({
             companyDb: activeCompanyDb || undefined,
@@ -662,7 +683,7 @@ function PurchaseOrder() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -708,7 +729,7 @@ function PurchaseOrder() {
 
     const label = sourceType === 'purchaseRequest' ? 'Purchase Request' : 'Purchase Quotation';
     setPageState((prev) => ({ ...prev, error: '', success: `Copied from ${label}. Please review and save.` }));
-    navigate(location.pathname, { replace: true, state: null });
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {
@@ -852,15 +873,6 @@ function PurchaseOrder() {
   };
   const derivedGstType = getDerivedGstType(header.vendorState, header.placeOfSupply);
   const inferredGstType = formatDerivedGstType(derivedGstType);
-  const getPreferredLineTaxCode = useCallback((currentTaxCode = '') => {
-    const preferredTaxCode = findPreferredGstTaxCode({
-      taxCodes: effectiveTaxCodes,
-      gstType: derivedGstType,
-      currentTaxCode,
-    });
-    return preferredTaxCode?.Code || '';
-  }, [derivedGstType, effectiveTaxCodes]);
-
   const getBranchName = (branchId) => {
     if (!branchId) return '';
     const branch = refData.branches.find(b => String(b.BPLId) === String(branchId));
@@ -903,7 +915,12 @@ function PurchaseOrder() {
     taxAmt = roundTo(taxAmt, numDec.tax);
     if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
     taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+    const rounding = calculateDocumentRounding(
+      discSub + freight + taxAmt,
+      header.rounding,
+      numDec.totalPaymentDue,
+    );
+    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, ...rounding, taxBreakdown: Array.from(taxMap.values()) };
   };
 
   const totals = calcTotals();
@@ -918,11 +935,13 @@ function PurchaseOrder() {
     ? {
       ...totals,
       taxAmt: header.tax !== '' ? parseNum(header.tax) : totals.taxAmt,
+      roundingAmount: header.roundingAmount !== '' ? parseNum(header.roundingAmount) : totals.roundingAmount,
       total: header.totalPaymentDue !== '' ? parseNum(header.totalPaymentDue) : totals.total,
     }
     : totals;
 
   useEffect(() => {
+    if (true) return;
     if (!derivedGstType) return;
 
     setLines(prevLines => prevLines.map(line => {
@@ -1242,19 +1261,9 @@ function PurchaseOrder() {
           next.itemDescription = item.ItemName || next.itemDescription;
           next.hsnCode = item.HSNCode || next.hsnCode || '';
           next.uomCode = String(item.PurchaseUnit || item.InventoryUOM || '').trim();
-          if (!next.unitPrice || Number(next.unitPrice) <= 0) {
-            next.unitPrice = getItemPrice(item, 'purchase') || next.unitPrice;
-          }
 
           if (itemDefaultWarehouse) {
             next.whse = itemDefaultWarehouse;
-          }
-        }
-
-        if (!next.taxCodeManuallyOverridden) {
-          const preferredTaxCode = getPreferredLineTaxCode(next.taxCode);
-          if (preferredTaxCode) {
-            next.taxCode = preferredTaxCode;
           }
         }
       }
@@ -1402,6 +1411,12 @@ function PurchaseOrder() {
   const handleSeriesChange = async (seriesValue) => {
     if (!seriesValue) return;
 
+    if (isManualDocumentSeries(seriesValue)) {
+      setHeader(p => ({ ...p, series: SAP_MANUAL_SERIES_VALUE, nextNumber: '' }));
+      setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+      return;
+    }
+
     setPageState(p => ({ ...p, seriesLoading: true }));
     setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
 
@@ -1416,11 +1431,11 @@ function PurchaseOrder() {
     }
   };
 
-  const refreshDocumentSeries = async () => {
+  const refreshDocumentSeries = async (targetDate = header.postingDate || today()) => {
     if (currentDocEntry) return;
 
     try {
-      const response = await fetchDocumentSeries();
+      const response = await fetchDocumentSeries(targetDate);
       const liveSeries = Array.isArray(response.data?.series) ? response.data.series : [];
       setRefData(p => ({ ...p, series: liveSeries }));
     } catch (error) {
@@ -1570,12 +1585,11 @@ function PurchaseOrder() {
         if (itemDefaultWarehouse) {
           next.whse = itemDefaultWarehouse;
         }
-        if (!next.taxCodeManuallyOverridden) {
-          const preferredTaxCode = getPreferredLineTaxCode(next.taxCode);
-          if (preferredTaxCode) {
-            next.taxCode = preferredTaxCode;
-          }
-        }
+        next.unitPrice = line.unitPrice || '';
+        next.price = line.price || '';
+        next.taxCode = line.taxCode || '';
+        next.taxCodeRepeat = line.taxCodeRepeat || '';
+        next.taxCodeManuallyOverridden = line.taxCodeManuallyOverridden;
         next.total = fmtDec(calcLineTotal(next), numDec.total);
         return next;
       }));
@@ -1592,7 +1606,11 @@ function PurchaseOrder() {
         if (itemDefaultWarehouse) {
           next.whse = itemDefaultWarehouse;
         }
-        next.taxCode = !line.taxCodeManuallyOverridden ? (getPreferredLineTaxCode(next.taxCode) || next.taxCode) : line.taxCode;
+        next.unitPrice = line.unitPrice || '';
+        next.price = line.price || '';
+        next.taxCode = line.taxCode || '';
+        next.taxCodeRepeat = line.taxCodeRepeat || '';
+        next.taxCodeManuallyOverridden = line.taxCodeManuallyOverridden;
         next.total = fmtDec(calcLineTotal(next), numDec.total);
         return next;
       }));
@@ -1749,7 +1767,8 @@ function PurchaseOrder() {
     });
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
+    const duplicateDate = today();
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -1772,7 +1791,27 @@ function PurchaseOrder() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      setHeader(prev => ({
+        ...prev,
+        postingDate: duplicateDate,
+        documentDate: duplicateDate,
+        deliveryDate: duplicateDate,
+        series: '',
+        nextNumber: '',
+      }));
+      let duplicateSeries = refData.series;
+      try {
+        const response = await fetchDocumentSeries(duplicateDate);
+        duplicateSeries = Array.isArray(response.data?.series) ? response.data.series : [];
+        setRefData(prev => ({ ...prev, series: duplicateSeries }));
+      } catch (_error) {
+        duplicateSeries = refData.series;
+      }
+      const defaultSeries = getDefaultSeriesForCurrentYear(duplicateSeries, new Date(`${duplicateDate}T00:00:00`))
+        || duplicateSeries[0];
+      if (defaultSeries?.Series != null) {
+        handleSeriesChange(defaultSeries.Series);
+      }
     }
   };
 
@@ -1788,6 +1827,11 @@ function PurchaseOrder() {
 
     if (!String(header.postingDate || '').trim()) { e.header.postingDate = 'Posting date is required.'; e.form = 'Please correct the highlighted fields.'; return e; }
     if (!String(header.documentDate || '').trim()) { e.header.documentDate = 'Document date is required.'; e.form = 'Please correct the highlighted fields.'; return e; }
+    if (!isUpdate && isManualDocumentSeries(header.series) && !isValidManualDocumentNumber(header.nextNumber)) {
+      e.header.nextNumber = 'Enter a positive document number for Manual series.';
+      e.form = 'Please correct the highlighted fields.';
+      return e;
+    }
 
     const pop = lines.filter(l => String(l.itemNo || '').trim());
     if (!pop.length) { e.form = 'Add at least one item line.'; return e; }
@@ -2243,12 +2287,13 @@ function PurchaseOrder() {
                         disabled={!!currentDocEntry || pageState.seriesLoading}
                       >
                         <option value="">Select Series</option>
+                        <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
                         {refData.series.map(s => (
                           <option key={s.Series} value={s.Series}>
                             {s.SeriesName}
                           </option>
                         ))}
-                        {header.series && !refData.series.some(s => String(s.Series) === String(header.series)) && (
+                        {header.series && !isManualDocumentSeries(header.series) && !refData.series.some(s => String(s.Series) === String(header.series)) && (
                           <option value={header.series}>{header.series}</option>
                         )}
                       </select>
@@ -2259,11 +2304,19 @@ function PurchaseOrder() {
                       <label className="po-field__label">Number</label>
                       <input 
                         name="nextNumber" 
-                        className="po-field__input" 
+                        className="po-field__input"
                         value={currentDocEntry ? (header.docNo || header.nextNumber || '') : (header.nextNumber || '')} 
-                        readOnly 
-                        style={{ background: '#f0f2f5' }}
+                        onChange={handleHeaderChange}
+                        readOnly={!!currentDocEntry || !isManualDocumentSeries(header.series)}
+                        style={{
+                          background: !currentDocEntry && isManualDocumentSeries(header.series) ? '#fff' : '#f0f2f5',
+                          border: valErrors.header.nextNumber ? '1px solid #c00' : undefined,
+                        }}
+                        title={isManualDocumentSeries(header.series) ? 'Enter the manual document number' : 'Number will be assigned after saving'}
                       />
+                      {valErrors.header.nextNumber && (
+                        <div style={{ color: '#c00', fontSize: 10, marginTop: 2 }}>{valErrors.header.nextNumber}</div>
+                      )}
                     </div>
 
                     {/* Vendor Ref. No. */}
@@ -2444,6 +2497,15 @@ function PurchaseOrder() {
                               ...
                             </button>
                           </td>
+                        </tr>
+                        <tr>
+                          <td>
+                            <label className="po-checkbox-label">
+                              <input type="checkbox" name="rounding" checked={header.rounding} onChange={handleHeaderChange} />
+                              Rounding
+                            </label>
+                          </td>
+                          <td className="po-grid__cell--num"><input className="po-grid__input" value={fmtDec(totalsForDisplay.roundingAmount, numDec.totalPaymentDue)} readOnly /></td>
                         </tr>
                         <tr>
                           <td>Tax</td>

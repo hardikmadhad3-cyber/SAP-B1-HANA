@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { flattenMenuTree, normalizePath } from "../auth/routeUtils";
 import useFloatingWindow from "./reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "./SapWindowTaskbarContext";
+import { mergeWindowTaskState } from "../utils/windowTaskState";
 
 const DASHBOARD_PATH = "/dashboard";
 const WINDOW_FRAME_EXCLUDED_PATHS = new Set([
@@ -66,10 +67,50 @@ function PageWindowFrame({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { menus } = useAuth();
-  const { closeActiveAndRestorePrevious, minimizeCurrentRouteTask } = useSapWindowTaskbarActions();
+  const {
+    closeActiveAndRestorePrevious,
+    minimizeCurrentRouteTask,
+    upsertTask,
+  } = useSapWindowTaskbarActions();
   const normalizedPath = normalizePath(location.pathname);
   const isExcludedPath = WINDOW_FRAME_EXCLUDED_PATHS.has(normalizedPath);
-  const routedWindow = location.state?.sapWindow || null;
+  const retainedWindowRef = useRef({
+    path: normalizedPath,
+    window: location.state?.sapWindow || null,
+  });
+  if (retainedWindowRef.current.path !== normalizedPath) {
+    retainedWindowRef.current = {
+      path: normalizedPath,
+      window: location.state?.sapWindow || null,
+    };
+  } else if (location.state?.sapWindow) {
+    retainedWindowRef.current.window = location.state.sapWindow;
+  }
+  const routedWindow = location.state?.sapWindow || retainedWindowRef.current.window;
+  const taskId = routedWindow?.id || `page-window:${normalizedPath}`;
+  const retainedTaskStateRef = useRef({
+    id: taskId,
+    state: location.state || undefined,
+  });
+  if (retainedTaskStateRef.current.id !== taskId) {
+    retainedTaskStateRef.current = {
+      id: taskId,
+      state: location.state || undefined,
+    };
+  } else if (location.state && typeof location.state === "object") {
+    retainedTaskStateRef.current.state = mergeWindowTaskState(
+      retainedTaskStateRef.current.state,
+      location.state,
+    );
+  }
+  const retainedTaskState = retainedTaskStateRef.current.state;
+  const retainedTaskSnapshotRef = useRef(null);
+  retainedTaskSnapshotRef.current = {
+    id: taskId,
+    path: routedWindow?.path || normalizedPath,
+    state: retainedTaskState,
+    title: routedWindow?.title,
+  };
 
   const flattenedMenus = useMemo(
     () => flattenMenuTree(menus).filter((menu) => menu?.menuPath),
@@ -92,6 +133,24 @@ function PageWindowFrame({ children }) {
   const pageTitle = routedWindow?.title || (currentMenu?.menuName
     ? getDisplayMenuName(currentMenu.menuName)
     : prettifyPathTitle(normalizedPath));
+  retainedTaskSnapshotRef.current.title = pageTitle;
+
+  useEffect(() => {
+    if (isExcludedPath || typeof window === "undefined") {
+      return undefined;
+    }
+
+    const preserveRouteStateOnMinimize = (event) => {
+      const task = retainedTaskSnapshotRef.current;
+      if (!task?.id || event.detail?.excludeId === task.id) return;
+      upsertTask?.(task);
+    };
+
+    window.addEventListener("sap-window-minimize-active", preserveRouteStateOnMinimize);
+    return () => {
+      window.removeEventListener("sap-window-minimize-active", preserveRouteStateOnMinimize);
+    };
+  }, [isExcludedPath, upsertTask]);
 
   const getFallbackPath = () => DASHBOARD_PATH;
 
@@ -100,9 +159,9 @@ function PageWindowFrame({ children }) {
     allowPersistedMinimized: false,
     defaultTop: 10,
     resetOnClose: false,
-    taskId: routedWindow?.id || `page-window:${normalizedPath}`,
+    taskId,
     taskPath: routedWindow?.path || normalizedPath,
-    taskState: location.state || undefined,
+    taskState: retainedTaskState,
     taskTitle: pageTitle,
   });
 
@@ -126,6 +185,7 @@ function PageWindowFrame({ children }) {
 
   const handleMinimize = () => {
     minimizeCurrentRouteTask();
+    window.dispatchEvent(new CustomEvent("sap-window-minimize-active"));
     navigate(DASHBOARD_PATH, { state: null });
   };
 

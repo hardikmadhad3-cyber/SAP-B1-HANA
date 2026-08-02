@@ -11,6 +11,7 @@ import HeaderUdfSidebar from '../../components/purchase-order/HeaderUdfSidebar';
 import ItemSelectionModal from '../../components/common/ItemSelectionModal';
 import DistributionRuleAssignmentModal from '../../components/DistributionRuleAssignmentModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import {
   fetchInventoryTransferBusinessPartnerDetails,
   fetchInventoryTransferByDocEntry,
@@ -1374,6 +1375,14 @@ function InventoryTransfer() {
         >
           Form Settings
         </button>
+        <JournalEntryPreviewButton
+          documentType="inventoryTransfer"
+          documentLabel="Inventory Transfer"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs })}
+          disabled={pageState.posting || pageState.loading}
+          className="po-btn sap-document-toolbar__journal-preview"
+        />
       </div>
 
       {pageState.loading && <div className="po-alert po-alert--success">Loading...</div>}

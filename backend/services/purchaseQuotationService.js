@@ -63,10 +63,8 @@ const getVendorDetails = async (vendorCode) => {
     const data = await purchaseQuotationDb.getVendorDetails(vendorCode);
     return data;
   } catch (error) {
-    return {
-      contacts: [],
-      pay_to_addresses: [],
-    };
+    console.error('[Purchase Quotation Service] Failed to load vendor details:', error);
+    throw error;
   }
 };
 
@@ -204,6 +202,11 @@ const toNumberOrUndefined = (value) => {
   if (value === '' || value === null || value === undefined) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const toSapYesNo = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized) ? 'tYES' : 'tNO';
 };
 
 const hasValue = (value) => value !== '' && value !== null && value !== undefined;
@@ -477,6 +480,7 @@ const buildPurchaseQuotationPayload = async ({ header = {}, lines = [], header_u
     JournalMemo: header.journalRemark,
     Confirmed: header.confirmed ? 'tYES' : 'tNO',
     DiscountPercent: toNumberOrUndefined(header.discount),
+    Rounding: toSapYesNo(header.rounding),
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
     DocumentLines: await buildDocumentLines(lines),
   });

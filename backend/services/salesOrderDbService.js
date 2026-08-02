@@ -11,6 +11,10 @@ const {
   getMarketingDocumentUdfs,
   getUdfDefinitions,
 } = require('./udfMetadataService');
+const {
+  loadBusinessPartnerAddresses,
+  splitBusinessPartnerAddresses,
+} = require('./businessPartnerAddressDbUtils');
 
 const safe = async (promise) => {
   try {
@@ -684,6 +688,25 @@ const toSqlIdentifier = (identifier) => `[${String(identifier || '').replace(/]/
 const normalizeDbScalar = (value) => {
   if (value instanceof Date) return value.toISOString().split('T')[0];
   return value == null ? '' : String(value);
+};
+
+const buildDocumentAddressComponents = (row = {}, prefix = 'ShipTo') => {
+  const components = {
+    streetPoBox: normalizeDbScalar(row[`${prefix}Street`]),
+    streetNo: normalizeDbScalar(row[`${prefix}StreetNo`]),
+    buildingFloorRoom: normalizeDbScalar(row[`${prefix}Building`]),
+    block: normalizeDbScalar(row[`${prefix}Block`]),
+    city: normalizeDbScalar(row[`${prefix}City`]),
+    zipCode: normalizeDbScalar(row[`${prefix}ZipCode`]),
+    county: normalizeDbScalar(row[`${prefix}County`]),
+    state: normalizeDbScalar(row[`${prefix}State`]),
+    countryRegion: normalizeDbScalar(row[`${prefix}Country`]),
+    addressName2: normalizeDbScalar(row[`${prefix}Address2`]),
+    addressName3: normalizeDbScalar(row[`${prefix}Address3`]),
+    gln: normalizeDbScalar(row[`${prefix}GlobalLocationNumber`]),
+  };
+
+  return Object.values(components).some((value) => String(value || '').trim()) ? components : null;
 };
 
 const getPhysicalUdfValues = async ({ tableName, keyColumn = 'DocEntry', keyValue, includeLineNum = false }) => {
@@ -1663,6 +1686,7 @@ const resolveSalesOrderLineUomEntry = async (itemCode, uomValue) => {
   const rawValue = uomValue == null ? '' : String(uomValue).trim();
   const requestedUomEntry = Number(rawValue);
   const requestedUomCode = rawValue.toUpperCase();
+  const isManualUomPlaceholder = requestedUomCode === 'MANUAL';
   const ugpEntry = Number(item.UgpEntry);
   const salesUomEntry = Number(item.SUoMEntry);
   const inventoryUomEntry = Number(item.IUoMEntry);
@@ -1688,7 +1712,7 @@ const resolveSalesOrderLineUomEntry = async (itemCode, uomValue) => {
     return rows[0]?.UomEntry != null ? Number(rows[0].UomEntry) : null;
   }
 
-  if (requestedUomCode) {
+  if (requestedUomCode && !isManualUomPlaceholder) {
     if (ugpEntry > 0) {
       const rows = await safe(db.query(`
         SELECT TOP 1 U.UomEntry
@@ -2046,27 +2070,8 @@ const getContactsByCustomer = async (cardCode) => {
   return result;
 };
 const getAddressesByCustomer = async (cardCode) => {
-  const crd1FieldMetadata = await getTableFieldMetadata('CRD1');
-  const optionalCrd1Column = (candidates, alias, fallback = "''") => {
-    const resolvedColumn = candidates
-      .map((candidate) => resolveTableColumnName(crd1FieldMetadata, candidate))
-      .find(Boolean);
-    return resolvedColumn
-      ? `T0.${quoteSqlIdentifier(resolvedColumn)} AS ${quoteSqlIdentifier(alias)}`
-      : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
-  };
-
-  return safe(db.query(`
-    SELECT T0.*, T0.CardCode, T0.AdresType, T0.Address,
-           T0.Street, T0.StreetNo, T0.Block, T0.Building,
-           T0.Address2, T0.Address3,
-           T0.City, T0.County, T0.State, T0.ZipCode, T0.Country,
-           ${optionalCrd1Column(['GSTRegnNo', 'GSTIN'], 'GSTIN')},
-           ${optionalCrd1Column(['GSTType'], 'GSTType')}
-    FROM   CRD1 T0
-    WHERE  T0.CardCode = @cardCode
-    ORDER  BY T0.AdresType, T0.Address
-  `, { cardCode }));
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'Sales Order' });
+  return addresses;
 };
 
 const getStateFromAddress = async (cardCode, addressCode) => {
@@ -2238,19 +2243,26 @@ const getReferenceData = async () => {
 };
 
 const getCustomerDetails = async (cardCode) => {
-  
+  const normalizedCardCode = String(cardCode || '').trim();
+  if (!normalizedCardCode) {
+    return {
+      contacts: [],
+      bill_to_addresses: [],
+      pay_to_addresses: [],
+      ship_to_addresses: [],
+    };
+  }
+
   const [contacts, addresses] = await Promise.all([
-    
-    getContactsByCustomer(cardCode),
-    getAddressesByCustomer(cardCode),
+    getContactsByCustomer(normalizedCardCode),
+    getAddressesByCustomer(normalizedCardCode),
   ]);
 
-  const billTo = addresses.filter(a => a.AdresType === 'B');
-  const shipTo = addresses.filter(a => a.AdresType === 'S');
+  const { billTo, shipTo } = splitBusinessPartnerAddresses(addresses, normalizedCardCode);
 
   return {
     contacts: contacts.map(c => ({
-      CardCode:    c.CardCode,
+      CardCode:    String(c.CardCode || normalizedCardCode).trim(),
       CntctCode:   c.CntctCode,
       Name:        c.Name || `${c.FirstName || ''} ${c.LastName || ''}`.trim(),
       FirstName:   c.FirstName,
@@ -2762,11 +2774,20 @@ const getSalesOrder = async (docEntry) => {
   const headerFieldMetadata = await getTableFieldMetadata('ORDR');
   const lineFieldMetadata = await getSalesOrderLineFieldMetadata();
   const sacFieldMetadata = await getTableFieldMetadata('OSAC');
+  const addressExtensionFieldMetadata = await getTableFieldMetadata('RDR12');
   const lineField = (columnName, alias, fallback = "''") => (
     resolveTableColumnName(lineFieldMetadata, columnName)
       ? `T1.${quoteSqlIdentifier(resolveTableColumnName(lineFieldMetadata, columnName))} AS ${quoteSqlIdentifier(alias)}`
       : `${fallback} AS ${quoteSqlIdentifier(alias)}`
   );
+  const addressExtensionField = (candidates, alias, fallback = "''") => {
+    const columnName = candidates
+      .map((candidate) => resolveTableColumnName(addressExtensionFieldMetadata, candidate))
+      .find(Boolean);
+    return columnName
+      ? `T12.${quoteSqlIdentifier(columnName)} AS ${quoteSqlIdentifier(alias)}`
+      : `${fallback} AS ${quoteSqlIdentifier(alias)}`;
+  };
   const hasSellerPaymentTermField = Boolean(lineFieldMetadata?.U_Seller_Payment_Term);
   const hasSellerPaymentTermsField = Boolean(lineFieldMetadata?.U_Seller_Payment_Terms);
   const hasRateField = Boolean(lineFieldMetadata?.U_Rate);
@@ -2802,8 +2823,36 @@ const getSalesOrder = async (docEntry) => {
     T0.PayToCode,
     T0.Address,
     T0.Address2,
+    ${addressExtensionField(['StreetS', 'ShipToStreet'], 'ShipToStreet')},
+    ${addressExtensionField(['StreetNoS', 'ShipToStreetNo'], 'ShipToStreetNo')},
+    ${addressExtensionField(['BuildingS', 'ShipToBuilding'], 'ShipToBuilding')},
+    ${addressExtensionField(['BlockS', 'ShipToBlock'], 'ShipToBlock')},
+    ${addressExtensionField(['CityS', 'ShipToCity'], 'ShipToCity')},
+    ${addressExtensionField(['ZipCodeS', 'ShipToZipCode'], 'ShipToZipCode')},
+    ${addressExtensionField(['CountyS', 'ShipToCounty'], 'ShipToCounty')},
+    ${addressExtensionField(['StateS', 'ShipToState'], 'ShipToState')},
+    ${addressExtensionField(['CountryS', 'ShipToCountry'], 'ShipToCountry')},
+    ${addressExtensionField(['Address2S', 'ShipToAddress2'], 'ShipToAddress2')},
+    ${addressExtensionField(['Address3S', 'ShipToAddress3'], 'ShipToAddress3')},
+    ${addressExtensionField(['GlblLocNumS', 'GlobalLocationNumberS', 'ShipToGlobalLocationNumber'], 'ShipToGlobalLocationNumber')},
+    ${addressExtensionField(['StreetB', 'BillToStreet'], 'BillToStreet')},
+    ${addressExtensionField(['StreetNoB', 'BillToStreetNo'], 'BillToStreetNo')},
+    ${addressExtensionField(['BuildingB', 'BillToBuilding'], 'BillToBuilding')},
+    ${addressExtensionField(['BlockB', 'BillToBlock'], 'BillToBlock')},
+    ${addressExtensionField(['CityB', 'BillToCity'], 'BillToCity')},
+    ${addressExtensionField(['ZipCodeB', 'BillToZipCode'], 'BillToZipCode')},
+    ${addressExtensionField(['CountyB', 'BillToCounty'], 'BillToCounty')},
+    ${addressExtensionField(['StateB', 'BillToState'], 'BillToState')},
+    ${addressExtensionField(['CountryB', 'BillToCountry'], 'BillToCountry')},
+    ${addressExtensionField(['Address2B', 'BillToAddress2'], 'BillToAddress2')},
+    ${addressExtensionField(['Address3B', 'BillToAddress3'], 'BillToAddress3')},
+    ${addressExtensionField(['GlblLocNumB', 'GlobalLocationNumberB', 'BillToGlobalLocationNumber'], 'BillToGlobalLocationNumber')},
     T0.TrnspCode,
     T0.Confirmed,
+    ${optionalHeaderColumn(headerFieldMetadata, ['LangCode', 'Language'], 'LanguageCode', 'NULL')},
+    ${optionalHeaderColumn(headerFieldMetadata, ['PickRmrk'], 'PickAndPackRemarks')},
+    ${optionalHeaderColumn(headerFieldMetadata, ['BPChCode'], 'BPChannelCode')},
+    ${optionalHeaderColumn(headerFieldMetadata, ['BPChCntc'], 'BPChannelContact', 'NULL')},
     T0.JrnlMemo,
     ${paymentMethodExpression} AS PaymentMethod,
     ${optionalHeaderColumn(headerFieldMetadata, ['TransCat', 'TransactionCategory'], 'TransactionCategory')},
@@ -2830,6 +2879,7 @@ const getSalesOrder = async (docEntry) => {
     -- 🔹 FINANCIALS
     T0.TotalExpns AS Freight,
     T0.VatSum AS TaxAmount,
+    T0.RoundDif AS RoundingAmount,
 
     -- 🔹 PLACE OF SUPPLY (NO DUPLICATE FIXED)
     ST.Name AS PlaceOfSupply,
@@ -2899,6 +2949,8 @@ const getSalesOrder = async (docEntry) => {
     CHP.ChapterID AS HSNCode
 
 FROM ORDR T0
+
+LEFT JOIN RDR12 T12 ON T12.DocEntry = T0.DocEntry
 
 -- ✅ LINES (KEEP INNER JOIN if lines must exist)
 INNER JOIN RDR1 T1 ON T0.DocEntry = T1.DocEntry
@@ -3073,6 +3125,8 @@ ORDER BY T1.LineNum
 
   // Use line data from the main joined query (rows already contains all lines)
   const lineRows = rows;
+  const shipToAddressComponents = buildDocumentAddressComponents(header, 'ShipTo');
+  const billToAddressComponents = buildDocumentAddressComponents(header, 'BillTo');
 
   // ✅ Try to get line UDFs if they exist
   let lineUdfs = mergeLineUdfValueMaps(dynamicLineUdfs, physicalLineUdfs);
@@ -3213,8 +3267,16 @@ ORDER BY T1.LineNum
         payToCode: header.PayToCode || '',
         shipTo: header.Address || '',
         payTo: header.Address2 || '',
+        shipToAddressComponents,
+        billToAddressComponents,
         shippingType: String(header.TrnspCode || ''),
         confirmed: header.Confirmed === 'Y',
+        language: header.LanguageCode != null ? String(header.LanguageCode) : '',
+        languageCode: header.LanguageCode != null ? String(header.LanguageCode) : '',
+        pickAndPackRemarks: header.PickAndPackRemarks || '',
+        bpChannelName: header.BPChannelCode || '',
+        bpChannelCode: header.BPChannelCode || '',
+        bpChannelContact: header.BPChannelContact != null ? String(header.BPChannelContact) : '',
         journalRemark: header.JrnlMemo || '',
         paymentMethod: header.PaymentMethod || '',
         transactionCategory: header.TransactionCategory || '',
@@ -3226,7 +3288,10 @@ ORDER BY T1.LineNum
           ? true
           : ['Y', 'YES', '1', 'TRUE'].includes(String(header.SupplyCovered || '').toUpperCase()),
         discount: String(header.DiscPrcnt || ''),
-        tax: '', // Tax is calculated, not stored
+        tax: header.TaxAmount != null ? String(header.TaxAmount) : '',
+        rounding: Number(header.RoundingAmount || 0) !== 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
+        totalPaymentDue: header.DocTotal != null ? String(header.DocTotal) : '',
         currency: header.DocCur || 'INR',
       },
       header_udfs: headerUdfs,
@@ -3431,7 +3496,7 @@ const getSalesOrderForCopy = async (docEntry) => {
       T0.BPLId,
       ${headerBranchField} AS BPL_IDAssignedToInvoice,
       T0.GroupNum, T0.SlpCode,
-      T0.DiscPrcnt, T0.TotalExpns AS Freight,
+      T0.DiscPrcnt, T0.RoundDif, T0.TotalExpns AS Freight,
       ${paymentMethodExpression} AS PaymentMethod,
       ${optionalHeaderColumn(headerFieldMetadata, ['TransCat', 'TransactionCategory'], 'TransactionCategory')},
       ${optionalHeaderColumn(headerFieldMetadata, ['FormNo', 'TaxFormNo'], 'TaxFormNo')},
@@ -3455,6 +3520,8 @@ const getSalesOrderForCopy = async (docEntry) => {
       T0.DiscPrcnt AS DiscountPercent,
       T0.WhsCode AS WarehouseCode,
       T0.TaxCode, T0.unitMsr AS UomCode, T0.unitMsr AS UomName,
+      ${lineField('NumPerMsr', 'UomFactor', 'CAST(1 AS DECIMAL(19, 6))')},
+      ${lineField('UomEntry', 'UoMEntry', 'NULL')},
       T0.OcrCode AS DistributionRule,
       ${lineField('OcrCode2', 'DistributionRule2')},
       ${lineField('OcrCode3', 'DistributionRule3')},

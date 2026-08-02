@@ -36,6 +36,39 @@ const getAddressValue = (address, aliases = []) => {
   return '';
 };
 
+const normalizeAddressType = (value) => {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'B' || normalized.includes('BILL')) return 'B';
+  if (normalized === 'S' || normalized.includes('SHIP')) return 'S';
+  return normalized;
+};
+
+export const normalizeBusinessPartnerAddress = (address = {}, fallbackCardCode = '') => {
+  const gstin = getAddressValue(address, ['GSTIN', 'GSTRegnNo']);
+
+  return {
+    ...address,
+    CardCode: String(getAddressValue(address, ['CardCode']) || fallbackCardCode || '').trim(),
+    Address: String(getAddressValue(address, ['Address', 'AddressName']) || '').trim(),
+    AdresType: normalizeAddressType(getAddressValue(address, ['AdresType', 'AddressType'])),
+    Street: getAddressValue(address, ['Street']),
+    StreetNo: getAddressValue(address, ['StreetNo', 'StreetNumber']),
+    Block: getAddressValue(address, ['Block']),
+    Building: getAddressValue(address, ['Building', 'BuildingFloorRoom']),
+    Address2: getAddressValue(address, ['Address2', 'AddressName2']),
+    Address3: getAddressValue(address, ['Address3', 'AddressName3']),
+    City: getAddressValue(address, ['City']),
+    County: getAddressValue(address, ['County']),
+    State: getAddressValue(address, ['State', 'StateCode']),
+    ZipCode: getAddressValue(address, ['ZipCode', 'Zip']),
+    Country: getAddressValue(address, ['Country', 'CountryCode']),
+    GlblLocNum: getAddressValue(address, ['GlblLocNum', 'GlobalLocationNumber', 'GLN']),
+    GSTIN: gstin,
+    GSTRegnNo: gstin,
+    GSTType: getAddressValue(address, ['GSTType', 'GstType']),
+  };
+};
+
 const formatDateValue = (value) => {
   if (!value) return '';
   if (value instanceof Date && !Number.isNaN(value.getTime())) {

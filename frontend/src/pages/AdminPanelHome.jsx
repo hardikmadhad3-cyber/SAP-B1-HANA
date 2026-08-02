@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchAdminEntities } from '../api/adminPanelApi';
+import { matchesSapSearchText } from '../utils/sapSearch';
 
 const GROUP_ORDER = ['Core Setup', 'Security', 'Navigation', 'Reporting'];
 const WORKSPACE_LINKS = [
@@ -48,23 +49,23 @@ const AdminPanelHome = () => {
   }, []);
 
   const filteredEntities = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
+    const query = searchTerm.trim();
     if (!query) return entities;
 
     return entities.filter((entity) => (
-      String(entity.title || '').toLowerCase().includes(query)
-      || String(entity.description || '').toLowerCase().includes(query)
-      || String(entity.group || '').toLowerCase().includes(query)
+      matchesSapSearchText(entity.title, query)
+      || matchesSapSearchText(entity.description, query)
+      || matchesSapSearchText(entity.group, query)
     ));
   }, [entities, searchTerm]);
 
   const filteredWorkspaceLinks = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
+    const query = searchTerm.trim();
     if (!query) return WORKSPACE_LINKS;
 
     return WORKSPACE_LINKS.filter((link) => (
-      String(link.title || '').toLowerCase().includes(query)
-      || String(link.description || '').toLowerCase().includes(query)
+      matchesSapSearchText(link.title, query)
+      || matchesSapSearchText(link.description, query)
     ));
   }, [searchTerm]);
 

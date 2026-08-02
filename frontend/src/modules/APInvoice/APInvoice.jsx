@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import './styles/APInvoice.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import FormSettingsPanel from '../../components/ap-invoice/FormSettingsPanel';
@@ -20,6 +20,7 @@ import WithholdingTaxTableModal from './components/WithholdingTaxTableModal';
 import CopyFromModal from '../../components/document/CopyFromModal';
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import PurchasePrintLayoutActions from '../../components/print-layout/PurchasePrintLayoutActions';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
@@ -32,9 +33,12 @@ import { mapAddressToModalForm, resolveAddressForModal } from '../../utils/docum
 import { getDefaultSeriesForCurrentYear, normalizeDocumentSeriesList } from '../../utils/seriesDefaults';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
+import { resolveWithholdingTaxBaseAmount } from '../../utils/withholdingTax';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import { useAuth } from '../../auth/AuthContext';
-import { consumeCopyToState } from '../../utils/copyToState';
+import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
   fetchAPInvoiceReferenceData,
@@ -150,6 +154,86 @@ const DEFAULT_TRANSACTION_TYPES = [
   { value: 'Bill of Supply', label: 'Bill of Supply' },
   { value: 'GST Debit Memo', label: 'GST Debit Memo' },
 ];
+
+const dedupeSeriesOptions = (series = []) => {
+  const seen = new Set();
+  return (Array.isArray(series) ? series : []).filter((item) => {
+    const id = String(item?.Series || '').trim();
+    const label = String(item?.SeriesName || item?.DisplayName || item?.RawSeriesName || item?.BeginStr || id).trim().toUpperCase();
+    const indicator = String(item?.Indicator || '').trim().toUpperCase();
+    const docSubType = String(item?.DocSubType || '').trim().toUpperCase();
+    const key = label ? `${label}|${indicator}|${docSubType}` : id;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const normalizeSeriesIdentity = (value) =>
+  String(value || '').toUpperCase().replace(/FY/g, '').replace(/[^A-Z0-9]/g, '');
+
+const resolveTransactionSeriesKind = (transactionType = '') => {
+  const normalizedType = normalizeSeriesIdentity(transactionType);
+  if (normalizedType.includes('DEBIT')) return 'debit';
+  if (normalizedType.includes('BILLOFSUPPLY') || normalizedType.includes('SUPPLY')) return 'bill';
+  if (normalizedType.includes('TAXINVOICE') || normalizedType.includes('GST')) return 'tax';
+  return '';
+};
+
+const scoreSeriesForTransactionType = (series = {}, transactionType = '') => {
+  const targetKind = resolveTransactionSeriesKind(transactionType);
+  if (!targetKind) return 0;
+
+  const text = normalizeSeriesIdentity([
+    series.SeriesName,
+    series.DisplayName,
+    series.RawSeriesName,
+    series.BeginStr,
+    series.Indicator,
+    series.DocSubType,
+  ].filter(Boolean).join(' '));
+  const docSubType = String(series.DocSubType || '').trim().toUpperCase();
+  const isManual = Number(series.Series) === -1 || String(series.SeriesName || '').trim().toUpperCase() === 'MANUAL';
+  if (isManual) return -10000;
+
+  let score = series.IsDefault || series.isDefault ? 25 : 0;
+  if (targetKind === 'debit') {
+    if (docSubType === 'GD') score += 250;
+    if (text.includes('CAN')) score += 180;
+    if (text.includes('DEBIT') || text.includes('DBN')) score += 160;
+    if (text.includes('AP')) score -= 40;
+    if (docSubType === 'GA' || text.includes('TAX')) score -= 80;
+  } else if (targetKind === 'bill') {
+    if (docSubType === '--') score += 120;
+    if (text.includes('BILLOFSUPPLY') || text.includes('SUPPLY') || text.includes('BOS') || text.includes('BILL')) score += 180;
+    if (text.includes('AP')) score += 140;
+    if (text.includes('CAN') || text.includes('DEBIT') || docSubType === 'GD') score -= 120;
+    if (docSubType === 'GA' || text.includes('TAX')) score -= 60;
+  } else if (targetKind === 'tax') {
+    if (docSubType === 'GA') score += 180;
+    if (text.includes('GST') || text.includes('TAXINVOICE') || text.includes('TAX')) score += 160;
+    if (!text.includes('AP') && !text.includes('CAN') && !text.includes('DEBIT') && !text.includes('BILL')) score += 120;
+    if (text.includes('AP')) score -= 100;
+    if (text.includes('CAN') || text.includes('DEBIT') || docSubType === 'GD') score -= 160;
+  }
+  return score;
+};
+
+const pickSapSeriesForTransactionType = (series = [], transactionType = '') => {
+  const rows = (Array.isArray(series) ? series : []).filter(Boolean);
+  if (!rows.length || !String(transactionType || '').trim()) return null;
+  const candidates = rows.filter((row) => (
+    Number(row.Series) !== -1 &&
+    String(row.SeriesName || '').trim().toUpperCase() !== 'MANUAL'
+  ));
+  const pool = candidates.length ? candidates : rows;
+  return [...pool]
+    .map((row, index) => ({ row, index, score: scoreSeriesForTransactionType(row, transactionType) }))
+    .sort((left, right) =>
+      right.score - left.score ||
+      Number(right.row.IsDefault || right.row.isDefault || 0) - Number(left.row.IsDefault || left.row.isDefault || 0) ||
+      left.index - right.index)[0]?.row || null;
+};
 
 const normalizeMetadataIdentity = (value) =>
   String(value || '').replace(/^U_/i, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
@@ -297,6 +381,10 @@ const INIT_HEADER = {
   importTax: false,
   supplyCovered: false,
   differentialTaxRate: '100',
+  referenceNumber: '',
+  referenceDate: '',
+  revision: false,
+  reasonForIssuingNote: 'Sales Return',
   edocFormat: '',
   documentStatus: '',
   totalImportedDocument: '',
@@ -310,6 +398,7 @@ const INIT_HEADER = {
   discount: '',
   freight: '',
   rounding: false,
+  roundingAmount: '',
   tax: '',
   totalPaymentDue: '',
   placeOfSupply: '',
@@ -336,12 +425,19 @@ const AP_INVOICE_COPY_BASE_TYPE = {
   apInvoice: 18,
 };
 
+const getLineBaseTypeNumber = (line = {}) => {
+  const parsed = Number(line.baseType ?? line.BaseType);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const isGrpoBasedLine = (line = {}) => getLineBaseTypeNumber(line) === 20;
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 const FALLBACK_UOM = ['EA', 'PCS', 'KG', 'LTR', 'MTR', 'BOX', 'SET', 'NOS', 'PKT', 'DZN'];
 
 function APInvoice() {
   const location = useLocation();
   const navigate = useNavigate();
+  const workspaceRef = useRef(null);
   const { company } = useAuth();
   const activeCompanyId = company?.companyId || '';
   const { removeTask, upsertTask } = useSapWindowTaskbarActions();
@@ -443,6 +539,7 @@ function APInvoice() {
     lstVatNo: '', cstNo: '', tanNo: '', serviceTaxNo: '', companyType: '', natureOfBusiness: '',
     assesseeType: '', tinNo: '', itrFiling: '', gstType: '', gstin: ''
   });
+  const [taxInfoDraft, setTaxInfoDraft] = useState({});
 
   useEffect(() => {
     if (!refData.states?.length || !header.placeOfSupply) return;
@@ -513,6 +610,81 @@ function APInvoice() {
       : 'Add & New';
 
   useEffect(() => {
+    const draft = location.state?.apInvoiceDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setHeader(draft.header || INIT_HEADER);
+    setLines(Array.isArray(draft.lines) && draft.lines.length
+      ? draft.lines
+      : [createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(draft.headerUdfs || createUdfState(headerUdfDefinitions));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    setFreightModal((prev) => ({
+      ...prev,
+      open: false,
+      freightCharges: Array.isArray(draft.freightCharges) ? draft.freightCharges : [],
+      loading: false,
+    }));
+    if (draft.withholdingTax) {
+      setWithholdingTax((prev) => ({
+        ...prev,
+        ...draft.withholdingTax,
+        open: false,
+      }));
+    }
+    if (draft.addressForm) setAddressForm(draft.addressForm);
+    if (draft.taxInfoForm) setTaxInfoForm(draft.taxInfoForm);
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [
+    headerUdfDefinitions,
+    location.pathname,
+    location.state,
+    navigate,
+    rowUdfDefinitions,
+  ]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    apInvoiceDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+      freightCharges: freightModal.freightCharges,
+      withholdingTax: {
+        vendorSubject: withholdingTax.vendorSubject,
+        defaultCode: withholdingTax.defaultCode,
+        allowedCodes: withholdingTax.allowedCodes,
+        rows: withholdingTax.rows,
+      },
+      addressForm,
+      taxInfoForm,
+    },
+  }), [
+    activeTab,
+    addressForm,
+    currentDocEntry,
+    freightModal.freightCharges,
+    header,
+    headerUdfs,
+    isDirty,
+    lines,
+    taxInfoForm,
+    withholdingTax.allowedCodes,
+    withholdingTax.defaultCode,
+    withholdingTax.rows,
+    withholdingTax.vendorSubject,
+  ]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'A/P Invoice',
+  });
+
+  useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
@@ -568,22 +740,12 @@ function APInvoice() {
           return;
         }
 
-        if (!currentDocEntry && !location.state?.APInvoiceDocEntry) {
+        if (!currentDocEntry && !location.state?.APInvoiceDocEntry && !location.state?.apInvoiceDraft) {
           setHeader(INIT_HEADER);
           setLines([createLine(rowUdfDefinitions)]);
         }
 
         const refDataRes = await fetchAPInvoiceReferenceData(activeCompanyId);
-        let seriesRes = { data: { series: [] } };
-        try {
-          seriesRes = await fetchAPInvoiceSeries({
-            date: INIT_HEADER.postingDate,
-            branch: INIT_HEADER.branch,
-            transactionType: INIT_HEADER.transactionType,
-          });
-        } catch (_seriesError) {
-          seriesRes = { data: { series: [] } };
-        }
 
         if (!ignore) {
           const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
@@ -638,15 +800,8 @@ function APInvoice() {
             decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
             udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
             warnings: refDataRes.data.warnings || [],
-            series: normalizeDocumentSeriesList(seriesRes.data.series || []),
+            series: [],
           });
-
-          if (seriesRes.data.series && seriesRes.data.series.length > 0 && !currentDocEntry && !location.state?.APInvoiceDocEntry) {
-            const defaultSeries = getDefaultSeriesForCurrentYear(normalizeDocumentSeriesList(seriesRes.data.series));
-            if (defaultSeries?.Series != null) {
-              handleSeriesChange(defaultSeries.Series);
-            }
-          }
         }
         console.log("FULL REF DATA:", refDataRes.data);
       } catch (e) {
@@ -687,11 +842,23 @@ function APInvoice() {
             }))
             : [createLine(rowUdfDefinitions)]
         );
+        const savedWithholdingRows = Array.isArray(po.withholding_tax_rows)
+          ? po.withholding_tax_rows
+          : (Array.isArray(po.withholdingTaxRows) ? po.withholdingTaxRows : []);
+        setWithholdingTax((prev) => ({
+          ...prev,
+          open: false,
+          vendorSubject: savedWithholdingRows.length > 0 || prev.vendorSubject,
+          rows: savedWithholdingRows,
+        }));
         setHeaderUdfs({ ...createUdfState(headerUdfDefinitions), ...(po.header_udfs || {}) });
         setSnapshotPending(true);
         setIsDirty(false);
         if (po.header?.vendor) {
-          loadVendorDetails(po.header.vendor);
+          loadVendorDetails(po.header.vendor, {
+            preserveWithholdingRows: true,
+            savedWithholdingRows,
+          });
         }
         setPageState(p => ({ ...p, success: po.doc_num ? `A/P Invoice ${po.doc_num} loaded.` : 'A/P Invoice loaded.' }));
       } catch (e) {
@@ -699,7 +866,7 @@ function APInvoice() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -720,19 +887,30 @@ function APInvoice() {
       normalizedHeader.customerRefNo = '';
     }
     const sourceLines = Array.isArray(copyFrom.lines) ? copyFrom.lines : [];
-    const copiedLines = sourceLines.map((line, index) => hydratePurchaseOrderLineUdfFields({
-      ...createLine(rowUdfDefinitions),
-      ...normaliseDocumentLine(
+    const copiedLines = sourceLines.map((line, index) => {
+      const normalizedLine = normaliseDocumentLine(
         line,
         index,
         line.baseEntry ?? copyFrom.baseDocument?.baseEntry ?? copyFrom.docEntry,
         line.baseType ?? copyFrom.baseDocument?.baseType ?? AP_INVOICE_COPY_BASE_TYPE[sourceType] ?? 20,
         line.branch || normalizedHeader.branch
-      ),
-      openQty: String(line.openQty ?? line.OpenQty ?? line.quantity ?? line.Quantity ?? ''),
-      taxCodeManuallyOverridden: false,
-      udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
-    }));
+      );
+      const openQty = String(line.openQty ?? line.OpenQty ?? normalizedLine.openQty ?? line.quantity ?? line.Quantity ?? '');
+      const copiedQuantity = isGrpoBasedLine(normalizedLine) && parseNum(openQty) > 0
+        ? openQty
+        : normalizedLine.quantity;
+
+      return hydratePurchaseOrderLineUdfFields({
+        ...createLine(rowUdfDefinitions),
+        ...normalizedLine,
+        quantity: copiedQuantity,
+        openQty,
+        batchManaged: isGrpoBasedLine(normalizedLine) ? false : normalizedLine.batchManaged,
+        batches: isGrpoBasedLine(normalizedLine) ? [] : normalizedLine.batches,
+        taxCodeManuallyOverridden: false,
+        udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
+      });
+    });
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
     setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
@@ -746,7 +924,7 @@ function APInvoice() {
 
     const label = sourceType === 'apInvoice' ? 'A/P Invoice' : 'GRPO';
     setPageState((prev) => ({ ...prev, error: '', success: `Copied from ${label}. Please review and save.` }));
-    navigate(location.pathname, { replace: true, state: null });
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {
@@ -832,6 +1010,7 @@ function APInvoice() {
 
   useEffect(() => {
     if (currentDocEntry || location.state?.APInvoiceDocEntry) return undefined;
+    if (!header.transactionType && transactionTypeOptions.length) return undefined;
 
     let ignore = false;
     const loadSeriesForHeader = async () => {
@@ -844,18 +1023,26 @@ function APInvoice() {
         });
         if (ignore) return;
 
-        const nextSeries = normalizeDocumentSeriesList(response.data?.series || []);
-        setRefData((prev) => ({ ...prev, series: nextSeries }));
-
+        let nextSeries = dedupeSeriesOptions(normalizeDocumentSeriesList(response.data?.series || []));
         if (!nextSeries.length) {
-          setHeader((prev) => ({ ...prev, series: '', nextNumber: '' }));
+          const fallbackResponse = await fetchAPInvoiceSeries({
+            date: header.postingDate || header.documentDate,
+            branch: header.branch || '',
+          });
+          nextSeries = dedupeSeriesOptions(normalizeDocumentSeriesList(fallbackResponse.data?.series || []));
+        }
+        if (!nextSeries.length) {
           return;
         }
 
+        setRefData((prev) => ({ ...prev, series: nextSeries }));
+
         const hasCurrentSeries = nextSeries.some((series) => String(series.Series) === String(header.series || ''));
-        const defaultSeries = hasCurrentSeries
-          ? nextSeries.find((series) => String(series.Series) === String(header.series || ''))
-          : getDefaultSeriesForCurrentYear(nextSeries, header.postingDate || header.documentDate);
+        const defaultSeries =
+          pickSapSeriesForTransactionType(nextSeries, header.transactionType) ||
+          (hasCurrentSeries
+            ? nextSeries.find((series) => String(series.Series) === String(header.series || ''))
+            : getDefaultSeriesForCurrentYear(nextSeries, header.postingDate || header.documentDate));
 
         if (defaultSeries?.Series != null && String(defaultSeries.Series) !== String(header.series || '')) {
           await handleSeriesChange(defaultSeries.Series);
@@ -863,10 +1050,7 @@ function APInvoice() {
           await handleSeriesChange(defaultSeries.Series);
         }
       } catch (error) {
-        if (!ignore) {
-          setRefData((prev) => ({ ...prev, series: [] }));
-          setHeader((prev) => ({ ...prev, series: '', nextNumber: '' }));
-        }
+        // Keep the last known live SAP series. A transient reload failure must not collapse the document to Manual.
       } finally {
         if (!ignore) setPageState((prev) => ({ ...prev, seriesLoading: false }));
       }
@@ -874,7 +1058,7 @@ function APInvoice() {
 
     loadSeriesForHeader();
     return () => { ignore = true; };
-  }, [currentDocEntry, location.state, header.postingDate, header.documentDate, header.branch, header.transactionType]);
+  }, [currentDocEntry, location.state, header.postingDate, header.documentDate, header.branch, header.transactionType, transactionTypeOptions.length]);
 
   const lineItemOptions = lines.reduce((acc, line, i) => {
     const code = String(line.itemNo || '').trim();
@@ -1033,7 +1217,12 @@ function APInvoice() {
     taxAmt = roundTo(taxAmt, numDec.tax);
     if (taxAmt === 0) { const lt = roundTo(parseNum(header.tax), numDec.tax); if (lt > 0) taxAmt = lt; }
     taxAmt = roundTo(taxAmt + freightTaxAmt, numDec.tax);
-    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, total: roundTo(discSub + freight + taxAmt, numDec.totalPaymentDue), taxBreakdown: Array.from(taxMap.values()) };
+    const rounding = calculateDocumentRounding(
+      discSub + freight + taxAmt,
+      header.rounding,
+      numDec.totalPaymentDue,
+    );
+    return { subtotal, discAmt, discSub, freight, freightTaxAmt, taxAmt, ...rounding, taxBreakdown: Array.from(taxMap.values()) };
   };
 
   const totals = calcTotals();
@@ -1045,15 +1234,25 @@ function APInvoice() {
     total: totals.total,
   });
   const hasWTaxLiableLines = lines.some((line) => isYesValue(line.wtaxLiable || line.wTaxLiable));
-  const wtaxBaseAmount = totals.total;
+  const hasSavedWithholdingTax = withholdingTax.rows.length > 0 || parseNum(header.wtaxAmount) !== 0;
+  const showWithholdingTax = hasWTaxLiableLines || hasSavedWithholdingTax;
+  const wtaxBaseAmount = {
+    netAmount: roundTo(totals.discSub + totals.freight, numDec.total),
+    taxAmount: totals.taxAmt,
+    grossAmount: totals.total,
+  };
   const recalcWithholdingRows = useCallback((rows = withholdingTax.rows, baseAmount = wtaxBaseAmount) => (
     (rows || []).map((row) => {
       const rate = parseNum(row.rate);
+      const resolvedBaseAmount = resolveWithholdingTaxBaseAmount(row, baseAmount, numDec.total);
       return {
         ...row,
-        baseAmount: roundTo(baseAmount, numDec.total),
-        taxableAmount: roundTo(baseAmount, numDec.total),
-        wtaxAmount: roundTo(baseAmount * rate / 100, numDec.tax),
+        baseAmount: resolvedBaseAmount,
+        taxableAmount: resolvedBaseAmount,
+        wtaxAmount: roundTo(resolvedBaseAmount * rate / 100, numDec.tax),
+        tdsRate: row.tdsRate ?? rate,
+        tdsBaseAmount: resolvedBaseAmount,
+        tdsTaxAmount: roundTo(resolvedBaseAmount * rate / 100, numDec.tax),
         category: row.category || 'Invoice',
         baseType: row.baseType || 'Net',
         criteria: row.criteria || 'Cash',
@@ -1068,34 +1267,81 @@ function APInvoice() {
     if (!codeRow) return [];
 
     const rate = parseNum(codeRow.rate);
+    const rowDefaults = {
+      baseTypeCode: codeRow.baseTypeCode || 'N',
+      baseType: codeRow.baseType || 'Net',
+      basePercentage: codeRow.basePercentage ?? 100,
+    };
+    const resolvedBaseAmount = resolveWithholdingTaxBaseAmount(rowDefaults, baseAmount, numDec.total);
     return [{
       code: codeRow.code || '',
       name: codeRow.name || '',
       rate,
-      baseAmount: roundTo(baseAmount, numDec.total),
-      taxableAmount: roundTo(baseAmount, numDec.total),
-      wtaxAmount: roundTo(baseAmount * rate / 100, numDec.tax),
+      baseAmount: resolvedBaseAmount,
+      taxableAmount: resolvedBaseAmount,
+      wtaxAmount: roundTo(resolvedBaseAmount * rate / 100, numDec.tax),
       category: codeRow.taxCategory || 'Invoice',
-      baseType: 'Net',
+      ...rowDefaults,
+      categoryCode: codeRow.taxCategory || 'I',
       criteria: 'Cash',
-      tdsType: 'eTDS',
-      tdsAccount: '',
-      surchargeAccount: '',
-      cessAccount: '',
-      hscAccount: '',
-      igstAccount: '',
-      cgstAccount: '',
-      sgstAccount: '',
-      utgstAccount: '',
+      criteriaCode: 'C',
+      tdsType: codeRow.tdsType || 'eTDS',
+      tdsTypeCode: codeRow.tdsTypeCode || 'E',
+      tdsAccount: codeRow.tdsAccount || codeRow.account || '',
+      surchargeAccount: codeRow.surchargeAccount || '',
+      cessAccount: codeRow.cessAccount || '',
+      hscAccount: codeRow.hscAccount || '',
+      igstAccount: codeRow.igstAccount || '',
+      cgstAccount: codeRow.cgstAccount || '',
+      sgstAccount: codeRow.sgstAccount || '',
+      utgstAccount: codeRow.utgstAccount || '',
+      cessGstAccount: codeRow.cessGstAccount || '',
+      tdsRate: codeRow.tdsRate ?? rate,
+      surchargeRate: codeRow.surchargeRate ?? 0,
+      cessRate: codeRow.cessRate ?? 0,
+      hscRate: codeRow.hscRate ?? 0,
+      igstRate: codeRow.igstRate ?? 0,
+      cgstRate: codeRow.cgstRate ?? 0,
+      sgstRate: codeRow.sgstRate ?? 0,
+      utgstRate: codeRow.utgstRate ?? 0,
+      cessGstRate: codeRow.cessGstRate ?? 0,
+      tdsBaseAmount: resolvedBaseAmount,
+      surchargeBaseAmount: 0,
+      cessBaseAmount: 0,
+      hscBaseAmount: 0,
+      igstBaseAmount: 0,
+      cgstBaseAmount: 0,
+      sgstBaseAmount: 0,
+      utgstBaseAmount: 0,
+      cessGstBaseAmount: 0,
+      tdsTaxAmount: roundTo(resolvedBaseAmount * rate / 100, numDec.tax),
+      surchargeTaxAmount: 0,
+      cessTaxAmount: 0,
+      hscTaxAmount: 0,
+      igstTaxAmount: 0,
+      cgstTaxAmount: 0,
+      sgstTaxAmount: 0,
+      utgstTaxAmount: 0,
+      cessGstTaxAmount: 0,
     }];
   }, [numDec.tax, numDec.total, withholdingTax.allowedCodes, withholdingTax.defaultCode, wtaxBaseAmount]);
-  const wtaxRowsForTotals = hasWTaxLiableLines
-    ? recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows())
+  const wtaxRowsForTotals = showWithholdingTax
+    ? (currentDocEntry && withholdingTax.rows.length
+      ? withholdingTax.rows
+      : recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows()))
     : [];
   const withholdingModalRows = withholdingTax.open
-    ? recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows())
+    ? (currentDocEntry && withholdingTax.rows.length
+      ? withholdingTax.rows
+      : recalcWithholdingRows(withholdingTax.rows.length ? withholdingTax.rows : createDefaultWithholdingRows()))
     : wtaxRowsForTotals;
-  const wtaxAmount = roundTo(wtaxRowsForTotals.reduce((sum, row) => sum + parseNum(row.wtaxAmount), 0), numDec.tax);
+  const calculatedWTaxAmount = wtaxRowsForTotals.reduce((sum, row) => sum + parseNum(row.wtaxAmount), 0);
+  const wtaxAmount = roundTo(
+    currentDocEntry && calculatedWTaxAmount === 0
+      ? parseNum(header.wtaxAmount)
+      : calculatedWTaxAmount,
+    numDec.tax
+  );
   const totalPaymentDueAfterWTax = roundTo(totals.total - wtaxAmount, numDec.totalPaymentDue);
   const derivedGstType = getDerivedGstType(header.vendorState, header.placeOfSupply);
   const inferredGstType = formatDerivedGstType(derivedGstType);
@@ -1283,7 +1529,12 @@ function APInvoice() {
     if (!header.vendor) return;
     setHeader(prev => {
       const existing = vendorEffectiveShipToAddresses.find(a => String(a.Address || '') === String(prev.shipToCode || ''));
-      if (existing) return prev;
+      if (existing) {
+        const savedOrAddressState = prev.placeOfSupply || String(existing.State || '').trim();
+        return savedOrAddressState === prev.placeOfSupply
+          ? prev
+          : { ...prev, placeOfSupply: savedOrAddressState };
+      }
       const def = vendorEffectiveShipToAddresses[0];
       if (!def) return prev;
       const fmt = fmtAddr(def);
@@ -1309,7 +1560,11 @@ function APInvoice() {
   }, [header.vendor, vendorEffectiveBillToAddresses]);
 
   // ── vendor details ────────────────────────────────────────────────────────
-  const loadVendorDetails = async (code) => {
+  const loadVendorDetails = async (code, options = {}) => {
+    const preserveWithholdingRows = Boolean(options.preserveWithholdingRows);
+    const savedWithholdingRows = Array.isArray(options.savedWithholdingRows)
+      ? options.savedWithholdingRows
+      : [];
     if (!code) {
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setHeader(prev => ({ ...prev, gstin: '', vendorState: '', gstType: '', allowGstOverride: false }));
@@ -1345,17 +1600,27 @@ function APInvoice() {
         allowGstOverride: false,
         contactPerson: contacts.length > 0 ? contacts[0].CntctCode : '',
       }));
-      setWithholdingTax({
+      setWithholdingTax((prev) => ({
         open: false,
-        vendorSubject: Boolean(vendorWithholdingTax.subject),
+        vendorSubject: Boolean(vendorWithholdingTax.subject) || savedWithholdingRows.length > 0,
         defaultCode: vendorWithholdingTax.defaultCode || '',
         allowedCodes: vendorWithholdingTax.allowedCodes || [],
-        rows: [],
-      });
+        rows: preserveWithholdingRows
+          ? (savedWithholdingRows.length ? savedWithholdingRows : prev.rows)
+          : [],
+      }));
     } catch (err) {
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [] }));
       setHeader(prev => ({ ...prev, gstin: '', vendorState: '', gstType: '', allowGstOverride: false, contactPerson: '' }));
-      setWithholdingTax({ open: false, vendorSubject: false, defaultCode: '', allowedCodes: [], rows: [] });
+      setWithholdingTax((prev) => ({
+        open: false,
+        vendorSubject: preserveWithholdingRows && (savedWithholdingRows.length > 0 || prev.rows.length > 0),
+        defaultCode: '',
+        allowedCodes: [],
+        rows: preserveWithholdingRows
+          ? (savedWithholdingRows.length ? savedWithholdingRows : prev.rows)
+          : [],
+      }));
     } finally {
       setPageState(p => ({ ...p, vendorLoading: false }));
     }
@@ -1401,6 +1666,8 @@ function APInvoice() {
         ...prev,
         transactionType: value,
         indicator: selectedOption?.indicator || prev.indicator,
+        series: '',
+        nextNumber: '',
       }));
       return;
     }
@@ -1700,6 +1967,7 @@ function APInvoice() {
 
   // ── Tax Info Modal handlers ───────────────────────────────────────────────
   const openTaxInfoModal = () => {
+    setTaxInfoDraft({ ...taxInfoForm });
     setTaxInfoModal(true);
   };
 
@@ -1708,6 +1976,7 @@ function APInvoice() {
   };
 
   const saveTaxInfoModal = () => {
+    setTaxInfoForm({ ...taxInfoDraft });
     closeTaxInfoModal();
   };
 
@@ -1807,7 +2076,7 @@ function APInvoice() {
 
   const handleTaxInfoFormChange = (e) => {
     const { name, value } = e.target;
-    setTaxInfoForm(p => ({ ...p, [name]: value }));
+    setTaxInfoDraft(p => ({ ...p, [name]: value }));
   };
 
   // ── Browse Attachment handler ─────────────────────────────────────────────
@@ -1831,13 +2100,30 @@ function APInvoice() {
       normalizedHeader.customerRefNo = '';
     }
     const rawLines = copySource.lines;
-    const copiedLines = rawLines.map((line, index) => hydratePurchaseOrderLineUdfFields({
-      ...createLine(rowUdfDefinitions),
-      ...normaliseDocumentLine(line, index, copySource.docEntry, AP_INVOICE_COPY_BASE_TYPE[docType] || 20, normalizedHeader.branch),
-      openQty: String(line.OpenQty ?? line.openQty ?? line.Quantity ?? line.quantity ?? ''),
-      taxCodeManuallyOverridden: false,
-      udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
-    }));
+    const copiedLines = rawLines.map((line, index) => {
+      const normalizedLine = normaliseDocumentLine(
+        line,
+        index,
+        copySource.docEntry,
+        AP_INVOICE_COPY_BASE_TYPE[docType] || 20,
+        normalizedHeader.branch,
+      );
+      const openQty = String(line.OpenQty ?? line.openQty ?? normalizedLine.openQty ?? line.Quantity ?? line.quantity ?? '');
+      const copiedQuantity = isGrpoBasedLine(normalizedLine) && parseNum(openQty) > 0
+        ? openQty
+        : normalizedLine.quantity;
+
+      return hydratePurchaseOrderLineUdfFields({
+        ...createLine(rowUdfDefinitions),
+        ...normalizedLine,
+        quantity: copiedQuantity,
+        openQty,
+        batchManaged: isGrpoBasedLine(normalizedLine) ? false : normalizedLine.batchManaged,
+        batches: isGrpoBasedLine(normalizedLine) ? [] : normalizedLine.batches,
+        taxCodeManuallyOverridden: false,
+        udf: { ...createUdfState(rowUdfDefinitions), ...(line.udf || {}) },
+      });
+    });
 
     setHeader((prev) => ({ ...prev, ...normalizedHeader }));
     setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
@@ -1903,6 +2189,7 @@ function APInvoice() {
   };
 
   const handleDuplicate = () => {
+    const sourceSeries = header.series;
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -1926,7 +2213,11 @@ function APInvoice() {
 
     if (duplicated) {
       setHeader((prev) => ({ ...prev, salesContractNo: '' }));
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      if (sourceSeries) {
+        handleSeriesChange(sourceSeries);
+      } else {
+        refreshDuplicateSeries(refData.series, '', handleSeriesChange);
+      }
     }
   };
 
@@ -1996,7 +2287,7 @@ function APInvoice() {
       }
 
       if (l.baseEntry != null && l.baseEntry !== '' && parseNum(l.openQty) > 0 && parseNum(l.quantity) > parseNum(l.openQty)) {
-        e.lines[i] = { ...(e.lines[i] || {}), quantity: `Quantity exceeds open GRPO quantity (${l.openQty})` };
+        e.lines[i] = { ...(e.lines[i] || {}), quantity: `Quantity cannot exceed open quantity ${l.openQty}` };
         e.form = 'Please correct the highlighted fields.';
         return e;
       }
@@ -2051,6 +2342,8 @@ function APInvoice() {
       };
       const payloadLines = lines.map((line) => ({
         ...line,
+        batches: isGrpoBasedLine(line) ? [] : line.batches,
+        batchManaged: isGrpoBasedLine(line) ? false : line.batchManaged,
         udf: buildPurchaseOrderLineUdfPayload(line, rowUdfDefinitions, formSettings),
       }));
       const payload = {
@@ -2114,6 +2407,7 @@ function APInvoice() {
   // ── render ────────────────────────────────────────────────────────────────
   return (
     <form
+      ref={workspaceRef}
       className={`po-page sap-document-page ap-invoice-page${isRightSidebarOpen ? ' po-page--sidebar-open' : ''}`}
       onSubmit={handleSubmit}
       onChangeCapture={markDirty}
@@ -2205,6 +2499,14 @@ function APInvoice() {
           disabled={pageState.posting || pageState.loading}
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, error: message, success: '' }))}
+        />
+        <JournalEntryPreviewButton
+          documentType="apInvoice"
+          documentLabel="A/P Invoice"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges })}
+          disabled={pageState.posting || pageState.loading}
+          className="po-btn sap-document-toolbar__journal-preview"
         />
         <span className={`po-mode-badge po-mode-badge--${currentDocEntry ? 'update' : 'add'}`}>
           {currentDocEntry ? 'Update' : 'Add'}
@@ -2326,7 +2628,11 @@ function APInvoice() {
                       <option value="">Select Series</option>
                       {refData.series.map(s => <option key={s.Series} value={s.Series}>{s.SeriesName} ({s.Indicator})</option>)}
                       {header.series && !refData.series.some(s => String(s.Series) === String(header.series)) && (
-                        <option value={header.series}>{header.series}</option>
+                        <option value={header.series}>
+                          {header.seriesName
+                            ? `${header.seriesName}${header.seriesIndicator ? ` (${header.seriesIndicator})` : ''}`
+                            : header.series}
+                        </option>
                       )}
                     </select>
                     <input type="text" className="po-field__input" style={{ width: 80, background: '#f0f2f5', textAlign: 'center' }} value={pageState.seriesLoading ? '...' : currentDocEntry ? (header.docNo || header.nextNumber || '') : (header.nextNumber || '')} readOnly title="Auto-assigned on save" />
@@ -2363,7 +2669,7 @@ function APInvoice() {
             </div>
 
             {/* ══ TAB CONTENT ═══════════════════════════════════════════════ */}
-            <div className="po-tab-panel">
+            <div className={activeTab === 'Tax' ? 'sap-b1-tax-panel' : 'po-tab-panel'}>
             {activeTab === 'Contents' && (
               <ContentsTab
                 lines={lines}
@@ -2411,7 +2717,13 @@ function APInvoice() {
             )}
 
             {activeTab === 'Tax' && (
-              <TaxTab header={header} onHeaderChange={handleHeaderChange} onOpenTaxInfoModal={openTaxInfoModal} />
+              <TaxTab
+                header={header}
+                onHeaderChange={handleHeaderChange}
+                onOpenTaxInfoModal={openTaxInfoModal}
+                errors={valErrors.header}
+                isEditable={isDocumentEditable}
+              />
             )}
 
             {activeTab === 'Electronic Documents' && (
@@ -2491,13 +2803,13 @@ function APInvoice() {
                             Rounding
                           </label>
                         </td>
-                        <td></td>
+                        <td><input className="po-grid__input" value={fmtDec(totals.roundingAmount, numDec.totalPaymentDue)} readOnly style={{ background: '#f5f8fc' }} /></td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: 600 }}>Tax</td>
                         <td><input className="po-grid__input" value={fmtDec(totals.taxAmt, numDec.tax)} readOnly style={{ background: '#f5f8fc' }} /></td>
                       </tr>
-                      {hasWTaxLiableLines && (
+                      {showWithholdingTax && (
                         <tr>
                           <td style={{ fontWeight: 600 }}>WTax Amount</td>
                           <td style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -2639,7 +2951,7 @@ function APInvoice() {
         isOpen={taxInfoModal}
         onClose={closeTaxInfoModal}
         onSave={saveTaxInfoModal}
-        taxInfoForm={taxInfoForm}
+        taxInfoForm={taxInfoDraft}
         onFormChange={handleTaxInfoFormChange}
       />
 
@@ -2711,6 +3023,7 @@ function APInvoice() {
         rows={withholdingModalRows}
         allowedCodes={withholdingTax.allowedCodes.length ? withholdingTax.allowedCodes : refData.withholding_tax_codes}
         baseAmount={wtaxBaseAmount}
+        workspaceRef={workspaceRef}
         onRowsChange={(rows) => setWithholdingTax((prev) => ({
           ...prev,
           rows: recalcWithholdingRows(rows),

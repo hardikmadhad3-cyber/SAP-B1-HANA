@@ -36,6 +36,7 @@ import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
 import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { isRouteStateForActiveCompany } from '../../utils/companyStorageScope';
 import { copyToDocument } from '../../services/documentCopyService';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
@@ -500,6 +501,27 @@ function NCSalesOrder() {
     const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
     const [snapshotPending, setSnapshotPending] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
+
+    useStandardDocumentDraftTask({
+        draftKey: 'ncSalesOrderDraft',
+        title: 'NC Sales Order',
+        draftValues: {
+            currentDocEntry,
+            header,
+            lines,
+            headerUdfs,
+            activeTab,
+            isDirty,
+        },
+        restoreDraft: (draft) => {
+            setCurrentDocEntry(draft.currentDocEntry || null);
+            setHeader(draft.header || createInitialHeader(generalSettingsRef.current));
+            setLines(Array.isArray(draft.lines) && draft.lines.length ? draft.lines : [createLine()]);
+            setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+            setActiveTab(draft.activeTab || 'Contents');
+            setIsDirty(Boolean(draft.isDirty));
+        },
+    });
     const [addressModal, setAddressModal] = useState(null);
     const [eWayBillModal, setEWayBillModal] = useState(false);
     const [eWayBillData, setEWayBillData] = useState({});
@@ -1353,6 +1375,9 @@ function NCSalesOrder() {
     };
 
     const getLineDiscountPercent = (line) => {
+        const explicitPercent = String(line.stdDiscount ?? '').trim();
+        if (explicitPercent) return parseNum(explicitPercent);
+
         const price = parseNum(line.unitPrice);
         if (price <= 0) return 0;
         return getLineDiscountAmount(line) * 100 / price;
@@ -2580,7 +2605,7 @@ function NCSalesOrder() {
         });
 
         if (duplicated) {
-            refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+            refreshDuplicateSeries(refData.series, '', handleSeriesChange);
         }
     };
 

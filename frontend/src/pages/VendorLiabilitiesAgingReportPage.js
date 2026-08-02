@@ -5,6 +5,7 @@ import GLAccountLookupModal from "../components/reports/GLAccountLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
+import { matchesSapSearchText } from "../utils/sapSearch";
 import "../styles/customer-receivables-aging-report.css";
 import "../styles/vendor-liabilities-aging-report.css";
 import "../styles/inventory-audit-report.css";
@@ -79,8 +80,8 @@ function VendorLiabilitiesAgingReportPage() {
       group.futureRemit += row.futureRemit || 0;
       row.buckets.forEach((value, index) => { group.buckets[index] += value; });
     });
-    const search = findText.trim().toLowerCase();
-    return [...map.values()].filter((group) => !search || `${group.key} ${group.label} ${group.rows.map((row) => row.documentNumber).join(" ")}`.toLowerCase().includes(search));
+    const search = findText.trim();
+    return [...map.values()].filter((group) => !search || matchesSapSearchText(`${group.key} ${group.label} ${group.rows.map((row) => row.documentNumber).join(" ")}`, search));
   }, [findText, report]);
 
   const totals = useMemo(() => groups.reduce((result, group) => {

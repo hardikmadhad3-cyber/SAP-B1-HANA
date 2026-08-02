@@ -4,6 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { fetchProductionOpenItemsReport } from "../api/productionOpenItemsReportApi";
+import { matchesSapSearchText } from "../utils/sapSearch";
 import "../styles/item-list-report.css";
 import "../styles/production-open-items-report.css";
 
@@ -67,12 +68,12 @@ function ProductionOpenItemsReportPage() {
 
   const filteredRows = useMemo(() => {
     const rows = report?.rows || [];
-    const query = criteria.query.trim().toLowerCase();
+    const query = criteria.query.trim();
     if (!query) return rows;
 
     return rows.filter((row) =>
       [row.docNo, row.docSeries, row.type, row.status, row.productNo, row.productDescription]
-        .some((value) => String(value || "").toLowerCase().includes(query)),
+        .some((value) => matchesSapSearchText(value, query)),
     );
   }, [criteria.query, report?.rows]);
 

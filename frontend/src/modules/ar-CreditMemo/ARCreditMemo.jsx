@@ -20,6 +20,7 @@ import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import SalesEmployeeSetupModal from '../../components/sales-employee/SalesEmployeeSetupModal';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
@@ -35,10 +36,16 @@ import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes } from '../../utils/taxCodeComponents';
-import { buildCopyToState, consumeCopyToState, openCopyToDocument } from '../../utils/copyToState';
+import {
+  buildCopyToState,
+  consumeCopyToState,
+  openCopyToDocument,
+  replaceRouteStatePreservingWindow,
+} from '../../utils/copyToState';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
+import useDocumentDraftTask from '../../hooks/useDocumentDraftTask';
 import { useAuth } from '../../auth/AuthContext';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import {
@@ -91,6 +98,11 @@ const parseNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0
 const roundTo = (v, d) => { const f = 10 ** Math.max(d, 0); return Math.round((v + Number.EPSILON) * f) / f; };
 const calcRoundingAmount = (value, decimals) => roundTo(Math.round(value) - value, decimals);
 const fmtDec = (v, d) => { if (v === '' || v == null) return ''; const n = Number(v); return Number.isNaN(n) ? '' : n.toFixed(Math.max(d, 0)); };
+const firstEnteredValue = (...values) => values.find((value) => (
+  value !== undefined
+  && value !== null
+  && !(typeof value === 'string' && value.trim() === '')
+));
 const sanitize = (v, d) => {
   const c = String(v ?? '').replace(/[^\d.-]/g, '').replace(/(?!^)-/g, '').replace(/^(-?)\./, '$10.').replace(/(\..*)\./g, '$1');
   if (!c) return '';
@@ -188,6 +200,75 @@ const FALLBACK_SHIPPING = [
 const DEC = { QtyDec: 2, PriceDec: 2, SumDec: 2, RateDec: 2, PercentDec: 2 };
 const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Documents', 'Attachments'];
 const DEFAULT_WAREHOUSE_CODE = '01';
+const DEFAULT_TRANSACTION_TYPES = [
+  { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
+  { value: 'Bill of Supply', label: 'Bill of Supply' },
+];
+
+const toArray = (value, fallbackKeys = []) => {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return [];
+
+  for (const key of fallbackKeys) {
+    if (Array.isArray(value[key])) return value[key];
+  }
+
+  if (Array.isArray(value.value)) return value.value;
+  if (Array.isArray(value.data)) return value.data;
+  if (Array.isArray(value.rows)) return value.rows;
+  if (Array.isArray(value.items)) return value.items;
+  if (Array.isArray(value.documents)) return value.documents;
+
+  return [];
+};
+
+const normalizeReferenceData = (data = {}) => {
+  const ref = data && typeof data === 'object' ? data : {};
+  const udfMetadata = ref.udf_metadata && typeof ref.udf_metadata === 'object' ? ref.udf_metadata : {};
+  const lineFieldMetadata = ref.line_field_metadata && typeof ref.line_field_metadata === 'object'
+    ? ref.line_field_metadata
+    : {};
+
+  return {
+    ...ref,
+    vendors: toArray(ref.vendors || ref.customers, ['vendors', 'customers', 'business_partners']),
+    customers: toArray(ref.customers || ref.vendors, ['customers', 'vendors', 'business_partners']),
+    contacts: toArray(ref.contacts, ['contacts']),
+    pay_to_addresses: toArray(ref.pay_to_addresses, ['pay_to_addresses']),
+    ship_to_addresses: toArray(ref.ship_to_addresses, ['ship_to_addresses']),
+    bill_to_addresses: toArray(ref.bill_to_addresses, ['bill_to_addresses']),
+    items: toArray(ref.items, ['items']),
+    warehouses: toArray(ref.warehouses, ['warehouses']),
+    warehouse_addresses: toArray(ref.warehouse_addresses || ref.warehouses, ['warehouse_addresses', 'warehouses']),
+    tax_codes: toArray(ref.tax_codes, ['tax_codes']),
+    payment_terms: toArray(ref.payment_terms, ['payment_terms']),
+    shipping_types: toArray(ref.shipping_types, ['shipping_types']),
+    sales_employees: toArray(ref.sales_employees, ['sales_employees']),
+    branches: toArray(ref.branches, ['branches']),
+    states: toArray(ref.states, ['states']),
+    transaction_types: toArray(ref.transaction_types || ref.transactionTypes, ['transaction_types', 'transactionTypes', 'validValues', 'ValidValues']),
+    gl_accounts: toArray(ref.gl_accounts, ['gl_accounts']),
+    distribution_rules: toArray(ref.distribution_rules, ['distribution_rules']),
+    uom_groups: toArray(ref.uom_groups, ['uom_groups']),
+    matrix_columns: toArray(ref.matrix_columns, ['matrix_columns']),
+    line_field_metadata: {
+      ...lineFieldMetadata,
+      matrix_columns: toArray(lineFieldMetadata.matrix_columns || ref.matrix_columns, ['matrix_columns']),
+      sap_form: lineFieldMetadata.sap_form || {},
+    },
+    udf_metadata: {
+      header: toArray(udfMetadata.header, ['header']),
+      rows: toArray(udfMetadata.rows, ['rows']),
+    },
+    warnings: toArray(ref.warnings, ['warnings']),
+  };
+};
+
+const normalizeTransactionOption = (option) => {
+  const value = String(option?.value ?? option?.Value ?? option?.code ?? option?.Code ?? option ?? '').trim();
+  const label = String(option?.label ?? option?.description ?? option?.Descr ?? option?.name ?? value).trim();
+  return value ? { value, label: label || value } : null;
+};
 
 const createLine = (rowUdfDefinitions = ROW_UDF_DEFINITIONS) => ({
   itemNo: '', itemDescription: '', hsnCode: '', sacCode: '', quantity: '', unitPrice: '',
@@ -415,6 +496,65 @@ function ARCreditMemo() {
       : 'Add & New';
 
   useEffect(() => {
+    const draft = location.state?.arCreditMemoDraft;
+    if (!draft) return;
+
+    setCurrentDocEntry(draft.currentDocEntry || null);
+    setLoadedCreditMemo(null);
+    setHeader(draft.header || INIT_HEADER);
+    setLines(Array.isArray(draft.lines) && draft.lines.length
+      ? draft.lines
+      : [createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(draft.headerUdfs || normalizeUdfState(headerUdfDefinitions));
+    setActiveTab(draft.activeTab || 'Contents');
+    setIsDirty(Boolean(draft.isDirty));
+    setFreightModal((prev) => ({
+      ...prev,
+      open: false,
+      freightCharges: Array.isArray(draft.freightCharges) ? draft.freightCharges : [],
+      loading: false,
+    }));
+    if (draft.addressForm) setAddressForm(draft.addressForm);
+    if (draft.taxInfoForm) setTaxInfoForm(draft.taxInfoForm);
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
+  }, [
+    headerUdfDefinitions,
+    location.pathname,
+    location.state,
+    navigate,
+    rowUdfDefinitions,
+  ]);
+
+  const buildLinkedRestoreState = useCallback(() => ({
+    arCreditMemoDraft: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+      freightCharges: freightModal.freightCharges,
+      addressForm,
+      taxInfoForm,
+    },
+  }), [
+    activeTab,
+    addressForm,
+    currentDocEntry,
+    freightModal.freightCharges,
+    header,
+    headerUdfs,
+    isDirty,
+    lines,
+    taxInfoForm,
+  ]);
+
+  useDocumentDraftTask({
+    buildDraftState: buildLinkedRestoreState,
+    title: 'A/R Credit Memo',
+  });
+
+  useEffect(() => {
     if (!snapshotPending || !currentDocEntry || pageState.loading || pageState.vendorLoading) return;
     setSnapshotPending(false);
   }, [snapshotPending, currentDocEntry, pageState.loading, pageState.vendorLoading, header, lines, headerUdfs]);
@@ -469,12 +609,13 @@ function ARCreditMemo() {
         ]);
         
         if (!ignore) {
-          const vendorRows = refDataRes.data.vendors || refDataRes.data.customers || [];
-          const nextHeaderUdfs = refDataRes.data.udf_metadata?.header || [];
-          const nextRowUdfs = refDataRes.data.udf_metadata?.rows || [];
-          const nextMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
-            ? refDataRes.data.line_field_metadata.matrix_columns
-            : (refDataRes.data.matrix_columns || []);
+          const nextRefData = normalizeReferenceData(refDataRes.data);
+          const vendorRows = nextRefData.vendors || nextRefData.customers || [];
+          const nextHeaderUdfs = nextRefData.udf_metadata.header;
+          const nextRowUdfs = nextRefData.udf_metadata.rows;
+          const nextMatrixColumns = nextRefData.line_field_metadata.matrix_columns.length
+            ? nextRefData.line_field_metadata.matrix_columns
+            : nextRefData.matrix_columns;
           const nextLayoutMatrixColumns = buildSalesOrderMatrixColumnsFromLayout({
             layoutColumns: layoutRes?.data?.columns || [],
             liveMatrixColumns: nextMatrixColumns,
@@ -513,33 +654,33 @@ function ARCreditMemo() {
           }));
           setRefData(prev => ({
             ...prev,
-            company: refDataRes.data.company || '',
+            company: nextRefData.company || '',
             vendors: vendorRows,
-            contacts: refDataRes.data.contacts || [],
-            pay_to_addresses: refDataRes.data.pay_to_addresses || [],
-            items: refDataRes.data.items || [],
-            warehouses: refDataRes.data.warehouses || [],
-            warehouse_addresses: refDataRes.data.warehouse_addresses || [],
-            company_address: refDataRes.data.company_address || {},
-            tax_codes: refDataRes.data.tax_codes || [],
-            payment_terms: refDataRes.data.payment_terms || [],
-            shipping_types: refDataRes.data.shipping_types || [],
-            sales_employees: refDataRes.data.sales_employees || [],
-            branches: refDataRes.data.branches || [],
-            states: refDataRes.data.states || [],
-            gl_accounts: refDataRes.data.gl_accounts || [],
-            distribution_rules: refDataRes.data.distribution_rules || [],
-            uom_groups: refDataRes.data.uom_groups || [],
-            decimal_settings: { ...DEC, ...(refDataRes.data.decimal_settings || {}) },
+            contacts: nextRefData.contacts,
+            pay_to_addresses: nextRefData.pay_to_addresses,
+            items: nextRefData.items,
+            warehouses: nextRefData.warehouses,
+            warehouse_addresses: nextRefData.warehouse_addresses,
+            company_address: nextRefData.company_address || {},
+            tax_codes: nextRefData.tax_codes,
+            payment_terms: nextRefData.payment_terms,
+            shipping_types: nextRefData.shipping_types,
+            sales_employees: nextRefData.sales_employees,
+            branches: nextRefData.branches,
+            states: nextRefData.states,
+            gl_accounts: nextRefData.gl_accounts,
+            distribution_rules: nextRefData.distribution_rules,
+            uom_groups: nextRefData.uom_groups,
+            decimal_settings: { ...DEC, ...(nextRefData.decimal_settings || {}) },
             matrix_columns: nextLayoutMatrixColumns,
             line_field_metadata: {
-              ...(refDataRes.data.line_field_metadata || { sap_form: {} }),
+              ...(nextRefData.line_field_metadata || { sap_form: {} }),
               matrix_columns: nextLayoutMatrixColumns,
               imported_layout: layoutRes?.data || null,
             },
-            udf_metadata: refDataRes.data.udf_metadata || { header: [], rows: [] },
+            udf_metadata: nextRefData.udf_metadata,
             warnings: [
-              ...(refDataRes.data.warnings || []),
+              ...(nextRefData.warnings || []),
               ...(layoutRes?.data?.warning ? [layoutRes.data.warning] : []),
             ],
             series: Array.isArray(prev.series) ? prev.series : [],
@@ -698,7 +839,7 @@ function ARCreditMemo() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -819,7 +960,7 @@ function ARCreditMemo() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -875,16 +1016,19 @@ function ARCreditMemo() {
         ...createLine(rowUdfDefinitions),
         itemNo:          l.itemNo             || l.ItemCode        || '',
         itemDescription: l.itemDescription    || l.ItemDescription || l.Dscription || '',
-        quantity:        String(l.quantity    || l.Quantity || l.OpenQty || 0),
-        unitPrice:       String(l.unitPrice   || l.UnitPrice || l.Price || 0),
+        quantity:        String(firstEnteredValue(l.quantity, l.Quantity, l.OpenQty, 0)),
+        unitPrice:       String(firstEnteredValue(l.unitPrice, l.UnitPrice, l.Price, 0)),
         uomCode:         l.uomCode            || l.UomCode || l.unitMsr || '',
         hsnCode:         l.hsnCode            || l.HSNCode || '',
         taxCode:         l.taxCode            || l.TaxCode || '',
         taxCodeManuallyOverridden: Boolean(String(l.taxCode || l.TaxCode || l.VatGroup || '').trim()),
-        total:           String(l.total       || l.LineTotal || 0),
+        total:           String(firstEnteredValue(l.total, l.LineTotal, 0)),
         whse:            l.whse               || l.WarehouseCode || l.WhsCode || DEFAULT_WAREHOUSE_CODE,
         loc:             l.loc                || l.Location || '',
-        stdDiscount:     String(l.stdDiscount || l.discount || l.DiscountPercent || l.DiscPrcnt || 0),
+        stdDiscount:     String(firstEnteredValue(l.stdDiscount, l.DiscountPercent, l.DiscPrcnt, l.discount, 0)),
+        packingType:     String(firstEnteredValue(l.packingType, l.U_PackingType, l.udf?.U_PackingType) ?? ''),
+        grossWt:         String(firstEnteredValue(l.grossWt, l.U_GrossWt, l.udf?.U_GrossWt) ?? ''),
+        totalPackage:    String(firstEnteredValue(l.totalPackage, l.U_TotalPackage, l.udf?.U_TotalPackage) ?? ''),
         baseEntry:       baseDocument?.baseEntry || copyFrom.docEntry,
         baseType:        baseDocument?.baseType  || 13,
         baseLine:        l.lineNum         ?? l.LineNum         ?? idx,
@@ -901,7 +1045,7 @@ function ARCreditMemo() {
 
     const sourceDocumentLabel = sourceLabel || (sourceType === 'arInvoice' ? 'A/R Invoice' : 'source document');
     setPageState(p => ({ ...p, success: `Copied from ${sourceDocumentLabel}. Please review and save.` }));
-    navigate(location.pathname, { replace: true, state: null });
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived / computed ────────────────────────────────────────────────────
@@ -931,6 +1075,12 @@ function ARCreditMemo() {
   const shipTypeOpts = refData.shipping_types.length
     ? refData.shipping_types.map(s => ({ value: String(s.TrnspCode), label: s.TrnspName }))
     : FALLBACK_SHIPPING;
+  const transactionTypeOptions = useMemo(() => {
+    const liveOptions = (refData.transaction_types || [])
+      .map(normalizeTransactionOption)
+      .filter(Boolean);
+    return liveOptions.length ? liveOptions : DEFAULT_TRANSACTION_TYPES;
+  }, [refData.transaction_types]);
   const resolveARCreditMemoAddress = useCallback((code, addresses = [], fallbackText = '') => {
     const normalizedCode = String(code || '').trim();
     if (normalizedCode) {
@@ -1212,6 +1362,16 @@ function ARCreditMemo() {
     
     if (name === 'series') {
       handleSeriesChange(value);
+      return;
+    }
+    if (name === 'transactionType') {
+      setHeader(p => ({
+        ...p,
+        transactionType: value,
+        series: '',
+        nextNumber: '',
+      }));
+      setSeriesReloadToken((token) => token + 1);
       return;
     }
     if (name === 'branch') {
@@ -2450,7 +2610,7 @@ function ARCreditMemo() {
       warehouse: normHeader.warehouse || copiedWarehouse || prev.warehouse,
       postingDate: copyDate,
       documentDate: copyDate,
-      deliveryDate: normHeader.deliveryDate || copyDate,
+      deliveryDate: copyDate,
       series: '',
       nextNumber: '',
     }));
@@ -2459,11 +2619,23 @@ function ARCreditMemo() {
     const rawLines = copySource.lines;
     const newLines = rawLines.map((line, idx) => {
       const normalizedLine = normaliseDocumentLine(line, idx, copySource.docEntry, baseType, resolvedBranch);
+      const copiedBatches = Array.isArray(line.batches)
+        ? line.batches
+        : Array.isArray(line.BatchNumbers)
+          ? line.BatchNumbers.map((batch) => ({
+              batchNumber: batch.batchNumber || batch.BatchNumber || '',
+              quantity: batch.quantity || batch.Quantity || '',
+              expiryDate: batch.expiryDate || batch.ExpiryDate || '',
+            }))
+          : [];
       return {
         ...createLine(rowUdfDefinitions),
         ...normalizedLine,
         branch: normalizeBranchSelection(normalizedLine.branch) || resolvedBranch,
         whse: normalizedLine.whse || normalizedLine.WarehouseCode || normalizedLine.WhsCode || copiedWarehouse || DEFAULT_WAREHOUSE_CODE,
+        batchManaged: Boolean(copiedBatches.length || line.batchManaged || line.BatchManaged === 'Y'),
+        hasBatchesAvailable: Boolean(copiedBatches.length),
+        batches: copiedBatches,
       };
     });
     setLines(newLines.length > 0 ? newLines : [createLine(rowUdfDefinitions)]);
@@ -2687,6 +2859,13 @@ function ARCreditMemo() {
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
         />
+        <JournalEntryPreviewButton
+          documentType="arCreditMemo"
+          documentLabel="A/R Credit Memo"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges })}
+          disabled={pageState.posting}
+        />
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
           <button
             type="button"
@@ -2807,6 +2986,23 @@ function ARCreditMemo() {
                       </select>
                     </div>
 
+                    <div className="del-field">
+                      <label className="del-field__label">Transaction Type</label>
+                      <select
+                        name="transactionType"
+                        className="del-field__select"
+                        value={header.transactionType || ''}
+                        onChange={handleHeaderChange}
+                        disabled={!!currentDocEntry || !transactionTypeOptions.length}
+                      >
+                        {transactionTypeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     <DocumentCurrencySelect
                       classPrefix="del"
                       header={header}
@@ -2835,28 +3031,6 @@ function ARCreditMemo() {
                           ...
                         </button>
                       </div>
-                    </div>
-
-                    {/* Payment Terms */}
-                    <div className="del-field">
-                      <label className="del-field__label">Payment Terms</label>
-                      <select name="paymentTerms" className="del-field__select" value={header.paymentTerms} onChange={handleHeaderChange}>
-                        <option value="">Select</option>
-                        {payTermOpts.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                      </select>
-                    </div>
-
-                    {/* Branch */}
-                    <div className="del-field">
-                      <label className="del-field__label">Branch</label>
-                      <select name="branch" className="del-field__select" value={header.branch} onChange={handleHeaderChange} disabled={!!currentDocEntry}>
-                        <option value="">Select Branch</option>
-                        {refData.branches.map(b => (
-                          <option key={b.BPLId} value={b.BPLId}>
-                            {b.BPLName}
-                          </option>
-                        ))}
-                      </select>
                     </div>
 
                     {/* Warehouse */}

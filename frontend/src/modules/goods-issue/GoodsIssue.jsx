@@ -13,6 +13,7 @@ import ReferenceInformationModal, {
 import BatchAllocationModal from '../../components/BatchAllocationModal';
 import DistributionRuleAssignmentModal from '../../components/DistributionRuleAssignmentModal';
 import LineValueLookupModal from '../../components/sales-document/LineValueLookupModal';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import {
   BATCH_QTY_TOLERANCE,
   getRequiredBatchQty,
@@ -173,6 +174,7 @@ const buildLookupOptions = ({
 function GoodsIssue() {
   const location = useLocation();
   const navigate = useNavigate();
+  const formRef = useRef(null);
   const fileInputRef = useRef(null);
   const attachmentsRef = useRef([]);
   const [currentDocEntry, setCurrentDocEntry] = useState(null);
@@ -1325,7 +1327,7 @@ function GoodsIssue() {
       : '';
 
   return (
-    <form className={`po-page sap-document-page gr-goods-receipt__page inventory-document-page${isRightSidebarOpen ? ' po-page--sidebar-open inventory-document-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form ref={formRef} className={`po-page sap-document-page gr-goods-receipt__page inventory-document-page${isRightSidebarOpen ? ' po-page--sidebar-open inventory-document-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
       <div className="po-toolbar">
         <div className="po-toolbar__title">
           Goods Issue{currentDocEntry ? ` - #${header.number || currentDocEntry}` : ''}
@@ -1374,6 +1376,14 @@ function GoodsIssue() {
         >
           Form Settings
         </button>
+        <JournalEntryPreviewButton
+          documentType="goodsIssue"
+          documentLabel="Goods Issue"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs })}
+          disabled={pageState.posting || pageState.loading}
+          className="po-btn sap-document-toolbar__journal-preview"
+        />
       </div>
 
       {pageState.loading && <div className="po-alert po-alert--success">Loading...</div>}
@@ -1644,6 +1654,7 @@ function GoodsIssue() {
         availableBatches={batchModal.availableBatches}
         loading={batchModal.loading}
         error={batchModal.error}
+        workspaceRef={formRef}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />

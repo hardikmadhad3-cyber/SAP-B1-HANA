@@ -11,10 +11,11 @@ export const fetchServiceARCreditMemoCustomerDetails = (customerCode) =>
 export const fetchServiceARCreditMemoCustomerOptions = (params = {}) =>
   client.get(`${API_BASE}/customers/search`, { params });
 
-export const fetchServiceARCreditMemoSeries = (date = '', branch = '') =>
+export const fetchServiceARCreditMemoSeries = (date = '', transactionType = '', branch = '') =>
   client.get(`${API_BASE}/series`, {
     params: {
       ...(date ? { date } : {}),
+      ...(transactionType ? { transactionType } : {}),
       ...(branch ? { branch } : {}),
     },
   });
@@ -35,7 +36,8 @@ export const updateServiceARCreditMemo = (docEntry, data) =>
   client.patch(`${API_BASE}/${encodeURIComponent(docEntry)}`, data);
 
 export const generateServiceARCreditMemoJournalEntry = ({ docEntry, payload, persist = false }) =>
-  client.post('/journal-entry/generate-from-ar-credit-memo', {
+  client.post('/journal-entry/preview', {
+    documentType: 'serviceArCreditMemo',
     docEntry,
     payload,
     persist,

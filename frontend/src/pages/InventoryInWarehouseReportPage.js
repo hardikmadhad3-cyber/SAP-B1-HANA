@@ -7,6 +7,7 @@ import ItemLookupModal from "../components/reports/ItemLookupModal";
 import PropertiesSelectionModal from "../components/reports/PropertiesSelectionModal";
 import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
+import { matchesSapSearchText } from "../utils/sapSearch";
 import "../styles/inventory-in-warehouse-report.css";
 import "../styles/sales-analysis-report.css";
 import "../styles/inventory-report-common.css";
@@ -173,9 +174,9 @@ function InventoryInWarehouseReportPage() {
 
   const filteredRows = useMemo(() => {
     const rows = report?.rows || [];
-    const search = findText.trim().toLowerCase();
+    const search = findText.trim();
     if (!search) return rows;
-    return rows.filter((row) => `${row.itemCode} ${row.itemName} ${row.uom}`.toLowerCase().includes(search));
+    return rows.filter((row) => matchesSapSearchText(`${row.itemCode} ${row.itemName} ${row.uom}`, search));
   }, [findText, report?.rows]);
 
   const selectedLocationSet = useMemo(() => new Set(criteria.selectedLocationCodes), [criteria.selectedLocationCodes]);

@@ -1,4 +1,5 @@
 const db = require('./dbService');
+const { loadBusinessPartnerAddresses } = require('./businessPartnerAddressDbUtils');
 const masterDataDbService = require('./masterDataDbService');
 const { buildMarketingDocumentListFilterQuery } = require('./documentListUtils');
 const { getHeaderUdfValues, getLineUdfValues, getMarketingDocumentUdfs } = require('./udfMetadataService');
@@ -21,6 +22,12 @@ const getTableColumns = async (tableName) => {
   return new Set(rows.map((row) => String(row.COLUMN_NAME || '').trim()));
 };
 
+const optionalColumn = (columns, tableAlias, columnName, alias, fallback = 'NULL') => (
+  columns.has(columnName)
+    ? `${tableAlias}.${columnName} AS ${alias}`
+    : `${fallback} AS ${alias}`
+);
+
 const parseSeriesDate = (value) => {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
   const text = String(value || '').trim();
@@ -37,7 +44,59 @@ const parseSeriesDate = (value) => {
 };
 
 const normalizeSeriesText = (value) =>
-  String(value || '').toUpperCase().replace(/FY/g, '').replace(/[-/\s]/g, '');
+  String(value || '').toUpperCase().replace(/FY/g, '').replace(/[^A-Z0-9]/g, '');
+
+const resolveTransactionSeriesKind = (transactionType = '') => {
+  const normalizedType = normalizeSeriesText(transactionType);
+  if (normalizedType.includes('DEBIT')) return 'debit';
+  if (normalizedType.includes('BILLOFSUPPLY') || normalizedType.includes('SUPPLY')) return 'bill';
+  if (normalizedType.includes('TAXINVOICE') || normalizedType.includes('GST')) return 'tax';
+  return '';
+};
+
+const scoreSeriesForTransactionType = (series = {}, transactionType = '') => {
+  const targetKind = resolveTransactionSeriesKind(transactionType);
+  if (!targetKind) return 0;
+  const text = normalizeSeriesText([
+    series.SeriesName,
+    series.DisplayName,
+    series.RawSeriesName,
+    series.BeginStr,
+    series.Indicator,
+    series.DocSubType,
+  ].filter(Boolean).join(' '));
+  const docSubType = String(series.DocSubType || '').trim().toUpperCase();
+  const isManual = Number(series.Series) === -1 || String(series.SeriesName || '').trim().toUpperCase() === 'MANUAL';
+  if (isManual) return -10000;
+  let score = series.IsDefault || series.isDefault ? 25 : 0;
+  if (targetKind === 'bill') {
+    if (docSubType === '--') score += 120;
+    if (text.includes('AP') || text.includes('BILL') || text.includes('SUPPLY') || text.includes('BOS')) score += 160;
+    if (text.includes('CAN') || text.includes('DEBIT') || docSubType === 'GD') score -= 120;
+  } else if (targetKind === 'tax') {
+    if (docSubType === 'GA') score += 180;
+    if (text.includes('GST') || text.includes('TAX')) score += 160;
+    if (!text.includes('AP') && !text.includes('CAN') && !text.includes('DEBIT') && !text.includes('BILL')) score += 120;
+    if (text.includes('AP') || text.includes('CAN') || text.includes('DEBIT') || docSubType === 'GD') score -= 120;
+  } else if (targetKind === 'debit') {
+    if (docSubType === 'GD') score += 200;
+    if (text.includes('CAN') || text.includes('DEBIT')) score += 180;
+  }
+  return score;
+};
+
+const pickSapSeriesForTransactionType = (series = [], transactionType = '') => {
+  if (!String(transactionType || '').trim()) return null;
+  const rows = (Array.isArray(series) ? series : []).filter(Boolean);
+  const candidates = rows.filter((row) => Number(row.Series) !== -1 && String(row.SeriesName || '').trim().toUpperCase() !== 'MANUAL');
+  const pool = candidates.length ? candidates : rows;
+  return pool
+    .map((row, index) => ({ row, index, score: scoreSeriesForTransactionType(row, transactionType) }))
+    .sort((left, right) =>
+      right.score - left.score ||
+      Number(right.row.IsDefault || right.row.isDefault || 0) - Number(left.row.IsDefault || left.row.isDefault || 0) ||
+      left.index - right.index)[0]?.row || null;
+};
 
 const getFinancialYearTokens = (docDate) => {
   const year = docDate.getFullYear();
@@ -59,7 +118,7 @@ const isDateBetween = (date, fromDate, toDate) => {
   return date >= from && date <= to;
 };
 
-const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = '' } = {}) => {
+const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = '', transactionType = '' } = {}) => {
   const docDate = parseSeriesDate(date);
   const branchId = String(branch || '').trim() === '' ? null : Number.parseInt(branch, 10);
   const normalizedBranchId = Number.isInteger(branchId) ? branchId : null;
@@ -67,6 +126,8 @@ const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = ''
   const nnm1Columns = await getTableColumns('NNM1');
   const hasBranchColumn = nnm1Columns.has('BPLId');
   const branchSelect = hasBranchColumn ? 'T0.BPLId,' : 'NULL AS BPLId,';
+  const docSubTypeSelect = nnm1Columns.has('DocSubType') ? 'T0.DocSubType,' : "'' AS DocSubType,";
+  const beginStrSelect = nnm1Columns.has('BeginStr') ? 'T0.BeginStr,' : "'' AS BeginStr,";
   const branchFilter = hasBranchColumn && normalizedBranchId != null
     ? 'AND (T0.BPLId IS NULL OR T0.BPLId IN (-1, 0, @branchId))'
     : '';
@@ -77,6 +138,8 @@ const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = ''
       T0.SeriesName,
       T0.Indicator,
       T0.NextNumber,
+      ${docSubTypeSelect}
+      ${beginStrSelect}
       ${branchSelect}
       FY.FinancialYear,
       FY.FromDate,
@@ -131,8 +194,8 @@ const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = ''
   const series = [...bySeriesNameAndIndicator.values()]
     .filter((row) => (
       row.IsManual === 1 ||
-      (hasYearMatchedRows && row.IsYearNameMatch === 1) ||
-      (!hasYearMatchedRows && row.IsDateMatch === 1)
+      row.IsDateMatch === 1 ||
+      row.IsYearNameMatch === 1
     ))
     .filter((row) => (
       !hasBranchColumn ||
@@ -146,7 +209,8 @@ const getMarketingDocumentSeries = async ({ objectCode, date = null, branch = ''
       Number(right.IsDefault || 0) - Number(left.IsDefault || 0) ||
       String(left.SeriesName || '').localeCompare(String(right.SeriesName || '')));
 
-  return { series };
+  const selectedSeries = pickSapSeriesForTransactionType(series, transactionType);
+  return { series: String(transactionType || '').trim() && selectedSeries ? [selectedSeries] : series };
 };
 
 const getVendors = () => safe(db.query(`
@@ -285,27 +349,10 @@ const getContactsByVendor = async (cardCode) => safe(db.query(`
   ORDER BY T0.Name
 `, { cardCode }));
 
-const getAddressesByVendor = async (cardCode) => safe(db.query(`
-  SELECT T0.*,
-    T0.CardCode,
-    T0.Address,
-    T0.AdresType,
-    T0.Street,
-    T0.StreetNo,
-    T0.Block,
-    T0.Building,
-    T0.Address2,
-    T0.Address3,
-    T0.City,
-    T0.County,
-    T0.State,
-    T0.ZipCode,
-    T0.Country,
-    T0.GSTRegnNo AS GSTIN
-  FROM CRD1 T0
-  WHERE T0.CardCode = @cardCode
-  ORDER BY T0.Address
-`, { cardCode }));
+const getAddressesByVendor = async (cardCode) => {
+  const { addresses } = await loadBusinessPartnerAddresses(db, cardCode, { context: 'AP Credit Memo' });
+  return addresses;
+};
 
 const getVendorGSTProfile = async (cardCode) => {
   const rows = await safe(db.query(`
@@ -375,6 +422,7 @@ const getGRPOForCopy = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue
@@ -449,6 +497,8 @@ const getGRPOForCopy = async (docEntry) => {
       branch: header.Branch ? String(header.Branch) : '',
       paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
       otherInstruction: header.Remarks || '',
+      rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+      roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
     },
     lines: lineRows.map((l) => {
       const itemInfo = itemInfoMap[l.ItemCode] || { hsnCode: '', batchManaged: false };
@@ -595,6 +645,7 @@ const getAPCreditMemo = async (docEntry) => {
       T0.Comments AS Remarks,
       T0.JrnlMemo AS JournalRemark,
       T0.DiscPrcnt AS DiscountPercent,
+      T0.RoundDif AS RoundingAmount,
       T0.TotalExpns AS Freight,
       T0.VatSum AS Tax,
       T0.DocTotal AS TotalPaymentDue,
@@ -618,6 +669,7 @@ const getAPCreditMemo = async (docEntry) => {
     getLineUdfValues({ tableId: 'RPC1', keyValue: docEntry }),
   ]);
 
+  const lineColumns = await getTableColumns('RPC1');
   const lineRows = await safe(db.query(`
     SELECT 
       T0.LineNum,
@@ -627,18 +679,18 @@ const getAPCreditMemo = async (docEntry) => {
       T0.Price AS UnitPrice,
       T0.DiscPrcnt AS DiscountPercent,
       T0.TaxCode,
-      T0.WTLiable,
+      ${optionalColumn(lineColumns, 'T0', 'WTLiable', 'WTLiable', "'N'")},
       T0.LineTotal,
       T0.WhsCode AS Warehouse,
-      T0.unitMsr AS UoMCode,
-      T0.AcctCode AS GLAccount,
-      T0.StockPrice AS ItemCost,
-      T0.OcrCode AS DistributionRule,
-      T0.CountryOrg AS CountryOfOrigin,
-      T0.LocCode AS LocationCode,
-      T0.SACEntry AS SACCode,
-      T0.NoInvtryMv AS WithoutQtyPosting,
-      T0.AgrNo AS BlanketAgreementNo,
+      ${optionalColumn(lineColumns, 'T0', 'unitMsr', 'UoMCode', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'AcctCode', 'GLAccount', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'StockPrice', 'ItemCost', '0')},
+      ${optionalColumn(lineColumns, 'T0', 'OcrCode', 'DistributionRule', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'CountryOrg', 'CountryOfOrigin', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'LocCode', 'LocationCode', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'SACEntry', 'SACCode', "''")},
+      ${optionalColumn(lineColumns, 'T0', 'NoInvtryMv', 'WithoutQtyPosting', "'N'")},
+      ${optionalColumn(lineColumns, 'T0', 'AgrNo', 'BlanketAgreementNo', "''")},
       T0.BaseEntry,
       T0.BaseType,
       T0.BaseLine
@@ -693,6 +745,8 @@ const getAPCreditMemo = async (docEntry) => {
         paymentTerms: header.PaymentTerms ? String(header.PaymentTerms) : '',
         otherInstruction: header.Remarks || '',
         discount: header.DiscountPercent != null ? String(header.DiscountPercent) : '',
+        rounding: Math.abs(Number(header.RoundingAmount || 0)) > 0,
+        roundingAmount: header.RoundingAmount != null ? String(header.RoundingAmount) : '',
         freight: header.Freight != null ? String(header.Freight) : '',
         tax: header.Tax != null ? String(header.Tax) : '',
         totalPaymentDue: header.TotalPaymentDue != null ? String(header.TotalPaymentDue) : '',
@@ -732,8 +786,8 @@ const getAPCreditMemo = async (docEntry) => {
   };
 };
 
-const getDocumentSeries = async ({ date = null, branch = '' } = {}) => {
-  return getMarketingDocumentSeries({ objectCode: '19', date, branch });
+const getDocumentSeries = async ({ date = null, branch = '', transactionType = '' } = {}) => {
+  return getMarketingDocumentSeries({ objectCode: '19', date, branch, transactionType });
 };
 
 const getNextNumber = async (series) => {
@@ -989,24 +1043,7 @@ const getItemValidation = async (itemCode) => {
   return rows[0] || null;
 };
 
-const getTaxCodeValidation = async (code) => {
-  const rows = await safe(db.query(`
-    SELECT TOP 1
-      T0.Code,
-      T0.Name,
-      SUM(T1.Rate) AS Rate,
-      CASE 
-        WHEN COUNT(DISTINCT T1.TaxType) = 2 THEN 'INTRASTATE'
-        WHEN MAX(T1.TaxType) = 'I' THEN 'INTERSTATE'
-        ELSE 'OTHER'
-      END AS GSTType
-    FROM OVTG T0
-    INNER JOIN VTG1 T1 ON T0.Code = T1.Code
-    WHERE T0.Code = @code
-    GROUP BY T0.Code, T0.Name
-  `, { code }));
-  return rows[0] || null;
-};
+const getTaxCodeValidation = async (code) => masterDataDbService.getTaxCode(code);
 
 const getGRPOOpenLineValidation = async (docEntry, lineNum) => {
   const rows = await safe(db.query(`

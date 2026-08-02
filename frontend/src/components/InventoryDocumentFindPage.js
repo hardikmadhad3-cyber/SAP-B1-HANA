@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { createCompanyScopedRouteState } from '../utils/companyStorageScope';
+import { matchesSapSearchText } from '../utils/sapSearch';
 import '../styles/sales-order-list.css';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
@@ -21,8 +22,6 @@ const formatDate = (value) => {
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString('en-GB');
 };
-
-const normalizeText = (value) => String(value ?? '').trim().toLowerCase();
 
 const getComparableDate = (value) => {
   if (!value) return '';
@@ -95,7 +94,7 @@ function InventoryDocumentFindPage({
   }, [fetchDocuments, title]);
 
   const filteredDocuments = useMemo(() => {
-    const query = normalizeText(appliedFilters.query);
+    const query = String(appliedFilters.query || '').trim();
 
     return documents.filter((document) => {
       for (const field of filterFields) {
@@ -107,14 +106,14 @@ function InventoryDocumentFindPage({
           if (!dateValue) return false;
           if (field.compare === 'from' && dateValue < value) return false;
           if (field.compare === 'to' && dateValue > value) return false;
-        } else if (!normalizeText(document[field.key || field.name]).includes(normalizeText(value))) {
+        } else if (!matchesSapSearchText(document[field.key || field.name], value)) {
           return false;
         }
       }
 
       if (!query) return true;
       return searchFields.some((fieldName) =>
-        normalizeText(document[fieldName]).includes(query)
+        matchesSapSearchText(document[fieldName], query)
       );
     });
   }, [appliedFilters, documents, filterFields, searchFields]);

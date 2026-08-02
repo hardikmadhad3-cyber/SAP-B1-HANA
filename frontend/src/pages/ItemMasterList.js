@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { searchItems } from '../api/itemApi';
 import { createCompanyScopedRouteState } from '../utils/companyStorageScope';
+import { matchesSapSearchText } from '../utils/sapSearch';
 import '../modules/item-master/styles/itemMaster.css';
 import '../styles/sales-order-list.css';
 
@@ -31,8 +32,7 @@ const STATUS_OPTIONS = [
   { code: 'inactive', name: 'Inactive' },
 ];
 
-const includesText = (value, query) =>
-  String(value || '').toLowerCase().includes(String(query || '').trim().toLowerCase());
+const includesText = (value, query) => matchesSapSearchText(value, query);
 
 const getErrorMessage = (error, fallbackMessage) =>
   error?.response?.data?.message || error?.message || fallbackMessage;

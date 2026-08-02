@@ -7,6 +7,7 @@ import useFloatingWindow from "../components/reports/useFloatingWindow";
 import { useSapWindowTaskbarActions } from "../components/SapWindowTaskbarContext";
 import { fetchItemGroups, fetchItemProperties } from "../api/itemApi";
 import { fetchItemListReport } from "../api/itemListReportApi";
+import { matchesSapSearchText } from "../utils/sapSearch";
 import "../styles/item-list-report.css";
 import "../styles/sales-analysis-report.css";
 
@@ -140,7 +141,7 @@ function ItemListReportPage() {
 
   const filteredRows = useMemo(() => {
     const rows = reportResult?.rows || [];
-    const query = findText.trim().toLowerCase();
+    const query = findText.trim();
     if (!query) return rows;
 
     return rows.filter((row) =>
@@ -153,7 +154,7 @@ function ItemListReportPage() {
         row.preferredVendor,
         row.webUserCode,
         row.webUser,
-      ].some((value) => String(value || "").toLowerCase().includes(query)),
+      ].some((value) => matchesSapSearchText(value, query)),
     );
   }, [findText, reportResult?.rows]);
 

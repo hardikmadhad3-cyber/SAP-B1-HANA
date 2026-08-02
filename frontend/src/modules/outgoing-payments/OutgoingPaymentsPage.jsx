@@ -10,12 +10,15 @@ import {
   submitOutgoingPayment,
 } from "../../api/outgoingPaymentsApi";
 import { useRelationshipMapRegistration } from "../../components/relationship-map/RelationshipMapHost";
+import JournalEntryPreviewButton from "../../components/journal-entry/JournalEntryPreviewButton";
 import PaymentMeansModal, {
   createDefaultPaymentMeans,
   paymentMeansTotal,
   validatePaymentMeans,
 } from "../payments/PaymentMeansModal";
 import SapLookupModal from "../../components/common/SapLookupModal";
+import { consumePendingLookupQuery } from "../../utils/sapTabNavigation";
+import { matchesSapSearchText } from "../../utils/sapSearch";
 import "./outgoingPayments.css";
 
 const today = new Date().toISOString().slice(0, 10);
@@ -106,7 +109,7 @@ function SapLookupField({
         setPagination(data?.pagination || { page: nextPage, pageSize, totalCount: nextRows.length, totalPages: 1 });
         return;
       }
-      const term = String(nextQuery || "").trim().toLowerCase();
+      const term = String(nextQuery || "").trim();
       if (!term) {
         allRowsRef.current = nextRows;
         setRows(nextRows);
@@ -114,15 +117,15 @@ function SapLookupField({
         setRows(nextRows);
       } else {
         setRows(allRowsRef.current.filter((row) =>
-          Object.values(row || {}).some((value) => String(value ?? "").toLowerCase().includes(term)),
+          Object.values(row || {}).some((value) => matchesSapSearchText(value, term)),
         ));
       }
     } catch (_error) {
       if (requestId !== requestRef.current) return;
-      const term = String(nextQuery || "").trim().toLowerCase();
+      const term = String(nextQuery || "").trim();
       setRows(term
         ? allRowsRef.current.filter((row) =>
-          Object.values(row || {}).some((value) => String(value ?? "").toLowerCase().includes(term)),
+          Object.values(row || {}).some((value) => matchesSapSearchText(value, term)),
         )
         : []);
     } finally {
@@ -132,10 +135,11 @@ function SapLookupField({
 
   const openModal = () => {
     if (readOnly) return;
+    const pendingQuery = consumePendingLookupQuery();
     setOpen(true);
-    setQuery("");
+    setQuery(pendingQuery);
     setPage(1);
-    load("", 1);
+    load(pendingQuery, 1);
   };
 
   useEffect(() => {
@@ -153,8 +157,15 @@ function SapLookupField({
 
   const pick = (row) => {
     if (!row) return;
-    onSelect(row);
+    Promise.resolve(onSelect(row)).finally(() => {
+      setOpen(false);
+      window.SapB1TabNavigation?.completeLookup?.();
+    });
+  };
+
+  const closeModal = () => {
     setOpen(false);
+    window.SapB1TabNavigation?.restoreLookup?.();
   };
 
   const handleQueryChange = (nextQuery) => {
@@ -193,7 +204,13 @@ function SapLookupField({
     <>
       <span className={`sap-lookup ${className}`}>
         <input value={value} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} readOnly={readOnly} />
-        <button type="button" className="sap-lookup__arrow" onClick={openModal} disabled={readOnly}>
+        <button
+          type="button"
+          className="sap-lookup__arrow"
+          data-sap-lookup-button="true"
+          onClick={openModal}
+          disabled={readOnly}
+        >
           {buttonLabel}
         </button>
       </span>
@@ -211,7 +228,7 @@ function SapLookupField({
           footerNote={footerNote}
           footerControls={footerControls}
           onQueryChange={handleQueryChange}
-          onClose={() => setOpen(false)}
+          onClose={closeModal}
           onSelect={pick}
           getRowKey={(row, index) => `${row.code || row.docEntry || index}-${index}`}
           width="min(1180px, calc(100% - 40px))"
@@ -1028,10 +1045,10 @@ export default function OutgoingPaymentsPage() {
   const getRuleName = (code) => distributionRules.find((rule) => String(rule.code) === String(code))?.name || "";
   const getLocationName = (code) => locations.find((location) => String(location.code) === String(code))?.name || "";
   const findDistributionRules = async (query = "") => {
-    const term = String(query || "").trim().toLowerCase();
+    const term = String(query || "").trim();
     if (!term) return distributionRules;
     return distributionRules.filter((rule) =>
-      `${rule.code} ${rule.name}`.toLowerCase().includes(term),
+      matchesSapSearchText(`${rule.code} ${rule.name}`, term),
     );
   };
   const isCustomer = header.bpType === "Customer";
@@ -1089,6 +1106,14 @@ export default function OutgoingPaymentsPage() {
         <button type="button" className="po-btn po-btn--primary" onClick={handleOk} disabled={posting || isFoundDocument}>
           {posting ? "Posting..." : "OK"}
         </button>
+        <JournalEntryPreviewButton
+          documentType="outgoingPayment"
+          documentLabel="Outgoing Payment"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, invoices, paymentMeans, selectedTotal })}
+          disabled={posting}
+          className="po-btn sap-document-toolbar__journal-preview"
+        />
         <button type="button" className="po-btn" onClick={resetForm} disabled={posting}>Cancel</button>
         <button type="button" className="po-btn" onClick={deselectAll} disabled={posting || isFoundDocument}>Deselect All</button>
         <button type="button" className="po-btn" onClick={selectAll} disabled={posting || isFoundDocument}>Select All</button>

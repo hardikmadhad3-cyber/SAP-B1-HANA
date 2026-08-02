@@ -69,6 +69,15 @@ const generateFromARCreditMemo = async (req, res) => {
   }
 };
 
+const previewJournalEntry = async (req, res) => {
+  try {
+    const result = await journalEntryService.previewJournalEntry(req.body || {});
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json(getErrorPayload(error, 'Failed to preview Journal Entry.'));
+  }
+};
+
 const createManualJournalEntry = async (req, res) => {
   try {
     const result = await journalEntryService.createManualJournalEntry(req.body || {});
@@ -86,11 +95,32 @@ const getJournalEntryByTransId = async (req, res) => {
   }
 };
 
+const getReferenceData = async (_req, res) => {
+  try {
+    res.json(await journalEntryService.getJournalEntryReferenceData({
+      postingDate: _req.query?.postingDate || '',
+    }));
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error, 'Failed to load Journal Entry reference data.'));
+  }
+};
+
+const getRemarkTemplates = async (req, res) => {
+  try {
+    res.json(await journalEntryService.getJournalRemarkTemplates(req.query?.query || ''));
+  } catch (error) {
+    res.status(500).json(getErrorPayload(error, 'Failed to load SAP remark templates.'));
+  }
+};
+
 module.exports = {
+  previewJournalEntry,
   generateFromARInvoice,
   generateFromAPInvoice,
   generateFromAPCreditMemo,
   generateFromARCreditMemo,
   createManualJournalEntry,
   getJournalEntryByTransId,
+  getReferenceData,
+  getRemarkTemplates,
 };

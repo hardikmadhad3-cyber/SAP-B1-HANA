@@ -1,13 +1,21 @@
 const apInvoiceService = require('../services/apInvoiceService');
 
-const getErrorPayload = (error, fallbackMessage) => ({
-  detail:
+const getErrorPayload = (error, fallbackMessage) => {
+  const detail =
     error.response?.data?.error?.message?.value ||
     error.response?.data?.error?.message ||
     error.response?.data ||
     error.message ||
-    fallbackMessage,
-});
+    fallbackMessage;
+
+  return {
+    success: false,
+    code: error.code || error.response?.data?.code,
+    message: error.message || fallbackMessage,
+    detail,
+    details: error.details,
+  };
+};
 
 const parseTopParam = (value) => {
   if (value == null || value === '') return undefined;
@@ -85,7 +93,7 @@ const submitAPInvoice = async (req, res) => {
   try {
     res.json(await apInvoiceService.submitAPInvoice(req.body));
   } catch (error) {
-    res.status(error.statusCode || 500).json({
+    res.status(error.statusCode || error.status || 500).json({
       ...getErrorPayload(error, 'Failed to submit A/P Invoice.'),
       validation: error.validation || null,
     });
@@ -143,7 +151,7 @@ const getGRPOForCopy = async (req, res) => {
   try {
     res.json(await apInvoiceService.getGRPOForCopy(req.params.docEntry));
   } catch (error) {
-    res.status(500).json(getErrorPayload(error, 'Failed to load GRPO.'));
+    res.status(error.statusCode || error.status || 500).json(getErrorPayload(error, 'Failed to load GRPO.'));
   }
 };
 

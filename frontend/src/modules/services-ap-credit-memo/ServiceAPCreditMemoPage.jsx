@@ -10,8 +10,10 @@ import LineValueLookupModal from '../../components/sales-document/LineValueLooku
 import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import { createActiveCompanyScopedRouteState } from '../../utils/companyStorageScope';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
-import { consumeCopyToState } from '../../utils/copyToState';
+import { consumeCopyToState, replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
+import { calculateDocumentRounding } from '../../utils/documentRounding';
 import { getDocumentLayout } from '../../api/sapLayoutApi';
 import { buildMatrixColumnsFromSapLayout, mergeLiveMatrixSettings } from '../../utils/liveDocumentLayout';
 import { BASE_TYPE, normaliseDocumentHeader, unwrapCopyFromDocument } from '../../api/copyFromApi';
@@ -25,6 +27,16 @@ import AttachmentsTab from '../APInvoice/components/AttachmentsTab';
 import AddressModal from '../../components/document/AddressComponentModal';
 import { mapAddressFields } from '../../utils/documentAddress';
 import TaxInfoModal from '../APInvoice/components/TaxInfoModal';
+import WithholdingTaxTableModal from '../APInvoice/components/WithholdingTaxTableModal';
+import {
+  calculateWithholdingTaxAmount,
+  createDefaultWithholdingRows,
+  createEmptyWithholdingTaxState,
+  isYesValue,
+  normalizePartnerWithholdingTax,
+  recalcWithholdingRows,
+  roundTo,
+} from '../../utils/withholdingTax';
 import JournalEntryPreviewModal from '../services-ar-invoice/JournalEntryPreviewModal';
 import {
   fetchOpenServiceAPInvoicesForAPCreditMemo,
@@ -108,7 +120,6 @@ const TAB_NAMES = ['Contents', 'Logistics', 'Accounting', 'Tax', 'Electronic Doc
 const DEFAULT_TRANSACTION_TYPES = [
   { value: 'GST Tax Invoice', label: 'GST Tax Invoice' },
   { value: 'Bill of Supply', label: 'Bill of Supply' },
-  { value: 'GST Debit Memo', label: 'GST Debit Memo' },
 ];
 
 const INIT_ATTACH = Array.from({ length: 9 }, (_, i) => ({
@@ -437,6 +448,48 @@ const includeSelectedSeries = (series = [], selectedSeries = '', selectedSeriesN
   }, ...series];
 };
 
+const getSeriesFamilyKey = (series = {}) => {
+  const safeSeries = series || {};
+  const label = String(
+    safeSeries.SeriesName ||
+    safeSeries.DisplayName ||
+    safeSeries.RawSeriesName ||
+    safeSeries.BeginStr ||
+    safeSeries.Indicator ||
+    ''
+  );
+  return label
+    .replace(/^U_/i, '')
+    .replace(/[^a-z0-9]+/gi, '')
+    .toLowerCase()
+    .replace(/(?:fy)?\d{2}\d{2}$/i, '')
+    .replace(/\d{4,}$/i, '')
+    .replace(/\d{2}$/i, '');
+};
+
+const pickSeriesForNewDocument = (series = [], preferredSeries = '', sourceSeries = []) => {
+  const available = Array.isArray(series) ? series.filter(Boolean) : [];
+  if (!available.length) return null;
+  const sourceAvailable = toArray(sourceSeries, ['series']);
+
+  const preferred = String(preferredSeries || '').trim();
+  const currentMatch = preferred
+    ? available.find((item) => String(item.Series || '') === preferred)
+    : null;
+  if (currentMatch) return currentMatch;
+
+  const oldSeries = preferred
+    ? sourceAvailable.find((item) => String(item.Series || '') === preferred)
+    : null;
+  const familyKey = getSeriesFamilyKey(oldSeries);
+  const familyMatch = familyKey
+    ? available.find((item) => getSeriesFamilyKey(item) === familyKey)
+    : null;
+  if (familyMatch) return familyMatch;
+
+  return available.find((item) => item.IsDefault || item.isDefault) || available[0];
+};
+
 const normalizeServiceApColumnToken = (value) =>
   String(value || '')
     .trim()
@@ -653,9 +706,25 @@ const readLineAliasValue = (line = {}, aliases = []) => {
   return '';
 };
 
+const normalizeAccountCode = (value) => String(value || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+
+const findAccountByCode = (accounts = [], code = '') => {
+  const normalizedCode = normalizeAccountCode(code);
+  if (!normalizedCode) return null;
+  return accounts.find((item) => [
+    item?.code,
+    item?.AcctCode,
+    item?.FormatCode,
+    item?.accountCode,
+    item?.value,
+  ].some((value) => normalizeAccountCode(value) === normalizedCode)) || null;
+};
+
+const getAccountName = (account = {}) => account?.name || account?.AcctName || account?.accountName || account?.description || '';
+
 const normalizeCopyLine = (line, idx, docEntry, baseType, accounts) => {
   const glAccount = String(line.AccountCode || line.AcctCode || line.glAccount || '').trim();
-  const account = accounts.find((item) => String(item.code) === glAccount);
+  const account = findAccountByCode(accounts, glAccount);
   const quantity = line.Quantity != null ? String(line.Quantity) : String(line.sQty || '');
   const unitPrice = line.UnitPrice != null ? String(line.UnitPrice) : String(line.unitPrice || '');
   const lineTotal = line.LineTotal != null
@@ -669,7 +738,7 @@ const normalizeCopyLine = (line, idx, docEntry, baseType, accounts) => {
     sac: String(line.SAC || line.SACEntry || line.sac || ''),
     description: String(line.ItemDescription || line.Dscription || line.description || ''),
     glAccount,
-    glAccountName: line.AccountName || line.AcctName || account?.name || '',
+    glAccountName: line.glAccountName || line.AccountName || line.AcctName || getAccountName(account),
     distRule: String(line.DistributionRule || line.OcrCode || line.distRule || ''),
     taxCode: String(line.TaxCode || line.taxCode || ''),
     totalLC: lineTotal,
@@ -727,6 +796,7 @@ const normalizeCopyLine = (line, idx, docEntry, baseType, accounts) => {
 function ServiceAPCreditMemoPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const workspaceRef = useRef(null);
   const requestedDocEntry = location.state?.serviceApCreditMemoDocEntry;
   const handledCopyFromRef = useRef('');
   const vendorDetailsRequestRef = useRef(0);
@@ -738,6 +808,7 @@ function ServiceAPCreditMemoPage() {
   const [matrixColumnDefinitions, setMatrixColumnDefinitions] = useState(CONTENT_COLUMNS);
   const [lines, setLines] = useState([createLine(ROW_UDF_DEFINITIONS)]);
   const [headerUdfs, setHeaderUdfs] = useState(() => normalizeUdfState(HEADER_UDF_DEFINITIONS));
+  const [withholdingTax, setWithholdingTax] = useState(createEmptyWithholdingTaxState);
   const [formSettings, setFormSettings, formSettingsStorageKey] = useCompanyScopedFormSettings(
     FORM_SETTINGS_STORAGE_KEY,
     readSavedFormSettings,
@@ -751,6 +822,22 @@ function ServiceAPCreditMemoPage() {
   const [pageState, setPageState] = useState({ loading: true, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
   const [isDirty, setIsDirty] = useState(false);
+
+  useStandardDocumentDraftTask({
+    draftKey: 'serviceApCreditMemoDraft',
+    title: 'Service A/P Credit Memo',
+    draftValues: { currentDocEntry, header, lines, headerUdfs, activeTab, isDirty },
+    restoreDraft: (draft) => {
+      setCurrentDocEntry(draft.currentDocEntry || null);
+      setHeader(draft.header || INIT_HEADER);
+      setLines(Array.isArray(draft.lines) && draft.lines.length
+        ? draft.lines
+        : [createLine(ROW_UDF_DEFINITIONS)]);
+      setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+      setActiveTab(draft.activeTab || 'Contents');
+      setIsDirty(Boolean(draft.isDirty));
+    },
+  });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [copyFromDocType, setCopyFromDocType] = useState('apInvoice');
   const [bpModalOpen, setBpModalOpen] = useState(false);
@@ -798,6 +885,7 @@ function ServiceAPCreditMemoPage() {
     open: false,
     loading: false,
     data: null,
+    error: '',
   });
   const [lineLookupModal, setLineLookupModal] = useState({
     open: false,
@@ -830,11 +918,12 @@ function ServiceAPCreditMemoPage() {
   const distributionRules = toArray(refData.distribution_rules, ['distribution_rules']);
   const paymentTerms = toArray(refData.payment_terms, ['payment_terms']);
   const shippingTypes = toArray(refData.shipping_types, ['shipping_types']);
-  const seriesOptions = useMemo(() => includeSelectedSeries(
-    toArray(refData.series, ['series']),
-    header.series,
-    header.seriesName
-  ), [refData.series, header.series, header.seriesName]);
+  const seriesOptions = useMemo(() => {
+    const availableSeries = toArray(refData.series, ['series']);
+    return currentDocEntry
+      ? includeSelectedSeries(availableSeries, header.series, header.seriesName)
+      : availableSeries;
+  }, [currentDocEntry, refData.series, header.series, header.seriesName]);
   const salesEmployeeOptions = toArray(refData.sales_employees, ['sales_employees']);
   const stateOptions = toArray(refData.states, ['states']);
   const vendorPayToAddresses = toArray(refData.pay_to_addresses, ['pay_to_addresses']).filter((address) => String(address.CardCode || '') === String(header.vendor || ''));
@@ -1088,12 +1177,61 @@ function ServiceAPCreditMemoPage() {
     const discountAmount = subtotal * parseNum(header.discount) / 100;
     const freight = parseNum(header.freight);
     const downPayment = parseNum(header.totalDownPayment);
-    const roundingAmount = parseNum(header.roundingAmount);
-    const total = Math.max(0, subtotal - discountAmount - downPayment) + freight + tax + roundingAmount;
+    const totalBeforeRounding = Math.max(0, subtotal - discountAmount - downPayment) + freight + tax;
+    const { roundingAmount, total } = calculateDocumentRounding(totalBeforeRounding, header.rounding, 2);
     const appliedAmount = parseNum(header.appliedAmount);
     const balanceDue = Math.max(0, total - appliedAmount);
     return { subtotal, tax, discountAmount, freight, downPayment, roundingAmount, total, appliedAmount, balanceDue, wtaxAmount: 0 };
-  }, [currentDocEntry, header.appliedAmount, header.balanceDue, header.discount, header.discountAmount, header.freight, header.roundingAmount, header.tax, header.totalBeforeDiscount, header.totalDownPayment, header.totalPaymentDue, header.wtaxAmount, lines]);
+  }, [currentDocEntry, header.appliedAmount, header.balanceDue, header.discount, header.discountAmount, header.freight, header.rounding, header.roundingAmount, header.tax, header.totalBeforeDiscount, header.totalDownPayment, header.totalPaymentDue, header.wtaxAmount, lines]);
+
+  const wtaxDecimals = { total: 2, tax: 2, totalPaymentDue: 2 };
+  const hasSavedWTaxAmount = Boolean(currentDocEntry && Math.abs(parseNum(header.wtaxAmount)) > 0);
+  const hasWTaxLiableLines = lines.some((line) => isYesValue(line.wtaxLiable || line.wTaxLiable)) || hasSavedWTaxAmount;
+  const wtaxBaseAmount = {
+    netAmount: roundTo(Math.max(0, totals.subtotal - totals.discountAmount - totals.downPayment) + totals.freight, 2),
+    taxAmount: totals.tax,
+    grossAmount: totals.total,
+  };
+  const wtaxRowsForTotals = hasWTaxLiableLines && withholdingTax.partnerSubject
+    ? recalcWithholdingRows(withholdingTax.rows, wtaxBaseAmount, wtaxDecimals)
+    : [];
+  const withholdingModalRows = withholdingTax.open
+    ? recalcWithholdingRows(
+      withholdingTax.rows.length
+        ? withholdingTax.rows
+        : createDefaultWithholdingRows(withholdingTax, wtaxBaseAmount, wtaxDecimals),
+      wtaxBaseAmount,
+      wtaxDecimals
+    )
+    : wtaxRowsForTotals;
+  const wtaxAmount = calculateWithholdingTaxAmount({
+    currentDocEntry,
+    savedAmount: header.wtaxAmount,
+    hasLiableLines: hasWTaxLiableLines,
+    withholdingTax,
+    baseAmount: wtaxBaseAmount,
+    decimals: wtaxDecimals,
+  });
+  const totalPaymentDueAfterWTax = roundTo(totals.total - wtaxAmount, wtaxDecimals.totalPaymentDue);
+  const balanceDueAfterWTax = currentDocEntry && String(header.balanceDue || '').trim()
+    ? totals.balanceDue
+    : Math.max(0, totalPaymentDueAfterWTax - totals.appliedAmount);
+
+  const openWithholdingTaxTable = () => {
+    if (!String(header.vendor || '').trim()) {
+      setPageState((prev) => ({ ...prev, error: 'Select a vendor before opening withholding tax table.', success: '' }));
+      return;
+    }
+    if (!withholdingTax.partnerSubject) {
+      setPageState((prev) => ({ ...prev, error: 'Selected vendor does not have withholding tax setup.', success: '' }));
+      return;
+    }
+    setWithholdingTax((prev) => ({
+      ...prev,
+      open: true,
+      rows: prev.rows.length ? recalcWithholdingRows(prev.rows, wtaxBaseAmount, wtaxDecimals) : createDefaultWithholdingRows(prev, wtaxBaseAmount, wtaxDecimals),
+    }));
+  };
 
   useEffect(() => {
     const handler = (event) => {
@@ -1113,7 +1251,7 @@ function ServiceAPCreditMemoPage() {
       try {
         const [refRes, seriesRes, layoutRes] = await Promise.all([
           fetchServiceAPCreditMemoReferenceData(),
-          fetchServiceAPCreditMemoSeries(header.postingDate),
+          fetchServiceAPCreditMemoSeries(header.postingDate, header.transactionType),
           getDocumentLayout({ documentType: 'SERVICE_AP_CREDIT_MEMO' }).catch((error) => ({
             data: {
               success: false,
@@ -1134,7 +1272,7 @@ function ServiceAPCreditMemoPage() {
         let nextRefData = normalizeReferenceData(refRes.data, seriesRes.data?.series || seriesRes.data);
         if (defaultBranch) {
           try {
-            const branchSeriesRes = await fetchServiceAPCreditMemoSeries(header.postingDate, defaultBranch);
+            const branchSeriesRes = await fetchServiceAPCreditMemoSeries(header.postingDate, header.transactionType, defaultBranch);
             if (ignore) return;
             nextRefData = normalizeReferenceData(refRes.data, branchSeriesRes.data?.series || branchSeriesRes.data);
           } catch (_seriesError) {
@@ -1207,16 +1345,27 @@ function ServiceAPCreditMemoPage() {
     const sourceLines = Array.isArray(copyFrom.lines) ? copyFrom.lines : [];
     const baseEntry = copyFrom.baseDocument?.baseEntry ?? copyFrom.docEntry;
     const baseType = copyFrom.baseDocument?.baseType ?? 18;
+    const copyDate = today();
+    const copyTransactionType = normalizedHeader.transactionType
+      || transactionTypeOptions[0]?.value
+      || 'GST Tax Invoice';
+    const copyBranch = normalizedHeader.branch || '';
 
     setHeader((prev) => ({
       ...prev,
       ...normalizedHeader,
-      docNo: prev.docNo,
-      nextNumber: prev.nextNumber,
-      series: prev.series,
+      postingDate: copyDate,
+      documentDate: copyDate,
+      deliveryDate: copyDate,
+      docNo: '',
+      nextNumber: '',
+      series: '',
       status: 'Open',
-      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice',
+      branch: copyBranch || prev.branch,
+      transactionType: copyTransactionType,
+      wtaxAmount: '',
     }));
+    setWithholdingTax(createEmptyWithholdingTaxState());
     if (copyFrom.headerUdfs) {
       setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, copyFrom.headerUdfs));
     }
@@ -1234,11 +1383,17 @@ function ServiceAPCreditMemoPage() {
       : [createLine(rowUdfDefinitions)]);
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState((prev) => ({ ...prev, error: '', success: 'Copied from Service A/P Invoice. Please review and save.' }));
+    refreshSeriesForNewDocument({
+      postingDate: copyDate,
+      transactionType: copyTransactionType,
+      branch: copyBranch,
+      preferredSeries: '',
+    });
 
     if (normalizedHeader.vendor) {
       loadVendorDetails(normalizedHeader.vendor);
     }
-    navigate(location.pathname, { replace: true, state: null });
+    replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
   }, [
     accounts,
     currentDocEntry,
@@ -1265,7 +1420,11 @@ function ServiceAPCreditMemoPage() {
         const loadedHeader = { ...doc.header };
         if (loadedHeader.postingDate) {
           try {
-            const seriesRes = await fetchServiceAPCreditMemoSeries(loadedHeader.postingDate, loadedHeader.branch || '');
+            const seriesRes = await fetchServiceAPCreditMemoSeries(
+              loadedHeader.postingDate,
+              loadedHeader.transactionType || header.transactionType,
+              loadedHeader.branch || '',
+            );
             if (ignore) return;
             const documentSeries = toArray(seriesRes.data?.series || seriesRes.data, ['series']);
             if (documentSeries.length) {
@@ -1352,6 +1511,7 @@ function ServiceAPCreditMemoPage() {
     if (!normalizedVendorCode) {
       setRefData((prev) => ({ ...prev, contacts: [] }));
       setHeader((prev) => ({ ...prev, contactPerson: '' }));
+      setWithholdingTax(createEmptyWithholdingTaxState());
       return;
     }
     try {
@@ -1365,6 +1525,8 @@ function ServiceAPCreditMemoPage() {
         ship_to_addresses: toArray(res.data?.ship_to_addresses, ['ship_to_addresses']),
         bill_to_addresses: toArray(res.data?.bill_to_addresses, ['bill_to_addresses']),
       }));
+      const vendorWithholdingTax = normalizePartnerWithholdingTax(res.data?.withholding_tax || {});
+      setWithholdingTax((prev) => ({ ...prev, ...vendorWithholdingTax, rows: [] }));
       const vendor = res.data?.vendor;
       if (vendor) {
         const shipToAddresses = toArray(res.data?.ship_to_addresses, ['ship_to_addresses']);
@@ -1491,7 +1653,7 @@ function ServiceAPCreditMemoPage() {
       setHeader((prev) => ({ ...prev, postingDate: value }));
       setPageState((prev) => ({ ...prev, seriesLoading: true }));
       try {
-        const res = await fetchServiceAPCreditMemoSeries(value, header.branch);
+        const res = await fetchServiceAPCreditMemoSeries(value, header.transactionType, header.branch);
         const nextSeries = toArray(res.data?.series || res.data, ['series']);
         setRefData((prev) => ({ ...prev, series: nextSeries }));
         setHeader((prev) => {
@@ -1573,7 +1735,16 @@ function ServiceAPCreditMemoPage() {
         ...prev,
         transactionType: value,
         indicator: selectedOption?.indicator || prev.indicator,
+        series: '',
+        nextNumber: '',
+        docNo: '',
       }));
+      await refreshSeriesForNewDocument({
+        postingDate: header.postingDate,
+        transactionType: value,
+        branch: header.branch,
+        preferredSeries: '',
+      });
       return;
     }
 
@@ -1765,7 +1936,11 @@ function ServiceAPCreditMemoPage() {
   };
 
   const buildPayload = () => ({
-    header,
+    header: {
+      ...header,
+      wtaxAmount,
+      totalPaymentDue: totalPaymentDueAfterWTax,
+    },
     lines: lines
       .filter((line) => String(line.description || line.glAccount || line.totalLC || '').trim())
       .map((line) => ({
@@ -1773,7 +1948,8 @@ function ServiceAPCreditMemoPage() {
         udf: buildVisibleEnteredRowUdfPayload(rowUdfDefinitions, line.udf || {}, formSettings),
       })),
     header_udfs: normalizeUdfState(headerUdfDefinitions, headerUdfs),
-    totals,
+    totals: { ...totals, wtaxAmount, total: totalPaymentDueAfterWTax, balanceDue: balanceDueAfterWTax },
+    withholdingTaxRows: wtaxRowsForTotals,
   });
 
   const openJournalLinkedMaster = (line = {}) => {
@@ -1809,19 +1985,19 @@ function ServiceAPCreditMemoPage() {
       return null;
     }
 
-    setJournalPreview((prev) => ({ ...prev, open: true, loading: true }));
+    setJournalPreview((prev) => ({ ...prev, open: true, loading: true, error: '' }));
     try {
       const res = await generateServiceAPCreditMemoJournalEntry({
         docEntry,
         payload: docEntry ? null : buildPayload(),
         persist,
       });
-      setJournalPreview({ open: true, loading: false, data: res.data });
+      setJournalPreview({ open: true, loading: false, data: res.data, error: '' });
       setPageState((prev) => ({ ...prev, error: '' }));
       return res.data;
     } catch (error) {
       const message = error.response?.data?.message || error.message || 'Failed to preview Journal Entry.';
-      setJournalPreview((prev) => ({ ...prev, loading: false }));
+      setJournalPreview((prev) => ({ ...prev, loading: false, error: message }));
       setPageState((prev) => ({ ...prev, success: '', error: message }));
       return null;
     }
@@ -1874,7 +2050,7 @@ function ServiceAPCreditMemoPage() {
     setLines([createLine(rowUdfDefinitions)]);
     setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
-    setJournalPreview({ open: false, loading: false, data: null });
+    setJournalPreview({ open: false, loading: false, data: null, error: '' });
     setPageState((prev) => ({ ...prev, error: '', success: '' }));
   };
 
@@ -1905,7 +2081,58 @@ function ServiceAPCreditMemoPage() {
     return null;
   };
 
-  const handleCopyFrom = (data, sourceType) => {
+  const refreshSeriesForNewDocument = async ({
+    postingDate = header.postingDate,
+    transactionType = header.transactionType,
+    branch = header.branch,
+    preferredSeries = header.series,
+  } = {}) => {
+    if (String(preferredSeries || '') === 'manual') {
+      setHeader((prev) => ({ ...prev, series: 'manual', nextNumber: '', docNo: '' }));
+      return;
+    }
+
+    setPageState((prev) => ({ ...prev, seriesLoading: true }));
+    try {
+      const res = await fetchServiceAPCreditMemoSeries(postingDate, transactionType, branch);
+      const nextSeries = toArray(res.data?.series || res.data, ['series']);
+      const selectedSeries = pickSeriesForNewDocument(nextSeries, preferredSeries, refData.series || []);
+      setRefData((prev) => ({ ...prev, series: nextSeries }));
+      if (selectedSeries) {
+        const numberRes = await fetchServiceAPCreditMemoNextNumber(selectedSeries.Series);
+        setHeader((prev) => ({
+          ...prev,
+          postingDate,
+          documentDate: postingDate,
+          deliveryDate: postingDate,
+          transactionType,
+          branch: branch || prev.branch || String(selectedSeries.BPLId || ''),
+          series: String(selectedSeries.Series || ''),
+          nextNumber: String(numberRes.data?.nextNumber || selectedSeries.NextNumber || ''),
+          docNo: '',
+        }));
+      }
+    } catch (_error) {
+      const selectedSeries = pickSeriesForNewDocument(refData.series || [], preferredSeries, refData.series || []);
+      if (selectedSeries) {
+        setHeader((prev) => ({
+          ...prev,
+          postingDate,
+          documentDate: postingDate,
+          deliveryDate: postingDate,
+          transactionType,
+          branch: branch || prev.branch || String(selectedSeries.BPLId || ''),
+          series: String(selectedSeries.Series || ''),
+          nextNumber: String(selectedSeries.NextNumber || ''),
+          docNo: '',
+        }));
+      }
+    } finally {
+      setPageState((prev) => ({ ...prev, seriesLoading: false }));
+    }
+  };
+
+  const handleCopyFrom = async (data, sourceType) => {
     const copySource = unwrapCopyFromDocument(data);
     const sourceLines = toArray(copySource.lines, ['lines', 'DocumentLines']);
     const copyKey = `${sourceType}-${copySource.docEntry}-${sourceLines.length}`;
@@ -1913,11 +2140,26 @@ function ServiceAPCreditMemoPage() {
     handledCopyFromRef.current = copyKey;
 
     const normalizedHeader = normaliseDocumentHeader(copySource.header);
+    const copyDate = today();
+    const copyTransactionType = normalizedHeader.transactionType
+      || header.transactionType
+      || transactionTypeOptions[0]?.value
+      || 'GST Tax Invoice';
+    const copyBranch = normalizedHeader.branch || header.branch || '';
     setHeader((prev) => ({
       ...prev,
       ...normalizedHeader,
-      transactionType: normalizedHeader.transactionType || prev.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice',
+      postingDate: copyDate,
+      documentDate: copyDate,
+      deliveryDate: copyDate,
+      transactionType: copyTransactionType,
+      branch: copyBranch,
+      wtaxAmount: '',
+      series: '',
+      nextNumber: '',
+      docNo: '',
     }));
+    setWithholdingTax(createEmptyWithholdingTaxState());
     const baseType = sourceType === 'apInvoice' ? 18 : BASE_TYPE[sourceType] || 18;
     const copyLines = sourceLines;
     setLines(copyLines.length
@@ -1927,10 +2169,22 @@ function ServiceAPCreditMemoPage() {
       }))
       : [createLine(rowUdfDefinitions)]);
     setActiveTab('Contents');
+    if (normalizedHeader.vendor) {
+      loadVendorDetails(normalizedHeader.vendor);
+    }
+    await refreshSeriesForNewDocument({
+      postingDate: copyDate,
+      transactionType: copyTransactionType,
+      branch: copyBranch,
+      preferredSeries: '',
+    });
     setPageState((prev) => ({ ...prev, success: 'Copied service A/P invoice lines.', error: '' }));
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
+    const duplicateDate = today();
+    const duplicateTransactionType = header.transactionType || transactionTypeOptions[0]?.value || 'GST Tax Invoice';
+    const duplicateBranch = header.branch || '';
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
@@ -1950,16 +2204,25 @@ function ServiceAPCreditMemoPage() {
     });
 
     if (duplicated) {
-      const selectedSeries =
-        (refData.series || []).find((series) => String(series.Series || '') === String(header.series || '')) ||
-        (refData.series || [])[0];
-      if (selectedSeries) {
-        setHeader((prev) => ({
-          ...prev,
-          series: String(selectedSeries.Series || ''),
-          nextNumber: String(selectedSeries.NextNumber || ''),
-        }));
-      }
+      setHeader((prev) => ({
+        ...prev,
+        postingDate: duplicateDate,
+        documentDate: duplicateDate,
+        deliveryDate: duplicateDate,
+        transactionType: duplicateTransactionType,
+        branch: duplicateBranch,
+        wtaxAmount: '',
+        series: '',
+        nextNumber: '',
+        docNo: '',
+      }));
+      setWithholdingTax((prev) => ({ ...prev, rows: [], open: false }));
+      await refreshSeriesForNewDocument({
+        postingDate: duplicateDate,
+        branch: duplicateBranch,
+        transactionType: duplicateTransactionType,
+        preferredSeries: header.series,
+      });
     }
   };
 
@@ -2162,7 +2425,7 @@ function ServiceAPCreditMemoPage() {
   const tableMinWidth = 42 + 48 + visibleLineColumns.reduce((sum, column) => sum + column.width, 0);
 
   return (
-    <form className={`ap-invoice-page del-page sap-document-page service-ap-credit-memo-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
+    <form ref={workspaceRef} className={`ap-invoice-page del-page sap-document-page service-ap-credit-memo-page${isRightSidebarOpen ? ' del-page--sidebar-open' : ''}`} onSubmit={handleSubmit} onChangeCapture={markDirty}>
       <div className="del-toolbar sap-document-toolbar">
         <span className="del-toolbar__title sap-document-toolbar__title">Service A/P Credit Memo{currentDocEntry ? ` - #${header.docNo || currentDocEntry}` : ''}</span>
         <button type="submit" className="del-btn del-btn--primary sap-document-toolbar__primary" disabled={pageState.posting || !isDocumentEditable} title={primaryActionLabel}>
@@ -2183,14 +2446,16 @@ function ServiceAPCreditMemoPage() {
           onSuccess={(message) => setPageState((prev) => ({ ...prev, error: '', success: message }))}
           onError={(message) => setPageState((prev) => ({ ...prev, success: '', error: message }))}
         />
-        <button
-          type="button"
-          className="del-btn sap-document-toolbar__journal-preview"
-          onClick={() => previewJournalEntry({ persist: false })}
-          disabled={pageState.posting || journalPreview.loading}
-        >
-          Preview Journal Entry
-        </button>
+        {!currentDocEntry && (
+          <button
+            type="button"
+            className="del-btn sap-document-toolbar__journal-preview"
+            onClick={() => previewJournalEntry({ persist: false })}
+            disabled={pageState.posting || journalPreview.loading}
+          >
+            Preview Journal Entry
+          </button>
+        )}
         <button type="button" className="del-btn sap-document-toolbar__find" onClick={() => navigate('/services/ap-credit-memo/find')}>Find</button>
         <button type="button" className="del-btn sap-document-toolbar__new" onClick={resetForm}>New</button>
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
@@ -2297,6 +2562,7 @@ function ServiceAPCreditMemoPage() {
                 <label className="del-field__label">No.</label>
                 <div className="service-ap-docnum">
                   <select className="del-field__select" name="series" value={header.series} onChange={handleHeaderChange} disabled={!isDocumentEditable || currentDocEntry || pageState.seriesLoading}>
+                    <option value="">Select Series</option>
                     <option value="manual">Manual</option>
                     {seriesOptions.map((series) => (
                       <option key={series.Series} value={series.Series}>{series.SeriesName}</option>
@@ -2409,15 +2675,17 @@ function ServiceAPCreditMemoPage() {
         )}
 
         {activeTab === 'Tax' && (
-          <TaxTab
-            onOpenTaxInfoModal={openTaxInfoModal}
-            isEditable={isDocumentEditable}
-            header={header}
-            onHeaderChange={handleHeaderChange}
-            showTaxInvoiceReference
-            taxInvoiceReferenceRequired={taxInvoiceReferenceRequired}
-            errors={valErrors.header}
-          />
+          <div className="sap-b1-tax-panel">
+            <TaxTab
+              onOpenTaxInfoModal={openTaxInfoModal}
+              isEditable={isDocumentEditable}
+              header={header}
+              onHeaderChange={handleHeaderChange}
+              showTaxInvoiceReference
+              taxInvoiceReferenceRequired={taxInvoiceReferenceRequired}
+              errors={valErrors.header}
+            />
+          </div>
         )}
 
         {activeTab === 'Electronic Documents' && (
@@ -2462,10 +2730,20 @@ function ServiceAPCreditMemoPage() {
                   <tr><td>Freight</td><td><input className="del-grid__input" name="freight" value={header.freight} onChange={handleHeaderChange} disabled={!isDocumentEditable} /></td></tr>
                   <tr><td><label className="service-ap-checkbox"><input type="checkbox" name="rounding" checked={header.rounding || parseNum(header.roundingAmount) !== 0} onChange={handleHeaderChange} disabled={!isDocumentEditable} /> Rounding</label></td><td><input className="del-grid__input" value={`INR ${fmt(totals.roundingAmount)}`} readOnly /></td></tr>
                   <tr><td>Tax</td><td><input className="del-grid__input" value={fmt(totals.tax)} readOnly /></td></tr>
-                  <tr><td>WTax Amount</td><td><input className="del-grid__input" value={fmt(totals.wtaxAmount)} readOnly /></td></tr>
-                  <tr style={{ borderTop: '2px solid #a0aab4' }}><td style={{ fontWeight: 700 }}>Total Credit</td><td><input className="del-grid__input" value={fmt(totals.total)} readOnly style={{ fontWeight: 700 }} /></td></tr>
+                  {hasWTaxLiableLines && (
+                    <tr>
+                      <td>WTax Amount</td>
+                      <td>
+                        <div className="service-ap-wtax-cell">
+                          <input className="del-grid__input service-ap-wtax-input" value={fmt(wtaxAmount)} readOnly />
+                          <button type="button" className="del-btn service-ap-wtax-btn" onClick={openWithholdingTaxTable} disabled={!isDocumentEditable}>→</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  <tr style={{ borderTop: '2px solid #a0aab4' }}><td style={{ fontWeight: 700 }}>Total Credit</td><td><input className="del-grid__input" value={fmt(totalPaymentDueAfterWTax)} readOnly style={{ fontWeight: 700 }} /></td></tr>
                   <tr><td>Applied Amount</td><td><input className="del-grid__input" name="appliedAmount" value={header.appliedAmount} onChange={handleHeaderChange} disabled={!isDocumentEditable} /></td></tr>
-                  <tr><td>Balance Due</td><td><input className="del-grid__input" value={fmt(totals.balanceDue)} readOnly /></td></tr>
+                  <tr><td>Balance Due</td><td><input className="del-grid__input" value={fmt(balanceDueAfterWTax)} readOnly /></td></tr>
                 </tbody>
               </table>
             </div>
@@ -2566,9 +2844,23 @@ function ServiceAPCreditMemoPage() {
         onFormChange={handleTaxInfoFormChange}
       />
 
+      <WithholdingTaxTableModal
+        isOpen={withholdingTax.open}
+        onClose={() => setWithholdingTax((prev) => ({ ...prev, open: false }))}
+        rows={withholdingModalRows}
+        allowedCodes={withholdingTax.allowedCodes.length ? withholdingTax.allowedCodes : refData.withholding_tax_codes}
+        baseAmount={wtaxBaseAmount}
+        workspaceRef={workspaceRef}
+        onRowsChange={(rows) => setWithholdingTax((prev) => ({
+          ...prev,
+          rows: recalcWithholdingRows(rows, wtaxBaseAmount, wtaxDecimals),
+        }))}
+      />
+
       <JournalEntryPreviewModal
         isOpen={journalPreview.open}
         loading={journalPreview.loading}
+        error={journalPreview.error}
         journalEntry={journalPreview.data}
         onClose={() => setJournalPreview((prev) => ({ ...prev, open: false }))}
         onOpenLinkedMaster={openJournalLinkedMaster}

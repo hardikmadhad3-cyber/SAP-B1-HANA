@@ -21,6 +21,7 @@ import QualitySelectionModal from '../sales-order/components/QualitySelectionMod
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import DocumentCurrencySelect from '../../components/document/DocumentCurrencySelect';
 import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar';
+import JournalEntryPreviewButton from '../../components/journal-entry/JournalEntryPreviewButton';
 import { useRelationshipMapRegistration } from '../../components/relationship-map/RelationshipMapHost';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import CopyFromModal from '../../components/document/CopyFromModal';
@@ -40,6 +41,7 @@ import {
   consumeCopyToState as consumePersistedCopyToState,
   replaceRouteStatePreservingWindow,
 } from '../../utils/copyToState';
+import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import {
@@ -646,6 +648,29 @@ function DCDelivery() {
   useValidationHighlights(valErrors, { rootRef: formRef });
   const [snapshotPending, setSnapshotPending] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+
+  useStandardDocumentDraftTask({
+    draftKey: 'dcDeliveryDraft',
+    title: 'DC Delivery',
+    draftValues: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+    },
+    restoreDraft: (draft) => {
+      setCurrentDocEntry(draft.currentDocEntry || null);
+      setHeader(draft.header || createInitialHeader(generalSettingsRef.current));
+      setLines(Array.isArray(draft.lines) && draft.lines.length
+        ? draft.lines
+        : [createLine(ROW_UDF_DEFINITIONS)]);
+      setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+      setActiveTab(draft.activeTab || 'Contents');
+      setIsDirty(Boolean(draft.isDirty));
+    },
+  });
   const [addressModal, setAddressModal] = useState(null);
   const [taxInfoModal, setTaxInfoModal] = useState(false);
   const [batchModal, setBatchModal] = useState({ open: false, lineIndex: null, availableBatches: [], loading: false, error: '' });
@@ -1477,6 +1502,9 @@ function DCDelivery() {
   };
 
   const getLineDiscountPercent = (line) => {
+    const explicitPercent = String(line.stdDiscount ?? '').trim();
+    if (explicitPercent) return parseNum(explicitPercent);
+
     const price = parseNum(line.unitPrice);
     if (price <= 0) return 0;
     return getLineDiscountAmount(line) * 100 / price;
@@ -3691,7 +3719,7 @@ function DCDelivery() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      refreshDuplicateSeries(refData.series, '', handleSeriesChange);
     }
   };
 
@@ -3867,6 +3895,13 @@ function DCDelivery() {
           classPrefix="del"
           onSuccess={(message) => setPageState(p => ({ ...p, error: '', success: message }))}
           onError={(message) => setPageState(p => ({ ...p, success: '', error: message }))}
+        />
+        <JournalEntryPreviewButton
+          documentType="dcDelivery"
+          documentLabel="DC Delivery"
+          docEntry={currentDocEntry}
+          buildPayload={() => ({ header, lines, header_udfs: headerUdfs, freightCharges: freightModal.freightCharges })}
+          disabled={pageState.posting || pageState.loading}
         />
         <div className="del-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
           <button
@@ -4531,6 +4566,7 @@ function DCDelivery() {
         availableBatches={batchModal.availableBatches}
         loading={batchModal.loading}
         error={batchModal.error}
+        workspaceRef={formRef}
         onClose={closeBatchModal}
         onSave={saveLineBatches}
       />

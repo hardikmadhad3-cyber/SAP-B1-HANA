@@ -27,17 +27,24 @@ import PrintLayoutToolbar from '../../components/print-layout/PrintLayoutToolbar
 import FreightChargesModal from '../../components/freight/FreightChargesModal';
 import { summarizeFreightRows } from '../../components/freight/freightUtils';
 import { useSapWindowTaskbarActions } from '../../components/SapWindowTaskbarContext';
+import useStandardDocumentDraftTask from '../../hooks/useStandardDocumentDraftTask';
 import { determineTaxCode, recalculateAllTaxCodes, getGSTTypeLabel } from '../../utils/taxEngine';
 import { filterWarehousesByBranch } from '../../utils/warehouseBranch';
 import { hydrateDocumentLineFromItem, mergeItemMaster } from '../../utils/documentItemHydration';
 import { FALLBACK_UOM, FALLBACK_WAREHOUSES } from '../../utils/fallbackReferenceData';
 import { getDefaultSeriesForCurrentYear } from '../../utils/seriesDefaults';
+import {
+  SAP_MANUAL_SERIES_VALUE,
+  isManualDocumentSeries,
+  isValidManualDocumentNumber,
+} from '../../utils/documentSeries';
 import { useCompanyScopedFormSettings } from '../../utils/formSettingsStorage';
 import { buildVisibleEnteredRowUdfPayload } from '../../utils/rowUdfPayload';
 import { getStateCodeValue, getStateDisplayName } from '../../utils/stateDisplay';
 import { findTaxCode, getTaxComponentCodes, taxCodeHasComponent } from '../../utils/taxCodeComponents';
 import { copyToDocument } from '../../services/documentCopyService';
-import { duplicateDocumentInPlace, refreshDuplicateSeries } from '../../utils/documentDuplicate';
+import { replaceRouteStatePreservingWindow } from '../../utils/copyToState';
+import { duplicateDocumentInPlace } from '../../utils/documentDuplicate';
 import useValidationHighlights from '../../utils/useValidationHighlights';
 import useSalesEmployeeSetup from '../../hooks/useSalesEmployeeSetup';
 import useSalesDocumentLineLookups from '../../hooks/useSalesDocumentLineLookups';
@@ -205,6 +212,17 @@ const INIT_HEADER = {
   shipToAddressComponents: null, billToAddressComponents: null,
 };
 
+const createInitialHeader = () => ({
+  ...INIT_HEADER,
+  postingDate: today(),
+  documentDate: today(),
+  deliveryDate: '',
+  docNo: '',
+  nextNumber: '',
+  series: '',
+  status: 'Open',
+});
+
 const resolveCurrencyCode = (currency, fallback = 'INR') => {
   const normalized = String(currency || '').trim();
   return normalized && normalized !== '##' ? normalized : fallback;
@@ -222,6 +240,179 @@ const isUomNameColumn = (column = {}) => {
   ].map((value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, ''));
 
   return tokens.some((token) => ['UOMNAME', 'UNITMSR'].includes(token));
+};
+
+const normalizeSalesQuotationColumnToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^U_/, 'U')
+    .replace(/[^A-Z0-9]+/g, '');
+
+const SALES_QUOTATION_LAYOUT_KEY_ALIASES = {
+  ITEMCODE: 'itemNo',
+  ITEMNO: 'itemNo',
+  DSCRIPTION: 'itemDescription',
+  DESCRIPTION: 'itemDescription',
+  ITEMDESCRIPTION: 'itemDescription',
+  ITEMSERVICEDESCRIPTION: 'itemDescription',
+  ITEMSERVICEDESCRIPTION200CHARACTERS: 'itemDescription',
+  QUANTITY: 'quantity',
+  QTY: 'quantity',
+  UNITMSR: 'uomName',
+  UOMNAME: 'uomName',
+  HSN: 'hsnCode',
+  HSNCODE: 'hsnCode',
+  HSNENTRY: 'hsnCode',
+  PRICE: 'unitPrice',
+  PRICEBEFDI: 'unitPrice',
+  UNITPRICE: 'unitPrice',
+  TAXCODE: 'taxCode',
+  VATGROUP: 'taxCode',
+  TOTAL: 'totalLC',
+  TOTALLC: 'totalLC',
+  LINETOTAL: 'totalLC',
+  GTOTAL: 'totalLC',
+  PACKINGTYPE: 'U_PackingType',
+  UPACKINGTYPE: 'U_PackingType',
+  UPACKINGSTATUS: 'U_PackingType',
+  OCRCODE: 'distRule',
+  DISTRULE: 'distRule',
+  DISTRRULE: 'distRule',
+  DISTRIBUTIONRULE: 'distRule',
+  UTAXCODE: 'taxCodeRepeat',
+  UPRICE: 'price',
+  UBROKSELLER: 'sellerBrokerage',
+  SELLERBROKERAGE: 'sellerBrokerage',
+  UBROKBUYER: 'buyerBrokerage',
+  BUYERBROKERAGE: 'buyerBrokerage',
+  UBUYERDELIVERY: 'buyerDelivery',
+  BUYERDELIVERY: 'buyerDelivery',
+  USELLERDELIVERY: 'sellerDelivery',
+  SELLERDELIVERY: 'sellerDelivery',
+  UBUYERPAYMENTTERM: 'buyerPaymentTerms',
+  UBUYERPAYMENTTERMS: 'buyerPaymentTerms',
+  BUYERTERMSOFPAYMENT: 'buyerPaymentTerms',
+  USELLERPAYMENTTER: 'sellerPaymentTerms',
+  USELLERPAYMENTTERM: 'sellerPaymentTerms',
+  USELLERPAYMENTTERMS: 'sellerPaymentTerms',
+  SELLERTERMSOFPAYMENT: 'sellerPaymentTerms',
+  UBUYERQUALITY: 'buyerQuality',
+  BUYERQUALITY: 'buyerQuality',
+  USELLERQUALITY: 'sellerQuality',
+  SELLERQUALITY: 'sellerQuality',
+  UBUYERPRICE: 'buyerPrice',
+  BUYERPRICE: 'buyerPrice',
+  USELLERPRICE: 'sellerPrice',
+  SELLERPRICE: 'sellerPrice',
+  UBUYERSPINS: 'buyerSpecialInstruction',
+  BUYERSPECIALINSTRUCTION: 'buyerSpecialInstruction',
+  USELLERSPINS: 'sellerSpecialInstruction',
+  SELLERSPECIALINSTRUCTION: 'sellerSpecialInstruction',
+  USELBROKAP: 'sellerBrokerageAmtPer',
+  SELLERBROKERAGEAMTPER: 'sellerBrokerageAmtPer',
+  USELLERBROKPER: 'sellerBrokeragePercent',
+  SELLERBROKERAGEINPERCENTAGE: 'sellerBrokeragePercent',
+  USELLTCODE: 'stcode',
+  USTCODE: 'stcode',
+  STCODE: 'stcode',
+  USITEM: 'sellerItem',
+  SITEM: 'sellerItem',
+  USQTY: 'sellerQty',
+  SQTY: 'sellerQty',
+  USPLRBT: 'specialRebate',
+  SPECIALREBATE: 'specialRebate',
+  UCOMPRC: 'commission',
+  COMMISION: 'commission',
+  COMMISSION: 'commission',
+  USBROKPERQTY: 'sellerBrokeragePerQty',
+  BROKPERQTY: 'sellerBrokeragePerQty',
+  UFIXBROCKB: 'U_Fix_Brock_B',
+  UFIXBROKB: 'U_Fix_Brock_B',
+  UFIXBROKBUYER: 'U_Fix_Brock_B',
+  FIXBROKBUYER: 'U_Fix_Brock_B',
+  UFIXBROCKS: 'U_Fix_Brock_S',
+  UFIXBROKS: 'U_Fix_Brock_S',
+  UFIXBROCKSELLER: 'U_Fix_Brock_S',
+  UFIXBROKSELLER: 'U_Fix_Brock_S',
+  FIXBROCKSELLER: 'U_Fix_Brock_S',
+  FIXBROKSELLER: 'U_Fix_Brock_S',
+};
+
+const getSalesQuotationCanonicalColumnKey = (column = {}) => {
+  const candidates = [
+    column.key,
+    column.valueKey,
+    column.rendererKey,
+    column.sapField,
+    column.fieldName,
+    column.layoutFieldName,
+    column.sapColumnId,
+    column.columnTitle,
+    column.label,
+  ];
+
+  for (const candidate of candidates) {
+    const key = SALES_QUOTATION_LAYOUT_KEY_ALIASES[normalizeSalesQuotationColumnToken(candidate)];
+    if (key) return key;
+  }
+
+  return '';
+};
+
+const getSalesQuotationItemDescription = (item = {}, fallback = '') => (
+  item.ItemName ||
+  item.ItemDescription ||
+  item.Dscription ||
+  item.Description ||
+  item.ItemDesc ||
+  item.FrgnName ||
+  fallback ||
+  ''
+);
+
+const normalizeSalesQuotationMatrixColumns = (columns = []) => {
+  const sourceColumns = Array.isArray(columns) ? columns : [];
+  const desiredColumns = BASE_MATRIX_COLUMNS;
+  const desiredByKey = new Map(desiredColumns.map((column) => [column.key, column]));
+  const sourceByCanonicalKey = new Map();
+
+  sourceColumns.forEach((column) => {
+    const key = getSalesQuotationCanonicalColumnKey(column);
+    if (key && desiredByKey.has(key) && !sourceByCanonicalKey.has(key)) {
+      sourceByCanonicalKey.set(key, column);
+    }
+  });
+
+  return desiredColumns.map((desiredColumn, index) => {
+    const sourceColumn = sourceByCanonicalKey.get(desiredColumn.key) || {};
+    const minWidth = Math.max(
+      Number(desiredColumn.minWidth) || 125,
+      Number(sourceColumn.minWidth || sourceColumn.width) || 0,
+    );
+
+    return {
+      ...sourceColumn,
+      ...desiredColumn,
+      key: desiredColumn.key,
+      valueKey: desiredColumn.valueKey || desiredColumn.key,
+      rendererKey: desiredColumn.rendererKey || desiredColumn.valueKey || desiredColumn.key,
+      label: desiredColumn.label,
+      visible: desiredColumn.visible !== false,
+      active: sourceColumn.active !== false,
+      readOnly: desiredColumn.readOnly ?? sourceColumn.readOnly,
+      minWidth,
+      width: minWidth,
+      order: index + 1,
+      columnOrder: index + 1,
+      type: desiredColumn.type || (desiredColumn.numeric ? 'number' : 'text'),
+      numeric: Boolean(desiredColumn.numeric),
+      isUdf: Boolean(desiredColumn.isUdf),
+      importedLayout: Boolean(sourceColumn.importedLayout),
+      sapControlled: Boolean(sourceColumn.sapControlled),
+      source: sourceColumn.source || desiredColumn.source || 'sales-quotation-workbook',
+    };
+  });
 };
 
 const ensureSalesQuotationMatrixColumns = (columns = []) => {
@@ -308,10 +499,11 @@ function SalesQuotation() {
     company: '', vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [], items: [],
     warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
     payment_terms: [], shipping_types: [], branches: [], uom_groups: [], sales_employees: [], owners: [],
-    countries: [], distribution_rules: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
+    countries: [], distribution_rules: [], distribution_dimensions: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
     company_currencies: { localCurrency: 'INR', systemCurrency: 'INR' },
     decimal_settings: DEC, warnings: [], series: [], states: [], udf_metadata: { header: [], rows: [] },
     line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
+    lookup_sources: {},
   });
   const [pageState, setPageState] = useState({ loading: false, vendorLoading: false, posting: false, error: '', success: '', seriesLoading: false });
   const [valErrors, setValErrors] = useState({ header: {}, lines: {}, form: '' });
@@ -327,6 +519,35 @@ function SalesQuotation() {
   const [hsnModal, setHsnModal] = useState({ open: false, lineIndex: -1 });
   const [itemModal, setItemModal] = useState({ open: false, lineIndex: -1, items: [], loading: false });
   const [freightModal, setFreightModal] = useState({ open: false, freightCharges: [], loading: false });
+
+  useStandardDocumentDraftTask({
+    draftKey: 'salesQuotationDraft',
+    title: 'Sales Quotation',
+    draftValues: {
+      currentDocEntry,
+      header,
+      lines,
+      headerUdfs,
+      activeTab,
+      isDirty,
+      freightCharges: freightModal.freightCharges,
+    },
+    restoreDraft: (draft) => {
+      setCurrentDocEntry(draft.currentDocEntry || null);
+      setHeader(draft.header || INIT_HEADER);
+      setLines(Array.isArray(draft.lines) && draft.lines.length
+        ? draft.lines
+        : [createLine(ROW_UDF_DEFINITIONS)]);
+      setHeaderUdfs(draft.headerUdfs || normalizeUdfState(HEADER_UDF_DEFINITIONS));
+      setActiveTab(draft.activeTab || 'Contents');
+      setIsDirty(Boolean(draft.isDirty));
+      setFreightModal((prev) => ({
+        ...prev,
+        freightCharges: Array.isArray(draft.freightCharges) ? draft.freightCharges : [],
+        loading: false,
+      }));
+    },
+  });
   const [copyFromModal, setCopyFromModal] = useState(false);
   const [addressForm, setAddressForm] = useState({
     shipToCode: '', shipToAddress: '', billToCode: '', billToAddress: '',
@@ -488,10 +709,11 @@ function SalesQuotation() {
             vendors: [], contacts: [], pay_to_addresses: [], ship_to_addresses: [], bill_to_addresses: [],
             items: [], warehouses: [], warehouse_addresses: [], company_address: {}, tax_codes: [], hsn_codes: [],
             payment_terms: [], shipping_types: [], branches: [], states: [], uom_groups: [], sales_employees: [], owners: [],
-            countries: [], distribution_rules: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
+            countries: [], distribution_rules: [], distribution_dimensions: [], quality_options: { buyer: [], seller: [] }, price_options: { buyer: [], seller: [] },
             company_currencies: { localCurrency: 'INR', systemCurrency: 'INR' },
             udf_metadata: { header: [], rows: [] },
             line_field_metadata: { matrix_columns: BASE_MATRIX_COLUMNS, sap_form: {} },
+            lookup_sources: {},
           }));
           return;
         }
@@ -558,12 +780,12 @@ function SalesQuotation() {
           const liveMatrixColumns = refDataRes.data.line_field_metadata?.matrix_columns?.length
             ? refDataRes.data.line_field_metadata.matrix_columns
             : BASE_MATRIX_COLUMNS;
-          const nextMatrixColumns = ensureSalesQuotationMatrixColumns(buildSalesOrderMatrixColumnsFromLayout({
+          const nextMatrixColumns = normalizeSalesQuotationMatrixColumns(ensureSalesQuotationMatrixColumns(buildSalesOrderMatrixColumnsFromLayout({
             layoutColumns: layoutRes?.data?.columns || [],
             liveMatrixColumns,
             rowUdfFields: nextRowUdfs,
             includeLineNumber: false,
-          }));
+          })));
           setHeaderUdfDefinitions(nextHeaderUdfs);
           setRowUdfDefinitions(nextRowUdfs);
           setMatrixColumnDefinitions(nextMatrixColumns);
@@ -610,6 +832,7 @@ function SalesQuotation() {
               matrix_columns: nextMatrixColumns,
               imported_layout: layoutRes?.data || null,
             },
+            lookup_sources: refDataRes.data.lookup_sources || {},
             series: Array.isArray(prev.series) ? prev.series : [],
           }));
         }
@@ -626,7 +849,7 @@ function SalesQuotation() {
 
   // ── load existing order ───────────────────────────────────────────────────
   useEffect(() => {
-    if (currentDocEntry || requestedEditDocEntry) return;
+    if (currentDocEntry) return;
 
     const seriesDate = String(header.postingDate || '').trim();
     if (!seriesDate) {
@@ -642,9 +865,11 @@ function SalesQuotation() {
         const seriesResponse = await fetchDocumentSeries(seriesDate);
         const availableSeries = seriesResponse.data?.series || [];
 
-        if (ignore || requestedEditDocEntry) return;
+        if (ignore) return;
 
         setRefData(prev => ({ ...prev, series: availableSeries }));
+
+        if (isManualDocumentSeries(header.series)) return;
 
         if (!availableSeries.length) {
           setHeader(prev => ({ ...prev, series: '', nextNumber: '' }));
@@ -666,7 +891,7 @@ function SalesQuotation() {
 
     loadSeriesForPostingDate();
     return () => { ignore = true; };
-  }, [currentDocEntry, requestedEditDocEntry, header.postingDate]);
+  }, [currentDocEntry, header.postingDate]);
 
   useEffect(() => {
     const docEntry = requestedEditDocEntry;
@@ -798,7 +1023,7 @@ function SalesQuotation() {
       } finally {
         if (!ignore) {
           setPageState(p => ({ ...p, loading: false }));
-          navigate(location.pathname, { replace: true, state: null });
+          replaceRouteStatePreservingWindow(navigate, location.pathname, location.state);
         }
       }
     };
@@ -1329,6 +1554,12 @@ function SalesQuotation() {
   
   const handleSeriesChange = async (seriesValue) => {
     if (!seriesValue) return;
+
+    if (isManualDocumentSeries(seriesValue)) {
+      setHeader(p => ({ ...p, series: SAP_MANUAL_SERIES_VALUE, nextNumber: '' }));
+      setPageState(p => ({ ...p, seriesLoading: false, error: '', success: '' }));
+      return;
+    }
     
     setPageState(p => ({ ...p, seriesLoading: true }));
     setHeader(p => ({ ...p, series: seriesValue, nextNumber: '...' }));
@@ -1341,6 +1572,30 @@ function SalesQuotation() {
       setPageState(p => ({ ...p, error: 'Failed to get next document number' }));
     } finally {
       setPageState(p => ({ ...p, seriesLoading: false }));
+    }
+  };
+
+  const refreshAddModeSeries = async (postingDateValue = today(), selectedSeries = '') => {
+    const seriesDate = String(postingDateValue || today()).trim();
+    if (!seriesDate) {
+      setRefData(prev => ({ ...prev, series: [] }));
+      setHeader(prev => ({ ...prev, series: '', nextNumber: '' }));
+      return;
+    }
+
+    try {
+      const seriesResponse = await fetchDocumentSeries(seriesDate);
+      const availableSeries = seriesResponse.data?.series || [];
+      setRefData(prev => ({ ...prev, series: availableSeries }));
+
+      const defaultSeries = resolvePreferredSeries(availableSeries, seriesDate, selectedSeries);
+      if (defaultSeries?.Series != null) {
+        await handleSeriesChange(defaultSeries.Series);
+      } else {
+        setHeader(prev => ({ ...prev, series: '', nextNumber: '' }));
+      }
+    } catch (e) {
+      setPageState(p => ({ ...p, error: getErrMsg(e, 'Failed to load document series.') }));
     }
   };
 
@@ -1371,7 +1626,7 @@ function SalesQuotation() {
             const next = { ...line, itemNo: value };
             
             // Step 1: Set Item Details
-            next.itemDescription = item.ItemName || next.itemDescription;
+            next.itemDescription = getSalesQuotationItemDescription(item, next.itemDescription);
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
             next.uomName = next.uomCode || next.uomName || '';
             
@@ -1383,7 +1638,7 @@ function SalesQuotation() {
             
             console.log('🔍 Item Selected:', {
               itemCode: item.ItemCode,
-              itemName: item.ItemName,
+              itemName: getSalesQuotationItemDescription(item),
               hsnCode: next.hsnCode,
               baseTaxCode: baseTaxCode,
               placeOfSupply: header.placeOfSupply,
@@ -1434,7 +1689,7 @@ function SalesQuotation() {
           const next = { ...line, itemNo: value };
           const item = refData.items.find(it => String(it.ItemCode || '') === String(value || ''));
           if (item) {
-            next.itemDescription = item.ItemName || next.itemDescription;
+            next.itemDescription = getSalesQuotationItemDescription(item, next.itemDescription);
             next.uomCode = String(item.SalesUnit || item.InventoryUOM || '').trim();
             next.uomName = next.uomCode || next.uomName || '';
             next.hsnCode = item.SWW || item.HSNCode || item.U_HSNCode || next.hsnCode || '';
@@ -1952,6 +2207,8 @@ function SalesQuotation() {
 
     const copySource = unwrapCopyFromDocument(documentData);
     const normalizedHeader = normaliseDocumentHeader(copySource.header);
+    const sourceHeaderUdfs = copySource.document?.header_udfs || copySource.source?.header_udfs || documentData?.header_udfs || {};
+    const sourceFreightCharges = copySource.document?.freightCharges || copySource.source?.freightCharges || documentData?.freightCharges || [];
     const rawLines = copySource.lines;
     const baseEntry = copySource.docEntry || documentData?.baseDocument?.baseEntry || null;
     const baseType = BASE_TYPE[docType] || BASE_TYPE.salesQuotation;
@@ -1970,7 +2227,7 @@ function SalesQuotation() {
       warehouse: firstLineWarehouse || prev.warehouse,
       otherInstruction: normalizedHeader.otherInstruction || prev.otherInstruction,
       docNo: '',
-      nextNumber: currentDocEntry ? '' : prev.nextNumber,
+      nextNumber: prev.nextNumber,
       status: 'Open',
     }));
 
@@ -1999,6 +2256,8 @@ function SalesQuotation() {
     });
 
     setLines(copiedLines.length ? copiedLines : [createLine(rowUdfDefinitions)]);
+    setHeaderUdfs(normalizeUdfState(headerUdfDefinitions, sourceHeaderUdfs));
+    setFreightModal({ open: false, freightCharges: Array.isArray(sourceFreightCharges) ? sourceFreightCharges : [], loading: false });
 
     if (normalizedHeader.vendor) {
       loadVendorDetails(normalizedHeader.vendor);
@@ -2028,11 +2287,12 @@ function SalesQuotation() {
     });
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
+    const resetHeader = createInitialHeader();
     const duplicated = duplicateDocumentInPlace({
       currentDocEntry,
       header,
-      initialHeader: INIT_HEADER,
+      initialHeader: resetHeader,
       lines: lines.map((line) => ({
         ...line,
         taxCodeManuallyOverridden: Boolean(String(line.taxCode || '').trim()),
@@ -2054,7 +2314,17 @@ function SalesQuotation() {
     });
 
     if (duplicated) {
-      refreshDuplicateSeries(refData.series, header.series, handleSeriesChange);
+      setHeader(prev => ({
+        ...prev,
+        postingDate: resetHeader.postingDate,
+        documentDate: resetHeader.documentDate,
+        deliveryDate: resetHeader.deliveryDate,
+        docNo: '',
+        nextNumber: '',
+        series: '',
+        status: 'Open',
+      }));
+      await refreshAddModeSeries(resetHeader.postingDate);
     }
   };
 
@@ -2111,6 +2381,12 @@ function SalesQuotation() {
   const validate = () => {
     const isUpdate = !!currentDocEntry;
     const e = { header: {}, lines: {}, form: '' };
+
+    if (!isUpdate && isManualDocumentSeries(header.series) && !isValidManualDocumentNumber(header.nextNumber)) {
+      e.header.nextNumber = 'Enter a positive document number for Manual series.';
+      e.form = 'Please correct the highlighted fields.';
+      return e;
+    }
     
     if (!isUpdate) {
       const vc = String(header.vendor || '').trim();
@@ -2272,11 +2548,45 @@ function SalesQuotation() {
         hsnCode: line.hsnCode,
         quantity: line.quantity,
         unitPrice: line.unitPrice,
+        price: line.price,
+        sellerPrice: line.sellerPrice,
+        buyerPrice: line.buyerPrice,
+        sellerDelivery: line.sellerDelivery,
+        buyerDelivery: line.buyerDelivery,
+        sellerBrokerageAmtPer: line.sellerBrokerageAmtPer,
+        sellerBrokeragePercent: line.sellerBrokeragePercent,
+        sellerBrokerage: line.sellerBrokerage,
+        buyerBrokerage: line.buyerBrokerage,
+        specialRebate: line.specialRebate,
+        commission: line.commission,
+        sellerBrokeragePerQty: line.sellerBrokeragePerQty,
+        unitPriceUdf: line.unitPriceUdf,
+        buyerPaymentTerms: line.buyerPaymentTerms,
+        sellerPaymentTerms: line.sellerPaymentTerms,
+        buyerQuality: line.buyerQuality,
+        sellerQuality: line.sellerQuality,
+        buyerSpecialInstruction: line.buyerSpecialInstruction,
+        sellerSpecialInstruction: line.sellerSpecialInstruction,
+        buyerBillDiscount: line.buyerBillDiscount,
+        sellerBillDiscount: line.sellerBillDiscount,
+        sellerItem: line.sellerItem,
+        sellerQty: line.sellerQty,
         uomCode: line.uomCode,
+        uomName: line.uomName,
         stdDiscount: line.stdDiscount,
+        stcode: line.stcode,
         taxCode: line.taxCode,
+        taxCodeRepeat: line.taxCodeRepeat,
         total: line.total,
         whse: line.whse,
+        distRule: line.distRule,
+        distRule2: line.distRule2,
+        distRule3: line.distRule3,
+        distRule4: line.distRule4,
+        distRule5: line.distRule5,
+        freeText: line.freeText,
+        countryOfOrigin: line.countryOfOrigin,
+        sacCode: line.sacCode,
         loc: line.loc,
         branch: line.branch,
         baseEntry: line.baseEntry,
@@ -2295,16 +2605,15 @@ function SalesQuotation() {
       
       const r = currentDocEntry ? await updateSalesQuotation(currentDocEntry, payload) : await submitSalesQuotation(payload);
       const dn = r.data.doc_num ? ` Doc No: ${r.data.doc_num}.` : '';
+      const resetHeader = createInitialHeader();
       setSnapshotPending(false);
       setIsDirty(false);
-      setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+      setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
+      setFreightModal({ open: false, freightCharges: [], loading: false });
       setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
       setRefData(p => ({ ...p, contacts: [], pay_to_addresses: [] }));
       setValErrors({ header: {}, lines: {}, form: '' });
-      
-      if (refData.series.length > 0) {
-        handleSeriesChange(refData.series[0].Series);
-      }
+      await refreshAddModeSeries(resetHeader.postingDate);
       
       setPageState(p => ({ ...p, success: `${r.data.message || 'Sales Quotation saved.'}${dn}` }));
     } catch (e) {
@@ -2316,13 +2625,16 @@ function SalesQuotation() {
     }
   };
 
-  const resetForm = () => {
+  const resetForm = async () => {
+    const resetHeader = createInitialHeader();
     setSnapshotPending(false);
     setIsDirty(false);
-    setCurrentDocEntry(null); setHeader(INIT_HEADER); setLines([createLine(rowUdfDefinitions)]);
+    setCurrentDocEntry(null); setHeader(resetHeader); setLines([createLine(rowUdfDefinitions)]);
+    setFreightModal({ open: false, freightCharges: [], loading: false });
     setHeaderUdfs(createUdfState(headerUdfDefinitions)); setActiveTab('Contents');
     setValErrors({ header: {}, lines: {}, form: '' });
     setPageState(p => ({ ...p, error: '', success: '' }));
+    await refreshAddModeSeries(resetHeader.postingDate);
   };
 
   const visHdrUdfs = headerUdfDefinitions.filter(f => formSettings.headerUdfs?.[f.key]?.visible !== false);
@@ -2587,6 +2899,7 @@ function SalesQuotation() {
                         disabled={!!currentDocEntry || pageState.seriesLoading}
                       >
                         <option value="">Select Series</option>
+                        <option value={SAP_MANUAL_SERIES_VALUE}>Manual</option>
                         {refData.series.map(s => (
                           <option key={s.Series} value={s.Series}>
                             {s.SeriesName}
@@ -2600,10 +2913,13 @@ function SalesQuotation() {
                       <label className="so-field__label">Number</label>
                       <input 
                         name="nextNumber" 
-                        className="so-field__input" 
+                        className={`so-field__input${valErrors.header.nextNumber ? ' so-field__input--error' : ''}`}
                         value={currentDocEntry ? (header.docNo || header.nextNumber || '') : (header.nextNumber || '')}
-                        readOnly 
-                        style={{ background: '#f0f2f5' }}
+                        onChange={handleHeaderChange}
+                        readOnly={!!currentDocEntry || !isManualDocumentSeries(header.series)}
+                        inputMode="numeric"
+                        style={{ background: !currentDocEntry && isManualDocumentSeries(header.series) ? '#fff' : '#f0f2f5' }}
+                        title={isManualDocumentSeries(header.series) ? 'Enter the manual document number' : 'Number will be assigned from the selected series'}
                       />
                     </div>
 
@@ -2682,6 +2998,7 @@ function SalesQuotation() {
                 valErrors={valErrors}
                 branches={refData.branches}
                 distributionRules={refData.distribution_rules || []}
+                distributionDimensions={refData.distribution_dimensions || []}
                 countries={refData.countries || []}
                 onOpenHSNModal={openHSNModal}
                 onOpenItemModal={openItemModal}
@@ -2690,6 +3007,7 @@ function SalesQuotation() {
                 getBranchName={getBranchName}
                 formSettings={formSettings}
                 matrixFields={matrixColumnDefinitions}
+                useSapMatrixOrder={Boolean(refData.line_field_metadata?.sap_form?.preferenceRows)}
                 rowUdfFields={visibleRowUdfs}
                 onRowUdfChange={handleRowUdfChange}
               />
@@ -2759,14 +3077,6 @@ function SalesQuotation() {
                       ))}
                       <option value="__DEFINE_NEW__">Define New</option>
                     </select>
-                    {/* Debug info */}
-                    <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
-                      {header.purchaser ? (
-                        <span>Selected: {header.purchaser} | Available: {effectiveSalesEmployees.length} employees</span>
-                      ) : (
-                        <span>No selection | Available: {effectiveSalesEmployees.length} employees</span>
-                      )}
-                    </div>
                   </div>
                   <div className="so-field">
                     <label className="so-field__label">Owner</label>
@@ -2784,14 +3094,6 @@ function SalesQuotation() {
                         </option>
                       ))}
                     </select>
-                    {/* Debug info */}
-                    <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
-                      {header.owner ? (
-                        <span>Selected: {header.owner} | Available: {(refData.owners || []).length} owners</span>
-                      ) : (
-                        <span>No selection | Available: {(refData.owners || []).length} owners</span>
-                      )}
-                    </div>
                   </div>
                   <div className="so-field">
                     <label className="so-field__label">Remarks</label>

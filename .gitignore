@@ -1,2 +1,60 @@
+# Dependencies
 node_modules/
-backend/data/*.sqlite*
+.pnp/
+.pnp.js
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Local databases and runtime data
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# Build and deployment output
+dist/
+build/
+out/
+coverage/
+.cache/
+
+# Logs and process files
+logs/
+*.log
+*.pid
+*.pid.lock
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local archives, exports, and temporary documents
+*.zip
+*.7z
+*.rar
+*.docx
+*.xlsx
+~$*
+/scripts/tablename
+
+# Editor, OS, and local AI-tool files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+.agents/
+.codex/
+.kiro/
+.agent.md
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~

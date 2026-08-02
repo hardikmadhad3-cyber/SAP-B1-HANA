@@ -4,6 +4,7 @@ import { createPredefinedText, fetchPredefinedTexts } from '../../api/predefined
 import SapLookupModal from '../common/SapLookupModal';
 import LineValueLookupModal from '../sales-document/LineValueLookupModal';
 import BusinessPartnerModal from '../../modules/sales-order/components/BusinessPartnerModal';
+import { matchesSapSearchText } from '../../utils/sapSearch';
 
 const SELLER_CODE_KEY = 'U_Seller_Code';
 const SELLER_NAME_KEY = 'U_Seller_Name';
@@ -587,10 +588,9 @@ function SellerAddressModal({
     const usableAddresses = dedupeAddresses(addresses);
     if (!searchTerm.trim()) return usableAddresses;
 
-    const term = searchTerm.toLowerCase();
     return usableAddresses.filter((address) =>
-      getAddressId(address).toLowerCase().includes(term) ||
-      formatAddressRowText(address).toLowerCase().includes(term)
+      matchesSapSearchText(getAddressId(address), searchTerm) ||
+      matchesSapSearchText(formatAddressRowText(address), searchTerm)
     );
   }, [addresses, searchTerm]);
 

@@ -4,6 +4,7 @@ const authDbService = require('./authDbService');
 const { getRequestContext } = require('./requestContextService');
 const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
+const { buildDocumentSeriesPayload } = require('./documentSeriesPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { isSapUdfKey, normalizeUdfValues } = require('./udfPayloadUtils');
 
@@ -89,12 +90,8 @@ const getVendorDetails = async (vendorCode) => {
     const data = await purchaseOrderDb.getVendorDetails(vendorCode);
     return data;
   } catch (error) {
-    return {
-      contacts: [],
-      pay_to_addresses: [],
-      ship_to_addresses: [],
-      bill_to_addresses: [],
-    };
+    console.error('[Purchase Order Service] Failed to load vendor details:', error);
+    throw error;
   }
 };
 
@@ -185,9 +182,9 @@ const getPurchaseOrder = async (docEntry) => {
 
 // ───────── DOCUMENT SERIES (USING ODBC) ─────────
 
-const getDocumentSeries = async () => {
+const getDocumentSeries = async (targetDate = null) => {
   try {
-    const result = await purchaseOrderDb.getDocumentSeries();
+    const result = await purchaseOrderDb.getDocumentSeries(targetDate);
     return result;
   } catch (error) {
     console.error('[PurchaseOrderService] Failed to load live SAP B1 purchase order series:', error.message);
@@ -336,8 +333,7 @@ const buildPurchaseOrderPayload = async (
     DocDate: header.postingDate || header.documentDate,
     DocDueDate: header.deliveryDate || header.postingDate || header.documentDate,
     TaxDate: header.documentDate || header.postingDate,
-    // Series for auto-numbering - only include if explicitly provided and valid
-    ...(header.series && Number(header.series) > 0 ? { Series: Number(header.series) } : {}),
+    ...buildDocumentSeriesPayload(header),
     BPL_IDAssignedToInvoice: header.branch ? Number(header.branch) : undefined,
     DocCurrency: header.currency || 'INR',
     PaymentGroupCode: header.paymentTerms ? Number(header.paymentTerms) : undefined,
@@ -352,6 +348,7 @@ const buildPurchaseOrderPayload = async (
     JournalMemo: header.journalRemark,
     Confirmed: toSapYesNo(forceConfirmed ? true : header.confirmed, true),
     DiscountPercent: toNumberOrUndefined(header.discount),
+    Rounding: toSapYesNo(header.rounding),
     DocumentAdditionalExpenses: buildDocumentAdditionalExpenses(freightCharges),
     DocumentLines: await buildDocumentLines(lines),
   });

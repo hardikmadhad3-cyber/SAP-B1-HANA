@@ -22,7 +22,7 @@
   gap: 8px;
   justify-content: flex-end;
   padding: 8px 12px 10px;
-  border-top: 1px solid #d7dde5;
+  border-top: 1px solid var(--sap-border-soft, #e3e8ee);
 }
 
 .sar-window__footer--split {
@@ -75,7 +75,7 @@
   margin-bottom: 8px;
   font-size: 12px;
   font-weight: 700;
-  color: #003366;
+  color: var(--sap-heading, #0a4a85);
 }
 
 .sar-radio-stack {
@@ -117,7 +117,7 @@
 
 .sar-date-separator {
   font-size: 12px;
-  color: #444;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .sar-secondary-toggle,
@@ -148,7 +148,7 @@
 
 .sar-grid tfoot td {
   font-weight: 700;
-  border-top: 2px solid #a0aab4;
+  border-top: 2px solid var(--sap-border-strong, #aab8c4);
 }
 
 .sar-grid__cell--num {
@@ -157,13 +157,13 @@
 }
 
 .sar-grid__row-link {
-  color: #005a9e;
+  color: var(--sap-primary, #0a6ed1);
   cursor: pointer;
   text-decoration: underline;
 }
 
 .sar-row-arrow {
-  color: #0066cc;
+  color: var(--sap-primary, #0a6ed1);
   margin-right: 6px;
   font-size: 12px;
   font-weight: bold;
@@ -172,17 +172,17 @@
 .sar-row-arrow-btn {
   padding: 2px 6px;
   margin: 0 6px 0 0;
-  border: 1px solid #0066cc;
-  background: #f0f8ff;
+  border: 1px solid var(--sap-primary, #0a6ed1);
+  background: var(--sap-primary-soft, rgba(10, 110, 209, 0.13));
   cursor: pointer;
   line-height: 1;
-  border-radius: 3px;
+  border-radius: var(--sap-radius-xs, 4px);
   transition: all 0.2s ease;
   font-size: 12px;
 }
 
 .sar-row-arrow-btn:hover {
-  background-color: #0066cc;
+  background-color: var(--sap-primary, #0a6ed1);
   color: white;
   transform: translateX(2px);
 }
@@ -202,16 +202,21 @@
 .sar-result-hint {
   margin-bottom: 8px;
   font-size: 12px;
-  color: #555;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .sar-chart-btn {
   width: 28px;
   height: 24px;
-  border: 1px solid #a0aab4;
-  background: linear-gradient(180deg, #fff9d6 0%, #f1d35d 100%);
-  border-radius: 2px;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
+  background: linear-gradient(180deg, #ffffff 0%, var(--sap-toolbar-bg, #eef2f7) 100%);
+  border-radius: var(--sap-radius-xs, 4px);
   cursor: pointer;
+}
+
+.sar-chart-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #dfe8f1 100%);
+  border-color: var(--sap-primary, #0a6ed1);
 }
 
 .sar-chart-btn:disabled {
@@ -221,7 +226,7 @@
 
 .sar-charts-panel {
   margin-top: 14px;
-  border-top: 1px solid #dde4ec;
+  border-top: 1px solid var(--sap-border, #d5dce3);
   padding-top: 12px;
 }
 
@@ -232,15 +237,16 @@
 }
 
 .sar-chart-card {
-  border: 1px solid #c8d0da;
-  background: linear-gradient(180deg, #eef6ff 0%, #f7fbff 100%);
+  border: 1px solid var(--sap-border, #d5dce3);
+  border-radius: var(--sap-radius-sm, 6px);
+  background: var(--sap-surface-soft, #f7fafc);
   padding: 10px 12px 12px;
 }
 
 .sar-chart-card__title {
   font-size: 12px;
   font-weight: 700;
-  color: #28445f;
+  color: var(--sap-heading, #0a4a85);
   margin-bottom: 6px;
 }
 
@@ -251,14 +257,14 @@
 }
 
 .sar-chart-axis {
-  stroke: #8da0b3;
+  stroke: var(--sap-border-strong, #aab8c4);
   stroke-width: 1;
 }
 
 .sar-chart-tick,
 .sar-chart-label {
   font-size: 11px;
-  fill: #45586b;
+  fill: var(--sap-text-muted, #64748b);
 }
 
 .sar-chart-bar {
@@ -306,7 +312,7 @@
   gap: 16px;
   margin-top: 6px;
   font-size: 12px;
-  color: #36485a;
+  color: var(--sap-text, #223548);
 }
 
 .sar-chart-legend__item {
@@ -318,7 +324,7 @@
 .sar-chart-legend__swatch {
   width: 12px;
   height: 12px;
-  border: 1px solid #9aa8b7;
+  border: 1px solid var(--sap-border-strong, #aab8c4);
 }
 
 .sar-chart-legend__swatch--primary {
@@ -340,7 +346,7 @@
 
 .sar-charts-panel__note {
   font-size: 12px;
-  color: #56697a;
+  color: var(--sap-text-muted, #64748b);
 }
 
 .sar-charts-panel__controls {
@@ -355,7 +361,7 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #36485a;
+  color: var(--sap-text, #223548);
 }
 
 .sar-chart-style-field .im-field__input {

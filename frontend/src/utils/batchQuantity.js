@@ -10,7 +10,9 @@ export const parseBatchNumber = (value) => {
 
 export const getLineUomFactor = (line = {}) => {
   const safeLine = normalizeLine(line);
-  const explicitFactor = parseBatchNumber(safeLine.uomFactor);
+  const explicitFactor = parseBatchNumber(
+    safeLine.uomFactor ?? safeLine.UomFactor ?? safeLine.NumPerMsr ?? safeLine.numPerMsr
+  );
   if (explicitFactor > 0) return explicitFactor;
 
   const rawUomCode = String(safeLine.uomCode || '').trim();

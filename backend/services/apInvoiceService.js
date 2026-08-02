@@ -5,6 +5,8 @@ const { getDocumentFreightCharges } = require('./freightChargesDbService');
 const { buildDocumentAdditionalExpenses } = require('./freightPayloadUtils');
 const { getUdfDefinitions } = require('./udfMetadataService');
 const { applyUdfValues, isBlankUdfValue, normalizeUdfValue } = require('./udfPayloadUtils');
+const { buildAPInvoiceDocumentLine } = require('./apInvoicePayloadUtils');
+const { applyPlaceOfSupplyUdf } = require('./placeOfSupplyUtils');
 
 const formatDateForSAP = (value) => {
   if (!value) return null;
@@ -16,17 +18,9 @@ const parseNum = (value) => {
   return Number.isFinite(num) ? num : 0;
 };
 
-const optionalNumber = (value) => {
-  if (value === '' || value === null || value === undefined) return undefined;
-  const num = Number(value);
-  return Number.isFinite(num) ? num : undefined;
-};
-
-const yesNo = (value) => {
-  const text = String(value ?? '').trim().toUpperCase();
-  if (['Y', 'YES', 'TRUE', '1', 'TYES'].includes(text)) return 'tYES';
-  if (['N', 'NO', 'FALSE', '0', 'TNO'].includes(text)) return 'tNO';
-  return undefined;
+const toSapYesNo = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['Y', 'YES', 'TRUE', '1', 'TYES'].includes(normalized) ? 'tYES' : 'tNO';
 };
 
 const normalizeState = (value) =>
@@ -38,12 +32,6 @@ const normalizeState = (value) =>
 const isGstTaxCode = (taxCode) => {
   const value = String(taxCode || '').trim().toUpperCase();
   return Boolean(value) && value.includes('GST') && !value.includes('NON-GST') && !value.includes('NONGST');
-};
-
-const isValidTaxCode = async (taxCode) => {
-  const code = String(taxCode || '').trim();
-  if (!code) return false;
-  return Boolean(await apInvoiceDb.getTaxCodeValidation(code));
 };
 
 const buildSmartGstValidation = async (header, lines, vendor) => {
@@ -138,12 +126,15 @@ const calculateExpectedTotal = (header, lines) => {
 const buildWithholdingTaxData = (rows = []) =>
   (Array.isArray(rows) ? rows : [])
     .filter((row) => String(row?.code || row?.WTCode || '').trim())
-    .map((row) => ({
-      WTCode: String(row.code || row.WTCode || '').trim(),
-      TaxableAmount: parseNum(row.taxableAmount),
-      WTAmount: parseNum(row.wtaxAmount || row.WTAmount),
-      Category: 'I',
-    }));
+    .map((row) => {
+      const category = String(row.categoryCode || row.category || 'I').trim().toUpperCase();
+      return {
+        WTCode: String(row.code || row.WTCode || '').trim(),
+        TaxableAmount: parseNum(row.taxableAmount),
+        WTAmount: parseNum(row.wtaxAmount ?? row.WTAmount),
+        Category: category.startsWith('P') ? 'P' : 'I',
+      };
+    });
 
 const validateAPInvoicePayload = async (payload, docEntry = null) => {
   const { header = {}, lines = [] } = payload || {};
@@ -189,6 +180,8 @@ const validateAPInvoicePayload = async (payload, docEntry = null) => {
   if (smartGstValidation.warning) {
     warnings.push(smartGstValidation.warning.message);
   }
+
+  await apInvoiceDb.validateAPInvoiceBaseDocuments(effectiveLines);
 
   for (const line of effectiveLines) {
     const itemCode = String(line.itemNo || '').trim();
@@ -286,8 +279,9 @@ const getReferenceData = async () => {
 const getVendorDetails = async (vendorCode) => {
   try {
     return await apInvoiceDb.getVendorDetails(vendorCode);
-  } catch (_error) {
-    return { contacts: [], pay_to_addresses: [], gstin: '', vendorState: '' };
+  } catch (error) {
+    console.error('[AP Invoice Service] Failed to load vendor details:', error);
+    throw error;
   }
 };
 
@@ -404,7 +398,8 @@ const getGRPOForCopy = async (docEntry) => {
   try {
     return await apInvoiceDb.getGRPOForCopy(docEntry);
   } catch (error) {
-    throw new Error(`Failed to load GRPO: ${error.message}`);
+    error.message = `Failed to load GRPO: ${error.message}`;
+    throw error;
   }
 };
 
@@ -426,56 +421,7 @@ const submitAPInvoice = async (payload) => {
 
     const documentLines = [];
     for (const l of lines.filter((line) => line.itemNo && String(line.itemNo).trim())) {
-      const hasBaseDoc =
-        l.baseEntry != null && l.baseEntry !== '' &&
-        l.baseType != null && l.baseType !== '' &&
-        l.baseLine != null && l.baseLine !== '';
-
-      const docLine = {
-        Quantity: parseFloat(l.quantity) || 0,
-        WarehouseCode: l.whse || '',
-      };
-      const lineWtaxLiable = yesNo(l.wtaxLiable ?? l.wTaxLiable);
-      if (lineWtaxLiable) {
-        docLine.WTLiable = lineWtaxLiable;
-      }
-      if (String(l.glAccount || '').trim()) {
-        docLine.AccountCode = String(l.glAccount).trim();
-      }
-      if (String(l.distRule || '').trim()) {
-        docLine.CostingCode = String(l.distRule).trim();
-      }
-      if (String(l.countryOfOrigin || '').trim()) {
-        docLine.CountryOrg = String(l.countryOfOrigin).trim();
-      }
-      const locationCode = optionalNumber(l.loc);
-      if (locationCode !== undefined) {
-        docLine.LocationCode = locationCode;
-      }
-      const agreementNo = optionalNumber(l.blanketAgreementNo);
-      if (agreementNo !== undefined) {
-        docLine.AgreementNo = agreementNo;
-      }
-
-      if (hasBaseDoc) {
-        docLine.BaseEntry = parseInt(l.baseEntry, 10);
-        docLine.BaseType = parseInt(l.baseType, 10);
-        docLine.BaseLine = parseInt(l.baseLine, 10);
-      } else {
-        docLine.ItemCode = l.itemNo;
-        docLine.Price = parseFloat(l.unitPrice) || 0;
-        if (await isValidTaxCode(l.taxCode)) {
-          docLine.TaxCode = String(l.taxCode).trim();
-        }
-        if (String(l.uomCode || '').trim()) docLine.UoMCode = String(l.uomCode).trim();
-      }
-
-      if (l.stdDiscount && Number(l.stdDiscount) > 0) {
-        docLine.DiscountPercent = parseFloat(l.stdDiscount) || 0;
-      }
-
-      applyUdfValues(docLine, l.udf, allowedLineUdfs);
-      documentLines.push(docLine);
+      documentLines.push(buildAPInvoiceDocumentLine(l, allowedLineUdfs));
     }
 
     const documentAdditionalExpenses = buildDocumentAdditionalExpenses(payload.freightCharges);
@@ -491,6 +437,7 @@ const submitAPInvoice = async (payload) => {
       NumAtCard: header.salesContractNo || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: toSapYesNo(header.rounding),
       DocumentLines: documentLines,
     };
     if (withholdingTaxData.length) {
@@ -509,6 +456,7 @@ const submitAPInvoice = async (payload) => {
     if (header.payToCode) sapPayload.PayToCode = String(header.payToCode).trim();
 
     applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
+    applyPlaceOfSupplyUdf(sapPayload, headerUdfDefinitionsByKey, header.placeOfSupply);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
     console.log('Constructed SAP Payload:', sapPayload);
@@ -546,11 +494,13 @@ const updateAPInvoice = async (docEntry, payload) => {
       JournalMemo: header.journalRemark || '',
       DiscountPercent: header.discount ? parseFloat(header.discount) : 0,
       DocumentAdditionalExpenses: documentAdditionalExpenses,
+      Rounding: toSapYesNo(header.rounding),
     };
 
     if (header.freight) sapPayload.TotalExpenses = parseFloat(header.freight);
 
     applyUdfValues(sapPayload, header_udfs, allowedHeaderUdfs, headerUdfDefinitionsByKey);
+    applyPlaceOfSupplyUdf(sapPayload, headerUdfDefinitionsByKey, header.placeOfSupply);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['TransactionType', 'TransType', 'DocumentType', 'DocType'], header.transactionType);
     setKnownUdfValue(sapPayload, headerUdfDefinitionsByKey, ['Indicator'], header.indicator);
 

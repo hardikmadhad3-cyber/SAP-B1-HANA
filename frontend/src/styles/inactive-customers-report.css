@@ -1,5 +1,5 @@
 .icr-page {
-  color: #111;
+  color: var(--sap-text, #223548);
 }
 
 .icr-window--criteria {
@@ -8,7 +8,7 @@
 }
 
 .icr-window--report {
-  width: min(1880px, calc(100vw - 34px));
+  width: min(1880px, 100%);
   height: calc(100vh - 142px);
 }
 
@@ -40,7 +40,7 @@
 .icr-label,
 .icr-small-label {
   font-size: 12px;
-  color: #1b1b1b;
+  color: var(--sap-text, #223548);
 }
 
 .icr-label {
@@ -90,7 +90,7 @@
   gap: 0 16px;
   padding: 4px 10px 5px;
   flex: 0 0 auto;
-  border-bottom: 1px solid #b8b8b8;
+  border-bottom: 1px solid var(--sap-border, #d5dce3);
 }
 
 .icr-document-option {
@@ -122,7 +122,7 @@
 
 @media (max-width: 720px) {
   .icr-window--criteria {
-    width: calc(100vw - 20px);
+    width: 100%;
     max-width: none;
   }
 

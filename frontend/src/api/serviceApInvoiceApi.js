@@ -11,10 +11,11 @@ export const fetchServiceAPInvoiceVendorDetails = (vendorCode) =>
 export const fetchServiceAPInvoiceVendorOptions = (params = {}) =>
   client.get(`${API_BASE}/vendors/search`, { params });
 
-export const fetchServiceAPInvoiceSeries = (date = '', branch = '') =>
+export const fetchServiceAPInvoiceSeries = (date = '', transactionType = '', branch = '') =>
   client.get(`${API_BASE}/series`, {
     params: {
       ...(date ? { date } : {}),
+      ...(transactionType ? { transactionType } : {}),
       ...(branch ? { branch } : {}),
     },
   });
@@ -35,7 +36,8 @@ export const updateServiceAPInvoice = (docEntry, data) =>
   client.patch(`${API_BASE}/${encodeURIComponent(docEntry)}`, data);
 
 export const generateServiceAPInvoiceJournalEntry = ({ docEntry, payload, persist = false }) =>
-  client.post('/journal-entry/generate-from-ap-invoice', {
+  client.post('/journal-entry/preview', {
+    documentType: 'serviceApInvoice',
     docEntry,
     payload,
     persist,

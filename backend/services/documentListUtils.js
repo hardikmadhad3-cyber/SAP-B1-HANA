@@ -1,5 +1,66 @@
 const escapeLike = (value) => String(value || '').replace(/[%_[\]]/g, (match) => `[${match}]`);
 
+const normalizeSearchValue = (value) =>
+  String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
+    .toUpperCase();
+
+const compactSearchValue = (value) => normalizeSearchValue(value).replace(/\s+/g, '');
+
+const getSearchTokens = (value, maxTokens = 8) =>
+  normalizeSearchValue(value)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, maxTokens);
+
+const buildConcatExpression = (expressions = []) => {
+  const parts = expressions.filter(Boolean).map((expression) => `ISNULL(${expression}, '')`);
+  if (parts.length === 0) return "''";
+  if (parts.length === 1) return parts[0];
+  return `CONCAT(${parts.join(", ' ', ")})`;
+};
+
+const compactSqlExpression = (expression) => `
+  UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+    ${expression},
+    '"', ''),
+    '''', ''),
+    '.', ''),
+    ',', ''),
+    '-', ''),
+    ' ', ''))
+`;
+
+const appendSapSearchCondition = (whereClauses, params, expressions, rawValue, paramPrefix, additionalClauses = []) => {
+  const normalizedValue = String(rawValue || '').trim();
+  if (!normalizedValue) return;
+
+  const normalized = normalizeSearchValue(normalizedValue);
+  const compact = compactSearchValue(normalizedValue);
+  const tokens = getSearchTokens(normalizedValue);
+  const searchableSql = buildConcatExpression(expressions);
+  const compactSearchableSql = compactSqlExpression(searchableSql);
+  const tokenConditions = tokens
+    .map((_, index) => `${compactSearchableSql} LIKE @${paramPrefix}Token${index}`)
+    .join(' AND ');
+
+  whereClauses.push(`(
+    UPPER(${searchableSql}) LIKE @${paramPrefix}Like
+    OR ${compactSearchableSql} LIKE @${paramPrefix}CompactLike
+    ${tokenConditions ? `OR (${tokenConditions})` : ''}
+    ${additionalClauses.length ? `OR ${additionalClauses.join('\n    OR ')}` : ''}
+  )`);
+
+  params[`${paramPrefix}Like`] = `%${escapeLike(normalized)}%`;
+  params[`${paramPrefix}CompactLike`] = `%${escapeLike(compact)}%`;
+  tokens.forEach((token, index) => {
+    params[`${paramPrefix}Token${index}`] = `%${escapeLike(token)}%`;
+  });
+};
+
 const normalizeTopLimit = (value) => {
   if (value == null || value === '') return null;
 
@@ -65,14 +126,19 @@ const buildMarketingDocumentListFilterQuery = ({
   }
 
   if (normalizedQuery) {
-    whereClauses.push(`(
-      ${docNumExpression} LIKE @query
-      OR ${partnerCodeField} LIKE @query
-      OR ${partnerNameField} LIKE @query
-      ${includeSellerFields ? `OR ${sellerCodeField} LIKE @query
-      OR ${sellerNameField} LIKE @query` : ''}
-      ${additionalQueryClauses.length ? `OR ${additionalQueryClauses.join('\n      OR ')}` : ''}
-    )`);
+    appendSapSearchCondition(
+      whereClauses,
+      params,
+      [
+        docNumExpression,
+        partnerCodeField,
+        partnerNameField,
+        ...(includeSellerFields ? [sellerCodeField, sellerNameField] : []),
+      ],
+      normalizedQuery,
+      'query',
+      additionalQueryClauses,
+    );
     params.query = `%${escapeLike(normalizedQuery)}%`;
   }
 
@@ -82,23 +148,19 @@ const buildMarketingDocumentListFilterQuery = ({
   }
 
   if (normalizedPartnerCode) {
-    whereClauses.push(`${partnerCodeField} LIKE @partnerCode`);
-    params.partnerCode = `%${escapeLike(normalizedPartnerCode)}%`;
+    appendSapSearchCondition(whereClauses, params, [partnerCodeField], normalizedPartnerCode, 'partnerCode');
   }
 
   if (normalizedPartnerName) {
-    whereClauses.push(`${partnerNameField} LIKE @partnerName`);
-    params.partnerName = `%${escapeLike(normalizedPartnerName)}%`;
+    appendSapSearchCondition(whereClauses, params, [partnerNameField], normalizedPartnerName, 'partnerName');
   }
 
   if (includeSellerFields && normalizedSellerCode) {
-    whereClauses.push(`${sellerCodeField} LIKE @sellerCode`);
-    params.sellerCode = `%${escapeLike(normalizedSellerCode)}%`;
+    appendSapSearchCondition(whereClauses, params, [sellerCodeField], normalizedSellerCode, 'sellerCode');
   }
 
   if (includeSellerFields && normalizedSellerName) {
-    whereClauses.push(`${sellerNameField} LIKE @sellerName`);
-    params.sellerName = `%${escapeLike(normalizedSellerName)}%`;
+    appendSapSearchCondition(whereClauses, params, [sellerNameField], normalizedSellerName, 'sellerName');
   }
 
   if (normalizedDateFrom) {
@@ -116,6 +178,10 @@ const buildMarketingDocumentListFilterQuery = ({
 
 module.exports = {
   escapeLike,
+  normalizeSearchValue,
+  compactSearchValue,
+  getSearchTokens,
+  appendSapSearchCondition,
   normalizeTopLimit,
   buildMarketingDocumentListFilterQuery,
 };

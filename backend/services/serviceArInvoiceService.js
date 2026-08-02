@@ -29,6 +29,16 @@ const yesNo = (value) => {
   return ['y', 'yes', 'true', '1', 'tyes'].includes(normalized) ? 'tYES' : 'tNO';
 };
 
+const buildWithholdingTaxData = (rows = []) =>
+  (Array.isArray(rows) ? rows : [])
+    .filter((row) => String(row?.code || row?.WTCode || '').trim())
+    .map((row) => ({
+      WTCode: String(row.code || row.WTCode || '').trim(),
+      TaxableAmount: parseNum(row.taxableAmount, 0),
+      WTAmount: parseNum(row.wtaxAmount || row.WTAmount, 0),
+      Category: 'I',
+    }));
+
 const normalizeBranchId = (value) => {
   const normalized = String(value ?? '').trim();
   if (!normalized || normalized === '-1' || normalized === '0') return undefined;
@@ -250,8 +260,14 @@ const buildSapPayload = async (payload, includeSeries = true) => {
     Comments: optString(header.remarks || header.otherInstruction || header.comments),
     JournalMemo: optString(header.journalRemark),
     DiscountPercent: header.discount ? parseNum(header.discount) : undefined,
+    Rounding: yesNo(header.rounding),
     DocumentLines: [],
   };
+
+  const withholdingTaxData = buildWithholdingTaxData(payload.withholdingTaxRows);
+  if (withholdingTaxData.length) {
+    sapPayload.WithholdingTaxDataWTXCollection = withholdingTaxData;
+  }
 
   applyExplicitUdfs(sapPayload, payload.header_udfs, headerUdfDefinitionsByKey);
   applyKnownHeaderUdfs(sapPayload, header, headerUdfDefinitionsByKey);
@@ -266,6 +282,7 @@ const buildSapPayload = async (payload, includeSeries = true) => {
       ItemDescription: String(line.description || '').trim(),
       Quantity: quantity,
       UnitPrice: unitPrice,
+      DiscountPercent: parseNum(line.discountPercent),
       TaxCode: optString(line.taxCode),
       CostingCode: optString(line.distRule),
       WTLiable: yesNo(line.wtaxLiable),
